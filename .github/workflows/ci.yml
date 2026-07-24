@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    name: Branch and PR policy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Validate PR direction
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          echo "Pull request: $HEAD_REF -> $BASE_REF"
+          if [ "$BASE_REF" = "main" ] && [ "$HEAD_REF" != "dev" ]; then
+            echo "::error::Only 'dev' may open a PR into 'main'. Task branches must target 'dev'."
+            exit 1
+          fi
+          echo "PR direction is valid."
+
+      - name: Validate Jira branch naming
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$HEAD_REF" = "dev" ]; then
+            echo "dev -> main promotion PR, naming check not applicable."
+            exit 0
+          fi
+          pattern='^(feature|fix|chore|docs)/SCRUM-[0-9]+-[a-z0-9][a-z0-9._-]*$'
+          if echo "$HEAD_REF" | grep -Eq "$pattern"; then
+            echo "Branch name '$HEAD_REF' is valid."
+          else
+            echo "::error::Branch '$HEAD_REF' does not match the required pattern: $pattern"
+            echo "Examples: feature/SCRUM-14-initial-ci, fix/SCRUM-31-course-delete-error"
+            exit 1
+          fi
+
+  repo-quality:
+    name: Repository quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Required repository files exist
+        run: |
+          missing=0
+          for f in README.md .gitignore .gitattributes .editorconfig .env.example; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Missing required file: $f"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: No tracked sensitive files
+        run: |
+          bad=$(git ls-files \
+            | grep -E '(^|/)\.env$|(^|/)\.env\.[^/]+$|\.pem$|\.key$|credentials.*\.json$' \
+            | grep -v '\.env\.example$' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Git is tracking sensitive files. Remove them and rotate any leaked secrets:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "No sensitive files are tracked."
+
+      - name: No unresolved merge conflict markers
+        run: |
+          hits=$(git grep -nE '^(<{7}( |$)|={7}$|>{7}( |$))' -- . ':!*.md' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::Unresolved merge conflict markers found:"
+            echo "$hits"
+            exit 1
+          fi
+          echo "No conflict markers found."
+
+      - name: Required .env.example keys present
+        run: |
+          missing=0
+          for key in APP_ENV APP_DEBUG DEPLOYMENT_MODE DATABASE_URL AI_PROVIDER; do
+            if ! grep -qE "^${key}=" .env.example; then
+              echo "::error::.env.example is missing required key: $key"
+              missing=1
+            fi
+          done
+          exit $missing
+
+  python-syntax:
+    name: Python syntax (conditional)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Detect Python files
+        id: detect
+        run: |
+          if git ls-files '*.py' | grep -q .; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No Python files yet. Backend checks activate when code exists."
+          fi
+
+      - name: Set up Python
+        if: steps.detect.outputs.found == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile all Python files
+        if: steps.detect.outputs.found == 'true'
+        run: git ls-files '*.py' | xargs -r python -m py_compile

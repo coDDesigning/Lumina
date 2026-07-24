@@ -1,0 +1,18 @@
+# Normalize all text files to LF in the repository
+* text=auto eol=lf
+
+# Files that must always keep LF even on Windows checkouts
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary files — never touch line endings, never merge as text
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.woff binary
+*.woff2 binary

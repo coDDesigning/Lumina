@@ -1,0 +1,43 @@
+# ── Secrets / environment ────────────────────────────────
+# Never commit real credentials. Only the example template is allowed.
+.env
+.env.*
+!.env.example
+
+# ── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node / frontend ──────────────────────────────────────
+node_modules/
+dist/
+build/
+
+# ── Databases & vector stores (self-hosted mode) ─────────
+*.sqlite3
+*.db
+chroma/
+chroma_db/
+
+# ── User-uploaded content & logs ─────────────────────────
+uploads/
+*.log
+logs/
+
+# ── IDE / OS noise ───────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Temp files ───────────────────────────────────────────
+*.tmp
+*.bak

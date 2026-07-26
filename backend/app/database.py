@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+from sqlalchemy import event
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -14,6 +16,15 @@ if DATABASE_URL.startswith("sqlite:///"):
     db_path.parent.mkdir(parents=True, exist_ok = True)
 
 engine = create_engine(DATABASE_URL)
+@event.listens_for(engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+    """SQLite disables FK enforcement per-connection by default. Fix that."""
+
+    if DATABASE_URL.startswith("sqlite"):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
 
 SessionLocal = sessionmaker(bind=engine, autoflush= False)
 

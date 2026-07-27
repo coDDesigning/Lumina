@@ -9,7 +9,7 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 @router.post("/register")
 async def register_user(user: UserCreate):
     """
-    Kullanıcı kayıt işlemlerini karşılar. Şifreyi hash'leyip veritabanı servisine iletmeye hazır hale getirir.
+    Handles user registration. Hashes password and prepares it for the database service.
     """
     hashed_pw = get_password_hash(user.password)
     
@@ -22,15 +22,13 @@ async def register_user(user: UserCreate):
 @router.post("/login", response_model=Token)
 async def login_user(form_data: OAuth2PasswordRequestForm = Depends()):
     """
-    Kullanıcı giriş işlemlerini karşılar ve doğrulama sonrası JWT Access Token döndürür.
-    Not: OAuth2 standardı gereği login formunda 'username' ve 'password' alanları gelir. 
-    Biz email adresini 'username' alanından alıyoruz.
+    Handles user login and returns a JWT Access Token. 
+    Note: OAuth2 standard expects 'username'. We use email as the username.
     """
-    # NORMALDE: Veritabanından kullanıcıyı form_data.username ile buluruz.
-    # Sonra utils.security.verify_password ile şifresini kontrol ederiz.
-    # Eğer eşleşmezse HTTPException(400, "Incorrect email or password") fırlatırız.
+    # TODO: Query user from DB by form_data.username and verify password
+    # If not matched, raise HTTPException(400, "Incorrect email or password")
     
-    # ŞİMDİLİK: Her isteği başarılı kabul edip mock bir token üretiyoruz
+    # MOCK: Accept any credentials and create a token for now
     access_token = create_access_token(data={"sub": form_data.username})
     
     return {"access_token": access_token, "token_type": "bearer"}
@@ -38,8 +36,8 @@ async def login_user(form_data: OAuth2PasswordRequestForm = Depends()):
 @router.get("/me")
 async def read_users_me(current_user: TokenData = Depends(get_current_user_token)):
     """
-    Token doğrulamasını test etmek için korumalı (protected) bir endpoint.
-    Sadece geçerli bir JWT (Bearer) token gönderenler buraya erişebilir.
+    Protected endpoint to test token verification.
+    Requires a valid JWT Bearer token to access.
     """
     return {
         "message": "You have access! Token is valid.",

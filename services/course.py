@@ -44,7 +44,7 @@ class CourseService:
 
     @staticmethod
     def soft_delete_course(course_id: int) -> CourseResponse:
-    """Moves the course to trash (soft delete by setting is_deleted=True)."""
+        """Moves the course to trash (soft delete by setting is_deleted=True)."""
         for course in _courses_db:
             if course["id"] == course_id and not course.get("is_deleted"):
                 course["is_deleted"] = True
@@ -53,7 +53,7 @@ class CourseService:
 
     @staticmethod
     def hard_delete_course(course_id: int) -> bool:
-    """Permanently deletes the course from memory."""
+        """Permanently deletes the course from memory."""
         global _courses_db
         for i, course in enumerate(_courses_db):
             if course["id"] == course_id:

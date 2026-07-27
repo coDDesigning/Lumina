@@ -3,19 +3,19 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import jwt
 
-# Bunlar normalde .env dosyasından okunmalıdır. Şimdilik burada tanımlıyoruz.
+# TODO: Read these from .env file instead of hardcoding
 SECRET_KEY = "super-secret-lumina-key-for-development-only"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 gün
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
 
 def get_password_hash(password: str) -> str:
-    """Düz metin şifreyi geri döndürülemez bir hash'e çevirir."""
+    """Hashes a plaintext password."""
     pwd_bytes = password.encode('utf-8')
     salt = bcrypt.gensalt()
     return bcrypt.hashpw(pwd_bytes, salt).decode('utf-8')
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Kullanıcının girdiği şifre ile veritabanındaki hash eşleşiyor mu kontrol eder."""
+    """Verifies if a plaintext password matches the hashed password."""
     pwd_bytes = plain_password.encode('utf-8')
     hash_bytes = hashed_password.encode('utf-8')
     try:
@@ -24,7 +24,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """JWT Access Token oluşturur."""
+    """Creates a new JWT Access Token."""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta

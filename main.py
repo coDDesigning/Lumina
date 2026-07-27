@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routes import auth
+from routes import auth, course
 
 app = FastAPI(
     title="Lumina API",
@@ -8,6 +8,7 @@ app = FastAPI(
 )
 
 app.include_router(auth.router)
+app.include_router(course.router)
 
 @app.get("/")
 def read_root():

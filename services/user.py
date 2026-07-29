@@ -6,9 +6,10 @@ from utils.security import get_password_hash
 _users_db: List[dict] = []
 _id_counter = 1
 
+
 class UserService:
     """Handles business logic and data access for users."""
-    
+
     @staticmethod
     def get_user_by_email(email: str) -> Optional[dict]:
         """Finds a user by their email address."""
@@ -30,15 +31,17 @@ class UserService:
         global _id_counter
         # If this is the first user in DB, make them ADMIN automatically.
         role = Role.ADMIN if len(_users_db) == 0 else Role.USER
-        
+
         new_user = user_data.model_dump()
         new_user["id"] = _id_counter
         new_user["password"] = get_password_hash(user_data.password)
         new_user["role"] = role
         new_user["is_banned"] = False
-        new_user["credits"] = 100.0 if role == Role.USER else float('inf') # Admins have unlimited credits
+        new_user["credits"] = (
+            100.0 if role == Role.USER else float("inf")
+        )  # Admins have unlimited credits
         new_user["preferred_model"] = "gpt-4o-mini"
-        
+
         _users_db.append(new_user)
         _id_counter += 1
         return new_user
@@ -54,7 +57,7 @@ class UserService:
         user = UserService.get_user_by_email(email)
         if not user:
             raise NotFoundException("User not found")
-            
+
         update_dict = update_data.model_dump(exclude_unset=True)
         user.update(update_dict)
         return UserResponse(**user)

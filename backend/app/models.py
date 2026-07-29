@@ -156,7 +156,7 @@ class GeneratedOutput(Base):
 
     __tablename__ = "generated_outputs"
 
-    #The auto-numbered identity of this row. Every table gets one.
+    # The auto-numbered identity of this row. Every table gets one.
     id: Mapped[int] = mapped_column(primary_key=True)
 
     course_id: Mapped[int] = mapped_column(
@@ -168,7 +168,7 @@ class GeneratedOutput(Base):
     # changing the table structure.
     output_type: Mapped[str] = mapped_column(String(30))
 
-    content: Mapped[str] = mapped_column(Text) #Unlimited length
+    content: Mapped[str] = mapped_column(Text)  # Unlimited length
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -177,7 +177,8 @@ class GeneratedOutput(Base):
     # Navigation attribute (NOT a column): lets Python code write
     # output.course to reach the Course object. The partner attribute
     # on Course must be named exactly "generated_outputs".
-    course: Mapped["Course"] = relationship(back_populates = "generated_outputs")
+    course: Mapped["Course"] = relationship(back_populates="generated_outputs")
+
 
 class Quiz(Base):
     """A quiz that belongs to one course."""
@@ -186,7 +187,7 @@ class Quiz(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    #Owner course. Same cascade logic.
+    # Owner course. Same cascade logic.
 
     course_id: Mapped[int] = mapped_column(
         ForeignKey("courses.id", ondelete="CASCADE"), index=True
@@ -198,22 +199,22 @@ class Quiz(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    #Navigation up to the course
+    # Navigation up to the course
     course: Mapped["Course"] = relationship(back_populates="quizzes")
 
     questions: Mapped[list["QuizQuestion"]] = relationship(
-        back_populates="quiz", cascade= "all, delete-orphan", passive_deletes=True
+        back_populates="quiz", cascade="all, delete-orphan", passive_deletes=True
     )
 
     attempts: Mapped[list["QuizAttempt"]] = relationship(
         back_populates="quiz", cascade="all, delete-orphan", passive_deletes=True
     )
 
+
 class QuizQuestion(Base):
     """One question inside a quiz, with its options and correct answer."""
 
     __tablename__ = "quiz_questions"
-
 
     # A quiz cannot contain two questions claiming the same position,
     # so the PAIR (quiz_id, question_index) must be unique. This is a
@@ -230,22 +231,23 @@ class QuizQuestion(Base):
         ForeignKey("quizzes.id", ondelete="CASCADE"), index=True
     )
 
-    #The position of this question inside its quiz: 0,1,2,3...
+    # The position of this question inside its quiz: 0,1,2,3...
     question_index: Mapped[int] = mapped_column(Integer)
 
-    #The question text itself
+    # The question text itself
     question_text: Mapped[str] = mapped_column(Text)
 
     # The answer options stored as one JSON value, for example:
     # ["Paris", "London", "Berlin", "Madrid"]. We chose JSON instead
     # of a separate options table because options are only ever read
-    # and written together as one bundle 
+    # and written together as one bundle
 
     options: Mapped[list] = mapped_column(JSON)
 
     correct_option_index: Mapped[int] = mapped_column(Integer)
 
     quiz: Mapped["Quiz"] = relationship(back_populates="questions")
+
 
 class QuizAttempt(Base):
     """The event of one user taking one quiz once.

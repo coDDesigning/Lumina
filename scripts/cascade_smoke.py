@@ -15,6 +15,7 @@ from backend.app.models import (
     UploadedDocument,
     User,
 )
+
 Base.metadata.create_all(engine)
 
 session = SessionLocal()

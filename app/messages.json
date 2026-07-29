@@ -1,0 +1,44 @@
+{
+  "upload_errors": {
+    "unsupported_file_type": {
+      "status_code": 415,
+      "code": "UPLOAD_UNSUPPORTED_FILE_TYPE",
+      "message": "Unsupported file type. Please upload a PDF, TXT, or Markdown file."
+    },
+    "empty_file": {
+      "status_code": 422,
+      "code": "UPLOAD_EMPTY_FILE",
+      "message": "The uploaded file is empty."
+    },
+    "corrupted_pdf": {
+      "status_code": 422,
+      "code": "UPLOAD_CORRUPTED_PDF",
+      "message": "The uploaded PDF is corrupted or invalid."
+    },
+    "corrupted_text": {
+      "status_code": 422,
+      "code": "UPLOAD_CORRUPTED_TEXT",
+      "message": "The uploaded text file is corrupted or contains binary data."
+    },
+    "password_protected_pdf": {
+      "status_code": 422,
+      "code": "UPLOAD_PASSWORD_PROTECTED_PDF",
+      "message": "Password-protected PDFs are not supported."
+    },
+    "document_required": {
+      "status_code": 422,
+      "code": "UPLOAD_DOCUMENT_REQUIRED",
+      "message": "Please select a document to upload."
+    },
+    "invalid_multipart": {
+      "status_code": 400,
+      "code": "UPLOAD_INVALID_MULTIPART",
+      "message": "The upload request is invalid. Please attach a document file."
+    },
+    "upload_failed": {
+      "status_code": 500,
+      "code": "UPLOAD_FAILED",
+      "message": "There was an error uploading the document. Please try again."
+    }
+  }
+}

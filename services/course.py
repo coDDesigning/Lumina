@@ -7,12 +7,17 @@ from utils.exceptions import NotFoundException
 _courses_db: List[dict] = []
 _id_counter = 1
 
+
 class CourseService:
     @staticmethod
     def get_all_courses(include_deleted: bool = False) -> List[CourseResponse]:
         if include_deleted:
             return [CourseResponse(**course) for course in _courses_db]
-        return [CourseResponse(**course) for course in _courses_db if not course.get("is_deleted")]
+        return [
+            CourseResponse(**course)
+            for course in _courses_db
+            if not course.get("is_deleted")
+        ]
 
     @staticmethod
     def get_course_by_id(course_id: int) -> CourseResponse:
@@ -28,7 +33,7 @@ class CourseService:
         new_course["id"] = _id_counter
         new_course["created_at"] = datetime.utcnow()
         new_course["is_deleted"] = False
-        
+
         _courses_db.append(new_course)
         _id_counter += 1
         return CourseResponse(**new_course)

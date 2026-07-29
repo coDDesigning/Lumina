@@ -3,11 +3,11 @@ from typing import Optional
 
 class UserCreate(BaseModel):
     name: str
-    email: str
+    email: EmailStr      
     password: str
 
 class UserLogin(BaseModel):
-    email: str
+    email: EmailStr      
     password: str
 
 class Token(BaseModel):

@@ -11,12 +11,14 @@ Base.metadata.create_all(engine)
 session = SessionLocal()
 
 role = Role(name="student")
-user = User(email ="smoke@test.local", password_hash = "not-a-real-hash",role = role)
-course = Course(title= "Smoke Course", owner = user)
+user = User(email="smoke@test.local", password_hash="not-a-real-hash", role=role)
+course = Course(title="Smoke Course", owner=user)
 
-doc = UploadedDocument(course = course, original_filename = "notes.pdf", storage_path = "/tmp/notes.pdf")
+doc = UploadedDocument(
+    course=course, original_filename="notes.pdf", storage_path="/tmp/notes.pdf"
+)
 
-chunk = DocumentChunk(document = doc, course = course, chunk_index = 0, text= "hello world")
+chunk = DocumentChunk(document=doc, course=course, chunk_index=0, text="hello world")
 
 session.add(role)
 session.commit()

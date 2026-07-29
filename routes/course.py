@@ -8,42 +8,58 @@ from schemas.user import UserResponse
 
 router = APIRouter(prefix="/api/courses", tags=["Courses"])
 
-@router.post("/", response_model=BaseResponse[CourseResponse], status_code=status.HTTP_201_CREATED)
+
+@router.post(
+    "/",
+    response_model=BaseResponse[CourseResponse],
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_course(
-    course: CourseCreate, 
-    current_admin: UserResponse = Depends(get_current_admin)
+    course: CourseCreate, current_admin: UserResponse = Depends(get_current_admin)
 ):
     """Creates a new course."""
     created_course = CourseService.create_course(course)
-    return BaseResponse(success=True, message="Course created successfully", data=created_course)
+    return BaseResponse(
+        success=True, message="Course created successfully", data=created_course
+    )
+
 
 @router.get("/", response_model=BaseResponse[List[CourseResponse]])
 async def get_courses():
     """Lists all active (non-deleted) courses."""
     courses = CourseService.get_all_courses(include_deleted=False)
-    return BaseResponse(success=True, message="Courses retrieved successfully", data=courses)
+    return BaseResponse(
+        success=True, message="Courses retrieved successfully", data=courses
+    )
+
 
 @router.get("/{course_id}", response_model=BaseResponse[CourseResponse])
 async def get_course(course_id: int):
     """Gets details of a specific course."""
     course = CourseService.get_course_by_id(course_id)
-    return BaseResponse(success=True, message="Course retrieved successfully", data=course)
+    return BaseResponse(
+        success=True, message="Course retrieved successfully", data=course
+    )
+
 
 @router.put("/{course_id}", response_model=BaseResponse[CourseResponse])
 async def update_course(
-    course_id: int, 
+    course_id: int,
     course_update: CourseUpdate,
-    current_admin: UserResponse = Depends(get_current_admin)
+    current_admin: UserResponse = Depends(get_current_admin),
 ):
     """Updates course information."""
     updated_course = CourseService.update_course(course_id, course_update)
-    return BaseResponse(success=True, message="Course updated successfully", data=updated_course)
+    return BaseResponse(
+        success=True, message="Course updated successfully", data=updated_course
+    )
+
 
 @router.delete("/{course_id}", response_model=BaseResponse[CourseResponse])
 async def delete_course(
     course_id: int,
     hard_delete: bool = False,
-    current_admin: UserResponse = Depends(get_current_admin)
+    current_admin: UserResponse = Depends(get_current_admin),
 ):
     """
     Deletes a course.
@@ -52,7 +68,11 @@ async def delete_course(
     """
     if hard_delete:
         CourseService.hard_delete_course(course_id)
-        return BaseResponse(success=True, message="Course permanently deleted", data=None)
+        return BaseResponse(
+            success=True, message="Course permanently deleted", data=None
+        )
     else:
         deleted_course = CourseService.soft_delete_course(course_id)
-        return BaseResponse(success=True, message="Course soft deleted", data=deleted_course)
+        return BaseResponse(
+            success=True, message="Course soft deleted", data=deleted_course
+        )

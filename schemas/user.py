@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import Optional
 from enum import Enum
 
@@ -10,7 +10,7 @@ class Role(str, Enum):
 class UserBase(BaseModel):
     """Base schema containing common user fields."""
     name: str
-    email: str
+    email: EmailStr
 
 class UserCreate(UserBase):
     """Schema for user registration payload."""

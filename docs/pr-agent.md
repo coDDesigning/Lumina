@@ -29,6 +29,10 @@ The action cannot push source changes. It is also intentionally separate from
 the required CI jobs, so an unavailable model or exhausted quota cannot approve
 or block a merge by itself.
 
+The workflow fails its own optional check when the Gemini secret is absent or the
+provider request fails. This prevents a misleading green result with no review.
+Do not add `PR Agent review` to required branch checks.
+
 This workflow uses the normal `pull_request` event so it can run while `main` is
 still an initial placeholder. For same-repository branches, proposed workflow
 code can receive Actions secrets. This design therefore assumes every developer

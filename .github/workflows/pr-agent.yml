@@ -41,6 +41,17 @@ jobs:
       issues: write
       pull-requests: write
     steps:
+      - name: Verify the Gemini secret is configured
+        env:
+          # Give this shell step only the value it must validate. The command
+          # checks whether a value exists and never prints the secret itself.
+          PR_AGENT_GEMINI_API_KEY: ${{ secrets.PR_AGENT_GEMINI_API_KEY }}
+        run: |
+          if [ -z "$PR_AGENT_GEMINI_API_KEY" ]; then
+            echo "::error::Missing repository secret: PR_AGENT_GEMINI_API_KEY"
+            exit 1
+          fi
+
       - name: Review the pull request
         # PR-Agent 0.41.0 is pinned by its immutable multi-platform image digest.
         # Do not replace this with a mutable tag such as "main" or "latest".
@@ -65,6 +76,9 @@ jobs:
           config.fallback_models: "[]"
           config.restricted_mode: "true"
           config.use_global_settings_file: "false"
+          config.propagate_tool_errors: "true"
+          config.log_level: "INFO"
+          config.reasoning_effort: "low"
 
           # Review automatically, but do not rewrite the team-authored PR body
           # and do not publish a large second set of automatic suggestions.

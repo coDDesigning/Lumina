@@ -3,7 +3,7 @@ from typing import List
 from schemas.course import CourseCreate, CourseUpdate, CourseResponse
 from schemas.response import BaseResponse
 from services.course import CourseService
-from utils.deps import get_current_user, get_current_admin
+from utils.deps import get_current_admin
 from schemas.user import UserResponse
 
 router = APIRouter(prefix="/api/courses", tags=["Courses"])

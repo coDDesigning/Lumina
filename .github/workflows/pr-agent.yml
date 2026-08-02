@@ -1,0 +1,79 @@
+# PR-Agent is review automation, not a required build or deployment gate.
+# Keeping it in a separate workflow prevents an AI provider outage from
+# blocking deterministic lint, test, migration, or container checks.
+name: PR Agent Review
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+    types:
+      - opened
+      - reopened
+      - ready_for_review
+      - synchronize
+
+# The workflow-level default is read-only. The single review job receives only
+# the additional permissions needed to publish review comments.
+permissions:
+  contents: read
+
+# A new push supersedes an older review for the same pull request. Cancelling
+# the stale run avoids paying for feedback about code that is no longer current.
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: PR Agent review
+    # Do not spend provider quota on drafts, bot-created events, or forked code.
+    # Lumina task branches live in this repository, so a fork is unexpected.
+    if: >-
+      github.event.sender.type != 'Bot' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Review the pull request
+        # PR-Agent 0.41.0 is pinned by its immutable multi-platform image digest.
+        # Do not replace this with a mutable tag such as "main" or "latest".
+        uses: docker://pragent/pr-agent@sha256:3121a7b8e3ab497b4df09dea6a444da8f01a474496c8c2f722828512c52fd266
+        env:
+          # GitHub creates this short-lived token for the job. It receives only
+          # the permissions declared above and is never stored in the repository.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # A repository administrator must create this Actions secret before
+          # the first automated review. Never place the key in .env or source.
+          GOOGLE_AI_STUDIO.GEMINI_API_KEY: ${{ secrets.PR_AGENT_GEMINI_API_KEY }}
+
+          # main is currently only an initial placeholder, while task pull
+          # requests target dev. Pinning this trusted branch lets PR-Agent load
+          # the reviewed .pr_agent.toml after this bootstrap change is merged.
+          PR_AGENT_CONFIG_BRANCH: dev
+
+          # Security-critical settings are repeated here so they still apply if
+          # repository configuration cannot be loaded during a transient error.
+          config.model: "gemini/gemini-2.5-flash"
+          config.fallback_models: "[]"
+          config.restricted_mode: "true"
+          config.use_global_settings_file: "false"
+
+          # Review automatically, but do not rewrite the team-authored PR body
+          # and do not publish a large second set of automatic suggestions.
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "false"
+          github_action_config.auto_improve: "false"
+          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review"]'
+
+          # On a new commit, update the review rather than relying on feedback
+          # generated for an obsolete diff.
+          github_action_config.handle_push_trigger: "true"
+          github_action_config.push_commands: '["/review"]'

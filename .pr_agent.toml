@@ -20,6 +20,12 @@ reasoning_effort = "low"
 max_model_tokens = 32000
 response_language = "en-US"
 
+# Provider failures must make the optional review check visibly fail instead of
+# producing a misleading green check with no review. INFO also avoids logging the
+# complete model prompt during normal operation.
+propagate_tool_errors = true
+log_level = "INFO"
+
 # Jira identifiers are not GitHub issue numbers. Disable automatic extraction so
 # SCRUM-50 is not incorrectly treated as a reference to GitHub issue number 50.
 extract_issue_from_branch = false

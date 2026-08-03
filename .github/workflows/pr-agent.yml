@@ -91,3 +91,8 @@ jobs:
           # generated for an obsolete diff.
           github_action_config.handle_push_trigger: "true"
           github_action_config.push_commands: '["/review"]'
+
+          # Keep code changes and approvals disabled even during this bootstrap
+          # PR, before the trusted dev branch contains .pr_agent.toml.
+          pr_code_suggestions.commitable_code_suggestions: "false"
+          pr_code_suggestions.approve_pr_on_self_review: "false"

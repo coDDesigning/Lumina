@@ -54,7 +54,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Required repository files exist
         run: |
@@ -89,6 +91,28 @@ jobs:
           fi
           echo "No conflict markers found."
 
+      - name: Workflow dependencies use immutable references
+        shell: bash
+        run: |
+          invalid=0
+          while IFS= read -r line; do
+            reference=$(echo "$line" | sed -E 's/^[[:space:]]*uses:[[:space:]]*([^[:space:]#]+).*/\1/')
+
+            if [[ "$reference" == ./* ]]; then
+              continue
+            fi
+            if [[ "$reference" =~ ^docker://[^@]+@sha256:[0-9a-f]{64}$ ]]; then
+              continue
+            fi
+            if [[ "$reference" =~ ^[^@]+@[0-9a-f]{40}$ ]]; then
+              continue
+            fi
+
+            echo "::error::Workflow dependency is not pinned immutably: $reference"
+            invalid=1
+          done < <(grep -RhE '^[[:space:]]*uses:' .github/workflows || true)
+          exit $invalid
+
       - name: Required .env.example keys present
         run: |
           missing=0
@@ -105,7 +129,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Detect Python files
         id: detect
@@ -119,7 +145,7 @@ jobs:
 
       - name: Set up Python
         if: steps.detect.outputs.found == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
           cache: pip

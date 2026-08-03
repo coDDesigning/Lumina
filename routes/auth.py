@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from schemas.auth import UserLogin, Token, TokenData
+from schemas.auth import Token
 from schemas.user import UserCreate, UserResponse
-from utils.security import get_password_hash, verify_password, create_access_token
+from utils.security import create_access_token, verify_password
 from utils.deps import get_current_user
 from services.user import UserService
 

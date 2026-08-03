@@ -1,67 +1,151 @@
-from typing import List
-from datetime import datetime
-from schemas.course import CourseCreate, CourseUpdate, CourseResponse
-from utils.exceptions import NotFoundException
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-# Temporary in-memory database
-_courses_db: List[dict] = []
-_id_counter = 1
+from backend.app.database import begin_serialized_write
+from backend.app.models import Course, UploadedDocument
+from schemas.course import CourseCreate, CourseResponse, CourseUpdate
+from utils.exceptions import NotFoundException
 
 
 class CourseService:
     @staticmethod
-    def get_all_courses(include_deleted: bool = False) -> List[CourseResponse]:
-        if include_deleted:
-            return [CourseResponse(**course) for course in _courses_db]
+    def get_all_courses(
+        db: Session, include_deleted: bool = False
+    ) -> list[CourseResponse]:
+        statement = select(Course).order_by(Course.id)
+        if not include_deleted:
+            statement = statement.where(Course.is_deleted.is_(False))
         return [
-            CourseResponse(**course)
-            for course in _courses_db
-            if not course.get("is_deleted")
+            CourseResponse.model_validate(course)
+            for course in db.scalars(statement).all()
         ]
 
     @staticmethod
-    def get_course_by_id(course_id: int) -> CourseResponse:
-        for course in _courses_db:
-            if course["id"] == course_id and not course.get("is_deleted"):
-                return CourseResponse(**course)
-        raise NotFoundException(detail="Course not found")
+    def get_course_by_id(db: Session, course_id: int) -> CourseResponse:
+        course = db.scalar(
+            select(Course).where(
+                Course.id == course_id,
+                Course.is_deleted.is_(False),
+            )
+        )
+        if course is None:
+            raise NotFoundException(detail="Course not found")
+        return CourseResponse.model_validate(course)
 
     @staticmethod
-    def create_course(course_data: CourseCreate) -> CourseResponse:
-        global _id_counter
-        new_course = course_data.model_dump()
-        new_course["id"] = _id_counter
-        new_course["created_at"] = datetime.utcnow()
-        new_course["is_deleted"] = False
-
-        _courses_db.append(new_course)
-        _id_counter += 1
-        return CourseResponse(**new_course)
+    def create_course(
+        db: Session, course_data: CourseCreate, owner_id: int
+    ) -> CourseResponse:
+        course = Course(
+            **course_data.model_dump(),
+            owner_id=owner_id,
+            is_deleted=False,
+        )
+        db.add(course)
+        db.flush()
+        db.refresh(course)
+        course_id = course.id
+        try:
+            db.commit()
+        except SQLAlchemyError as exc:
+            db.rollback()
+            try:
+                with Session(bind=db.get_bind()) as verification_db:
+                    persisted = verification_db.get(Course, course_id)
+                    if persisted is not None:
+                        return CourseResponse.model_validate(persisted)
+            except SQLAlchemyError as verification_exc:
+                raise exc from verification_exc
+            raise
+        return CourseResponse.model_validate(course)
 
     @staticmethod
-    def update_course(course_id: int, update_data: CourseUpdate) -> CourseResponse:
-        for course in _courses_db:
-            if course["id"] == course_id and not course.get("is_deleted"):
-                update_dict = update_data.model_dump(exclude_unset=True)
-                course.update(update_dict)
-                return CourseResponse(**course)
-        raise NotFoundException(detail="Course not found")
+    def update_course(
+        db: Session, course_id: int, update_data: CourseUpdate
+    ) -> CourseResponse:
+        course = db.scalar(
+            select(Course).where(
+                Course.id == course_id,
+                Course.is_deleted.is_(False),
+            )
+        )
+        if course is None:
+            raise NotFoundException(detail="Course not found")
+
+        for field, value in update_data.model_dump(exclude_unset=True).items():
+            setattr(course, field, value)
+
+        db.commit()
+        db.refresh(course)
+        return CourseResponse.model_validate(course)
 
     @staticmethod
-    def soft_delete_course(course_id: int) -> CourseResponse:
+    def soft_delete_course(db: Session, course_id: int) -> CourseResponse:
         """Moves the course to trash (soft delete by setting is_deleted=True)."""
-        for course in _courses_db:
-            if course["id"] == course_id and not course.get("is_deleted"):
-                course["is_deleted"] = True
-                return CourseResponse(**course)
-        raise NotFoundException(detail="Course not found")
+        course = db.scalar(
+            select(Course).where(
+                Course.id == course_id,
+                Course.is_deleted.is_(False),
+            )
+        )
+        if course is None:
+            raise NotFoundException(detail="Course not found")
+
+        course.is_deleted = True
+        db.commit()
+        db.refresh(course)
+        return CourseResponse.model_validate(course)
 
     @staticmethod
-    def hard_delete_course(course_id: int) -> bool:
-        """Permanently deletes the course from memory."""
-        global _courses_db
-        for i, course in enumerate(_courses_db):
-            if course["id"] == course_id:
-                _courses_db.pop(i)
-                return True
-        raise NotFoundException(detail="Course not found")
+    def prepare_hard_delete(db: Session, course_id: int) -> list[tuple[str, str]]:
+        """Tombstone a course and retain metadata until storage is cleaned."""
+        db.rollback()
+        begin_serialized_write(db)
+        course = db.scalar(
+            select(Course).where(Course.id == course_id).with_for_update()
+        )
+        if course is None:
+            raise NotFoundException(detail="Course not found")
+
+        course.is_deleted = True
+        db.commit()
+        stored_documents = list(
+            db.execute(
+                select(
+                    UploadedDocument.storage_provider,
+                    UploadedDocument.storage_key,
+                ).where(UploadedDocument.course_id == course_id)
+            ).all()
+        )
+        db.rollback()
+        return stored_documents
+
+    @staticmethod
+    def finalize_hard_delete(db: Session, course_id: int) -> None:
+        """Delete a tombstoned course after its stored documents are gone."""
+        db.rollback()
+        begin_serialized_write(db)
+        course = db.scalar(
+            select(Course).where(Course.id == course_id).with_for_update()
+        )
+        if course is None:
+            raise NotFoundException(detail="Course not found")
+        if not course.is_deleted:
+            raise RuntimeError("Course must be tombstoned before hard deletion.")
+
+        db.delete(course)
+        try:
+            db.commit()
+        except SQLAlchemyError as exc:
+            try:
+                db.rollback()
+            except SQLAlchemyError:
+                pass
+            try:
+                with Session(bind=db.get_bind()) as verification_db:
+                    deletion_committed = verification_db.get(Course, course_id) is None
+            except SQLAlchemyError as verification_exc:
+                raise exc from verification_exc
+            if not deletion_committed:
+                raise

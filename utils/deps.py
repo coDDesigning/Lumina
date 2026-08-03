@@ -1,16 +1,23 @@
+from typing import Annotated
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
-from schemas.auth import TokenData
-from schemas.user import UserResponse, Role
+from jose import JWTError
+from sqlalchemy.orm import Session
+
+from backend.app.database import get_db
+from schemas.user import Role, UserResponse
 from services.user import UserService
-from utils.security import SECRET_KEY, ALGORITHM
+from utils.security import decode_access_token
 
 # Defines the OAuth2 scheme and token URL for Swagger UI
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserResponse:
+def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: Annotated[Session, Depends(get_db)],
+) -> UserResponse:
     """
     Validates the JWT token, extracts user, and checks if banned.
     """
@@ -20,30 +27,28 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserResponse:
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")  # Extract email from 'sub' (subject) claim
-        if email is None:
+        payload = decode_access_token(token)
+        subject = payload.get("sub")
+        if not isinstance(subject, str) or not subject:
             raise credentials_exception
-        token_data = TokenData(email=email)
     except JWTError:
         raise credentials_exception
 
-    # Fetch user object from the database here
-    user_dict = UserService.get_user_by_email(token_data.email)
-    if user_dict is None:
+    user = UserService.get_user_by_email(db, subject)
+    if user is None:
         raise credentials_exception
 
-    if user_dict.get("is_banned"):
+    if user.is_banned:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account has been banned.",
         )
 
-    return UserResponse(**user_dict)
+    return UserService.to_response(user)
 
 
-async def get_current_admin(
-    current_user: UserResponse = Depends(get_current_user),
+def get_current_admin(
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
 ) -> UserResponse:
     """
     Checks if the current user has the ADMIN role.

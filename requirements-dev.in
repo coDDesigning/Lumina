@@ -3,6 +3,7 @@
 -c requirements.txt
 -r requirements.in
 
+# Starlette 1.3 TestClient prefers Pydantic's maintained HTTPX successor.
 httpx2==2.9.1
 pytest==8.4.2
 ruff==0.16.1

@@ -1,0 +1,8 @@
+# Development and CI dependencies. Constraining against the production lock
+# guarantees contributors test the exact runtime package versions we deploy.
+-c requirements.txt
+-r requirements.in
+
+httpx2==2.9.1
+pytest==8.4.2
+ruff==0.16.1

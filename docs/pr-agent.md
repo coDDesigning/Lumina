@@ -55,9 +55,9 @@ gh auth login
 gh auth status
 ```
 
-Create a dedicated, quota-limited Gemini key in Google AI Studio. Add it
-interactively so the value is not placed in shell history, source code, `.env`,
-or `.env.example`:
+Before marking the bootstrap pull request ready, create a dedicated,
+quota-limited Gemini key in Google AI Studio. Add it interactively so the value
+is not placed in shell history, source code, `.env`, or `.env.example`:
 
 ```bash
 # gh securely prompts for the secret value and encrypts it for GitHub Actions.
@@ -70,6 +70,12 @@ gh secret list
 The expected list contains `PR_AGENT_GEMINI_API_KEY`. Do not paste the real key
 into an issue, pull-request body, terminal command argument, or chat message.
 
+PR #21 is the bootstrap pull request. Its workflow repeats the security-critical
+settings as environment variables because `.pr_agent.toml` is not yet available
+on the trusted `dev` branch. After PR #21 is merged, later reviews load the full
+policy from `dev`; the next eligible pull request is therefore the first complete
+end-to-end validation of the repository configuration.
+
 ## Review Behavior
 
 PR-Agent reviews non-draft pull requests targeting `dev` or `main`. It runs when
@@ -78,13 +84,18 @@ Bot events and forked repositories are ignored. GitHub may also postpone the
 event while a pull request has merge conflicts.
 
 GitHub may not run a newly introduced workflow on its own bootstrap pull request.
-The first guaranteed automated review is the next eligible pull request after
-SCRUM-50 is merged to `dev` and the Gemini secret exists.
+Marking PR #21 ready validates the workflow-level bootstrap settings. The first
+guaranteed review using every setting in `.pr_agent.toml` is the next eligible
+pull request after SCRUM-50 is merged to `dev` and the Gemini secret exists.
 
 The workflow loads `.pr_agent.toml` from the fixed `dev` branch. This is necessary
 while GitHub's default `main` branch contains only the initial placeholder. Never
 replace that fixed value with a pull-request branch or `${{ github.head_ref }}`;
 an untrusted branch could then redirect model traffic or change review policy.
+
+The PR-Agent check is advisory. Its own failures remain visible for diagnosis,
+but the check must not be configured as a required merge gate. Deterministic CI
+and human review remain authoritative when the AI provider is unavailable.
 
 ## Handling Findings
 

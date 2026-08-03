@@ -72,7 +72,7 @@ jobs:
 
           # Security-critical settings are repeated here so they still apply if
           # repository configuration cannot be loaded during a transient error.
-          config.model: "gemini/gemini-2.5-flash"
+          config.model: "gemini/gemini-3.6-flash"
           config.fallback_models: "[]"
           config.restricted_mode: "true"
           config.use_global_settings_file: "false"

@@ -153,7 +153,7 @@ jobs:
     timeout-minutes: 15
     env:
       DEPLOYMENT_MODE: self_hosted
-      DATABASE_URL: sqlite:///:memory:
+      DATABASE_URL: "sqlite:///:memory:"
       CHROMA_PERSIST_DIRECTORY: ${{ runner.temp }}/lumina-chroma
       UPLOAD_DIRECTORY: ${{ runner.temp }}/lumina-uploads
       PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache

@@ -12,4 +12,8 @@ select = ["E4", "E7", "E9", "F"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
-line-ending = "auto"
+line-ending = "lf"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

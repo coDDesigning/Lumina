@@ -5,6 +5,9 @@
 *.sh text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+requirements*.in text eol=lf
+requirements*.txt text eol=lf
+pyproject.toml text eol=lf
 
 # Binary files — never touch line endings, never merge as text
 *.png binary

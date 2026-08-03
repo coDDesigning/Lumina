@@ -1,20 +1,26 @@
 from datetime import datetime
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    Uuid,
+    false,
     func,
 )
-
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .database import Base
+from .base import Base
 
 
 class Role(Base):
@@ -28,11 +34,23 @@ class Role(Base):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (CheckConstraint("email = lower(email)", name="email_lowercase"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"))
+    is_initial_admin: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True, unique=True
+    )
+    credits: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_banned: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    preferred_model: Mapped[str] = mapped_column(
+        String(100), default="gpt-4o-mini", server_default="gpt-4o-mini"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -41,6 +59,9 @@ class User(Base):
 
     courses: Mapped[list["Course"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan", passive_deletes=True
+    )
+    uploaded_documents: Mapped[list["UploadedDocument"]] = relationship(
+        back_populates="uploader", passive_deletes=True
     )
 
     # Every quiz attempt this user has made.
@@ -61,9 +82,16 @@ class User(Base):
 
 class Course(Base):
     __tablename__ = "courses"
+    __table_args__ = (CheckConstraint("price >= 0", name="price_nonnegative"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    instructor: Mapped[str] = mapped_column(String(200))
+    price: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
     owner_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
@@ -78,7 +106,10 @@ class Course(Base):
     )
 
     chunks: Mapped[list["DocumentChunk"]] = relationship(
-        back_populates="course", cascade="all, delete-orphan", passive_deletes=True
+        back_populates="course",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        overlaps="document,chunks",
     )
 
     # AI-generated artifacts (summaries and similar) for this course.
@@ -99,22 +130,57 @@ class Course(Base):
 
 class UploadedDocument(Base):
     __tablename__ = "uploaded_documents"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    course_id: Mapped[int] = mapped_column(
-        ForeignKey("courses.id", ondelete="CASCADE"), index=True
+    __table_args__ = (
+        UniqueConstraint(
+            "course_id",
+            "file_hash",
+            name="uq_uploaded_documents_course_id_file_hash",
+        ),
+        UniqueConstraint(
+            "id",
+            "course_id",
+            name="uq_uploaded_documents_id_course_id",
+        ),
+        CheckConstraint("length(file_hash) = 64", name="file_hash_length"),
+        CheckConstraint("file_size >= 0", name="file_size_nonnegative"),
+        CheckConstraint(
+            "status IN ('pending', 'processing', 'completed', 'failed')",
+            name="status_valid",
+        ),
     )
 
-    original_filename: Mapped[str] = mapped_column(String(255))
-    storage_path: Mapped[str] = mapped_column(String(500))
-    status: Mapped[str] = mapped_column(String(20), default="uploaded")
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
+    original_file_name: Mapped[str] = mapped_column(String(255))
+    file_type: Mapped[str] = mapped_column(String(50))
+    mime_type: Mapped[str] = mapped_column(String(255))
+    file_size: Mapped[int] = mapped_column(BigInteger)
+    file_hash: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"))
+    storage_provider: Mapped[str] = mapped_column(String(50))
+    storage_key: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending", server_default="pending"
+    )
+    processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
+    uploader: Mapped["User"] = relationship(back_populates="uploaded_documents")
     course: Mapped["Course"] = relationship(back_populates="documents")
     chunks: Mapped[list["DocumentChunk"]] = relationship(
-        back_populates="document", cascade="all, delete-orphan", passive_deletes=True
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        overlaps="course,chunks",
     )
 
 
@@ -122,12 +188,19 @@ class DocumentChunk(Base):
     __tablename__ = "document_chunks"
     __table_args__ = (
         UniqueConstraint("document_id", "chunk_index", name="uq_chunk_doc_index"),
+        ForeignKeyConstraint(
+            ["document_id", "course_id"],
+            ["uploaded_documents.id", "uploaded_documents.course_id"],
+            name="fk_document_chunks_document_course_uploaded_documents",
+            ondelete="CASCADE",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    document_id: Mapped[int] = mapped_column(
-        ForeignKey("uploaded_documents.id", ondelete="CASCADE"), index=True
+    document_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        index=True,
     )
 
     course_id: Mapped[int] = mapped_column(
@@ -142,8 +215,12 @@ class DocumentChunk(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    document: Mapped["UploadedDocument"] = relationship(back_populates="chunks")
-    course: Mapped["Course"] = relationship(back_populates="chunks")
+    document: Mapped["UploadedDocument"] = relationship(
+        back_populates="chunks", overlaps="course,chunks"
+    )
+    course: Mapped["Course"] = relationship(
+        back_populates="chunks", overlaps="document,chunks"
+    )
 
 
 class GeneratedOutput(Base):
@@ -259,6 +336,9 @@ class QuizAttempt(Base):
     """
 
     __tablename__ = "quiz_attempts"
+    __table_args__ = (
+        CheckConstraint("score >= 0 AND score <= 1", name="score_fraction"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -298,6 +378,10 @@ class Progress(Base):
     __tablename__ = "progress"
     __table_args__ = (
         UniqueConstraint("user_id", "course_id", name="uq_progress_user_course"),
+        CheckConstraint(
+            "completion >= 0 AND completion <= 1",
+            name="completion_fraction",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

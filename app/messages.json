@@ -5,6 +5,26 @@
       "code": "UPLOAD_UNSUPPORTED_FILE_TYPE",
       "message": "Unsupported file type. Please upload a PDF, TXT, or Markdown file."
     },
+    "invalid_file_name": {
+      "status_code": 422,
+      "code": "UPLOAD_INVALID_FILE_NAME",
+      "message": "The uploaded file name is too long."
+    },
+    "file_too_large": {
+      "status_code": 413,
+      "code": "UPLOAD_FILE_TOO_LARGE",
+      "message": "The uploaded file exceeds the configured size limit."
+    },
+    "document_too_complex": {
+      "status_code": 422,
+      "code": "UPLOAD_DOCUMENT_TOO_COMPLEX",
+      "message": "The uploaded document exceeds the configured processing limits."
+    },
+    "course_document_limit": {
+      "status_code": 409,
+      "code": "UPLOAD_COURSE_DOCUMENT_LIMIT",
+      "message": "The course document storage limit has been reached."
+    },
     "empty_file": {
       "status_code": 422,
       "code": "UPLOAD_EMPTY_FILE",

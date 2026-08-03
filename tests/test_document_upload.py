@@ -1,512 +1,751 @@
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from io import BytesIO
+from pathlib import Path
+from threading import Barrier, Event
+from types import SimpleNamespace
+from typing import BinaryIO
+from uuid import UUID, uuid4
 
-import pymupdf
 import pytest
-from fastapi.testclient import TestClient
+from fastapi import UploadFile
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import Session
 
-from routes import document as document_route
-
-EXPECTED_FILE_TYPES = {
-    "pdf": {"validator": "pdf", "content_type": "application/pdf"},
-    "txt": {"validator": "text", "content_type": "text/plain"},
-    "md": {"validator": "text", "content_type": "text/markdown"},
-    "markdown": {"validator": "text", "content_type": "text/markdown"},
-}
-
-EXPECTED_ERRORS = {
-    "unsupported_file_type": {
-        "status_code": 415,
-        "code": "UPLOAD_UNSUPPORTED_FILE_TYPE",
-        "message": "Unsupported file type. Please upload a PDF, TXT, or Markdown file.",
-    },
-    "empty_file": {
-        "status_code": 422,
-        "code": "UPLOAD_EMPTY_FILE",
-        "message": "The uploaded file is empty.",
-    },
-    "corrupted_pdf": {
-        "status_code": 422,
-        "code": "UPLOAD_CORRUPTED_PDF",
-        "message": "The uploaded PDF is corrupted or invalid.",
-    },
-    "corrupted_text": {
-        "status_code": 422,
-        "code": "UPLOAD_CORRUPTED_TEXT",
-        "message": "The uploaded text file is corrupted or contains binary data.",
-    },
-    "password_protected_pdf": {
-        "status_code": 422,
-        "code": "UPLOAD_PASSWORD_PROTECTED_PDF",
-        "message": "Password-protected PDFs are not supported.",
-    },
-    "document_required": {
-        "status_code": 422,
-        "code": "UPLOAD_DOCUMENT_REQUIRED",
-        "message": "Please select a document to upload.",
-    },
-    "invalid_multipart": {
-        "status_code": 400,
-        "code": "UPLOAD_INVALID_MULTIPART",
-        "message": "The upload request is invalid. Please attach a document file.",
-    },
-    "upload_failed": {
-        "status_code": 500,
-        "code": "UPLOAD_FAILED",
-        "message": "There was an error uploading the document. Please try again.",
-    },
-}
+from backend.app.models import Course, UploadedDocument
+from backend.app.repositories.document import DocumentRepository
+from main import app
+from services import document as document_service
+from services import document_validation
+from services.course import CourseService
+from services.document import DocumentRegistrationError, DocumentService
+from storage.base import StorageError
+from storage.local import LocalStorage
 
 
-def _pdf_bytes(*, text: str | None = None, with_image: bool = False) -> bytes:
-    pdf = pymupdf.open()
-    page = pdf.new_page()
-
-    if text:
-        page.insert_text((72, 72), text)
-    if with_image:
-        pixel = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 2, 2), False)
-        pixel.clear_with(255)
-        page.insert_image(pymupdf.Rect(72, 72, 144, 144), stream=pixel.tobytes("png"))
-
-    content = pdf.tobytes()
-    pdf.close()
-    return content
-
-
-def _encrypted_pdf_bytes() -> bytes:
-    pdf = pymupdf.open()
-    page = pdf.new_page()
-    page.insert_text((72, 72), "Protected course material")
-    content = pdf.tobytes(
-        encryption=pymupdf.PDF_ENCRYPT_AES_256,
-        owner_pw="owner-password",
-        user_pw="user-password",
-    )
-    pdf.close()
-    return content
-
-
-def _pdf_with_broken_later_page() -> bytes:
-    pdf = pymupdf.open()
-    first_page = pdf.new_page()
-    first_page.insert_text((72, 72), "Valid first page")
-    broken_page = pdf.new_page()
-    broken_page.insert_text((72, 72), "Broken second page")
-    pdf.xref_set_key(broken_page.xref, "Contents", "99999 0 R")
-    content = pdf.tobytes()
-    pdf.close()
-    return content
-
-
-def _pdf_with_malformed_later_stream() -> bytes:
-    pdf = pymupdf.open()
-    first_page = pdf.new_page()
-    first_page.insert_text((72, 72), "Valid first page")
-    broken_page = pdf.new_page()
-    broken_page.insert_text((72, 72), "Broken second page")
-    content_xref = broken_page.get_contents()[0]
-    pdf.update_stream(
-        content_xref,
-        b"not valid PDF drawing operators \xff\x00\x01",
-        compress=False,
-    )
-    content = pdf.tobytes()
-    pdf.close()
-    return content
-
-
-def _pdf_with_dangling_xobject() -> bytes:
-    pdf = pymupdf.open()
-    first_page = pdf.new_page()
-    first_page.insert_text((72, 72), "Valid first page")
-    broken_page = pdf.new_page()
-    broken_page.insert_text((72, 72), "Broken second page")
-    _, resources_value = pdf.xref_get_key(broken_page.xref, "Resources")
-    resources_xref = int(resources_value.split()[0])
-    content_xref = broken_page.get_contents()[0]
-    pdf.xref_set_key(resources_xref, "XObject", "<</Bad 99999 0 R>>")
-    pdf.update_stream(content_xref, b"q /Bad Do Q", compress=False)
-    content = pdf.tobytes()
-    pdf.close()
-    return content
-
-
-def _pdf_with_invalid_compressed_image_stream() -> bytes:
-    pdf = pymupdf.open()
-    page = pdf.new_page()
-    pixel = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 2, 2), False)
-    pixel.clear_with(255)
-    page.insert_image(pymupdf.Rect(72, 72, 144, 144), stream=pixel.tobytes("png"))
-    image_xref = page.get_images(full=True)[0][0]
-    pdf.update_stream(image_xref, b"broken-zlib", compress=False)
-    pdf.xref_set_key(image_xref, "Filter", "/FlateDecode")
-    content = pdf.tobytes()
-    pdf.close()
-    return content
-
-
-@pytest.fixture
-def upload_client(tmp_path, monkeypatch):
-    monkeypatch.setattr(document_route, "UPLOAD_DIRECTORY", tmp_path)
-    with TestClient(document_route.app) as client:
-        yield client, tmp_path
-
-
-def _upload(client: TestClient, filename: str, content: bytes, content_type: str):
-    return client.post(
-        "/upload-doc",
+def upload_document(
+    context,
+    filename: str,
+    content: bytes,
+    content_type: str = "application/octet-stream",
+    *,
+    course_id: int | None = None,
+    authenticated: bool = True,
+):
+    headers = context.authorization if authenticated else {}
+    return context.client.post(
+        f"/api/courses/{course_id or context.course_id}/documents",
+        headers=headers,
         files={"document": (filename, content, content_type)},
     )
 
 
-def _assert_error(response, error_key: str) -> None:
-    error = EXPECTED_ERRORS[error_key]
-    assert response.status_code == error["status_code"]
-    assert response.json() == {
-        "success": False,
-        "message": error["message"],
-        "data": {"code": error["code"]},
+def stored_files(root: Path) -> list[Path]:
+    return sorted(
+        (path for path in root.rglob("*") if path.is_file()),
+        key=lambda path: path.as_posix(),
+    )
+
+
+def document_count(context) -> int:
+    with context.session_factory() as session:
+        return session.scalar(select(func.count()).select_from(UploadedDocument)) or 0
+
+
+def test_first_upload_returns_201_pending_document_with_trusted_metadata(
+    upload_api,
+) -> None:
+    content = b"Deterministic course notes"
+
+    response = upload_document(
+        upload_api,
+        "NOTES.TXT",
+        content,
+        "text/html",
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    document = payload["document"]
+    document_id = UUID(document["id"])
+    assert payload["duplicate"] is False
+    assert document == {
+        "id": str(document_id),
+        "original_file_name": "NOTES.TXT",
+        "file_type": "txt",
+        "mime_type": "text/plain",
+        "file_size": len(content),
+        "course_id": upload_api.course_id,
+        "status": "pending",
+        "created_at": document["created_at"],
+        "updated_at": document["updated_at"],
     }
+    datetime.fromisoformat(document["created_at"])
+    datetime.fromisoformat(document["updated_at"])
+
+    with upload_api.session_factory() as session:
+        persisted = session.get(UploadedDocument, document_id)
+        assert persisted is not None
+        assert persisted.file_hash == hashlib.sha256(content).hexdigest()
+        assert persisted.user_id == upload_api.user_id
+        assert persisted.storage_provider == upload_api.storage.provider
+        assert upload_api.storage.read(persisted.storage_key) == content
+    assert len(stored_files(upload_api.storage_root)) == 1
 
 
-def test_configuration_matches_supported_contract():
-    assert document_route.FILE_TYPES == EXPECTED_FILE_TYPES
-    for key, definition in EXPECTED_ERRORS.items():
-        assert document_route.UPLOAD_ERRORS[key] == definition
+def test_same_bytes_in_same_course_including_renamed_file_are_deduplicated(
+    upload_api,
+) -> None:
+    content = b"The same lesson under two names"
+    first = upload_document(upload_api, "lesson.txt", content, "text/plain")
+    second = upload_document(upload_api, "renamed.md", content, "text/markdown")
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert first.json()["duplicate"] is False
+    assert second.json()["duplicate"] is True
+    assert second.json()["document"]["id"] == first.json()["document"]["id"]
+    assert second.json()["document"]["original_file_name"] == "lesson.txt"
+    assert second.json()["document"]["file_type"] == "txt"
+    assert document_count(upload_api) == 1
+    assert len(stored_files(upload_api.storage_root)) == 1
 
 
-def test_configuration_accepts_another_text_extension(tmp_path, monkeypatch):
-    config_path = tmp_path / "config.json"
-    config_path.write_text(
-        """{
-          "supported_file_types": {
-            "rst": {
-              "validator": "text",
-              "content_type": "text/plain"
-            }
-          }
-        }""",
-        encoding="utf-8",
+def test_missing_duplicate_storage_is_repaired_without_replacing_metadata(
+    upload_api,
+) -> None:
+    content = b"Recover missing stored content"
+    first = upload_document(upload_api, "lesson.txt", content)
+    assert first.status_code == 201
+
+    with upload_api.session_factory() as session:
+        persisted = session.scalar(select(UploadedDocument))
+        assert persisted is not None
+        upload_api.storage.delete(persisted.storage_key)
+
+    replacement = upload_document(upload_api, "lesson-renamed.txt", content)
+
+    assert replacement.status_code == 200
+    assert replacement.json()["duplicate"] is True
+    assert replacement.json()["document"]["id"] == first.json()["document"]["id"]
+    assert document_count(upload_api) == 1
+    assert len(stored_files(upload_api.storage_root)) == 1
+
+
+def test_failed_missing_storage_repair_preserves_document_row(
+    upload_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = b"Preserve document metadata"
+    first = upload_document(upload_api, "lesson.txt", content)
+    assert first.status_code == 201
+
+    with upload_api.session_factory() as session:
+        persisted = session.scalar(select(UploadedDocument))
+        assert persisted is not None
+        upload_api.storage.delete(persisted.storage_key)
+
+    def fail_save(_key: str, _source: BinaryIO) -> None:
+        raise StorageError("simulated repair failure")
+
+    monkeypatch.setattr(upload_api.storage, "save", fail_save)
+    failed = upload_document(upload_api, "lesson.txt", content)
+
+    assert failed.status_code == 500
+    assert document_count(upload_api) == 1
+
+
+def test_same_bytes_in_different_courses_create_distinct_rows_and_files(
+    upload_api,
+) -> None:
+    content = b"Shared source material"
+    first = upload_document(upload_api, "shared.txt", content)
+    second = upload_document(
+        upload_api,
+        "shared.txt",
+        content,
+        course_id=upload_api.other_course_id,
     )
-    monkeypatch.setattr(document_route, "CONFIG_PATH", config_path)
 
-    assert document_route._load_supported_file_types() == {
-        "rst": {"validator": "text", "content_type": "text/plain"}
-    }
+    assert first.status_code == second.status_code == 201
+    assert first.json()["document"]["id"] != second.json()["document"]["id"]
+    assert first.json()["duplicate"] is second.json()["duplicate"] is False
+    assert document_count(upload_api) == 2
+    assert len(stored_files(upload_api.storage_root)) == 2
+    with upload_api.session_factory() as session:
+        hashes = set(session.scalars(select(UploadedDocument.file_hash)).all())
+        assert hashes == {hashlib.sha256(content).hexdigest()}
 
 
-def test_configuration_rejects_unknown_validator(monkeypatch):
-    monkeypatch.setattr(
-        document_route,
-        "FILE_TYPES",
-        {"docx": {"validator": "word", "content_type": "application/docx"}},
+def test_upload_requires_authentication_and_creates_nothing(upload_api) -> None:
+    response = upload_document(
+        upload_api,
+        "notes.txt",
+        b"Course notes",
+        authenticated=False,
     )
 
-    with pytest.raises(RuntimeError, match="Unknown configured validators: word"):
-        document_route._validate_configured_handlers()
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Not authenticated"
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert document_count(upload_api) == 0
+    assert stored_files(upload_api.storage_root) == []
 
 
-def test_configuration_rejects_duplicate_json_keys(tmp_path, monkeypatch):
-    config_path = tmp_path / "config.json"
-    config_path.write_text(
-        """{
-          "supported_file_types": {},
-          "supported_file_types": {}
-        }""",
-        encoding="utf-8",
+@pytest.mark.parametrize("course_kind", ["missing", "deleted"])
+def test_missing_or_deleted_course_returns_404_without_side_effects(
+    upload_api,
+    course_kind: str,
+) -> None:
+    course_id = 999_999 if course_kind == "missing" else upload_api.deleted_course_id
+
+    response = upload_document(
+        upload_api,
+        "notes.txt",
+        b"Course notes",
+        course_id=course_id,
     )
-    monkeypatch.setattr(document_route, "CONFIG_PATH", config_path)
 
-    with pytest.raises(RuntimeError, match="Duplicate JSON key"):
-        document_route._load_supported_file_types()
-
-
-def test_message_catalog_accepts_another_error(tmp_path, monkeypatch):
-    messages_path = tmp_path / "messages.json"
-    messages_path.write_text(
-        """{
-          "upload_errors": {
-            "scan_pending": {
-              "status_code": 409,
-              "code": "UPLOAD_SCAN_PENDING",
-              "message": "The document is waiting for OCR."
-            }
-          }
-        }""",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(document_route, "MESSAGES_PATH", messages_path)
-
-    assert document_route._load_upload_errors() == {
-        "scan_pending": {
-            "status_code": 409,
-            "code": "UPLOAD_SCAN_PENDING",
-            "message": "The document is waiting for OCR.",
-        }
-    }
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Course not found"}
+    assert document_count(upload_api) == 0
+    assert stored_files(upload_api.storage_root) == []
 
 
 @pytest.mark.parametrize(
-    ("filename", "content", "content_type"),
+    ("filename", "content", "expected_status", "expected_code"),
     [
-        ("notes.txt", b"Course notes", "text/plain"),
-        ("lesson.md", b"# Lesson\n\nContent", "text/markdown"),
-        ("lesson.markdown", b"# Lesson\n\nContent", "text/markdown"),
-        ("NOTES.TXT", b"Uppercase extension", "text/plain"),
+        ("notes.docx", b"unsupported", 415, "UPLOAD_UNSUPPORTED_FILE_TYPE"),
+        ("empty.txt", b"", 422, "UPLOAD_EMPTY_FILE"),
+        ("broken.pdf", b"%PDF-1.7\ntruncated", 422, "UPLOAD_CORRUPTED_PDF"),
         (
-            "pdf-header.txt",
-            b"The PDF header is %PDF-1.7 and identifies the version.",
-            "text/plain",
+            "binary.txt",
+            b"\x89PNG\r\n\x1a\nnot text",
+            422,
+            "UPLOAD_CORRUPTED_TEXT",
         ),
-        ("executable-notes.txt", b"MZ is an executable header.", "text/plain"),
-        ("image-notes.txt", b"GIF89a added animation support.", "text/plain"),
     ],
+    ids=["unsupported", "empty", "corrupt-pdf", "binary-text"],
 )
-def test_supported_text_file_is_saved(upload_client, filename, content, content_type):
-    client, upload_directory = upload_client
+def test_invalid_uploads_create_no_rows_or_files(
+    upload_api,
+    filename: str,
+    content: bytes,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    response = upload_document(upload_api, filename, content)
 
-    response = _upload(client, filename, content, content_type)
-
-    expected_hash = hashlib.sha256(content).hexdigest()
-    extension = filename.rsplit(".", 1)[1].lower()
-    assert response.status_code == 200
-    assert response.json() == {
-        "filename": filename,
-        "content_type": content_type,
-        "hash": expected_hash,
-    }
-    assert (upload_directory / f"{expected_hash}.{extension}").read_bytes() == content
-
-
-def test_text_pdf_is_saved(upload_client):
-    client, upload_directory = upload_client
-    content = _pdf_bytes(text="Course material")
-
-    response = _upload(client, "course.pdf", content, "application/pdf")
-
-    expected_hash = hashlib.sha256(content).hexdigest()
-    assert response.status_code == 200
-    assert (upload_directory / f"{expected_hash}.pdf").read_bytes() == content
+    assert response.status_code == expected_status
+    assert response.json()["success"] is False
+    assert response.json()["data"] == {"code": expected_code}
+    assert document_count(upload_api) == 0
+    assert stored_files(upload_api.storage_root) == []
 
 
-def test_image_only_pdf_is_saved_for_later_ocr(upload_client):
-    client, upload_directory = upload_client
-    content = _pdf_bytes(with_image=True)
+def test_oversized_upload_returns_413_without_side_effects(
+    upload_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        document_validation,
+        "settings",
+        SimpleNamespace(max_upload_size_bytes=8),
+    )
 
-    response = _upload(client, "scan.pdf", content, "application/pdf")
+    response = upload_document(upload_api, "large.txt", b"123456789")
 
-    expected_hash = hashlib.sha256(content).hexdigest()
-    assert response.status_code == 200
-    assert (upload_directory / f"{expected_hash}.pdf").read_bytes() == content
-
-
-@pytest.mark.parametrize(
-    "filename",
-    ["document.docx", "document", "document.pdf.exe", ".pdf"],
-)
-def test_unsupported_filename_is_rejected_without_writing(upload_client, filename):
-    client, upload_directory = upload_client
-
-    response = _upload(client, filename, b"content", "application/octet-stream")
-
-    _assert_error(response, "unsupported_file_type")
-    assert list(upload_directory.iterdir()) == []
+    assert response.status_code == 413
+    assert response.json()["data"] == {"code": "UPLOAD_FILE_TOO_LARGE"}
+    assert document_count(upload_api) == 0
+    assert stored_files(upload_api.storage_root) == []
 
 
-def test_missing_document_uses_error_response_contract(upload_client):
-    client, upload_directory = upload_client
+@pytest.mark.parametrize("limit_kind", ["count", "bytes"])
+def test_course_document_limits_do_not_leave_extra_rows_or_files(
+    upload_api,
+    monkeypatch: pytest.MonkeyPatch,
+    limit_kind: str,
+) -> None:
+    first_content = b"first document"
+    first = upload_document(upload_api, "first.txt", first_content)
+    assert first.status_code == 201
 
-    response = client.post("/upload-doc")
+    limits = (
+        SimpleNamespace(max_documents_per_course=1, max_course_storage_bytes=10_000)
+        if limit_kind == "count"
+        else SimpleNamespace(
+            max_documents_per_course=10,
+            max_course_storage_bytes=len(first_content) + 1,
+        )
+    )
+    monkeypatch.setattr(document_service, "settings", limits)
 
-    _assert_error(response, "document_required")
-    assert list(upload_directory.iterdir()) == []
+    rejected = upload_document(upload_api, "second.txt", b"second document")
+
+    assert rejected.status_code == 409
+    assert rejected.json()["data"] == {"code": "UPLOAD_COURSE_DOCUMENT_LIMIT"}
+    assert document_count(upload_api) == 1
+    assert len(stored_files(upload_api.storage_root)) == 1
 
 
-def test_malformed_multipart_uses_error_response_contract(upload_client):
-    client, upload_directory = upload_client
+def test_storage_failure_creates_no_database_row(
+    upload_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_save(_key: str, _source: object) -> None:
+        raise StorageError("simulated unavailable storage")
 
-    response = client.post(
-        "/upload-doc",
+    monkeypatch.setattr(upload_api.storage, "save", fail_save)
+
+    response = upload_document(upload_api, "notes.txt", b"Course notes")
+
+    assert response.status_code == 500
+    assert response.json()["data"] == {"code": "UPLOAD_FAILED"}
+    assert document_count(upload_api) == 0
+    assert stored_files(upload_api.storage_root) == []
+
+
+def test_database_insert_failure_deletes_the_stored_file(
+    upload_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_create(_db: Session, **_values: object) -> UploadedDocument:
+        raise SQLAlchemyError("simulated insert failure")
+
+    monkeypatch.setattr(DocumentRepository, "create", fail_create)
+
+    response = upload_document(upload_api, "notes.txt", b"Course notes")
+
+    assert response.status_code == 500
+    assert response.json()["data"] == {"code": "UPLOAD_FAILED"}
+    assert document_count(upload_api) == 0
+    assert stored_files(upload_api.storage_root) == []
+
+
+def test_unknown_commit_outcome_preserves_content_for_reconciliation(
+    db_session: Session,
+    model_graph,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = LocalStorage(tmp_path / "commit-failure")
+
+    def fail_commit() -> None:
+        raise SQLAlchemyError("simulated pre-commit failure")
+
+    monkeypatch.setattr(db_session, "commit", fail_commit)
+
+    with pytest.raises(DocumentRegistrationError):
+        DocumentService.register(
+            db=db_session,
+            storage=storage,
+            upload=UploadFile(BytesIO(b"commit failure"), filename="notes.txt"),
+            course_id=model_graph.course.id,
+            user_id=model_graph.user.id,
+        )
+
+    assert len(stored_files(storage.root)) == 1
+    assert db_session.scalar(select(func.count()).select_from(UploadedDocument)) == 0
+
+
+def test_committed_row_and_file_are_preserved_when_acknowledgement_fails(
+    db_session: Session,
+    model_graph,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = LocalStorage(tmp_path / "commit-acknowledgement")
+    original_commit = db_session.commit
+
+    def commit_then_fail() -> None:
+        original_commit()
+        raise SQLAlchemyError("simulated lost commit acknowledgement")
+
+    monkeypatch.setattr(db_session, "commit", commit_then_fail)
+
+    result = DocumentService.register(
+        db=db_session,
+        storage=storage,
+        upload=UploadFile(BytesIO(b"committed content"), filename="notes.txt"),
+        course_id=model_graph.course.id,
+        user_id=model_graph.user.id,
+    )
+
+    assert result.duplicate is False
+    assert len(stored_files(storage.root)) == 1
+    assert db_session.scalar(select(func.count()).select_from(UploadedDocument)) == 1
+
+
+def test_rollback_failure_still_removes_unregistered_file(
+    db_session: Session,
+    model_graph,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = LocalStorage(tmp_path / "rollback-failure")
+    original_rollback = db_session.rollback
+
+    def fail_create(_db: Session, **_values: object) -> UploadedDocument:
+        raise SQLAlchemyError("simulated insert failure")
+
+    def fail_rollback() -> None:
+        raise SQLAlchemyError("simulated rollback failure")
+
+    monkeypatch.setattr(DocumentRepository, "create", fail_create)
+    monkeypatch.setattr(db_session, "rollback", fail_rollback)
+
+    with pytest.raises(DocumentRegistrationError):
+        DocumentService.register(
+            db=db_session,
+            storage=storage,
+            upload=UploadFile(BytesIO(b"rollback failure"), filename="notes.txt"),
+            course_id=model_graph.course.id,
+            user_id=model_graph.user.id,
+        )
+
+    assert stored_files(storage.root) == []
+    monkeypatch.setattr(db_session, "rollback", original_rollback)
+
+
+def test_unique_race_returns_winner_and_deletes_losing_file(
+    db_session: Session,
+    model_graph,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = b"concurrent upload content"
+    file_hash = hashlib.sha256(content).hexdigest()
+    storage = LocalStorage(tmp_path / "race-storage", chunk_size=5)
+    winner_id = uuid4()
+    winner_key = storage.generate_key(
+        model_graph.course.id,
+        winner_id,
+        "txt",
+    )
+    storage.save(winner_key, BytesIO(content))
+    winner = DocumentRepository.create(
+        db_session,
+        id=winner_id,
+        original_file_name="winner.txt",
+        file_type="txt",
+        mime_type="text/plain",
+        file_size=len(content),
+        file_hash=file_hash,
+        user_id=model_graph.user.id,
+        course_id=model_graph.course.id,
+        storage_provider=storage.provider,
+        storage_key=winner_key,
+        status="pending",
+    )
+    db_session.commit()
+    lookup_count = 0
+
+    def race_lookup(
+        _db: Session,
+        _course_id: int,
+        _file_hash: str,
+    ) -> UploadedDocument | None:
+        nonlocal lookup_count
+        lookup_count += 1
+        return None if lookup_count == 1 else winner
+
+    def lose_insert(_db: Session, **_values: object) -> UploadedDocument:
+        raise IntegrityError(
+            "INSERT INTO uploaded_documents ...",
+            {},
+            Exception("unique constraint race"),
+        )
+
+    monkeypatch.setattr(
+        DocumentRepository,
+        "get_by_course_and_hash",
+        race_lookup,
+    )
+    monkeypatch.setattr(DocumentRepository, "create", lose_insert)
+
+    result = DocumentService.register(
+        db=db_session,
+        storage=storage,
+        upload=UploadFile(BytesIO(content), filename="loser.txt"),
+        course_id=model_graph.course.id,
+        user_id=model_graph.user.id,
+    )
+
+    assert result.duplicate is True
+    assert result.document.id == winner_id
+    assert lookup_count == 2
+    assert db_session.in_transaction() is False
+    assert storage.read(winner_key) == content
+    assert stored_files(storage.root) == [storage.root.joinpath(*winner_key.split("/"))]
+    assert db_session.scalar(select(func.count()).select_from(UploadedDocument)) == 1
+
+
+def test_duplicate_service_return_releases_database_transaction(
+    db_session: Session,
+    model_graph,
+    tmp_path: Path,
+) -> None:
+    storage = LocalStorage(tmp_path / "duplicate-transaction")
+    content = b"duplicate transaction"
+    first = DocumentService.register(
+        db=db_session,
+        storage=storage,
+        upload=UploadFile(BytesIO(content), filename="notes.txt"),
+        course_id=model_graph.course.id,
+        user_id=model_graph.user.id,
+    )
+    second = DocumentService.register(
+        db=db_session,
+        storage=storage,
+        upload=UploadFile(BytesIO(content), filename="renamed.txt"),
+        course_id=model_graph.course.id,
+        user_id=model_graph.user.id,
+    )
+
+    assert first.document.id == second.document.id
+    assert second.duplicate is True
+    assert db_session.in_transaction() is False
+
+
+def test_simultaneous_uploads_use_database_constraint_and_one_file(
+    session_factory,
+    model_graph,
+    tmp_path: Path,
+) -> None:
+    content = b"real concurrent duplicate"
+    storage = LocalStorage(tmp_path / "concurrent-storage", chunk_size=5)
+    start_barrier = Barrier(2)
+
+    def register() -> tuple[UUID, bool]:
+        start_barrier.wait(timeout=5)
+        with session_factory() as session:
+            result = DocumentService.register(
+                db=session,
+                storage=storage,
+                upload=UploadFile(BytesIO(content), filename="notes.txt"),
+                course_id=model_graph.course.id,
+                user_id=model_graph.user.id,
+            )
+            return result.document.id, result.duplicate
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: register(), range(2)))
+
+    assert {duplicate for _document_id, duplicate in results} == {False, True}
+    assert len({document_id for document_id, _duplicate in results}) == 1
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(UploadedDocument)) == 1
+    assert len(stored_files(storage.root)) == 1
+
+
+def test_missing_multipart_document_is_rejected_before_service(upload_api) -> None:
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/documents",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["data"] == {"code": "UPLOAD_DOCUMENT_REQUIRED"}
+    assert document_count(upload_api) == 0
+    assert stored_files(upload_api.storage_root) == []
+
+
+def test_malformed_multipart_uses_controlled_error_response(upload_api) -> None:
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/documents",
+        headers={
+            **upload_api.authorization,
+            "Content-Type": "multipart/form-data",
+        },
         content=b"malformed multipart body",
-        headers={"Content-Type": "multipart/form-data"},
     )
 
-    _assert_error(response, "invalid_multipart")
-    assert list(upload_directory.iterdir()) == []
+    assert response.status_code == 400
+    assert response.json()["data"] == {"code": "UPLOAD_INVALID_MULTIPART"}
+    assert document_count(upload_api) == 0
+    assert stored_files(upload_api.storage_root) == []
 
 
-@pytest.mark.parametrize(
-    ("filename", "content"),
-    [
-        ("empty.txt", b""),
-        ("whitespace.txt", b" \r\n\t"),
-        ("empty.md", " \n\t".encode("utf-16")),
-    ],
-)
-def test_empty_text_file_is_rejected_without_writing(upload_client, filename, content):
-    client, upload_directory = upload_client
-
-    response = _upload(client, filename, content, "text/plain")
-
-    _assert_error(response, "empty_file")
-    assert list(upload_directory.iterdir()) == []
-
-
-def test_blank_pdf_is_rejected_without_writing(upload_client):
-    client, upload_directory = upload_client
-
-    response = _upload(client, "blank.pdf", _pdf_bytes(), "application/pdf")
-
-    _assert_error(response, "empty_file")
-    assert list(upload_directory.iterdir()) == []
-
-
-@pytest.mark.parametrize(
-    "content",
-    [
-        b"not a PDF",
-        b"%PDF-1.7\ntruncated",
-        bytes(range(256)),
-        _pdf_with_broken_later_page(),
-        _pdf_with_malformed_later_stream(),
-        _pdf_with_dangling_xobject(),
-        _pdf_with_invalid_compressed_image_stream(),
-    ],
-)
-def test_corrupted_pdf_is_rejected_without_writing(upload_client, content):
-    client, upload_directory = upload_client
-
-    response = _upload(client, "broken.pdf", content, "application/pdf")
-
-    _assert_error(response, "corrupted_pdf")
-    assert list(upload_directory.iterdir()) == []
-
-
-def test_password_protected_pdf_is_rejected_without_writing(upload_client):
-    client, upload_directory = upload_client
-
-    response = _upload(
-        client,
-        "protected.pdf",
-        _encrypted_pdf_bytes(),
-        "application/pdf",
+def test_non_file_request_validation_keeps_fastapi_error_contract(upload_api) -> None:
+    response = upload_api.client.post(
+        "/api/courses/not-an-integer/documents",
+        headers=upload_api.authorization,
+        files={"document": ("notes.txt", b"notes", "text/plain")},
     )
 
-    _assert_error(response, "password_protected_pdf")
-    assert list(upload_directory.iterdir()) == []
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], list)
 
 
-@pytest.mark.parametrize(
-    "content",
-    [
-        bytes(range(256)),
-        b"\x89PNG\r\n\x1a\nnot-text",
-        _pdf_bytes(text="Renamed PDF"),
-        b"X" + _pdf_bytes(text="Prefixed and renamed PDF"),
-        b"X" * 1020 + _pdf_bytes(text="Boundary-prefixed renamed PDF"),
-        b"X" * 1025 + _pdf_bytes(text="Long-prefixed renamed PDF"),
-        _pdf_bytes(text="Altered-header renamed PDF").replace(b"%PDF-", b"%PDE-", 1),
-    ],
-)
-def test_binary_text_file_is_rejected_without_writing(upload_client, content):
-    client, upload_directory = upload_client
+def test_hard_course_delete_removes_registered_document_file(upload_api) -> None:
+    uploaded = upload_document(upload_api, "notes.txt", b"Course notes")
+    assert uploaded.status_code == 201
+    assert len(stored_files(upload_api.storage_root)) == 1
 
-    response = _upload(client, "binary.txt", content, "text/plain")
+    deleted = upload_api.client.delete(
+        f"/api/courses/{upload_api.course_id}",
+        params={"hard_delete": "true"},
+        headers=upload_api.authorization,
+    )
 
-    _assert_error(response, "corrupted_text")
-    assert list(upload_directory.iterdir()) == []
+    assert deleted.status_code == 200
+    assert deleted.json()["message"] == "Course permanently deleted"
+    assert stored_files(upload_api.storage_root) == []
+    assert document_count(upload_api) == 0
 
 
-@pytest.mark.parametrize("filename", ["binary.txt", "binary.md", "binary.markdown"])
-def test_text_with_binary_tail_is_rejected_without_writing(upload_client, filename):
-    client, upload_directory = upload_client
-    content = b"A" * 100_000 + b"\x00" * 1_000
+def test_failed_hard_delete_retains_metadata_and_can_be_retried(
+    upload_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uploaded = upload_document(upload_api, "notes.txt", b"Course notes")
+    assert uploaded.status_code == 201
+    original_delete = upload_api.storage.delete
 
-    response = _upload(client, filename, content, "text/plain")
+    def fail_delete(_key: str) -> None:
+        raise StorageError("simulated cleanup failure")
 
-    _assert_error(response, "corrupted_text")
-    assert list(upload_directory.iterdir()) == []
+    monkeypatch.setattr(upload_api.storage, "delete", fail_delete)
+    failed = upload_api.client.delete(
+        f"/api/courses/{upload_api.course_id}",
+        params={"hard_delete": "true"},
+        headers=upload_api.authorization,
+    )
 
+    assert failed.status_code == 500
+    with upload_api.session_factory() as session:
+        course = session.get(Course, upload_api.course_id)
+        assert course is not None
+        assert course.is_deleted is True
+        assert session.scalar(select(func.count()).select_from(UploadedDocument)) == 1
+    assert len(stored_files(upload_api.storage_root)) == 1
 
-@pytest.mark.parametrize(
-    "content",
-    [
-        b"UTF-8 course notes",
-        "UTF-16 course notes".encode("utf-16"),
-        "BOM-less UTF-16 LE notes".encode("utf-16-le"),
-        "BOM-less UTF-16 BE notes".encode("utf-16-be"),
-        "Caf\u00e9 course notes".encode("cp1252"),
-    ],
-)
-def test_detected_text_encoding_is_accepted(upload_client, content):
-    client, upload_directory = upload_client
+    monkeypatch.setattr(upload_api.storage, "delete", original_delete)
+    retried = upload_api.client.delete(
+        f"/api/courses/{upload_api.course_id}",
+        params={"hard_delete": "true"},
+        headers=upload_api.authorization,
+    )
 
-    response = _upload(client, "encoded.txt", content, "text/plain")
-
-    expected_hash = hashlib.sha256(content).hexdigest()
-    assert response.status_code == 200
-    assert (upload_directory / f"{expected_hash}.txt").read_bytes() == content
-
-
-def test_storage_error_is_generic(upload_client, monkeypatch):
-    client, upload_directory = upload_client
-    blocked_path = upload_directory / "not-a-directory"
-    blocked_path.write_text("occupied", encoding="utf-8")
-    monkeypatch.setattr(document_route, "UPLOAD_DIRECTORY", blocked_path)
-
-    response = _upload(client, "notes.txt", b"Course notes", "text/plain")
-
-    _assert_error(response, "upload_failed")
+    assert retried.status_code == 200
+    assert stored_files(upload_api.storage_root) == []
+    assert document_count(upload_api) == 0
 
 
-def test_atomic_storage_failure_preserves_existing_file(upload_client, monkeypatch):
-    client, upload_directory = upload_client
-    content = b"Course notes"
-    expected_hash = hashlib.sha256(content).hexdigest()
-    storage_path = upload_directory / f"{expected_hash}.txt"
-    storage_path.write_bytes(b"existing content")
+def test_course_deleted_during_file_work_cleans_stored_file(
+    upload_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_save = upload_api.storage.save
 
-    def fail_replace(_source, _destination):
-        raise OSError("simulated atomic replace failure")
+    def save_then_delete_course(key: str, source: BinaryIO) -> None:
+        original_save(key, source)
+        with upload_api.session_factory() as session:
+            course = session.get(Course, upload_api.course_id)
+            assert course is not None
+            course.is_deleted = True
+            session.commit()
 
-    monkeypatch.setattr(document_route.os, "replace", fail_replace)
+    monkeypatch.setattr(upload_api.storage, "save", save_then_delete_course)
 
-    response = _upload(client, "notes.txt", content, "text/plain")
+    response = upload_document(upload_api, "notes.txt", b"Course notes")
 
-    _assert_error(response, "upload_failed")
-    assert storage_path.read_bytes() == b"existing content"
-    assert list(upload_directory.glob("*.tmp")) == []
-
-
-def test_validated_content_type_does_not_trust_client_metadata(upload_client):
-    client, _upload_directory = upload_client
-
-    response = _upload(client, "notes.txt", b"Course notes", "text/html")
-
-    assert response.status_code == 200
-    assert response.json()["content_type"] == "text/plain"
+    assert response.status_code == 404
+    assert document_count(upload_api) == 0
+    assert stored_files(upload_api.storage_root) == []
 
 
-def test_pdf_warning_buffer_is_isolated_across_threads():
-    valid_pdf = _pdf_bytes(text="Valid course material")
-    corrupt_pdf = _pdf_with_invalid_compressed_image_stream()
+def test_hard_delete_waits_for_upload_final_write_section(
+    session_factory,
+    model_graph,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = LocalStorage(tmp_path / "delete-upload-race")
+    upload_at_insert = Event()
+    delete_started = Event()
+    allow_insert = Event()
+    original_create = DocumentRepository.create
 
-    def validation_result(content: bytes) -> str:
-        try:
-            document_route.validate_document_content("pdf", content)
-        except document_route.DocumentValidationError as exc:
-            return exc.error_key
-        return "valid"
+    def paused_create(db: Session, **values: object) -> UploadedDocument:
+        upload_at_insert.set()
+        assert allow_insert.wait(timeout=5)
+        return original_create(db, **values)
 
-    payloads = [valid_pdf, corrupt_pdf] * 8
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(executor.map(validation_result, payloads))
+    monkeypatch.setattr(DocumentRepository, "create", paused_create)
 
-    assert results == ["valid", "corrupted_pdf"] * 8
+    def upload() -> None:
+        with session_factory() as session:
+            DocumentService.register(
+                db=session,
+                storage=storage,
+                upload=UploadFile(BytesIO(b"racing content"), filename="notes.txt"),
+                course_id=model_graph.course.id,
+                user_id=model_graph.user.id,
+            )
+
+    def hard_delete() -> None:
+        delete_started.set()
+        with session_factory() as session:
+            stored_documents = CourseService.prepare_hard_delete(
+                session,
+                model_graph.course.id,
+            )
+            for _provider, storage_key in stored_documents:
+                storage.delete(storage_key)
+            CourseService.finalize_hard_delete(session, model_graph.course.id)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        upload_future = executor.submit(upload)
+        assert upload_at_insert.wait(timeout=5)
+        delete_future = executor.submit(hard_delete)
+        assert delete_started.wait(timeout=5)
+        allow_insert.set()
+        upload_future.result(timeout=10)
+        delete_future.result(timeout=10)
+
+    with session_factory() as session:
+        assert session.get(Course, model_graph.course.id) is None
+        assert session.scalar(select(func.count()).select_from(UploadedDocument)) == 0
+    assert stored_files(storage.root) == []
 
 
-def test_openapi_documents_upload_responses():
-    upload_operation = document_route.app.openapi()["paths"]["/upload-doc"]["post"]
+def test_hard_delete_recovers_lost_commit_acknowledgement(
+    db_session: Session,
+    model_graph,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    CourseService.prepare_hard_delete(db_session, model_graph.course.id)
+    original_commit = db_session.commit
 
-    assert {"200", "400", "415", "422", "500"} <= set(upload_operation["responses"])
+    def commit_then_fail() -> None:
+        original_commit()
+        raise SQLAlchemyError("simulated lost delete acknowledgement")
+
+    monkeypatch.setattr(db_session, "commit", commit_then_fail)
+
+    CourseService.finalize_hard_delete(db_session, model_graph.course.id)
+
+    assert db_session.get(Course, model_graph.course.id) is None
+
+
+def test_main_app_openapi_describes_document_upload_contract() -> None:
+    operation = app.openapi()["paths"]["/api/courses/{course_id}/documents"]["post"]
+
+    assert {
+        "200",
+        "201",
+        "400",
+        "401",
+        "403",
+        "404",
+        "409",
+        "413",
+        "415",
+        "422",
+        "500",
+    } <= set(operation["responses"])
+    assert operation["security"] == [{"OAuth2PasswordBearer": []}]

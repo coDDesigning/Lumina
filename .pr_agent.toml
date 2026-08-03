@@ -3,8 +3,9 @@
 # because obsolete upstream settings would become frozen in this repository.
 
 [config]
-# Gemini 2.5 Flash has a large context window and keeps routine review cost low.
-model = "gemini/gemini-2.5-flash"
+# Gemini 3.6 Flash is supported by the pinned PR-Agent release and keeps routine
+# review cost low while providing a large context window.
+model = "gemini/gemini-3.6-flash"
 fallback_models = []
 
 # Restricted mode prevents PR-Agent's push-code operation. Repository permissions

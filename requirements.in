@@ -1,0 +1,17 @@
+# Direct application and migration dependencies.
+# Edit this file, then regenerate requirements.txt as documented in
+# docs/dependencies.md. Do not edit the generated lock by hand.
+alembic==1.18.5
+bcrypt==5.0.0
+charset-normalizer==3.4.4
+email-validator==2.3.0
+fastapi==0.139.2
+pgvector==0.5.0
+psycopg[binary]==3.3.4
+pydantic==2.13.4
+pymupdf==1.28.0
+python-jose[cryptography]==3.5.0
+python-multipart==0.0.32
+sqlalchemy==2.0.51
+starlette==1.3.1
+uvicorn==0.51.0

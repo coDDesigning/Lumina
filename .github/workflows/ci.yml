@@ -154,9 +154,6 @@ jobs:
     env:
       DEPLOYMENT_MODE: self_hosted
       DATABASE_URL: "sqlite:///:memory:"
-      CHROMA_PERSIST_DIRECTORY: ${{ runner.temp }}/lumina-chroma
-      UPLOAD_DIRECTORY: ${{ runner.temp }}/lumina-uploads
-      PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PIP_NO_INPUT: "1"
     steps:
@@ -173,6 +170,12 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+
+      - name: Configure temporary directories
+        run: |
+          echo "CHROMA_PERSIST_DIRECTORY=$RUNNER_TEMP/lumina-chroma" >> "$GITHUB_ENV"
+          echo "UPLOAD_DIRECTORY=$RUNNER_TEMP/lumina-uploads" >> "$GITHUB_ENV"
+          echo "PYTHONPYCACHEPREFIX=$RUNNER_TEMP/pycache" >> "$GITHUB_ENV"
 
       - name: Install locked backend dependencies
         run: >-

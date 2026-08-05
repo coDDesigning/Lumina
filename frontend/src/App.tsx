@@ -1,23 +1,28 @@
-import { FormEvent, useRef, useState } from 'react'
+import { FormEvent, useEffect, useRef, useState } from 'react'
 import {
   CircleHelp,
   File,
   FilePlus2,
   Menu,
-  Pencil,
   Search,
-  Settings,
-  Smile,
 } from 'lucide-react'
+import { Navigate, Route, Routes, useParams } from 'react-router-dom'
+import WorkspaceNavigation from './components/WorkspaceNavigation'
+import type {
+  Workspace,
+  WorkspaceDraft,
+  WorkspaceSource,
+} from './data/workspaces'
+import { initialWorkspaces } from './data/workspaces'
+import EditPage from './pages/EditPage'
+import ProfilePage from './pages/ProfilePage'
+import SettingsPage from './pages/SettingsPage'
+import WorkspacesPage from './pages/WorkspacesPage'
 import './App.css'
+import './pages/pages.css'
+import './pages/workspaces.css'
 
 type WorkspaceTab = 'Exam' | 'Tutoring' | 'Practice'
-
-type Source = {
-  id: number
-  name: string
-  description: string
-}
 
 const tabContent: Record<
   WorkspaceTab,
@@ -52,15 +57,13 @@ const tabContent: Record<
   },
 }
 
-const initialSources: Source[] = [1, 2, 3].map((number) => ({
-  id: number,
-  name: `Source ${number}`,
-  description: 'Source description.',
-}))
+type WorkspacePageProps = {
+  workspace: Workspace
+}
 
-function App() {
+function WorkspacePage({ workspace }: WorkspacePageProps) {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('Exam')
-  const [sources, setSources] = useState<Source[]>(initialSources)
+  const [sources, setSources] = useState<WorkspaceSource[]>(workspace.sources)
   const [generatorPrompt, setGeneratorPrompt] = useState('')
   const [mainPrompt, setMainPrompt] = useState('')
   const [lastPrompt, setLastPrompt] = useState('')
@@ -176,20 +179,7 @@ function App() {
       </aside>
 
       <section className="main-workspace">
-        <nav className="top-actions" aria-label="Workspace controls">
-          <button type="button">
-            <Pencil aria-hidden="true" />
-            <span>Edit</span>
-          </button>
-          <button type="button">
-            <Settings aria-hidden="true" />
-            <span>Settings</span>
-          </button>
-          <button type="button">
-            <Smile aria-hidden="true" />
-            <span>Profile</span>
-          </button>
-        </nav>
+        <WorkspaceNavigation workspaceId={workspace.id} />
 
         <div className="workspace-stage">
           <div className="workspace-tabs" role="tablist" aria-label="Study mode">
@@ -254,6 +244,173 @@ function App() {
         </div>
       </section>
     </main>
+  )
+}
+
+const WORKSPACES_STORAGE_KEY = 'lumina.workspaces'
+const ACTIVE_WORKSPACE_STORAGE_KEY = 'lumina.activeWorkspaceId'
+const workspaceAccents: Workspace['accent'][] = [
+  'blue',
+  'violet',
+  'rose',
+  'amber',
+]
+
+function loadWorkspaces() {
+  const storedWorkspaces = localStorage.getItem(WORKSPACES_STORAGE_KEY)
+  if (!storedWorkspaces) return initialWorkspaces
+
+  try {
+    const parsedWorkspaces = JSON.parse(storedWorkspaces) as Workspace[]
+    return Array.isArray(parsedWorkspaces) && parsedWorkspaces.length > 0
+      ? parsedWorkspaces
+      : initialWorkspaces
+  } catch {
+    return initialWorkspaces
+  }
+}
+
+type WorkspaceRouteProps = {
+  workspaces: Workspace[]
+  onSelect: (workspaceId: string) => void
+}
+
+function WorkspaceRoute({ workspaces, onSelect }: WorkspaceRouteProps) {
+  const { workspaceId } = useParams()
+  const workspace = workspaces.find(({ id }) => id === workspaceId)
+
+  useEffect(() => {
+    if (workspace) onSelect(workspace.id)
+  }, [onSelect, workspace])
+
+  if (!workspace) return <Navigate to="/" replace />
+  return <WorkspacePage key={workspace.id} workspace={workspace} />
+}
+
+type EditWorkspaceRouteProps = WorkspaceRouteProps & {
+  onSave: (workspace: Workspace) => void
+}
+
+function EditWorkspaceRoute({
+  workspaces,
+  onSelect,
+  onSave,
+}: EditWorkspaceRouteProps) {
+  const { workspaceId } = useParams()
+  const workspace = workspaces.find(({ id }) => id === workspaceId)
+
+  useEffect(() => {
+    if (workspace) onSelect(workspace.id)
+  }, [onSelect, workspace])
+
+  if (!workspace) return <Navigate to="/" replace />
+  return <EditPage key={workspace.id} workspace={workspace} onSave={onSave} />
+}
+
+function App() {
+  const [workspaces, setWorkspaces] = useState<Workspace[]>(loadWorkspaces)
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(
+    () =>
+      localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) ??
+      initialWorkspaces[0].id,
+  )
+
+  useEffect(() => {
+    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces))
+  }, [workspaces])
+
+  useEffect(() => {
+    localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, activeWorkspaceId)
+  }, [activeWorkspaceId])
+
+  const selectWorkspace = (workspaceId: string) => {
+    setActiveWorkspaceId(workspaceId)
+  }
+
+  const createWorkspace = (draft: WorkspaceDraft) => {
+    const slugBase =
+      draft.name
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '') || 'workspace'
+    let id = slugBase
+    let suffix = 2
+
+    while (workspaces.some((workspace) => workspace.id === id)) {
+      id = `${slugBase}-${suffix}`
+      suffix += 1
+    }
+
+    const workspace: Workspace = {
+      id,
+      name: draft.name.trim(),
+      semester: draft.semester.trim(),
+      examDate: draft.examDate,
+      topics: draft.topics
+        .split(',')
+        .map((topic) => topic.trim())
+        .filter(Boolean),
+      syllabus: draft.syllabus.trim(),
+      progress: 0,
+      status: 'New',
+      updatedAt: 'Created just now',
+      accent: workspaceAccents[workspaces.length % workspaceAccents.length],
+      sources: [],
+    }
+
+    setWorkspaces((current) => [workspace, ...current])
+    setActiveWorkspaceId(workspace.id)
+    return workspace
+  }
+
+  const updateWorkspace = (updatedWorkspace: Workspace) => {
+    setWorkspaces((current) =>
+      current.map((workspace) =>
+        workspace.id === updatedWorkspace.id ? updatedWorkspace : workspace,
+      ),
+    )
+  }
+
+  return (
+    <Routes>
+      <Route
+        path="/"
+        element={
+          <WorkspacesPage
+            workspaces={workspaces}
+            activeWorkspaceId={activeWorkspaceId}
+            onCreate={createWorkspace}
+            onSelect={selectWorkspace}
+          />
+        }
+      />
+      <Route
+        path="/workspaces/:workspaceId"
+        element={
+          <WorkspaceRoute workspaces={workspaces} onSelect={selectWorkspace} />
+        }
+      />
+      <Route
+        path="/workspaces/:workspaceId/edit"
+        element={
+          <EditWorkspaceRoute
+            workspaces={workspaces}
+            onSelect={selectWorkspace}
+            onSave={updateWorkspace}
+          />
+        }
+      />
+      <Route
+        path="/settings"
+        element={<SettingsPage workspaceId={activeWorkspaceId} />}
+      />
+      <Route
+        path="/profile"
+        element={<ProfilePage workspaceId={activeWorkspaceId} />}
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   )
 }
 

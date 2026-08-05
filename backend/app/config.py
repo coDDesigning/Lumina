@@ -6,6 +6,7 @@ No other module should call os.getenv for application configuration -
 this file is the single source of truth for "what the environment says".
 """
 
+import math
 import os
 import re
 import secrets
@@ -31,6 +32,12 @@ DEFAULT_MAX_PDF_PAGE_PIXELS = 40_000_000
 DEFAULT_MAX_PDF_TOTAL_PIXELS = 100_000_000
 DEFAULT_MAX_PDF_CONTENT_STREAM_BYTES = 5 * 1024 * 1024
 DEFAULT_MAX_PDF_DRAWING_OPERATIONS = 100_000
+DEFAULT_PROCESSING_JOB_LEASE_SECONDS = 60
+DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS = 3
+DEFAULT_PROCESSING_JOB_POLL_SECONDS = 1.0
+DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS = 300
+DEFAULT_MAX_EXTRACTED_CHARACTERS = 2_000_000
+DEFAULT_MAX_DOCUMENT_CHUNKS = 1_000
 
 
 @dataclass(frozen=True)
@@ -67,6 +74,12 @@ class Settings:
     max_pdf_total_pixels: int
     max_pdf_content_stream_bytes: int
     max_pdf_drawing_operations: int
+    processing_job_lease_seconds: int
+    processing_job_max_attempts: int
+    processing_job_poll_seconds: float
+    processing_job_attempt_timeout_seconds: int
+    max_extracted_characters: int
+    max_document_chunks: int
 
     @property
     def is_hosted(self) -> bool:
@@ -180,6 +193,36 @@ def load_settings() -> Settings:
         "MAX_PDF_DRAWING_OPERATIONS",
         DEFAULT_MAX_PDF_DRAWING_OPERATIONS,
     )
+    processing_job_lease_seconds = _bounded_positive_integer_setting(
+        "PROCESSING_JOB_LEASE_SECONDS",
+        DEFAULT_PROCESSING_JOB_LEASE_SECONDS,
+        minimum=5,
+        maximum=86_400,
+    )
+    processing_job_max_attempts = _bounded_positive_integer_setting(
+        "PROCESSING_JOB_MAX_ATTEMPTS",
+        DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS,
+        minimum=1,
+        maximum=100,
+    )
+    processing_job_poll_seconds = _positive_float_setting(
+        "PROCESSING_JOB_POLL_SECONDS",
+        DEFAULT_PROCESSING_JOB_POLL_SECONDS,
+    )
+    processing_job_attempt_timeout_seconds = _bounded_positive_integer_setting(
+        "PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS",
+        DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=86_400,
+    )
+    max_extracted_characters = _positive_integer_setting(
+        "MAX_EXTRACTED_CHARACTERS",
+        DEFAULT_MAX_EXTRACTED_CHARACTERS,
+    )
+    max_document_chunks = _positive_integer_setting(
+        "MAX_DOCUMENT_CHUNKS",
+        DEFAULT_MAX_DOCUMENT_CHUNKS,
+    )
 
     return Settings(
         deployment_mode=mode,
@@ -201,6 +244,12 @@ def load_settings() -> Settings:
         max_pdf_total_pixels=max_pdf_total_pixels,
         max_pdf_content_stream_bytes=max_pdf_content_stream_bytes,
         max_pdf_drawing_operations=max_pdf_drawing_operations,
+        processing_job_lease_seconds=processing_job_lease_seconds,
+        processing_job_max_attempts=processing_job_max_attempts,
+        processing_job_poll_seconds=processing_job_poll_seconds,
+        processing_job_attempt_timeout_seconds=processing_job_attempt_timeout_seconds,
+        max_extracted_characters=max_extracted_characters,
+        max_document_chunks=max_document_chunks,
     )
 
 
@@ -212,6 +261,30 @@ def _positive_integer_setting(name: str, default: int) -> int:
         raise ValueError(f"{name} must be a positive integer.") from exc
     if value <= 0:
         raise ValueError(f"{name} must be a positive integer.")
+    return value
+
+
+def _positive_float_setting(name: str, default: float) -> float:
+    raw_value = os.getenv(name, str(default))
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive finite number.") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a positive finite number.")
+    return value
+
+
+def _bounded_positive_integer_setting(
+    name: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = _positive_integer_setting(name, default)
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}.")
     return value
 
 

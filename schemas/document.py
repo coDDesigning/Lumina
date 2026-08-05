@@ -23,3 +23,22 @@ class DocumentResponse(BaseModel):
 class DocumentUploadResponse(BaseModel):
     document: DocumentResponse
     duplicate: bool
+
+
+class ProcessingJobResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: str
+    attempt_count: int
+    max_attempts: int
+    available_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    last_error_code: str | None
+    last_error_message: str | None
+
+
+class DocumentStatusResponse(BaseModel):
+    document: DocumentResponse
+    processing_job: ProcessingJobResponse

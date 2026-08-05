@@ -14,13 +14,14 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from backend.app.models import Course, UploadedDocument
+from backend.app.models import Course, ProcessingJob, UploadedDocument
 from backend.app.repositories.document import DocumentRepository
 from main import app
 from services import document as document_service
 from services import document_validation
 from services.course import CourseService
 from services.document import DocumentRegistrationError, DocumentService
+from services.processing_jobs import enqueue_document_job
 from storage.base import StorageError
 from storage.local import LocalStorage
 
@@ -325,6 +326,24 @@ def test_database_insert_failure_deletes_the_stored_file(
     assert stored_files(upload_api.storage_root) == []
 
 
+def test_job_enqueue_failure_rolls_back_document_and_storage(
+    upload_api,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_enqueue(*_args, **_kwargs):
+        raise SQLAlchemyError("simulated enqueue failure")
+
+    monkeypatch.setattr(document_service, "enqueue_document_job", fail_enqueue)
+
+    response = upload_document(upload_api, "notes.txt", b"Course notes")
+
+    assert response.status_code == 500
+    assert document_count(upload_api) == 0
+    with upload_api.session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(ProcessingJob)) == 0
+    assert stored_files(upload_api.storage_root) == []
+
+
 def test_unknown_commit_outcome_preserves_content_for_reconciliation(
     db_session: Session,
     model_graph,
@@ -349,6 +368,7 @@ def test_unknown_commit_outcome_preserves_content_for_reconciliation(
 
     assert len(stored_files(storage.root)) == 1
     assert db_session.scalar(select(func.count()).select_from(UploadedDocument)) == 0
+    assert db_session.scalar(select(func.count()).select_from(ProcessingJob)) == 0
 
 
 def test_committed_row_and_file_are_preserved_when_acknowledgement_fails(
@@ -377,6 +397,7 @@ def test_committed_row_and_file_are_preserved_when_acknowledgement_fails(
     assert result.duplicate is False
     assert len(stored_files(storage.root)) == 1
     assert db_session.scalar(select(func.count()).select_from(UploadedDocument)) == 1
+    assert db_session.scalar(select(func.count()).select_from(ProcessingJob)) == 1
 
 
 def test_rollback_failure_still_removes_unregistered_file(
@@ -440,6 +461,7 @@ def test_unique_race_returns_winner_and_deletes_losing_file(
         storage_key=winner_key,
         status="pending",
     )
+    enqueue_document_job(db_session, winner)
     db_session.commit()
     lookup_count = 0
 
@@ -481,6 +503,7 @@ def test_unique_race_returns_winner_and_deletes_losing_file(
     assert storage.read(winner_key) == content
     assert stored_files(storage.root) == [storage.root.joinpath(*winner_key.split("/"))]
     assert db_session.scalar(select(func.count()).select_from(UploadedDocument)) == 1
+    assert db_session.scalar(select(func.count()).select_from(ProcessingJob)) == 1
 
 
 def test_duplicate_service_return_releases_database_transaction(
@@ -538,6 +561,7 @@ def test_simultaneous_uploads_use_database_constraint_and_one_file(
     assert len({document_id for document_id, _duplicate in results}) == 1
     with session_factory() as session:
         assert session.scalar(select(func.count()).select_from(UploadedDocument)) == 1
+        assert session.scalar(select(func.count()).select_from(ProcessingJob)) == 1
     assert len(stored_files(storage.root)) == 1
 
 

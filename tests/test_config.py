@@ -3,7 +3,9 @@ import pytest
 from backend.app.config import (
     DEFAULT_MAX_CONCURRENT_DOCUMENT_VALIDATIONS,
     DEFAULT_MAX_COURSE_STORAGE_BYTES,
+    DEFAULT_MAX_DOCUMENT_CHUNKS,
     DEFAULT_MAX_DOCUMENTS_PER_COURSE,
+    DEFAULT_MAX_EXTRACTED_CHARACTERS,
     DEFAULT_MAX_PDF_CONTENT_STREAM_BYTES,
     DEFAULT_MAX_PDF_DRAWING_OPERATIONS,
     DEFAULT_MAX_PDF_PAGE_PIXELS,
@@ -11,6 +13,10 @@ from backend.app.config import (
     DEFAULT_MAX_PDF_TOTAL_PIXELS,
     DEFAULT_MAX_REQUEST_SIZE_BYTES,
     DEFAULT_MAX_UPLOAD_SIZE_BYTES,
+    DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
+    DEFAULT_PROCESSING_JOB_LEASE_SECONDS,
+    DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS,
+    DEFAULT_PROCESSING_JOB_POLL_SECONDS,
     MODE_HOSTED,
     MODE_SELF_HOSTED,
     load_settings,
@@ -37,6 +43,12 @@ CONFIGURATION_KEYS = (
     "MAX_PDF_TOTAL_PIXELS",
     "MAX_PDF_CONTENT_STREAM_BYTES",
     "MAX_PDF_DRAWING_OPERATIONS",
+    "PROCESSING_JOB_LEASE_SECONDS",
+    "PROCESSING_JOB_MAX_ATTEMPTS",
+    "PROCESSING_JOB_POLL_SECONDS",
+    "PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS",
+    "MAX_EXTRACTED_CHARACTERS",
+    "MAX_DOCUMENT_CHUNKS",
 )
 
 
@@ -68,6 +80,15 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
     assert loaded.max_pdf_total_pixels == DEFAULT_MAX_PDF_TOTAL_PIXELS
     assert loaded.max_pdf_content_stream_bytes == DEFAULT_MAX_PDF_CONTENT_STREAM_BYTES
     assert loaded.max_pdf_drawing_operations == DEFAULT_MAX_PDF_DRAWING_OPERATIONS
+    assert loaded.processing_job_lease_seconds == DEFAULT_PROCESSING_JOB_LEASE_SECONDS
+    assert loaded.processing_job_max_attempts == DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS
+    assert loaded.processing_job_poll_seconds == DEFAULT_PROCESSING_JOB_POLL_SECONDS
+    assert (
+        loaded.processing_job_attempt_timeout_seconds
+        == DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS
+    )
+    assert loaded.max_extracted_characters == DEFAULT_MAX_EXTRACTED_CHARACTERS
+    assert loaded.max_document_chunks == DEFAULT_MAX_DOCUMENT_CHUNKS
 
 
 def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -81,6 +102,12 @@ def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MAX_PDF_TOTAL_PIXELS", "2000")
     monkeypatch.setenv("MAX_PDF_CONTENT_STREAM_BYTES", "3000")
     monkeypatch.setenv("MAX_PDF_DRAWING_OPERATIONS", "4000")
+    monkeypatch.setenv("PROCESSING_JOB_LEASE_SECONDS", "90")
+    monkeypatch.setenv("PROCESSING_JOB_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv("PROCESSING_JOB_POLL_SECONDS", "0.25")
+    monkeypatch.setenv("PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("MAX_EXTRACTED_CHARACTERS", "6000")
+    monkeypatch.setenv("MAX_DOCUMENT_CHUNKS", "7")
 
     assert load_settings().max_upload_size_bytes == 1024
     assert load_settings().max_request_size_bytes == 512
@@ -92,6 +119,12 @@ def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     assert load_settings().max_pdf_total_pixels == 2000
     assert load_settings().max_pdf_content_stream_bytes == 3000
     assert load_settings().max_pdf_drawing_operations == 4000
+    assert load_settings().processing_job_lease_seconds == 90
+    assert load_settings().processing_job_max_attempts == 5
+    assert load_settings().processing_job_poll_seconds == 0.25
+    assert load_settings().processing_job_attempt_timeout_seconds == 120
+    assert load_settings().max_extracted_characters == 6000
+    assert load_settings().max_document_chunks == 7
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
@@ -109,6 +142,57 @@ def test_pdf_page_limit_must_be_positive(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("MAX_PDF_PAGES", "0")
 
     with pytest.raises(ValueError, match="MAX_PDF_PAGES"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "not-a-number"])
+def test_processing_poll_interval_must_be_positive_and_finite(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("PROCESSING_JOB_POLL_SECONDS", value)
+
+    with pytest.raises(ValueError, match="PROCESSING_JOB_POLL_SECONDS"):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "PROCESSING_JOB_LEASE_SECONDS",
+        "PROCESSING_JOB_MAX_ATTEMPTS",
+        "PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS",
+        "MAX_EXTRACTED_CHARACTERS",
+        "MAX_DOCUMENT_CHUNKS",
+    ],
+)
+def test_processing_integer_limits_must_be_positive(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    monkeypatch.setenv(name, "0")
+
+    with pytest.raises(ValueError, match=name):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("PROCESSING_JOB_LEASE_SECONDS", "4"),
+        ("PROCESSING_JOB_LEASE_SECONDS", "86401"),
+        ("PROCESSING_JOB_MAX_ATTEMPTS", "101"),
+        ("PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS", "86401"),
+    ],
+)
+def test_processing_operational_limits_are_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match=name):
         load_settings()
 
 

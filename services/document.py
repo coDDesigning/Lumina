@@ -3,7 +3,7 @@
 import logging
 import time
 from dataclasses import dataclass
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import UploadFile
 from sqlalchemy import func, select
@@ -12,12 +12,22 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.database import begin_serialized_write
-from backend.app.models import Course, UploadedDocument
+from backend.app.models import (
+    JOB_TYPE_EXTRACT_DOCUMENT,
+    Course,
+    ProcessingJob,
+    UploadedDocument,
+)
 from backend.app.repositories.document import DocumentRepository
 from services.document_hash import calculate_file_hash
 from services.document_validation import validate_document
+from services.processing_jobs import (
+    ProcessingJobStateError,
+    enqueue_document_job,
+    retry_failed_job,
+)
 from storage.base import Storage, StorageError
-from utils.exceptions import NotFoundException
+from utils.exceptions import ConflictException, NotFoundException
 
 logger = logging.getLogger(__name__)
 COMMIT_RECONCILIATION_ATTEMPTS = 3
@@ -180,6 +190,7 @@ class DocumentService:
                 storage_key=storage_key,
                 status="pending",
             )
+            enqueue_document_job(db, document)
             db.refresh(document)
         except (IntegrityError, OperationalError) as exc:
             DocumentService._rollback_and_remove(db, storage, storage_key)
@@ -207,6 +218,45 @@ class DocumentService:
                 exc,
             )
         return DocumentUploadResult(document=document, duplicate=False)
+
+    @staticmethod
+    def get_document_job(
+        db: Session,
+        document_id: UUID,
+        course_id: int,
+    ) -> tuple[UploadedDocument, ProcessingJob]:
+        row = db.execute(
+            select(UploadedDocument, ProcessingJob)
+            .join(
+                ProcessingJob,
+                (ProcessingJob.document_id == UploadedDocument.id)
+                & (ProcessingJob.course_id == UploadedDocument.course_id),
+            )
+            .join(Course, Course.id == UploadedDocument.course_id)
+            .where(
+                UploadedDocument.id == document_id,
+                UploadedDocument.course_id == course_id,
+                ProcessingJob.job_type == JOB_TYPE_EXTRACT_DOCUMENT,
+                Course.is_deleted.is_(False),
+            )
+        ).one_or_none()
+        if row is None:
+            raise NotFoundException("Document not found")
+        return row
+
+    @staticmethod
+    def retry_document(
+        db: Session,
+        document_id: UUID,
+        course_id: int,
+    ) -> tuple[UploadedDocument, ProcessingJob]:
+        try:
+            result = retry_failed_job(db, document_id, course_id)
+        except ProcessingJobStateError as exc:
+            raise ConflictException(str(exc)) from exc
+        if result is None:
+            raise NotFoundException("Document not found")
+        return result
 
     @staticmethod
     def _wait_for_duplicate(

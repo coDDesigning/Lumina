@@ -19,7 +19,12 @@ def is_sqlite_database(url: URL) -> bool:
     return url.get_backend_name() == "sqlite"
 
 
-def create_database_engine(value: str, **engine_options: Any) -> Engine:
+def create_database_engine(
+    value: str,
+    *,
+    apply_runtime_timeouts: bool = True,
+    **engine_options: Any,
+) -> Engine:
     """Create an engine with the required behavior for its SQL dialect."""
     url = normalize_database_url(value)
 
@@ -29,9 +34,26 @@ def create_database_engine(value: str, **engine_options: Any) -> Engine:
 
         connect_args = dict(engine_options.pop("connect_args", {}))
         connect_args.setdefault("check_same_thread", False)
-        connect_args.setdefault("timeout", 30)
+        connect_args.setdefault("timeout", 5)
+        engine_options["connect_args"] = connect_args
+    elif url.get_backend_name() == "postgresql":
+        connect_args = dict(engine_options.pop("connect_args", {}))
+        connect_args.setdefault("connect_timeout", 5)
+        if apply_runtime_timeouts:
+            connect_args.setdefault(
+                "options",
+                "-c lock_timeout=2000 -c statement_timeout=5000",
+            )
         engine_options["connect_args"] = connect_args
 
+    supports_pool_timeout = url.get_backend_name() == "postgresql" or (
+        is_sqlite_database(url)
+        and url.database not in (None, "", ":memory:")
+        and "poolclass" not in engine_options
+    )
+    if apply_runtime_timeouts and supports_pool_timeout:
+        engine_options.setdefault("pool_timeout", 5)
+    engine_options.setdefault("hide_parameters", True)
     engine = create_engine(url, **engine_options)
     if is_sqlite_database(url):
         event.listen(engine, "connect", _enable_sqlite_foreign_keys)

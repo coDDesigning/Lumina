@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -10,6 +10,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
@@ -18,9 +19,43 @@ from sqlalchemy import (
     false,
     func,
 )
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
 
 from .base import Base
+
+
+JOB_TYPE_EXTRACT_DOCUMENT = "extract_document"
+JOB_STATUS_QUEUED = "queued"
+JOB_STATUS_RUNNING = "running"
+JOB_STATUS_SUCCEEDED = "succeeded"
+JOB_STATUS_FAILED = "failed"
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    """Persist UTC job timestamps consistently across supported databases."""
+
+    impl = DateTime
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect):
+        return dialect.type_descriptor(DateTime(timezone=dialect.name != "sqlite"))
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("UTCDateTime values must be timezone-aware")
+        value = value.astimezone(timezone.utc)
+        return value.replace(tzinfo=None) if dialect.name == "sqlite" else value
+
+    def process_result_value(self, value: datetime | None, _dialect: Dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 class Role(Base):
@@ -182,12 +217,20 @@ class UploadedDocument(Base):
         passive_deletes=True,
         overlaps="course,chunks",
     )
+    processing_jobs: Mapped[list["ProcessingJob"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
     __table_args__ = (
         UniqueConstraint("document_id", "chunk_index", name="uq_chunk_doc_index"),
+        CheckConstraint(
+            "page_number IS NULL OR page_number >= 1", name="page_number_positive"
+        ),
         ForeignKeyConstraint(
             ["document_id", "course_id"],
             ["uploaded_documents.id", "uploaded_documents.course_id"],
@@ -208,6 +251,7 @@ class DocumentChunk(Base):
     )
 
     chunk_index: Mapped[int] = mapped_column(Integer)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     text: Mapped[str] = mapped_column(Text)
 
@@ -220,6 +264,86 @@ class DocumentChunk(Base):
     )
     course: Mapped["Course"] = relationship(
         back_populates="chunks", overlaps="document,chunks"
+    )
+
+
+class ProcessingJob(Base):
+    __tablename__ = "processing_jobs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["document_id", "course_id"],
+            ["uploaded_documents.id", "uploaded_documents.course_id"],
+            name="fk_processing_jobs_document_course_uploaded_documents",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "document_id", "job_type", name="uq_processing_jobs_document_type"
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
+            name="status_valid",
+        ),
+        CheckConstraint("attempt_count >= 0", name="attempt_count_nonnegative"),
+        CheckConstraint("max_attempts > 0", name="max_attempts_positive"),
+        CheckConstraint(
+            "attempt_count <= max_attempts", name="attempt_count_within_limit"
+        ),
+        CheckConstraint(
+            "status <> 'queued' OR attempt_count < max_attempts",
+            name="queued_attempts_available",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND attempt_count > 0 "
+            "AND lease_owner IS NOT NULL AND claim_token IS NOT NULL "
+            "AND claimed_at IS NOT NULL AND heartbeat_at IS NOT NULL "
+            "AND lease_expires_at IS NOT NULL "
+            "AND heartbeat_at >= claimed_at "
+            "AND lease_expires_at > heartbeat_at AND finished_at IS NULL) OR "
+            "(status <> 'running' AND lease_owner IS NULL "
+            "AND claim_token IS NULL AND claimed_at IS NULL "
+            "AND heartbeat_at IS NULL AND lease_expires_at IS NULL)",
+            name="lease_state_valid",
+        ),
+        CheckConstraint(
+            "(status IN ('succeeded', 'failed') AND finished_at IS NOT NULL) OR "
+            "(status IN ('queued', 'running') AND finished_at IS NULL)",
+            name="finished_state_valid",
+        ),
+        Index("ix_processing_jobs_claimable", "status", "available_at", "id"),
+        Index("ix_processing_jobs_recoverable", "status", "lease_expires_at", "id"),
+        Index("ix_processing_jobs_course_created", "course_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True))
+    course_id: Mapped[int] = mapped_column(Integer)
+    job_type: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(
+        String(20), default=JOB_STATUS_QUEUED, server_default=JOB_STATUS_QUEUED
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    max_attempts: Mapped[int] = mapped_column(Integer)
+    available_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
+    lease_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
+    )
+
+    document: Mapped["UploadedDocument"] = relationship(
+        back_populates="processing_jobs"
     )
 
 

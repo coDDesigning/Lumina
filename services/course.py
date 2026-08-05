@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from backend.app.database import begin_serialized_write
 from backend.app.models import Course, UploadedDocument
 from schemas.course import CourseCreate, CourseResponse, CourseUpdate
+from services.processing_jobs import fence_course_jobs
 from utils.exceptions import NotFoundException
 
 
@@ -64,17 +65,24 @@ class CourseService:
     def update_course(
         db: Session, course_id: int, update_data: CourseUpdate
     ) -> CourseResponse:
-        course = db.scalar(
-            select(Course).where(
-                Course.id == course_id,
-                Course.is_deleted.is_(False),
-            )
+        updates = update_data.model_dump(exclude_unset=True)
+        if updates.get("is_deleted") is True:
+            db.rollback()
+            begin_serialized_write(db)
+        statement = select(Course).where(
+            Course.id == course_id,
+            Course.is_deleted.is_(False),
         )
+        if updates.get("is_deleted") is True:
+            statement = statement.with_for_update()
+        course = db.scalar(statement)
         if course is None:
             raise NotFoundException(detail="Course not found")
 
-        for field, value in update_data.model_dump(exclude_unset=True).items():
+        for field, value in updates.items():
             setattr(course, field, value)
+        if course.is_deleted:
+            fence_course_jobs(db, course_id)
 
         db.commit()
         db.refresh(course)
@@ -83,16 +91,21 @@ class CourseService:
     @staticmethod
     def soft_delete_course(db: Session, course_id: int) -> CourseResponse:
         """Moves the course to trash (soft delete by setting is_deleted=True)."""
+        db.rollback()
+        begin_serialized_write(db)
         course = db.scalar(
-            select(Course).where(
+            select(Course)
+            .where(
                 Course.id == course_id,
                 Course.is_deleted.is_(False),
             )
+            .with_for_update()
         )
         if course is None:
             raise NotFoundException(detail="Course not found")
 
         course.is_deleted = True
+        fence_course_jobs(db, course_id)
         db.commit()
         db.refresh(course)
         return CourseResponse.model_validate(course)
@@ -109,6 +122,7 @@ class CourseService:
             raise NotFoundException(detail="Course not found")
 
         course.is_deleted = True
+        fence_course_jobs(db, course_id)
         db.commit()
         stored_documents = list(
             db.execute(

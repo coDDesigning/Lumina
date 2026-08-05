@@ -18,7 +18,7 @@ MESSAGES_PATH = Path(__file__).resolve().parents[1] / "app" / "messages.json"
 
 # MuPDF stores parser warnings globally, so concurrent validations must not
 # clear or consume each other's warnings.
-_PDF_WARNING_LOCK = threading.Lock()
+PDF_OPERATION_LOCK = threading.Lock()
 _VALIDATION_SEMAPHORE = threading.BoundedSemaphore(
     settings.max_concurrent_document_validations
 )
@@ -176,7 +176,7 @@ def _derive_file_type_and_mime_type(filename: str | None) -> tuple[str, str]:
 
 
 def _validate_pdf(content: bytes) -> None:
-    with _PDF_WARNING_LOCK:
+    with PDF_OPERATION_LOCK:
         _validate_pdf_locked(content)
 
 
@@ -329,7 +329,7 @@ def _validate_pdf_locked(content: bytes) -> None:
 
 
 def _contains_parseable_pdf(content: bytes) -> bool:
-    with _PDF_WARNING_LOCK:
+    with PDF_OPERATION_LOCK:
         return _contains_parseable_pdf_locked(content)
 
 

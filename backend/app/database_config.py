@@ -2,10 +2,13 @@
 
 import os
 
+from dotenv import load_dotenv
 from sqlalchemy.engine import make_url
 
 MODE_SELF_HOSTED = "self_hosted"
 MODE_HOSTED = "hosted"
+
+load_dotenv()
 
 
 def load_deployment_mode() -> str:

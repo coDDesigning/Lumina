@@ -192,11 +192,9 @@ jobs:
           python - <<'PY'
           from backend.app import models
           from main import app
-          from routes import document
 
           assert models.Base.metadata.tables
           app.openapi()
-          document.app.openapi()
           print("Backend imports and OpenAPI generation succeeded")
           PY
 

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from backend.app import database_engine
 from backend.app.database_engine import (
     create_database_engine,
     is_sqlite_database,
@@ -21,9 +22,32 @@ def test_sqlite_engine_creates_parent_and_enables_foreign_keys(
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
 
     try:
+        assert engine.hide_parameters is True
         with engine.connect() as connection:
             foreign_keys = connection.exec_driver_sql("PRAGMA foreign_keys").scalar()
         assert database_path.exists()
         assert foreign_keys == 1
     finally:
         engine.dispose()
+
+
+def test_migration_engine_can_disable_postgresql_runtime_timeouts(
+    monkeypatch,
+) -> None:
+    captured_options = {}
+    sentinel = object()
+
+    def capture_engine(_url, **options):
+        captured_options.update(options)
+        return sentinel
+
+    monkeypatch.setattr(database_engine, "create_engine", capture_engine)
+
+    created = create_database_engine(
+        "postgresql://lumina:password@localhost/lumina",
+        apply_runtime_timeouts=False,
+    )
+
+    assert created is sentinel
+    assert captured_options["connect_args"] == {"connect_timeout": 5}
+    assert captured_options["hide_parameters"] is True

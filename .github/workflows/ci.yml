@@ -153,7 +153,6 @@ jobs:
     timeout-minutes: 15
     env:
       DEPLOYMENT_MODE: self_hosted
-      DATABASE_URL: "sqlite:///:memory:"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PIP_NO_INPUT: "1"
     steps:
@@ -176,6 +175,7 @@ jobs:
           echo "CHROMA_PERSIST_DIRECTORY=$RUNNER_TEMP/lumina-chroma" >> "$GITHUB_ENV"
           echo "UPLOAD_DIRECTORY=$RUNNER_TEMP/lumina-uploads" >> "$GITHUB_ENV"
           echo "PYTHONPYCACHEPREFIX=$RUNNER_TEMP/pycache" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=sqlite:///$RUNNER_TEMP/lumina-ci.db" >> "$GITHUB_ENV"
 
       - name: Install locked backend dependencies
         run: >-
@@ -187,13 +187,21 @@ jobs:
       - name: Validate installed dependencies
         run: python -m pip check
 
+      - name: Apply and verify database migrations
+        run: |
+          python -m alembic upgrade head
+          python -m alembic current --check-heads
+          python -m alembic check
+
       - name: Import applications and build OpenAPI schemas
         run: |
           python - <<'PY'
           from backend.app import models
           from main import app
+          from workers.document_processor import process_next_job
 
           assert models.Base.metadata.tables
+          assert callable(process_next_job)
           app.openapi()
           print("Backend imports and OpenAPI generation succeeded")
           PY

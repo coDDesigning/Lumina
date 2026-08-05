@@ -3,6 +3,7 @@
 import logging
 import math
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Request, Response, UploadFile, status
 from fastapi.encoders import jsonable_encoder
@@ -16,7 +17,12 @@ from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.app.database import get_db
-from schemas.document import DocumentResponse, DocumentUploadResponse
+from schemas.document import (
+    DocumentResponse,
+    DocumentStatusResponse,
+    DocumentUploadResponse,
+    ProcessingJobResponse,
+)
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.document import (
@@ -39,6 +45,13 @@ class UploadErrorData(BaseModel):
 
 
 UploadErrorResponse = BaseResponse[UploadErrorData]
+
+
+def _status_response(document, job) -> DocumentStatusResponse:
+    return DocumentStatusResponse(
+        document=DocumentResponse.model_validate(document),
+        processing_job=ProcessingJobResponse.model_validate(job),
+    )
 
 
 def _error_response(error_key: str) -> JSONResponse:
@@ -140,3 +153,43 @@ def upload_document(
         document=DocumentResponse.model_validate(result.document),
         duplicate=result.duplicate,
     )
+
+
+@router.get(
+    "/{course_id}/documents/{document_id}",
+    response_model=DocumentStatusResponse,
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Account is not allowed to access documents"},
+        404: {"description": "Document not found"},
+    },
+)
+def get_document_status(
+    course_id: int,
+    document_id: UUID,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> DocumentStatusResponse:
+    document, job = DocumentService.get_document_job(db, document_id, course_id)
+    return _status_response(document, job)
+
+
+@router.post(
+    "/{course_id}/documents/{document_id}/retry",
+    response_model=DocumentStatusResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Account is not allowed to retry documents"},
+        404: {"description": "Document not found"},
+        409: {"description": "Only failed document jobs can be retried"},
+    },
+)
+def retry_document(
+    course_id: int,
+    document_id: UUID,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> DocumentStatusResponse:
+    document, job = DocumentService.retry_document(db, document_id, course_id)
+    return _status_response(document, job)

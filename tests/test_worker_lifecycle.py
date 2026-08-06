@@ -25,6 +25,13 @@ def fake_session_factory() -> FakeSession:
     return FakeSession()
 
 
+class ReadyStorage:
+    provider = "ready-test"
+
+    def check_ready(self) -> None:
+        pass
+
+
 class SignalingSlowStorage:
     provider = "signal-test"
 
@@ -47,11 +54,14 @@ def test_worker_drains_active_job_and_does_not_claim_another(
     worker_ids: list[str] = []
     session_factories = []
     completed_waits: list[bool] = []
+    storage_instance = ReadyStorage()
 
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **_k: None)
     monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *_a, **_k: 0)
 
-    def process_job(*, session_factory, worker_id, shutdown_requested):
+    def process_job(*, session_factory, storage, worker_id, shutdown_requested):
         session_factories.append(session_factory)
+        assert storage is storage_instance
         worker_ids.append(worker_id)
         job_started.set()
         completed_waits.append(allow_completion.wait(timeout=2))
@@ -66,6 +76,7 @@ def test_worker_drains_active_job_and_does_not_claim_another(
             "worker_id": "deploy-worker",
             "stop_event": stop,
             "session_factory": fake_session_factory,
+            "storage": storage_instance,
         },
         daemon=True,
     )
@@ -105,6 +116,7 @@ def test_shutdown_requested_during_recovery_prevents_claim(monkeypatch) -> None:
         claims += 1
         return False
 
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **_k: None)
     monkeypatch.setattr(document_processor, "recover_expired_jobs", recover)
     monkeypatch.setattr(document_processor, "process_next_job", process_job)
 
@@ -112,6 +124,7 @@ def test_shutdown_requested_during_recovery_prevents_claim(monkeypatch) -> None:
         once=False,
         stop_event=stop,
         session_factory=fake_session_factory,
+        storage=ReadyStorage(),
     )
 
     assert claims == 0
@@ -121,11 +134,14 @@ def test_worker_uses_one_generated_identity_for_all_claims(monkeypatch) -> None:
     stop = threading.Event()
     worker_ids: list[str] = []
 
+    storage_instance = ReadyStorage()
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **_k: None)
     monkeypatch.setattr(document_processor, "_default_worker_id", lambda: "stable-id")
     monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *_a, **_k: 0)
 
-    def process_job(*, session_factory, worker_id, shutdown_requested):
+    def process_job(*, session_factory, storage, worker_id, shutdown_requested):
         assert session_factory is fake_session_factory
+        assert storage is storage_instance
         assert shutdown_requested() is False
         worker_ids.append(worker_id)
         if len(worker_ids) == 2:
@@ -138,9 +154,118 @@ def test_worker_uses_one_generated_identity_for_all_claims(monkeypatch) -> None:
         once=False,
         stop_event=stop,
         session_factory=fake_session_factory,
+        storage=storage_instance,
     )
 
     assert worker_ids == ["stable-id", "stable-id"]
+
+
+def test_worker_checks_readiness_before_recovery_and_claim(monkeypatch) -> None:
+    events: list[str] = []
+    storage_instance = ReadyStorage()
+
+    def check_ready(*, session_factory, storage):
+        assert session_factory is fake_session_factory
+        assert storage is storage_instance
+        events.append("ready")
+
+    def recover(_session, *, limit):
+        assert limit == document_processor.RECOVERY_BATCH_SIZE
+        events.append("recover")
+        return 0
+
+    def process_job(**kwargs):
+        assert kwargs["storage"] is storage_instance
+        events.append("claim")
+        return False
+
+    monkeypatch.setattr(document_processor, "check_worker_ready", check_ready)
+    monkeypatch.setattr(document_processor, "recover_expired_jobs", recover)
+    monkeypatch.setattr(document_processor, "process_next_job", process_job)
+
+    document_processor.run_worker(
+        once=True,
+        session_factory=fake_session_factory,
+        storage=storage_instance,
+    )
+
+    assert events == ["ready", "recover", "claim"]
+
+
+def test_worker_readiness_failure_prevents_recovery_and_claim(monkeypatch) -> None:
+    def fail_readiness(**_kwargs):
+        raise document_processor.ReadinessError("database is unavailable")
+
+    monkeypatch.setattr(document_processor, "check_worker_ready", fail_readiness)
+    monkeypatch.setattr(
+        document_processor,
+        "recover_expired_jobs",
+        lambda *_args, **_kwargs: pytest.fail("recovery should not run"),
+    )
+    monkeypatch.setattr(
+        document_processor,
+        "process_next_job",
+        lambda **_kwargs: pytest.fail("claim should not run"),
+    )
+
+    with pytest.raises(document_processor.ReadinessError):
+        document_processor.run_worker(
+            once=True,
+            session_factory=fake_session_factory,
+            storage=ReadyStorage(),
+        )
+
+
+def test_requested_shutdown_skips_startup_readiness(monkeypatch) -> None:
+    stop = threading.Event()
+    stop.set()
+    monkeypatch.setattr(
+        document_processor,
+        "check_worker_ready",
+        lambda **_kwargs: pytest.fail("readiness should not run"),
+    )
+
+    document_processor.run_worker(
+        once=False,
+        stop_event=stop,
+        session_factory=fake_session_factory,
+        storage=ReadyStorage(),
+    )
+
+
+def test_worker_check_cli_does_not_install_handlers_or_run_worker(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        document_processor,
+        "check_worker_ready",
+        lambda: calls.append("check"),
+    )
+    monkeypatch.setattr(
+        document_processor,
+        "_install_shutdown_handlers",
+        lambda _stop: pytest.fail("handlers should not be installed"),
+    )
+    monkeypatch.setattr(
+        document_processor,
+        "run_worker",
+        lambda **_kwargs: pytest.fail("worker should not run"),
+    )
+
+    document_processor.main(["--check"])
+
+    assert calls == ["check"]
+
+
+def test_worker_check_cli_exits_nonzero_when_not_ready(monkeypatch) -> None:
+    def fail_readiness() -> None:
+        raise document_processor.ReadinessError("database is unavailable")
+
+    monkeypatch.setattr(document_processor, "check_worker_ready", fail_readiness)
+
+    with pytest.raises(SystemExit) as exc_info:
+        document_processor.main(["--check"])
+
+    assert exc_info.value.code == 1
 
 
 def test_signal_handlers_request_graceful_shutdown(monkeypatch) -> None:

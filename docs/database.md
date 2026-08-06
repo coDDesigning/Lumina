@@ -50,6 +50,17 @@ Process at most one available job for smoke testing:
 python -m workers.document_processor --once
 ```
 
+Check database migrations, required role seeds, and writable document storage
+without recovering or claiming a job:
+
+```bash
+python -m workers.document_processor --check
+```
+
+The worker performs this readiness check before entering its processing loop and
+exits nonzero if a dependency is not ready. `--check` and `--once` are mutually
+exclusive; unlike `--check`, `--once` may recover and process durable jobs.
+
 The worker handles `SIGTERM` and `SIGINT` as drain requests. It stops claiming
 new jobs and normally finishes and persists the active attempt before exiting.
 The process uses one stable worker identity for its lifetime so lease logs can be

@@ -172,6 +172,7 @@ jobs:
 
       - name: Configure temporary directories
         run: |
+          mkdir -p "$RUNNER_TEMP/lumina-chroma" "$RUNNER_TEMP/lumina-uploads"
           echo "CHROMA_PERSIST_DIRECTORY=$RUNNER_TEMP/lumina-chroma" >> "$GITHUB_ENV"
           echo "UPLOAD_DIRECTORY=$RUNNER_TEMP/lumina-uploads" >> "$GITHUB_ENV"
           echo "PYTHONPYCACHEPREFIX=$RUNNER_TEMP/pycache" >> "$GITHUB_ENV"
@@ -188,10 +189,21 @@ jobs:
         run: python -m pip check
 
       - name: Apply and verify database migrations
+        env:
+          APP_ENV: production
         run: |
           python -m alembic upgrade head
           python -m alembic current --check-heads
           python -m alembic check
+
+      - name: Check document worker readiness
+        env:
+          APP_ENV: production
+          APP_DEBUG: "false"
+          JWT_SECRET_KEY: ci-only-jwt-secret-at-least-32-characters
+          BOOTSTRAP_ADMIN_EMAIL: admin@example.com
+          BOOTSTRAP_ADMIN_TOKEN: ci-only-bootstrap-token-at-least-32-characters
+        run: python -m workers.document_processor --check
 
       - name: Import applications and build OpenAPI schemas
         run: |

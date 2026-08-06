@@ -1,6 +1,6 @@
 """FastAPI dependencies for document storage."""
 
-from backend.app.config import STORAGE_BACKEND_LOCAL, settings
+from backend.app.config import APP_ENV_PRODUCTION, STORAGE_BACKEND_LOCAL, settings
 from storage.base import Storage
 from storage.local import LocalStorage
 
@@ -10,6 +10,7 @@ def _build_storage() -> Storage:
         return LocalStorage(
             settings.upload_directory,
             namespace=settings.storage_namespace,
+            require_existing_root=settings.app_env == APP_ENV_PRODUCTION,
         )
     raise RuntimeError(f"Unsupported storage backend: {settings.storage_backend}")
 

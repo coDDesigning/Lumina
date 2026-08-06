@@ -3,12 +3,15 @@ from collections.abc import Generator
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
-from .config import settings
+from .config import APP_ENV_PRODUCTION, settings
 from .database_engine import create_database_engine
 
 __all__ = ["SessionLocal", "begin_serialized_write", "engine", "get_db"]
 
-engine = create_database_engine(settings.database_url)
+engine = create_database_engine(
+    settings.database_url,
+    create_sqlite_parent_directory=settings.app_env != APP_ENV_PRODUCTION,
+)
 
 
 SessionLocal = sessionmaker(

@@ -23,13 +23,18 @@ def create_database_engine(
     value: str,
     *,
     apply_runtime_timeouts: bool = True,
+    create_sqlite_parent_directory: bool = True,
     **engine_options: Any,
 ) -> Engine:
     """Create an engine with the required behavior for its SQL dialect."""
     url = normalize_database_url(value)
 
     if is_sqlite_database(url):
-        if url.database not in (None, "", ":memory:"):
+        if create_sqlite_parent_directory and url.database not in (
+            None,
+            "",
+            ":memory:",
+        ):
             Path(url.database).parent.mkdir(parents=True, exist_ok=True)
 
         connect_args = dict(engine_options.pop("connect_args", {}))

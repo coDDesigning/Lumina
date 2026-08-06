@@ -11,12 +11,16 @@ import os
 import re
 import secrets
 from dataclasses import dataclass
+from pathlib import Path
 
 from email_validator import EmailNotValidError, validate_email
-
 from .database_config import (
+    APP_ENV_DEVELOPMENT,
+    APP_ENV_PRODUCTION,
+    APP_ENV_STAGING as APP_ENV_STAGING,
     MODE_HOSTED,
     MODE_SELF_HOSTED,
+    load_app_environment,
     load_database_url,
     load_deployment_mode,
 )
@@ -42,6 +46,9 @@ DEFAULT_MAX_DOCUMENT_CHUNKS = 1_000
 
 @dataclass(frozen=True)
 class Settings:
+    app_env: str
+    app_debug: bool
+
     # Which deployment flavor we are running as - the keystone value.
     deployment_mode: str
 
@@ -89,6 +96,10 @@ class Settings:
     def is_self_hosted(self) -> bool:
         return self.deployment_mode == MODE_SELF_HOSTED
 
+    @property
+    def requires_protected_admin_bootstrap(self) -> bool:
+        return self.is_hosted or self.app_env == APP_ENV_PRODUCTION
+
 
 def load_settings() -> Settings:
     """Read, validate and freeze the configuration from the environment.
@@ -99,8 +110,21 @@ def load_settings() -> Settings:
     first second with a clear message
     """
 
+    app_env = load_app_environment()
+    app_debug = _boolean_setting(
+        "APP_DEBUG",
+        default=app_env == APP_ENV_DEVELOPMENT,
+    )
+    if app_env == APP_ENV_PRODUCTION and app_debug:
+        raise ValueError("APP_DEBUG must be false in production.")
+
     mode = load_deployment_mode()
-    database_url = load_database_url(mode)
+    if app_env == APP_ENV_PRODUCTION and mode == MODE_HOSTED:
+        raise ValueError(
+            "Hosted production is not supported until durable shared storage "
+            "and live PostgreSQL qualification are implemented."
+        )
+    database_url = load_database_url(mode, app_env=app_env)
 
     storage_backend = os.getenv("STORAGE_BACKEND", STORAGE_BACKEND_LOCAL)
     if storage_backend != STORAGE_BACKEND_LOCAL:
@@ -119,11 +143,15 @@ def load_settings() -> Settings:
             "Hosted mode requires STORAGE_NAMESPACE to identify shared storage."
         )
 
+    chroma_persist_directory = os.getenv("CHROMA_PERSIST_DIRECTORY", "./data/chroma")
+    upload_directory = os.getenv("UPLOAD_DIRECTORY", "./data/uploads")
     configured_secret = os.getenv("JWT_SECRET_KEY", "").strip()
     if configured_secret and len(configured_secret) < 32:
         raise ValueError("JWT_SECRET_KEY must contain at least 32 characters.")
     if mode == MODE_HOSTED and not configured_secret:
         raise ValueError("Hosted mode requires JWT_SECRET_KEY to be set.")
+    if app_env == APP_ENV_PRODUCTION and not configured_secret:
+        raise ValueError("Production requires JWT_SECRET_KEY to be set.")
     jwt_secret_key = configured_secret or secrets.token_urlsafe(32)
 
     bootstrap_admin_email = os.getenv("BOOTSTRAP_ADMIN_EMAIL", "").strip().lower()
@@ -137,8 +165,13 @@ def load_settings() -> Settings:
             raise ValueError(
                 "BOOTSTRAP_ADMIN_EMAIL must be a valid email address."
             ) from exc
-    if mode == MODE_HOSTED and not bootstrap_admin_email:
-        raise ValueError("Hosted mode requires BOOTSTRAP_ADMIN_EMAIL to be set.")
+    requires_protected_admin_bootstrap = (
+        mode == MODE_HOSTED or app_env == APP_ENV_PRODUCTION
+    )
+    if requires_protected_admin_bootstrap and not bootstrap_admin_email:
+        raise ValueError(
+            "Hosted mode and production require BOOTSTRAP_ADMIN_EMAIL to be set."
+        )
 
     bootstrap_admin_token = os.getenv("BOOTSTRAP_ADMIN_TOKEN", "").strip()
     token_is_header_safe = all(
@@ -150,8 +183,18 @@ def load_settings() -> Settings:
         raise ValueError(
             "BOOTSTRAP_ADMIN_TOKEN must contain at least 32 visible ASCII characters."
         )
-    if mode == MODE_HOSTED and not bootstrap_admin_token:
-        raise ValueError("Hosted mode requires BOOTSTRAP_ADMIN_TOKEN to be set.")
+    if requires_protected_admin_bootstrap and not bootstrap_admin_token:
+        raise ValueError(
+            "Hosted mode and production require BOOTSTRAP_ADMIN_TOKEN to be set."
+        )
+
+    if app_env == APP_ENV_PRODUCTION:
+        for name, value in (
+            ("UPLOAD_DIRECTORY", upload_directory),
+            ("CHROMA_PERSIST_DIRECTORY", chroma_persist_directory),
+        ):
+            if not Path(value).is_absolute():
+                raise ValueError(f"Production {name} must use an absolute path.")
 
     max_upload_size_bytes = _positive_integer_setting(
         "MAX_UPLOAD_SIZE_BYTES",
@@ -225,10 +268,12 @@ def load_settings() -> Settings:
     )
 
     return Settings(
+        app_env=app_env,
+        app_debug=app_debug,
         deployment_mode=mode,
         database_url=database_url,
-        chroma_persist_directory=os.getenv("CHROMA_PERSIST_DIRECTORY", "./data/chroma"),
-        upload_directory=os.getenv("UPLOAD_DIRECTORY", "./data/uploads"),
+        chroma_persist_directory=chroma_persist_directory,
+        upload_directory=upload_directory,
         storage_backend=storage_backend,
         storage_namespace=storage_namespace,
         jwt_secret_key=jwt_secret_key,
@@ -262,6 +307,18 @@ def _positive_integer_setting(name: str, default: int) -> int:
     if value <= 0:
         raise ValueError(f"{name} must be a positive integer.")
     return value
+
+
+def _boolean_setting(name: str, *, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false.")
 
 
 def _positive_float_setting(name: str, default: float) -> float:

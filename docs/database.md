@@ -50,6 +50,20 @@ Process at most one available job for smoke testing:
 python -m workers.document_processor --once
 ```
 
+The worker handles `SIGTERM` and `SIGINT` as drain requests. It stops claiming
+new jobs and normally finishes and persists the active attempt before exiting.
+The process uses one stable worker identity for its lifetime so lease logs can be
+correlated across jobs. Database finalization failures leave the lease for safe
+recovery, while unrecoverable child-process failures exit nonzero for supervisor
+restart.
+
+For normal operation, set the supervisor termination grace to at least
+`PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS + 45` seconds. With the defaults this is
+345 seconds. This is a minimum baseline, not a deadline for uninterruptible
+storage or operating-system I/O. A forced kill before draining completes leaves
+the lease to expire; recovery is safe, but the interrupted attempt still counts
+toward `PROCESSING_JOB_MAX_ATTEMPTS`.
+
 The API and worker must use the same `STORAGE_BACKEND`, `STORAGE_NAMESPACE`,
 and storage contents. With the current local provider, multiple hosts require a
 shared mounted directory at `UPLOAD_DIRECTORY`.

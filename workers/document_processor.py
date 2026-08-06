@@ -4,10 +4,12 @@ import argparse
 import logging
 import multiprocessing
 import os
+import signal
 import socket
 import threading
 import time
 from collections.abc import Callable
+from typing import Protocol
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -34,10 +36,36 @@ SessionFactory = Callable[[], Session]
 RECOVERY_BATCH_SIZE = 100
 MAX_RECOVERY_BATCHES_PER_PASS = 10
 HEARTBEAT_SHUTDOWN_SECONDS = 30
+WORKER_SHUTDOWN_SIGNALS = {signal.SIGTERM, signal.SIGINT}
 
 
 class WorkerProcessFatalError(RuntimeError):
     """The worker process must exit so its supervisor can recycle it."""
+
+
+class StopEvent(Protocol):
+    def is_set(self) -> bool: ...
+
+    def wait(self, timeout: float) -> bool: ...
+
+
+class _SignalStopEvent:
+    """Lock-free stop flag written by Python's main-thread signal handler."""
+
+    def __init__(self) -> None:
+        self.requested = False
+
+    def is_set(self) -> bool:
+        return self.requested
+
+    def wait(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while not self.requested:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.1, remaining))
+        return self.requested
 
 
 def _default_worker_id() -> str:
@@ -88,6 +116,11 @@ def _record_failure(
 
 
 def _extraction_process(connection, storage: Storage, job: ClaimedJob) -> None:
+    # The parent owns graceful shutdown and the hard timeout for this child.
+    for shutdown_signal in WORKER_SHUTDOWN_SIGNALS:
+        signal.signal(shutdown_signal, signal.SIG_IGN)
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, WORKER_SHUTDOWN_SIGNALS)
     try:
         chunks = extract_document_chunks(
             storage,
@@ -123,7 +156,7 @@ def _extract_with_timeout(
     timed_out = False
     reaped = True
     try:
-        process.start()
+        _start_extraction_process(process)
         started = True
         child_connection.close()
         deadline = time.monotonic() + timeout_seconds
@@ -177,12 +210,21 @@ def _extract_with_timeout(
 def _reap_process(process) -> bool:
     process.join(timeout=1)
     if process.is_alive():
-        process.terminate()
-        process.join(timeout=2)
-    if process.is_alive():
         process.kill()
         process.join(timeout=2)
     return not process.is_alive()
+
+
+def _start_extraction_process(process) -> None:
+    if not hasattr(signal, "pthread_sigmask"):
+        process.start()
+        return
+
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, WORKER_SHUTDOWN_SIGNALS)
+    try:
+        process.start()
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
 
 def _stop_heartbeat(
@@ -205,7 +247,10 @@ def process_next_job(
     storage: Storage | None = None,
     worker_id: str | None = None,
     lease_seconds: int | None = None,
+    shutdown_requested: Callable[[], bool] | None = None,
 ) -> bool:
+    if shutdown_requested is not None and shutdown_requested():
+        return False
     if storage is None:
         storage = get_storage()
     if lease_seconds is None:
@@ -214,6 +259,8 @@ def process_next_job(
         worker_id = _default_worker_id()
 
     with session_factory() as session:
+        if shutdown_requested is not None and shutdown_requested():
+            return False
         job = claim_next_job(
             session,
             worker_id,
@@ -285,54 +332,84 @@ def run_worker(
     *,
     once: bool,
     worker_id: str | None = None,
-    stop_event: threading.Event | None = None,
+    stop_event: StopEvent | None = None,
+    session_factory: SessionFactory = SessionLocal,
 ) -> None:
     stop = stop_event or threading.Event()
+    worker_id = worker_id or _default_worker_id()
     recovery_interval = min(
         30.0,
         max(0.1, settings.processing_job_lease_seconds / 2),
     )
     next_recovery = 0.0
 
-    while not stop.is_set():
-        monotonic_now = time.monotonic()
-        if monotonic_now >= next_recovery:
-            recovery_saturated = False
-            try:
-                recovered_total = 0
-                for _ in range(MAX_RECOVERY_BATCHES_PER_PASS):
-                    with SessionLocal() as session:
-                        recovered = recover_expired_jobs(
-                            session,
-                            limit=RECOVERY_BATCH_SIZE,
+    logger.info("Document worker %s started", worker_id)
+    try:
+        while True:
+            if stop.is_set():
+                logger.info(
+                    "Shutdown requested; document worker %s will not claim another job",
+                    worker_id,
+                )
+                break
+            monotonic_now = time.monotonic()
+            if monotonic_now >= next_recovery:
+                recovery_saturated = False
+                try:
+                    recovered_total = 0
+                    for _ in range(MAX_RECOVERY_BATCHES_PER_PASS):
+                        if stop.is_set():
+                            break
+                        with session_factory() as session:
+                            recovered = recover_expired_jobs(
+                                session,
+                                limit=RECOVERY_BATCH_SIZE,
+                            )
+                        recovered_total += recovered
+                        if recovered < RECOVERY_BATCH_SIZE:
+                            break
+                    else:
+                        recovery_saturated = True
+                    if recovered_total:
+                        logger.info(
+                            "Recovered %s expired processing jobs", recovered_total
                         )
-                    recovered_total += recovered
-                    if recovered < RECOVERY_BATCH_SIZE:
-                        break
-                else:
-                    recovery_saturated = True
-                if recovered_total:
-                    logger.info("Recovered %s expired processing jobs", recovered_total)
-            except Exception:
-                logger.exception("Failed to recover expired processing jobs")
-            next_recovery = (
-                monotonic_now
-                if recovery_saturated
-                else monotonic_now + recovery_interval
-            )
+                except Exception:
+                    logger.exception("Failed to recover expired processing jobs")
+                next_recovery = (
+                    monotonic_now
+                    if recovery_saturated
+                    else monotonic_now + recovery_interval
+                )
 
-        try:
-            processed = process_next_job(worker_id=worker_id)
-        except WorkerProcessFatalError:
-            logger.critical("Document worker requires process recycle")
-            raise
-        except Exception:
-            logger.exception("Document worker iteration failed")
-            processed = False
-        if once:
-            return
-        if not processed:
-            stop.wait(settings.processing_job_poll_seconds)
+            if stop.is_set():
+                break
+            try:
+                processed = process_next_job(
+                    session_factory=session_factory,
+                    worker_id=worker_id,
+                    shutdown_requested=stop.is_set,
+                )
+            except WorkerProcessFatalError:
+                logger.critical("Document worker requires process recycle")
+                raise
+            except Exception:
+                logger.exception("Document worker iteration failed")
+                processed = False
+            if once:
+                return
+            if not processed:
+                stop.wait(settings.processing_job_poll_seconds)
+    finally:
+        logger.info("Document worker %s stopped", worker_id)
+
+
+def _install_shutdown_handlers(stop_event: _SignalStopEvent) -> None:
+    def request_shutdown(_signum: int, _frame) -> None:
+        stop_event.requested = True
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
 
 
 def main() -> None:
@@ -341,7 +418,9 @@ def main() -> None:
     parser.add_argument("--worker-id", help="stable identifier shown in job leases")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
-    run_worker(once=args.once, worker_id=args.worker_id)
+    stop_event = _SignalStopEvent()
+    _install_shutdown_handlers(stop_event)
+    run_worker(once=args.once, worker_id=args.worker_id, stop_event=stop_event)
 
 
 if __name__ == "__main__":

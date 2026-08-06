@@ -63,7 +63,7 @@ class UserService:
         user_data: UserCreate,
         bootstrap_token: str | None = None,
     ) -> User:
-        """Registers a new user and auto-assigns ADMIN to the first user."""
+        """Register a user and assign the configured initial administrator."""
         if UserService.get_user_by_email(db, user_data.email) is not None:
             raise BadRequestException("Email already registered")
 
@@ -75,10 +75,11 @@ class UserService:
         if canonical_email is None:
             raise BadRequestException("Invalid email address")
 
-        is_hosted_bootstrap_email = (
-            settings.is_hosted and settings.bootstrap_admin_email == canonical_email
+        is_protected_bootstrap_email = (
+            settings.requires_protected_admin_bootstrap
+            and settings.bootstrap_admin_email == canonical_email
         )
-        if is_hosted_bootstrap_email and (
+        if is_protected_bootstrap_email and (
             not bootstrap_token
             or not settings.bootstrap_admin_token
             or not secrets.compare_digest(
@@ -88,7 +89,12 @@ class UserService:
             raise BadRequestException("Invalid bootstrap administrator credentials")
 
         claims_initial_admin = initial_admin_exists is None and (
-            (settings.is_self_hosted and user_count == 0) or is_hosted_bootstrap_email
+            (
+                settings.is_self_hosted
+                and not settings.requires_protected_admin_bootstrap
+                and user_count == 0
+            )
+            or is_protected_bootstrap_email
         )
         new_user = UserService._new_user(
             db,

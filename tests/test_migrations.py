@@ -112,6 +112,34 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert "ck_processing_jobs_lease_state_valid" in normalized_job_sql
 
 
+def test_production_migration_does_not_create_missing_database_parent(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "missing-mount" / "lumina.sqlite3"
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "APP_ENV": "production",
+            "DEPLOYMENT_MODE": "self_hosted",
+            "DATABASE_URL": f"sqlite:///{database_path.as_posix()}",
+        }
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_CONFIG), "upgrade", "head"],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "parent directory must already exist" in completed.stderr
+    assert not database_path.parent.exists()
+
+
 def test_fresh_alembic_baseline_upgrades_downgrades_and_reupgrades(
     tmp_path: Path,
 ) -> None:

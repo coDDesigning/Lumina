@@ -17,6 +17,8 @@ class Storage(Protocol):
 
     provider: str
 
+    def check_ready(self) -> None: ...
+
     def generate_key(
         self,
         course_id: int,

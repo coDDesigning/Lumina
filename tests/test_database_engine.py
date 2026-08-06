@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+from sqlalchemy.exc import OperationalError
+
 from backend.app import database_engine
 from backend.app.database_engine import (
     create_database_engine,
@@ -27,6 +30,22 @@ def test_sqlite_engine_creates_parent_and_enables_foreign_keys(
             foreign_keys = connection.exec_driver_sql("PRAGMA foreign_keys").scalar()
         assert database_path.exists()
         assert foreign_keys == 1
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_engine_can_require_an_existing_parent(tmp_path: Path) -> None:
+    database_path = tmp_path / "missing" / "lumina.db"
+    engine = create_database_engine(
+        f"sqlite:///{database_path.as_posix()}",
+        create_sqlite_parent_directory=False,
+    )
+
+    try:
+        with pytest.raises(OperationalError):
+            with engine.connect():
+                pass
+        assert not database_path.parent.exists()
     finally:
         engine.dispose()
 

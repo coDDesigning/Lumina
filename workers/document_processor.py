@@ -8,7 +8,7 @@ import signal
 import socket
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Protocol
 from uuid import uuid4
 
@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.database import SessionLocal
+from backend.app.readiness import ReadinessError, check_readiness
 from services.document_extraction import (
     DocumentProcessingError,
     extract_document_chunks,
@@ -328,14 +329,34 @@ def process_next_job(
     return True
 
 
+def check_worker_ready(
+    *,
+    session_factory: SessionFactory = SessionLocal,
+    storage: Storage | None = None,
+) -> None:
+    if storage is None:
+        storage = get_storage()
+    with session_factory() as session:
+        check_readiness(session, storage)
+
+
 def run_worker(
     *,
     once: bool,
     worker_id: str | None = None,
     stop_event: StopEvent | None = None,
     session_factory: SessionFactory = SessionLocal,
+    storage: Storage | None = None,
 ) -> None:
     stop = stop_event or threading.Event()
+    if stop.is_set():
+        return
+    if storage is None:
+        storage = get_storage()
+    check_worker_ready(session_factory=session_factory, storage=storage)
+    if stop.is_set():
+        return
+
     worker_id = worker_id or _default_worker_id()
     recovery_interval = min(
         30.0,
@@ -387,6 +408,7 @@ def run_worker(
             try:
                 processed = process_next_job(
                     session_factory=session_factory,
+                    storage=storage,
                     worker_id=worker_id,
                     shutdown_requested=stop.is_set,
                 )
@@ -412,15 +434,34 @@ def _install_shutdown_handlers(stop_event: _SignalStopEvent) -> None:
     signal.signal(signal.SIGINT, request_shutdown)
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Process durable document jobs")
-    parser.add_argument("--once", action="store_true", help="process at most one job")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--once", action="store_true", help="process at most one job")
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="check dependencies without claiming work",
+    )
     parser.add_argument("--worker-id", help="stable identifier shown in job leases")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
+    if args.check:
+        try:
+            check_worker_ready()
+        except ReadinessError as exc:
+            logger.error("Document worker readiness check failed: %s", exc)
+            raise SystemExit(1) from None
+        logger.info("Document worker readiness check succeeded")
+        return
+
     stop_event = _SignalStopEvent()
     _install_shutdown_handlers(stop_event)
-    run_worker(once=args.once, worker_id=args.worker_id, stop_event=stop_event)
+    try:
+        run_worker(once=args.once, worker_id=args.worker_id, stop_event=stop_event)
+    except ReadinessError as exc:
+        logger.error("Document worker readiness check failed: %s", exc)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

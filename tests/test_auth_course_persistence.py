@@ -8,7 +8,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
 import services.user as user_service_module
-from backend.app.config import MODE_HOSTED, settings
+from backend.app.config import (
+    APP_ENV_PRODUCTION,
+    MODE_HOSTED,
+    MODE_SELF_HOSTED,
+    settings,
+)
 from backend.app.models import Course, User
 from schemas.course import CourseCreate
 from schemas.user import Role, UserCreate, UserUpdate
@@ -404,6 +409,57 @@ def test_hosted_bootstrap_email_requires_secret_token(
                 bootstrap_token="wrong-token",
             )
         assert UserService.get_user_by_email(session, "bootstrap@example.com") is None
+
+
+def test_production_self_hosted_admin_requires_bootstrap_credentials(
+    session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        user_service_module,
+        "settings",
+        replace(
+            settings,
+            app_env=APP_ENV_PRODUCTION,
+            deployment_mode=MODE_SELF_HOSTED,
+            bootstrap_admin_email="bootstrap@example.com",
+            bootstrap_admin_token="b" * 32,
+        ),
+    )
+
+    with session_factory() as session:
+        regular = UserService.create_user(
+            session,
+            UserCreate(
+                name="Regular",
+                email="regular@example.com",
+                password="regular-password",
+            ),
+        )
+        with pytest.raises(BadRequestException, match="Invalid bootstrap"):
+            UserService.create_user(
+                session,
+                UserCreate(
+                    name="Attacker",
+                    email="bootstrap@example.com",
+                    password="attacker-password",
+                ),
+                bootstrap_token="wrong-token",
+            )
+        bootstrap = UserService.create_user(
+            session,
+            UserCreate(
+                name="Bootstrap",
+                email="bootstrap@example.com",
+                password="bootstrap-password",
+            ),
+            bootstrap_token="b" * 32,
+        )
+
+        assert regular.role.name == "user"
+        assert regular.is_initial_admin is None
+        assert bootstrap.role.name == "admin"
+        assert bootstrap.is_initial_admin is True
 
 
 def test_admin_cannot_self_lock_and_role_changes_keep_credit_invariant(

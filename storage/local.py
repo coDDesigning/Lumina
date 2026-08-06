@@ -13,6 +13,7 @@ from storage.base import Storage, StorageError
 DEFAULT_CHUNK_SIZE = 1024 * 1024
 _FILE_TYPE_PATTERN = re.compile(r"[a-z0-9]+")
 _KEY_PART_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_READINESS_PAYLOAD = b"lumina-storage-readiness"
 
 
 class LocalStorage(Storage):
@@ -23,16 +24,43 @@ class LocalStorage(Storage):
         root: str | os.PathLike[str],
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         namespace: str = "default",
+        require_existing_root: bool = False,
     ) -> None:
         if type(chunk_size) is not int or chunk_size <= 0:
             raise ValueError("chunk_size must be a positive integer")
+        if type(require_existing_root) is not bool:
+            raise TypeError("require_existing_root must be a boolean")
 
         try:
             self.root = Path(root).expanduser().resolve()
         except (OSError, RuntimeError) as exc:
             raise StorageError("Unable to initialize local document storage.") from exc
         self._chunk_size = chunk_size
+        self._require_existing_root = require_existing_root
         self.provider = f"local:{namespace}"
+
+    def check_ready(self) -> None:
+        """Verify that the storage root supports durable temporary writes."""
+        try:
+            if not self.root.is_dir():
+                if self._require_existing_root:
+                    raise OSError("document storage root does not exist")
+                self.root.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w+b",
+                dir=self.root,
+                prefix=".lumina-readiness-",
+                suffix=".tmp",
+            ) as probe:
+                if probe.write(_READINESS_PAYLOAD) != len(_READINESS_PAYLOAD):
+                    raise OSError("incomplete readiness probe write")
+                probe.flush()
+                os.fsync(probe.fileno())
+                probe.seek(0)
+                if probe.read() != _READINESS_PAYLOAD:
+                    raise OSError("readiness probe content mismatch")
+        except Exception as exc:
+            raise StorageError("Document storage is not ready.") from exc
 
     def generate_key(
         self,
@@ -70,7 +98,7 @@ class LocalStorage(Storage):
         try:
             destination = self._path_for_key(key)
             source.seek(0)
-            destination.parent.mkdir(parents=True, exist_ok=True)
+            self._prepare_destination_parent(destination)
 
             with tempfile.NamedTemporaryFile(
                 mode="w+b",
@@ -185,3 +213,15 @@ class LocalStorage(Storage):
             raise ValueError("storage key escapes the configured root") from exc
 
         return path
+
+    def _prepare_destination_parent(self, destination: Path) -> None:
+        if not self._require_existing_root:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            return
+        if not self.root.is_dir():
+            raise OSError("document storage root does not exist")
+
+        current = self.root
+        for part in destination.parent.relative_to(self.root).parts:
+            current /= part
+            current.mkdir(exist_ok=True)

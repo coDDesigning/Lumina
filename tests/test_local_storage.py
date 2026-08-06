@@ -82,6 +82,73 @@ def test_chunked_save_read_open_exists_and_delete(tmp_path: Path) -> None:
     storage.delete(key)
 
 
+def test_readiness_probe_leaves_no_files(tmp_path: Path) -> None:
+    storage = LocalStorage(tmp_path)
+
+    storage.check_ready()
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_readiness_probe_creates_development_storage_root(tmp_path: Path) -> None:
+    root = tmp_path / "missing" / "uploads"
+    storage = LocalStorage(root)
+
+    storage.check_ready()
+
+    assert root.is_dir()
+    assert list(root.iterdir()) == []
+
+
+def test_readiness_probe_rejects_missing_storage_root(tmp_path: Path) -> None:
+    root = tmp_path / "missing" / "uploads"
+    storage = LocalStorage(root, require_existing_root=True)
+
+    with pytest.raises(StorageError, match="not ready"):
+        storage.check_ready()
+
+    assert not root.exists()
+
+
+def test_strict_save_does_not_recreate_missing_storage_root(tmp_path: Path) -> None:
+    root = tmp_path / "missing" / "uploads"
+    storage = LocalStorage(root, require_existing_root=True)
+    source = BytesIO(b"document")
+    key = storage.generate_key(1, uuid4(), "txt")
+
+    with pytest.raises(StorageError, match="Unable to save document"):
+        storage.save(key, source)
+
+    assert source.tell() == 0
+    assert not root.exists()
+
+
+def test_readiness_probe_failure_is_wrapped_and_cleaned_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = LocalStorage(tmp_path)
+
+    def fail_fsync(_file_descriptor: int) -> None:
+        raise OSError("simulated readiness failure")
+
+    monkeypatch.setattr(local_storage_module.os, "fsync", fail_fsync)
+
+    with pytest.raises(StorageError, match="not ready"):
+        storage.check_ready()
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_readiness_probe_rejects_file_as_storage_root(tmp_path: Path) -> None:
+    root = tmp_path / "uploads"
+    root.write_bytes(b"not a directory")
+    storage = LocalStorage(root)
+
+    with pytest.raises(StorageError, match="not ready"):
+        storage.check_ready()
+
+
 @pytest.mark.parametrize(
     "key",
     [

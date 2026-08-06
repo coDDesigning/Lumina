@@ -1,6 +1,11 @@
+from pathlib import Path
+
 import pytest
 
 from backend.app.config import (
+    APP_ENV_DEVELOPMENT,
+    APP_ENV_PRODUCTION,
+    APP_ENV_STAGING,
     DEFAULT_MAX_CONCURRENT_DOCUMENT_VALIDATIONS,
     DEFAULT_MAX_COURSE_STORAGE_BYTES,
     DEFAULT_MAX_DOCUMENT_CHUNKS,
@@ -24,6 +29,8 @@ from backend.app.config import (
 from backend.app.database_config import load_database_url
 
 CONFIGURATION_KEYS = (
+    "APP_ENV",
+    "APP_DEBUG",
     "DEPLOYMENT_MODE",
     "DATABASE_URL",
     "STORAGE_BACKEND",
@@ -58,9 +65,26 @@ def clear_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(key, raising=False)
 
 
+def _configure_production(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "lumina.sqlite3"
+    monkeypatch.setenv("APP_ENV", APP_ENV_PRODUCTION)
+    monkeypatch.setenv("APP_DEBUG", "false")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+    monkeypatch.setenv("UPLOAD_DIRECTORY", str(tmp_path / "uploads"))
+    monkeypatch.setenv("CHROMA_PERSIST_DIRECTORY", str(tmp_path / "chroma"))
+    monkeypatch.setenv("JWT_SECRET_KEY", "x" * 32)
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "y" * 32)
+
+
 def test_self_hosted_defaults_are_safe_and_runnable() -> None:
     loaded = load_settings()
 
+    assert loaded.app_env == APP_ENV_DEVELOPMENT
+    assert loaded.app_debug is True
     assert loaded.deployment_mode == MODE_SELF_HOSTED
     assert loaded.database_url == "sqlite:///./data/lumina.db"
     assert loaded.storage_backend == "local"
@@ -89,6 +113,171 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
     )
     assert loaded.max_extracted_characters == DEFAULT_MAX_EXTRACTED_CHARACTERS
     assert loaded.max_document_chunks == DEFAULT_MAX_DOCUMENT_CHUNKS
+
+
+def test_staging_defaults_to_debug_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", APP_ENV_STAGING)
+
+    loaded = load_settings()
+
+    assert loaded.app_env == APP_ENV_STAGING
+    assert loaded.app_debug is False
+
+
+def test_application_environment_is_validated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", "preview")
+
+    with pytest.raises(ValueError, match="APP_ENV"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["", "debug", "2"])
+def test_application_debug_must_be_boolean(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("APP_DEBUG", value)
+
+    with pytest.raises(ValueError, match="APP_DEBUG"):
+        load_settings()
+
+
+def test_valid_self_hosted_production_configuration_loads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+
+    loaded = load_settings()
+
+    assert loaded.app_env == APP_ENV_PRODUCTION
+    assert loaded.app_debug is False
+    assert loaded.database_url.startswith("sqlite:///")
+
+
+def test_production_rejects_debug_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("APP_DEBUG", "true")
+
+    with pytest.raises(ValueError, match="APP_DEBUG"):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    ("missing_name", "message"),
+    [
+        ("JWT_SECRET_KEY", "JWT_SECRET_KEY"),
+        ("DATABASE_URL", "DATABASE_URL"),
+        ("BOOTSTRAP_ADMIN_EMAIL", "BOOTSTRAP_ADMIN_EMAIL"),
+        ("BOOTSTRAP_ADMIN_TOKEN", "BOOTSTRAP_ADMIN_TOKEN"),
+    ],
+)
+def test_production_requires_explicit_security_and_database_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    missing_name: str,
+    message: str,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.delenv(missing_name)
+
+    with pytest.raises(ValueError, match=message):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    ["sqlite:///relative/lumina.sqlite3", "sqlite:///~/lumina.sqlite3"],
+)
+def test_production_sqlite_database_path_must_be_absolute(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    database_url: str,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    with pytest.raises(ValueError, match="absolute path"):
+        load_settings()
+
+
+def test_production_sqlite_parent_directory_must_exist(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    database_path = tmp_path / "missing" / "lumina.sqlite3"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+
+    with pytest.raises(ValueError, match="parent directory"):
+        load_settings()
+
+
+def test_database_only_loader_enforces_production_database_safety(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_ENV", APP_ENV_PRODUCTION)
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///relative/lumina.sqlite3")
+
+    with pytest.raises(ValueError, match="absolute path"):
+        load_database_url()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("UPLOAD_DIRECTORY", "relative/path"),
+        ("UPLOAD_DIRECTORY", "~/uploads"),
+        ("CHROMA_PERSIST_DIRECTORY", "relative/path"),
+        ("CHROMA_PERSIST_DIRECTORY", "~/chroma"),
+    ],
+)
+def test_production_storage_paths_must_be_absolute(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    name: str,
+    value: str,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match=name):
+        load_settings()
+
+
+def test_hosted_production_is_not_supported(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("DEPLOYMENT_MODE", MODE_HOSTED)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://lumina:password@localhost:5432/lumina",
+    )
+    monkeypatch.setenv("STORAGE_NAMESPACE", "hosted-shared-volume")
+
+    with pytest.raises(ValueError, match="Hosted production is not supported"):
+        load_settings()
+
+
+def test_self_hosted_production_rejects_unqualified_postgresql(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://lumina:password@localhost:5432/lumina",
+    )
+
+    with pytest.raises(ValueError, match="PostgreSQL is not supported"):
+        load_settings()
 
 
 def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:

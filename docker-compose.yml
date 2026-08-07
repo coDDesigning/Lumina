@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  lumina-backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DEPLOYMENT_MODE=self_hosted
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

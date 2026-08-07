@@ -1,0 +1,70 @@
+# This file intentionally overrides only Lumina-specific review behavior.
+# Copying PR-Agent's complete default configuration would make upgrades harder
+# because obsolete upstream settings would become frozen in this repository.
+
+[config]
+# Gemini 3.6 Flash is supported by the pinned PR-Agent release and keeps routine
+# review cost low while providing a large context window.
+model = "gemini/gemini-3.6-flash"
+fallback_models = []
+
+# Restricted mode prevents PR-Agent's push-code operation. Repository permissions
+# and the explicit setting below independently prevent automatic approval.
+restricted_mode = true
+
+# Keep configuration changes reviewable in Git. Organization settings are
+# disabled so they cannot silently override this repository's policy.
+use_global_settings_file = false
+
+# Low reasoning limits cost while retaining enough analysis for normal task PRs.
+reasoning_effort = "low"
+max_model_tokens = 32000
+response_language = "en-US"
+
+# Provider failures must make the optional review check visibly fail instead of
+# producing a misleading green check with no review. INFO also avoids logging the
+# complete model prompt during normal operation.
+propagate_tool_errors = true
+log_level = "INFO"
+
+# Jira identifiers are not GitHub issue numbers. Disable automatic extraction so
+# SCRUM-50 is not incorrectly treated as a reference to GitHub issue number 50.
+extract_issue_from_branch = false
+
+# Fingerprints prevent the same inline finding from being posted repeatedly when
+# a developer pushes a correction and PR-Agent reviews the updated diff.
+persistent_inline_comments = true
+
+[pr_reviewer]
+require_tests_review = true
+require_security_review = true
+require_todo_scan = true
+
+# Jira is not connected to PR-Agent yet, so it cannot fetch authoritative ticket
+# content. The reviewer still checks branch and PR conventions via instructions.
+require_ticket_analysis_review = false
+
+# A small upper bound keeps the review focused on the highest-impact findings.
+num_max_findings = 5
+persistent_comment = true
+enable_review_labels_security = false
+enable_review_labels_effort = false
+
+extra_instructions = """\
+Review only actionable correctness, security, data-integrity, or missing-test problems. Clearly distinguish defects from matters of taste.
+Enforce Lumina's task-branch flow: task branches target dev, and only dev promotes to main.
+For SQLAlchemy changes, check foreign keys, cascades, transaction boundaries, migration safety, and SQLite/PostgreSQL parity.
+After Alembic is introduced, reject schema changes that rely on create_all instead of a reviewed migration.
+For retrieval code, course_id isolation is mandatory. Numerical embeddings belong in the vector store; SQL stores canonical chunk text and citation metadata such as document, page, and chunk identifiers.
+For uploads, check server-generated storage keys, path-traversal prevention, size limits, and cleanup after partial failures.
+Never suggest committing secrets, provider keys, uploaded documents, local databases, or vector-store persistence files.
+Check that tests use disposable databases, storage directories, fake embedders, and no paid network calls.
+"""
+
+[pr_code_suggestions]
+# Suggestions remain advisory. A human must judge every finding before editing or
+# resolving its conversation, and PR-Agent cannot publish committable changes.
+commitable_code_suggestions = false
+approve_pr_on_self_review = false
+focus_only_on_problems = true
+suggestions_score_threshold = 7

@@ -1,6 +1,13 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional
 from enum import Enum
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class Role(str, Enum):
@@ -13,14 +20,21 @@ class Role(str, Enum):
 class UserBase(BaseModel):
     """Base schema containing common user fields."""
 
-    name: str
-    email: EmailStr
+    name: str = Field(min_length=1, max_length=255)
+    email: EmailStr = Field(max_length=255)
 
 
 class UserCreate(UserBase):
     """Schema for user registration payload."""
 
-    password: str
+    password: str = Field(min_length=8)
+
+    @field_validator("password")
+    @classmethod
+    def validate_bcrypt_length(cls, password: str) -> str:
+        if len(password.encode("utf-8")) > 72:
+            raise ValueError("Password must be at most 72 UTF-8 bytes")
+        return password
 
 
 class UserResponse(UserBase):
@@ -29,17 +43,24 @@ class UserResponse(UserBase):
     id: int
     role: Role
     is_banned: bool
-    credits: float
+    credits: float | None
     preferred_model: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserUpdate(BaseModel):
     """Schema for updating user profile or admin actions."""
 
-    role: Optional[Role] = None
-    is_banned: Optional[bool] = None
-    credits: Optional[float] = None
-    preferred_model: Optional[str] = None
+    role: Role | None = None
+    is_banned: bool | None = None
+    credits: float | None = None
+    preferred_model: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def reject_null_for_required_columns(self) -> "UserUpdate":
+        required_columns = {"role", "is_banned", "preferred_model"}
+        explicitly_null = required_columns & self.model_fields_set
+        if any(getattr(self, field) is None for field in explicitly_null):
+            raise ValueError("Required user fields cannot be null")
+        return self

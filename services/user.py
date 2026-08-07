@@ -1,63 +1,181 @@
-from typing import List, Optional
-from schemas.user import UserCreate, UserUpdate, UserResponse, Role
-from utils.exceptions import NotFoundException
-from utils.security import get_password_hash
+import secrets
 
-_users_db: List[dict] = []
-_id_counter = 1
+from email_validator import EmailNotValidError, validate_email
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, selectinload
+
+from backend.app.config import settings
+from backend.app.models import Role as RoleModel
+from backend.app.models import User
+from schemas.user import Role, UserCreate, UserResponse, UserUpdate
+from utils.exceptions import BadRequestException, NotFoundException
+from utils.security import get_password_hash
 
 
 class UserService:
     """Handles business logic and data access for users."""
 
     @staticmethod
-    def get_user_by_email(email: str) -> Optional[dict]:
+    def to_response(user: User) -> UserResponse:
+        return UserResponse(
+            id=user.id,
+            name=user.name,
+            email=user.email,
+            role=Role(user.role.name),
+            is_banned=user.is_banned,
+            credits=user.credits,
+            preferred_model=user.preferred_model,
+        )
+
+    @staticmethod
+    def _get_role(db: Session, role: Role) -> RoleModel:
+        role_model = db.scalar(select(RoleModel).where(RoleModel.name == role.value))
+        if role_model is None:
+            raise RuntimeError("Required roles are missing; apply database migrations.")
+        return role_model
+
+    @staticmethod
+    def get_user_by_email(db: Session, email: str) -> User | None:
         """Finds a user by their email address."""
-        for user in _users_db:
-            if user["email"] == email:
-                return user
-        return None
+        canonical_email = UserService.canonicalize_email(email)
+        if canonical_email is None:
+            return None
+        return db.scalar(
+            select(User)
+            .options(selectinload(User.role))
+            .where(User.email == canonical_email)
+        )
 
     @staticmethod
-    def get_user_by_id(user_id: int) -> Optional[dict]:
-        for user in _users_db:
-            if user["id"] == user_id:
-                return user
-        return None
+    def canonicalize_email(email: str) -> str | None:
+        try:
+            return validate_email(
+                email.strip(),
+                check_deliverability=False,
+            ).normalized.lower()
+        except EmailNotValidError:
+            return None
 
     @staticmethod
-    def create_user(user_data: UserCreate) -> dict:
-        """Registers a new user and auto-assigns ADMIN to the first user."""
-        global _id_counter
-        # If this is the first user in DB, make them ADMIN automatically.
-        role = Role.ADMIN if len(_users_db) == 0 else Role.USER
+    def create_user(
+        db: Session,
+        user_data: UserCreate,
+        bootstrap_token: str | None = None,
+    ) -> User:
+        """Register a user and assign the configured initial administrator."""
+        if UserService.get_user_by_email(db, user_data.email) is not None:
+            raise BadRequestException("Email already registered")
 
-        new_user = user_data.model_dump()
-        new_user["id"] = _id_counter
-        new_user["password"] = get_password_hash(user_data.password)
-        new_user["role"] = role
-        new_user["is_banned"] = False
-        new_user["credits"] = (
-            100.0 if role == Role.USER else float("inf")
-        )  # Admins have unlimited credits
-        new_user["preferred_model"] = "gpt-4o-mini"
+        user_count = db.scalar(select(func.count()).select_from(User)) or 0
+        initial_admin_exists = db.scalar(
+            select(User.id).where(User.is_initial_admin.is_(True))
+        )
+        canonical_email = UserService.canonicalize_email(user_data.email)
+        if canonical_email is None:
+            raise BadRequestException("Invalid email address")
 
-        _users_db.append(new_user)
-        _id_counter += 1
+        is_protected_bootstrap_email = (
+            settings.requires_protected_admin_bootstrap
+            and settings.bootstrap_admin_email == canonical_email
+        )
+        if is_protected_bootstrap_email and (
+            not bootstrap_token
+            or not settings.bootstrap_admin_token
+            or not secrets.compare_digest(
+                bootstrap_token, settings.bootstrap_admin_token
+            )
+        ):
+            raise BadRequestException("Invalid bootstrap administrator credentials")
+
+        claims_initial_admin = initial_admin_exists is None and (
+            (
+                settings.is_self_hosted
+                and not settings.requires_protected_admin_bootstrap
+                and user_count == 0
+            )
+            or is_protected_bootstrap_email
+        )
+        new_user = UserService._new_user(
+            db,
+            user_data,
+            Role.ADMIN if claims_initial_admin else Role.USER,
+            claims_initial_admin=claims_initial_admin,
+        )
+        db.add(new_user)
+
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            if UserService.get_user_by_email(db, user_data.email) is not None:
+                raise BadRequestException("Email already registered") from exc
+
+            initial_admin_exists = db.scalar(
+                select(User.id).where(User.is_initial_admin.is_(True))
+            )
+            if not claims_initial_admin or initial_admin_exists is None:
+                raise BadRequestException("Unable to register user") from exc
+
+            # Another first-user request won the unique bootstrap-admin claim.
+            new_user = UserService._new_user(
+                db,
+                user_data,
+                Role.USER,
+                claims_initial_admin=False,
+            )
+            db.add(new_user)
+            try:
+                db.commit()
+            except IntegrityError as retry_exc:
+                db.rollback()
+                raise BadRequestException("Email already registered") from retry_exc
+
+        db.refresh(new_user)
         return new_user
 
     @staticmethod
-    def get_all_users() -> List[UserResponse]:
-        """Returns a list of all registered users."""
-        return [UserResponse(**u) for u in _users_db]
+    def _new_user(
+        db: Session,
+        user_data: UserCreate,
+        role: Role,
+        *,
+        claims_initial_admin: bool,
+    ) -> User:
+        canonical_email = UserService.canonicalize_email(user_data.email)
+        if canonical_email is None:
+            raise BadRequestException("Invalid email address")
+        return User(
+            name=user_data.name,
+            email=canonical_email,
+            password_hash=get_password_hash(user_data.password),
+            role=UserService._get_role(db, role),
+            is_initial_admin=True if claims_initial_admin else None,
+            credits=None if role == Role.ADMIN else 100.0,
+            is_banned=False,
+            preferred_model="gpt-4o-mini",
+        )
 
     @staticmethod
-    def update_user(email: str, update_data: UserUpdate) -> UserResponse:
+    def update_user(db: Session, email: str, update_data: UserUpdate) -> UserResponse:
         """Updates specific fields of a user by email."""
-        user = UserService.get_user_by_email(email)
+        user = UserService.get_user_by_email(db, email)
         if not user:
             raise NotFoundException("User not found")
 
         update_dict = update_data.model_dump(exclude_unset=True)
-        user.update(update_dict)
-        return UserResponse(**user)
+        role = update_dict.pop("role", None)
+        if role is not None:
+            previous_role = Role(user.role.name)
+            user.role = UserService._get_role(db, role)
+            if role == Role.ADMIN:
+                user.credits = None
+            elif previous_role == Role.ADMIN and user.credits is None:
+                user.credits = 100.0
+
+        for field, value in update_dict.items():
+            setattr(user, field, value)
+
+        db.commit()
+        db.refresh(user)
+        return UserService.to_response(user)

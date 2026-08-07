@@ -1,0 +1,19 @@
+# Ruff is configured in one version-controlled location so local development and
+# GitHub Actions evaluate the same rules. The first baseline intentionally checks
+# syntax, undefined names, and unused imports. Additional rule families should be
+# enabled only when the existing codebase passes them in a focused Jira task.
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

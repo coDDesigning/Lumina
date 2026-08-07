@@ -562,3 +562,9 @@ class ProfileKnowledge(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="knowledge_items")
+
+
+
+#BLOB özellikle dosyaları vector search olarak tutup buradaki design choice semantic search eden -> vector database
+
+#database de documentlar nasıl tutulacak 

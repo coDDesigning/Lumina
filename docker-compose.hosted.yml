@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  lumina-backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DEPLOYMENT_MODE=hosted
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/lumina
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    # Use pgvector image directly to support pgvector out of the box
+    image: ankane/pgvector:latest
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=lumina
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lumina"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:

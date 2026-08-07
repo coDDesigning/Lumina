@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+sqlalchemy
+alembic
+pydantic
+pymupdf
+python-multipart
+python-jose[cryptography]
+bcrypt
+passlib
+psycopg2-binary
+chromadb
+pgvector
+sentence-transformers

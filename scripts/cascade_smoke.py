@@ -1,6 +1,6 @@
 """Verifies that ON DELETE CASCADE works end to end on the content chain
 
-Run from the repo root: python scripts/cascade_smoke.py
+Run from the repo root: python -m scripts.cascade_smoke
 """
 
 from backend.app.database import Base, SessionLocal, engine
@@ -16,11 +16,19 @@ from backend.app.models import (
     User,
 )
 
-Base.metadata.create_all(engine)
 
 session = SessionLocal()
 
-role = Role(name="student")
+role = session.query(Role).filter_by(name="student").first()
+if not role:
+    role = Role(name="student")
+    session.add(role)
+    session.commit()
+
+# Clean up existing users so we can run repeatedly
+session.query(User).filter(User.email.in_(["smoke@test.local", "smoke2@test.local"])).delete()
+session.commit()
+
 user = User(email="smoke@test.local", password_hash="not-a-real-hash", role=role)
 course = Course(title="Smoke Course", owner=user)
 
@@ -30,7 +38,7 @@ doc = UploadedDocument(
 
 chunk = DocumentChunk(document=doc, course=course, chunk_index=0, text="hello world")
 
-session.add(role)
+session.add(user)
 session.commit()
 
 print("chunks before delete:", session.query(DocumentChunk).count())

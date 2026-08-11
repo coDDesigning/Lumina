@@ -1,10 +1,11 @@
 # Deployment readiness
 
 Lumina's API and durable document processor currently support production only
-in `self_hosted` mode with SQLite and local filesystem document storage. Hosted
-and PostgreSQL production are rejected at startup until live PostgreSQL
-qualification and a durable shared-storage adapter are implemented. Vector
-retrieval is not yet implemented or production-qualified.
+in `self_hosted` mode with SQLite and local filesystem document storage. The
+relational contract is tested against PostgreSQL 17.6 in CI, but hosted and
+PostgreSQL production remain blocked until durable shared storage and deployment
+topology are qualified. Vector retrieval is not implemented or
+production-qualified.
 
 The tracked Docker and Compose files are experimental development artifacts.
 They do not yet implement the migration ownership, non-root runtime, API/worker

@@ -14,7 +14,7 @@ from backend.app.config import (
     MODE_SELF_HOSTED,
     settings,
 )
-from backend.app.models import Course, User
+from backend.app.models import Course, DocumentChunk, UploadedDocument, User
 from schemas.course import CourseCreate
 from schemas.user import Role, UserCreate, UserUpdate
 from services.course import CourseService
@@ -105,6 +105,41 @@ def test_registration_login_and_admin_course_creation_persist(api_context) -> No
         assert persisted.price == course_payload["price"]
         assert persisted.is_deleted is False
         assert session.scalar(select(func.count()).select_from(Course)) == 1
+
+
+def test_user_delete_cascades_loaded_documents_and_chunks(
+    db_session,
+    model_graph,
+) -> None:
+    document = UploadedDocument(
+        original_file_name="cascade.txt",
+        file_type="txt",
+        mime_type="text/plain",
+        file_size=7,
+        file_hash="a" * 64,
+        uploader=model_graph.user,
+        course=model_graph.course,
+        storage_provider="local:test",
+        storage_key="cascade.txt",
+    )
+    chunk = DocumentChunk(
+        document=document,
+        course=model_graph.course,
+        chunk_index=0,
+        page_number=None,
+        text="cascade",
+    )
+    db_session.add(chunk)
+    db_session.commit()
+    document_id = document.id
+    chunk_id = chunk.id
+
+    assert list(model_graph.user.uploaded_documents) == [document]
+    db_session.delete(model_graph.user)
+    db_session.commit()
+
+    assert db_session.get(UploadedDocument, document_id) is None
+    assert db_session.get(DocumentChunk, chunk_id) is None
 
 
 def test_course_creation_recovers_lost_commit_acknowledgement(

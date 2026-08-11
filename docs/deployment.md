@@ -6,6 +6,11 @@ and PostgreSQL production are rejected at startup until live PostgreSQL
 qualification and a durable shared-storage adapter are implemented. Vector
 retrieval is not yet implemented or production-qualified.
 
+The tracked Docker and Compose files are experimental development artifacts.
+They do not yet implement the migration ownership, non-root runtime, API/worker
+composition, health checks, or immutable image requirements in this document
+and must not be used as a production deployment path.
+
 ## Production configuration
 
 Set configuration through the environment before importing or starting the

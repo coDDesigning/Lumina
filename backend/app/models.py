@@ -96,7 +96,9 @@ class User(Base):
         back_populates="owner", cascade="all, delete-orphan", passive_deletes=True
     )
     uploaded_documents: Mapped[list["UploadedDocument"]] = relationship(
-        back_populates="uploader", passive_deletes=True
+        back_populates="uploader",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
     # Every quiz attempt this user has made.
@@ -521,12 +523,7 @@ class Progress(Base):
     # Completion as a fraction from 0.0 to 1.0.
     completion: Mapped[float] = mapped_column(Float, default=0.0)
 
-    # Two automatic timestamps working together:
-    #   server_default=func.now()  -> set once, when the row is born
-    #   onupdate=func.now()        -> refreshed by the database every
-    #                                 time the row is changed
-    # So updated_at always answers "when did this student last study
-    # this course?" without any application code remembering to set it.
+    # SQLAlchemy includes the onupdate expression in ORM-generated updates.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -562,9 +559,3 @@ class ProfileKnowledge(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="knowledge_items")
-
-
-
-#BLOB özellikle dosyaları vector search olarak tutup buradaki design choice semantic search eden -> vector database
-
-#database de documentlar nasıl tutulacak 

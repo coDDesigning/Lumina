@@ -61,7 +61,7 @@ jobs:
       - name: Required repository files exist
         run: |
           missing=0
-          for f in README.md .gitignore .gitattributes .editorconfig .env.example; do
+          for f in README.md .gitignore .gitattributes .editorconfig .env.example .dockerignore; do
             if [ ! -f "$f" ]; then
               echo "::error::Missing required file: $f"
               missing=1
@@ -187,6 +187,13 @@ jobs:
 
       - name: Validate installed dependencies
         run: python -m pip check
+
+      - name: Validate canonical migration graph
+        run: >-
+          python -m pytest
+          -q
+          -p no:cacheprovider
+          tests/test_migrations.py::test_migration_graph_has_one_canonical_base_and_head
 
       - name: Apply and verify database migrations
         env:

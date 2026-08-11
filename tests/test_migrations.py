@@ -5,10 +5,29 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
 BASE_REVISION = "97d9fd86a3ba"
 HEAD_REVISION = "b6d8f2a4c901"
+
+
+def test_migration_graph_has_one_canonical_base_and_head() -> None:
+    config = Config(str(ALEMBIC_CONFIG))
+    scripts = ScriptDirectory.from_config(config)
+    revisions = {
+        revision.revision: revision.down_revision
+        for revision in scripts.walk_revisions()
+    }
+
+    assert scripts.get_bases() == [BASE_REVISION]
+    assert scripts.get_heads() == [HEAD_REVISION]
+    assert revisions == {
+        HEAD_REVISION: BASE_REVISION,
+        BASE_REVISION: None,
+    }
 
 
 def run_alembic(

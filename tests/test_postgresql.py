@@ -434,13 +434,14 @@ def test_postgresql_claim_skips_locked_job(
         lock_session.rollback()
 
     with postgresql_sessions() as session:
-        statuses = dict(
-            session.execute(
+        statuses = {
+            job_id: status
+            for job_id, status in session.execute(
                 select(ProcessingJob.id, ProcessingJob.status).where(
                     ProcessingJob.id.in_(job_ids)
                 )
-            )
-        )
+            ).all()
+        }
         assert statuses == {
             job_ids[0]: JOB_STATUS_QUEUED,
             job_ids[1]: JOB_STATUS_RUNNING,

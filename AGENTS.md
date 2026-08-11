@@ -14,7 +14,7 @@ Operating instructions for coding agents in this repository.
 
 - Python is pinned to 3.12. Backend code uses FastAPI, Pydantic 2, and SQLAlchemy 2 typed declarative models.
 - `backend/app/config.py` owns application settings. `backend/app/database_config.py` reads the database-only subset for Alembic and currently loads `.env`; do not add environment reads elsewhere. Settings are frozen and import-cached.
-- `DEPLOYMENT_MODE=self_hosted` defaults to SQLite and local paths. Hosted mode requires `DATABASE_URL`; pgvector/S3 hosted adapters are not implemented.
+- `DEPLOYMENT_MODE=self_hosted` defaults to SQLite and local paths. Hosted staging requires PostgreSQL and is exercised by a pinned live CI service; hosted production remains blocked because shared storage, pgvector, and S3 adapters are not implemented.
 - `backend/app/database.py` creates SQLite parent directories outside production and enables `PRAGMA foreign_keys=ON` for every connection. Do not remove the listener; SQLite cascades depend on it.
 - `backend/app/models.py` defines the 12-table relational model. `DocumentChunk.course_id` is intentional denormalization for course-scoped reads.
 - Keep DB `ondelete="CASCADE"` and ORM `cascade="all, delete-orphan", passive_deletes=True` together. `User -> Role` deliberately does not cascade.
@@ -59,7 +59,7 @@ npm run build
 
 - Run one test with `python -m pytest -q tests/test_document_upload.py::test_name`.
 - Frontend lint is deliberately scoped to `src` and `vite.config.ts`; do not replace it with `eslint .`, which scans generated/dependency trees.
-- CI also imports `backend.app.models`, builds `main.app` OpenAPI, and requires tests/builds to leave tracked files unchanged.
+- CI also imports `backend.app.models`, builds `main.app` OpenAPI, qualifies the relational contract on PostgreSQL 17.6, and requires tests/builds to leave tracked files unchanged.
 
 ## Git And PRs
 
@@ -75,7 +75,7 @@ npm run build
 
 ## CI Contract
 
-- Current `dev` job names are `Branch and PR policy`, `Repository quality`, `Backend quality and tests`, and `Frontend quality and build`.
+- Current `dev` job names are `Branch and PR policy`, `Repository quality`, `Backend quality and tests`, `PostgreSQL quality`, and `Frontend quality and build`.
 - Job names are referenced by dormant rulesets. Flag the corresponding ruleset update before renaming one.
 - CI must verify, never modify: no `--fix`, generated changes, or auto-commits. Keep `permissions: contents: read`.
 - Third-party Actions must remain pinned to immutable 40-character commit SHAs.

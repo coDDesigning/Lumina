@@ -28,6 +28,7 @@ from services.processing_jobs import (
     fail_job,
     heartbeat_job,
     recover_expired_jobs,
+    update_job_stage,
 )
 from storage.base import Storage
 from storage.dependencies import get_storage
@@ -123,6 +124,10 @@ def _extraction_process(connection, storage: Storage, job: ClaimedJob) -> None:
     if hasattr(signal, "pthread_sigmask"):
         signal.pthread_sigmask(signal.SIG_UNBLOCK, WORKER_SHUTDOWN_SIGNALS)
     try:
+
+        def report_stage(stage) -> None:
+            connection.send(("stage", stage.value))
+
         chunks = extract_document_chunks(
             storage,
             storage_provider=job.storage_provider,
@@ -130,6 +135,7 @@ def _extraction_process(connection, storage: Storage, job: ClaimedJob) -> None:
             expected_hash=job.file_hash,
             expected_size=job.file_size,
             file_type=job.file_type,
+            stage_callback=report_stage,
         )
         connection.send(("succeeded", chunks))
     except DocumentProcessingError as exc:
@@ -144,6 +150,7 @@ def _extract_with_timeout(
     storage: Storage,
     job: ClaimedJob,
     timeout_seconds: int,
+    stage_callback: Callable[[str], None] | None = None,
 ):
     context = multiprocessing.get_context("spawn")
     parent_connection, child_connection = context.Pipe(duplex=False)
@@ -169,15 +176,13 @@ def _extract_with_timeout(
             try:
                 if parent_connection.poll(min(0.1, remaining)):
                     result = parent_connection.recv()
+                    if result[0] == "stage":
+                        if stage_callback is not None:
+                            stage_callback(result[1])
+                        result = None
+                        continue
                     break
             except (EOFError, OSError):
-                break
-            if not process.is_alive():
-                try:
-                    if parent_connection.poll(0.1):
-                        result = parent_connection.recv()
-                except (EOFError, OSError):
-                    pass
                 break
     finally:
         parent_connection.close()
@@ -280,10 +285,28 @@ def process_next_job(
     )
     heartbeat.start()
     try:
+
+        def persist_stage(stage: str) -> None:
+            with session_factory() as session:
+                updated = update_job_stage(
+                    session,
+                    job.id,
+                    job.claim_token,
+                    stage,
+                )
+            if not updated:
+                claim_lost.set()
+                raise DocumentProcessingError(
+                    "STATUS_UPDATE_CONFLICT",
+                    "The document processing claim changed unexpectedly.",
+                    retryable=True,
+                )
+
         chunks = _extract_with_timeout(
             storage,
             job,
             settings.processing_job_attempt_timeout_seconds,
+            stage_callback=persist_stage,
         )
     except WorkerProcessFatalError:
         _stop_heartbeat(stop, heartbeat, claim_lost)

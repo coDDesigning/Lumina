@@ -28,7 +28,7 @@ def document_values(
         "course_id": course_id or model_graph.course.id,
         "storage_provider": "local",
         "storage_key": f"test/{uuid4()}/source.txt",
-        "status": "pending",
+        "status": "uploaded",
     }
     values.update(overrides)
     return values
@@ -149,7 +149,7 @@ def test_update_status_and_processing_error(
     assert updated is not None
     assert updated.status == "failed"
     assert updated.processing_error == "OCR failed"
-    assert DocumentRepository.update_status(db_session, uuid4(), "completed") is None
+    assert DocumentRepository.update_status(db_session, uuid4(), "ready") is None
     with pytest.raises(ValueError, match="Unsupported document status"):
         DocumentRepository.update_status(db_session, document.id, "queued")
 

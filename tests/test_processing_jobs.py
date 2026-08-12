@@ -41,6 +41,7 @@ from services.processing_jobs import (
     fail_job,
     heartbeat_job,
     recover_expired_jobs,
+    update_job_stage,
 )
 from storage.local import LocalStorage
 from workers import document_processor
@@ -115,7 +116,7 @@ def _queue_document(
             course=course,
             storage_provider=storage.provider,
             storage_key=storage_key,
-            status="pending",
+            status="uploaded",
         )
         session.add(document)
         session.flush()
@@ -169,10 +170,12 @@ def test_worker_processes_text_into_canonical_chunks(session_factory, tmp_path):
         ).all()
         assert document is not None
         assert job is not None
-        assert document.status == "completed"
+        assert document.status == "ready"
         assert job.status == JOB_STATUS_SUCCEEDED
         assert job.attempt_count == 1
         assert job.claim_token is None
+        assert job.processing_stage is None
+        assert job.failed_stage is None
         assert [chunk.text for chunk in chunks] == ["Durable processing notes"]
 
 
@@ -198,7 +201,8 @@ def test_image_pdf_fails_permanently_then_can_be_retried(session_factory, tmp_pa
         assert job is not None
         assert document.status == "failed"
         assert job.status == JOB_STATUS_FAILED
-        assert job.last_error_code == "OCR_REQUIRED"
+        assert job.last_error_code == "OCR_UNAVAILABLE"
+        assert job.failed_stage == "running_ocr"
         assert job.finished_at is not None
 
     with session_factory() as session:
@@ -207,10 +211,56 @@ def test_image_pdf_fails_permanently_then_can_be_retried(session_factory, tmp_pa
             queued.document_id,
             queued.course_id,
         )
-        assert document.status == "pending"
+        assert document.status == "uploaded"
         assert job.status == JOB_STATUS_QUEUED
         assert job.attempt_count == 0
         assert job.last_error_code is None
+        assert job.failed_stage is None
+
+
+def test_processing_stage_transitions_are_ordered_and_claim_fenced(
+    session_factory,
+    tmp_path,
+):
+    queued = _queue_document(session_factory, tmp_path)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session,
+            "stage-worker",
+            queued.storage.provider,
+            60,
+            now=queued.available_at + timedelta(seconds=1),
+        )
+    assert claim is not None
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        assert job is not None
+        assert job.processing_stage == "validating"
+    with session_factory() as session:
+        assert not update_job_stage(
+            session,
+            claim.id,
+            "wrong-claim",
+            "extracting_text",
+            now=queued.available_at + timedelta(seconds=2),
+        )
+    with session_factory() as session:
+        assert update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "extracting_text",
+            now=queued.available_at + timedelta(seconds=2),
+        )
+    with session_factory() as session:
+        assert not update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "chunking",
+            now=queued.available_at + timedelta(seconds=3),
+        )
 
 
 def test_sqlite_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp_path):
@@ -581,9 +631,9 @@ def test_extraction_preserves_pdf_pages_and_enforces_integrity(tmp_path):
     storage = LocalStorage(tmp_path / "extract", namespace="worker")
     pdf = pymupdf.open()
     first = pdf.new_page()
-    first.insert_text((72, 72), "First page")
+    first.insert_text((72, 72), "First searchable page has course material")
     second = pdf.new_page()
-    second.insert_text((72, 72), "Second page")
+    second.insert_text((72, 72), "Second searchable page has more material")
     content = pdf.tobytes()
     pdf.close()
     key = storage.generate_key(1, uuid4(), "pdf")

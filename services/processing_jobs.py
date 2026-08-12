@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.database import begin_serialized_write
 from backend.app.models import (
+    DOCUMENT_PROCESSING_STAGES,
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
@@ -45,6 +46,25 @@ class ClaimedJob:
 
 class ProcessingJobStateError(RuntimeError):
     """A requested transition is not valid for the current durable state."""
+
+
+_EXPECTED_STAGES = {
+    "validating": ("validating",),
+    "extracting_text": ("validating", "extracting_text"),
+    "running_ocr": ("extracting_text", "running_ocr"),
+    "understanding_images": (
+        "extracting_text",
+        "running_ocr",
+        "understanding_images",
+    ),
+    "cleaning_text": (
+        "extracting_text",
+        "running_ocr",
+        "understanding_images",
+        "cleaning_text",
+    ),
+    "chunking": ("cleaning_text", "chunking"),
+}
 
 
 def _supplied_utc(value: datetime) -> datetime:
@@ -144,7 +164,7 @@ def claim_next_job(
             ProcessingJob.status == JOB_STATUS_QUEUED,
             ProcessingJob.available_at <= eligibility_time,
             ProcessingJob.attempt_count < ProcessingJob.max_attempts,
-            UploadedDocument.status == "pending",
+            UploadedDocument.status == "uploaded",
             UploadedDocument.storage_provider == storage_provider,
             Course.is_deleted.is_(False),
         )
@@ -175,7 +195,7 @@ def claim_next_job(
         .join(UploadedDocument, UploadedDocument.id == ProcessingJob.document_id)
         .where(
             ProcessingJob.id == job_id,
-            UploadedDocument.status == "pending",
+            UploadedDocument.status == "uploaded",
         )
     )
     if dialect_name == "postgresql":
@@ -211,6 +231,8 @@ def claim_next_job(
             finished_at=None,
             last_error_code=None,
             last_error_message=None,
+            processing_stage="validating",
+            failed_stage=None,
             updated_at=claimed_at,
         )
     )
@@ -223,7 +245,7 @@ def claim_next_job(
         .where(
             UploadedDocument.id == row.document_id,
             UploadedDocument.course_id == row.course_id,
-            UploadedDocument.status == "pending",
+            UploadedDocument.status == "uploaded",
         )
         .values(status="processing", processing_error=None, updated_at=claimed_at)
     )
@@ -273,6 +295,37 @@ def heartbeat_job(
             lease_expires_at=heartbeat_at + timedelta(seconds=lease_seconds),
             updated_at=heartbeat_at,
         )
+    )
+    if result.rowcount != 1:
+        session.rollback()
+        return False
+    session.commit()
+    return True
+
+
+def update_job_stage(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    stage: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if stage not in DOCUMENT_PROCESSING_STAGES:
+        raise ValueError(f"Unsupported document processing stage: {stage}")
+
+    _start_transition(session)
+    updated_at = _database_now(session, now)
+    result = session.execute(
+        update(ProcessingJob)
+        .where(
+            ProcessingJob.id == job_id,
+            ProcessingJob.status == JOB_STATUS_RUNNING,
+            ProcessingJob.claim_token == claim_token,
+            ProcessingJob.lease_expires_at > updated_at,
+            ProcessingJob.processing_stage.in_(_EXPECTED_STAGES[stage]),
+        )
+        .values(processing_stage=stage, updated_at=updated_at)
     )
     if result.rowcount != 1:
         session.rollback()
@@ -342,6 +395,8 @@ def complete_job(
     job.finished_at = finished_at
     job.last_error_code = None
     job.last_error_message = None
+    job.processing_stage = None
+    job.failed_stage = None
     job.updated_at = finished_at
     _clear_lease(job)
 
@@ -358,7 +413,7 @@ def complete_job(
         )
         for index, chunk in enumerate(chunks)
     )
-    document.status = "completed"
+    document.status = "ready"
     document.processing_error = None
     document.updated_at = finished_at
     session.flush()
@@ -414,10 +469,12 @@ def fail_job(
     job.finished_at = None if should_retry else failed_at
     job.last_error_code = error_code.strip()[:100]
     job.last_error_message = message
+    job.failed_stage = None if should_retry else job.processing_stage
+    job.processing_stage = None
     job.updated_at = failed_at
     _clear_lease(job)
 
-    document.status = "pending" if should_retry else "failed"
+    document.status = "uploaded" if should_retry else "failed"
     document.processing_error = None if should_retry else message
     document.updated_at = failed_at
     session.commit()
@@ -466,13 +523,15 @@ def recover_expired_jobs(
         job.finished_at = None if should_retry else recovered_at
         job.last_error_code = "COURSE_DELETED" if course.is_deleted else "LEASE_EXPIRED"
         job.last_error_message = message
+        job.failed_stage = None if should_retry else job.processing_stage
+        job.processing_stage = None
         job.updated_at = recovered_at
         _clear_lease(job)
         document_updates.append((document, should_retry, message))
 
     session.flush()
     for document, should_retry, message in document_updates:
-        document.status = "pending" if should_retry else "failed"
+        document.status = "uploaded" if should_retry else "failed"
         document.processing_error = None if should_retry else message
         document.updated_at = recovered_at
 
@@ -507,6 +566,7 @@ def retry_failed_job(
         .where(
             UploadedDocument.id == document_id,
             UploadedDocument.course_id == course_id,
+            UploadedDocument.status != "deleting",
             ProcessingJob.job_type == JOB_TYPE_EXTRACT_DOCUMENT,
         )
     )
@@ -529,9 +589,11 @@ def retry_failed_job(
     job.finished_at = None
     job.last_error_code = None
     job.last_error_message = None
+    job.processing_stage = None
+    job.failed_stage = None
     job.updated_at = available_at
     _clear_lease(job)
-    document.status = "pending"
+    document.status = "uploaded"
     document.processing_error = None
     document.updated_at = available_at
     session.commit()
@@ -565,6 +627,8 @@ def fence_course_jobs(
         job.finished_at = fenced_at
         job.last_error_code = "COURSE_DELETED"
         job.last_error_message = message
+        job.failed_stage = job.processing_stage
+        job.processing_stage = None
         job.updated_at = fenced_at
         _clear_lease(job)
     # Keep the global lock order job -> document consistent with claims/recovery.
@@ -573,7 +637,7 @@ def fence_course_jobs(
         update(UploadedDocument)
         .where(
             UploadedDocument.id.in_(document_ids),
-            UploadedDocument.status.in_(("pending", "processing")),
+            UploadedDocument.status.in_(("uploaded", "processing")),
         )
         .values(
             status="failed",

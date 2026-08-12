@@ -11,7 +11,8 @@ from alembic.script import ScriptDirectory
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
 BASE_REVISION = "97d9fd86a3ba"
-HEAD_REVISION = "b6d8f2a4c901"
+PROCESSING_REVISION = "b6d8f2a4c901"
+HEAD_REVISION = "d2a7f0c91e35"
 
 
 def test_migration_graph_has_one_canonical_base_and_head() -> None:
@@ -25,7 +26,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: BASE_REVISION,
+        HEAD_REVISION: PROCESSING_REVISION,
+        PROCESSING_REVISION: BASE_REVISION,
         BASE_REVISION: None,
     }
 
@@ -129,6 +131,12 @@ def assert_upgraded_schema(database_path: Path) -> None:
         normalized_job_sql = " ".join(job_sql[0].lower().split())
         assert "uq_processing_jobs_document_type" in normalized_job_sql
         assert "ck_processing_jobs_lease_state_valid" in normalized_job_sql
+        assert "ck_processing_jobs_processing_stage_valid" in normalized_job_sql
+        assert "ck_processing_jobs_failed_stage_valid" in normalized_job_sql
+        job_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(processing_jobs)")
+        }
+        assert {"processing_stage", "failed_stage"} <= job_columns
 
 
 def test_production_migration_does_not_create_missing_database_parent(
@@ -254,10 +262,10 @@ def test_processing_migration_backfills_existing_documents(tmp_path: Path) -> No
             "ORDER BY d.storage_key"
         ).fetchall()
         assert rows == [
-            ("pending", "queued", 0, 3, None),
-            ("pending", "queued", 0, 3, None),
-            ("pending", "queued", 0, 3, None),
-            ("completed", "succeeded", 1, 3, None),
+            ("uploaded", "queued", 0, 3, None),
+            ("uploaded", "queued", 0, 3, None),
+            ("uploaded", "queued", 0, 3, None),
+            ("ready", "succeeded", 1, 3, None),
             ("failed", "failed", 3, 3, "LEGACY_PROCESSING_FAILED"),
             ("failed", "failed", 3, 3, "COURSE_DELETED"),
         ]

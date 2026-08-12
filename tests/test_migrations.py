@@ -11,6 +11,7 @@ from alembic.script import ScriptDirectory
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
 BASE_REVISION = "97d9fd86a3ba"
+PROCESSING_REVISION = "b6d8f2a4c901"
 HEAD_REVISION = "d2a7f0c91e35"
 
 
@@ -25,7 +26,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: BASE_REVISION,
+        HEAD_REVISION: PROCESSING_REVISION,
+        PROCESSING_REVISION: BASE_REVISION,
         BASE_REVISION: None,
     }
 

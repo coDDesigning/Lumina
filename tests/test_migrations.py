@@ -13,7 +13,8 @@ ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
 BASE_REVISION = "97d9fd86a3ba"
 PROCESSING_REVISION = "b6d8f2a4c901"
 STAGES_REVISION = "d2a7f0c91e35"
-HEAD_REVISION = "c4e6a8f1b203"
+PAGES_REVISION = "c4e6a8f1b203"
+HEAD_REVISION = "f7a3c9d2e541"
 
 
 def test_migration_graph_has_one_canonical_base_and_head() -> None:
@@ -27,7 +28,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: STAGES_REVISION,
+        HEAD_REVISION: PAGES_REVISION,
+        PAGES_REVISION: STAGES_REVISION,
         STAGES_REVISION: PROCESSING_REVISION,
         PROCESSING_REVISION: BASE_REVISION,
         BASE_REVISION: None,
@@ -94,6 +96,7 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert "uploaded_documents" in tables
         assert "document_chunks" in tables
         assert "document_pages" in tables
+        assert "document_visuals" in tables
         assert "processing_jobs" in tables
 
         roles = connection.execute("SELECT name FROM roles ORDER BY name").fetchall()
@@ -147,7 +150,45 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert page_sql is not None
         normalized_page_sql = " ".join(page_sql[0].lower().split())
         assert "uq_document_pages_document_content_index" in normalized_page_sql
+        assert "ck_document_pages_raw_extraction_method_valid" in normalized_page_sql
+        assert "ck_document_pages_extraction_method_valid" in normalized_page_sql
         assert "ck_document_pages_ocr_candidate_valid" in normalized_page_sql
+        assert "ck_document_pages_ocr_status_valid" in normalized_page_sql
+        assert "ck_document_pages_visual_analysis_status_valid" in normalized_page_sql
+        page_columns = {
+            row[1]: row
+            for row in connection.execute("PRAGMA table_info(document_pages)")
+        }
+        assert {
+            "raw_text",
+            "raw_extraction_method",
+            "raw_needs_ocr",
+            "ocr_status",
+            "has_visual_content",
+            "visual_analysis_status",
+        } <= set(page_columns)
+        assert page_columns["raw_text"][3] == 1
+
+        visual_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'document_visuals'"
+        ).fetchone()
+        assert visual_sql is not None
+        normalized_visual_sql = " ".join(visual_sql[0].lower().split())
+        assert "uq_visual_page_index" in normalized_visual_sql
+        assert "unique (page_id, visual_index)" in normalized_visual_sql
+        assert "ck_document_visuals_visual_index_nonnegative" in normalized_visual_sql
+        assert "ck_document_visuals_visual_type_valid" in normalized_visual_sql
+        assert "ck_document_visuals_source_valid" in normalized_visual_sql
+        assert "ck_document_visuals_bbox_valid" in normalized_visual_sql
+        assert "ck_document_visuals_analysis_status_valid" in normalized_visual_sql
+        assert "ck_document_visuals_description_status_valid" in normalized_visual_sql
+        assert "ck_document_visuals_failed_error_code_required" in normalized_visual_sql
+        assert "on delete cascade" in normalized_visual_sql
+        visual_indexes = {
+            row[1] for row in connection.execute("PRAGMA index_list(document_visuals)")
+        }
+        assert "ix_document_visuals_page_id" in visual_indexes
 
 
 def test_production_migration_does_not_create_missing_database_parent(
@@ -196,6 +237,174 @@ def test_fresh_alembic_baseline_upgrades_downgrades_and_reupgrades(
 
     run_alembic(database_path, tmp_path, "upgrade", "head")
     assert_upgraded_schema(database_path)
+
+
+def test_visual_enrichment_migration_backfills_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "visual-backfill.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", PAGES_REVISION)
+
+    document_id = uuid4().hex
+    with sqlite3.connect(database_path) as connection:
+        role_id = connection.execute(
+            "SELECT id FROM roles WHERE name = 'user'"
+        ).fetchone()[0]
+        user_id = connection.execute(
+            "INSERT INTO users "
+            "(name, email, password_hash, role_id, is_banned, preferred_model) "
+            "VALUES (?, ?, ?, ?, 0, ?)",
+            (
+                "Visual migration user",
+                "visual-migration@example.com",
+                "hash",
+                role_id,
+                "model",
+            ),
+        ).lastrowid
+        course_id = connection.execute(
+            "INSERT INTO courses "
+            "(title, description, instructor, price, is_deleted, owner_id) "
+            "VALUES (?, NULL, ?, 0, 0, ?)",
+            ("Visual migration course", "Instructor", user_id),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO uploaded_documents "
+            "(id, original_file_name, file_type, mime_type, file_size, file_hash, "
+            "user_id, course_id, storage_provider, storage_key, status) "
+            "VALUES (?, ?, 'pdf', 'application/pdf', 7, ?, ?, ?, 'local:test', ?, "
+            "'ready')",
+            (
+                document_id,
+                "visual-migration.pdf",
+                "f" * 64,
+                user_id,
+                course_id,
+                "visual-migration.pdf",
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO document_pages "
+            "(document_id, course_id, content_index, page_number, text, "
+            "extraction_method, has_images, needs_ocr) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                (
+                    document_id,
+                    course_id,
+                    0,
+                    None,
+                    "Legacy decoded text",
+                    "decoded",
+                    0,
+                    0,
+                ),
+                (
+                    document_id,
+                    course_id,
+                    1,
+                    2,
+                    "Legacy scanned text",
+                    "native",
+                    1,
+                    1,
+                ),
+            ),
+        )
+        connection.commit()
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            "SELECT content_index, raw_text, text, raw_extraction_method, "
+            "extraction_method, has_visual_content, ocr_status, "
+            "visual_analysis_status FROM document_pages ORDER BY content_index"
+        ).fetchall()
+        assert rows == [
+            (
+                0,
+                "Legacy decoded text",
+                "Legacy decoded text",
+                "decoded",
+                "decoded",
+                0,
+                "not_required",
+                "not_applicable",
+            ),
+            (
+                1,
+                "Legacy scanned text",
+                "Legacy scanned text",
+                "native",
+                "native",
+                0,
+                "pending",
+                "not_applicable",
+            ),
+        ]
+
+        page_id = connection.execute(
+            "SELECT id FROM document_pages WHERE content_index = 1"
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE document_pages SET text = 'OCR enriched text', "
+            "extraction_method = 'ocr', has_images = 0, has_visual_content = 1, "
+            "ocr_status = 'succeeded', visual_analysis_status = 'completed' "
+            "WHERE id = ?",
+            (page_id,),
+        )
+        connection.execute(
+            "INSERT INTO document_visuals "
+            "(page_id, visual_index, visual_type, source, bbox_x0, bbox_y0, "
+            "bbox_x1, bbox_y1, description, analysis_status) "
+            "VALUES (?, 0, 'diagram', 'drawing', 1, 2, 10, 20, ?, 'succeeded')",
+            (page_id, "Migrated diagram"),
+        )
+        connection.commit()
+
+    run_alembic(database_path, tmp_path, "downgrade", PAGES_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        assert "document_visuals" not in database_tables(connection)
+        page_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(document_pages)")
+        }
+        assert {
+            "raw_text",
+            "raw_extraction_method",
+            "raw_needs_ocr",
+            "ocr_status",
+            "has_visual_content",
+            "visual_analysis_status",
+        }.isdisjoint(page_columns)
+        downgraded_page = connection.execute(
+            "SELECT text, extraction_method, has_images, needs_ocr "
+            "FROM document_pages WHERE content_index = 1"
+        ).fetchone()
+        assert downgraded_page == ("Legacy scanned text", "native", 0, 0)
+        revision = connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone()
+        assert revision == (PAGES_REVISION,)
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        reupgraded_page = connection.execute(
+            "SELECT raw_text, text, raw_extraction_method, extraction_method, "
+            "has_visual_content, ocr_status, visual_analysis_status "
+            "FROM document_pages WHERE content_index = 1"
+        ).fetchone()
+        assert reupgraded_page == (
+            "Legacy scanned text",
+            "Legacy scanned text",
+            "native",
+            "native",
+            0,
+            "not_required",
+            "not_applicable",
+        )
+        assert connection.execute(
+            "SELECT COUNT(*) FROM document_visuals"
+        ).fetchone() == (0,)
 
 
 def test_processing_migration_backfills_existing_documents(tmp_path: Path) -> None:

@@ -146,7 +146,7 @@ def _extraction_process(connection, storage: Storage, job: ClaimedJob) -> None:
             stage_callback=report_stage,
             extraction_callback=report_extraction,
         )
-        connection.send(("succeeded", result.chunks))
+        connection.send(("succeeded", result.pages, result.chunks))
     except DocumentProcessingError as exc:
         logger.info(
             "Document processing failed for job %s with code %s", job.id, exc.code
@@ -251,10 +251,12 @@ def _extract_with_timeout(
             "Document processing failed unexpectedly.",
             retryable=True,
         )
-    return _chunks_from_process_result(result)
+    return _document_data_from_process_result(result)
 
 
-def _chunks_from_process_result(result) -> list[ChunkData]:
+def _document_data_from_process_result(
+    result,
+) -> tuple[list[PageData], list[ChunkData]]:
     if not isinstance(result, tuple) or not result:
         raise DocumentProcessingError(
             "UNEXPECTED_PROCESSING_ERROR",
@@ -278,13 +280,22 @@ def _chunks_from_process_result(result) -> list[ChunkData]:
             result[2],
             retryable=result[3],
         )
-    if result[0] != "succeeded" or len(result) != 2:
+    if result[0] != "succeeded" or len(result) != 3:
         raise DocumentProcessingError(
             "UNEXPECTED_PROCESSING_ERROR",
             "Document processing failed unexpectedly.",
             retryable=True,
         )
-    chunks = result[1]
+    pages = result[1]
+    chunks = result[2]
+    if not isinstance(pages, list) or any(
+        not isinstance(page, PageData) for page in pages
+    ):
+        raise DocumentProcessingError(
+            "UNEXPECTED_PROCESSING_ERROR",
+            "Document processing failed unexpectedly.",
+            retryable=True,
+        )
     if not isinstance(chunks, list) or any(
         not isinstance(chunk, ChunkData) for chunk in chunks
     ):
@@ -293,7 +304,12 @@ def _chunks_from_process_result(result) -> list[ChunkData]:
             "Document processing failed unexpectedly.",
             retryable=True,
         )
-    return chunks
+    return pages, chunks
+
+
+def _chunks_from_process_result(result) -> list[ChunkData]:
+    """Retain the narrow parser used by existing worker contract tests."""
+    return _document_data_from_process_result(result)[1]
 
 
 def _reap_process(process) -> bool:
@@ -415,7 +431,7 @@ def process_next_job(
                     failed_stage="extracting_text",
                 )
 
-        chunks = _extract_with_timeout(
+        pages, chunks = _extract_with_timeout(
             storage,
             job,
             settings.processing_job_attempt_timeout_seconds,
@@ -456,7 +472,13 @@ def process_next_job(
         return True
     try:
         with session_factory() as session:
-            completed = complete_job(session, job.id, job.claim_token, chunks)
+            completed = complete_job(
+                session,
+                job.id,
+                job.claim_token,
+                chunks,
+                pages,
+            )
     except Exception:
         # Leave the fenced running state intact; periodic recovery safely retries it.
         logger.exception("Failed to finalize processing job %s", job.id)

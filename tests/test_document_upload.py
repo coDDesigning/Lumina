@@ -55,7 +55,7 @@ def document_count(context) -> int:
         return session.scalar(select(func.count()).select_from(UploadedDocument)) or 0
 
 
-def test_first_upload_returns_201_pending_document_with_trusted_metadata(
+def test_first_upload_returns_201_uploaded_document_with_trusted_metadata(
     upload_api,
 ) -> None:
     content = b"Deterministic course notes"
@@ -79,7 +79,7 @@ def test_first_upload_returns_201_pending_document_with_trusted_metadata(
         "mime_type": "text/plain",
         "file_size": len(content),
         "course_id": upload_api.course_id,
-        "status": "pending",
+        "status": "uploaded",
         "created_at": document["created_at"],
         "updated_at": document["updated_at"],
     }
@@ -220,15 +220,8 @@ def test_missing_or_deleted_course_returns_404_without_side_effects(
     [
         ("notes.docx", b"unsupported", 415, "UPLOAD_UNSUPPORTED_FILE_TYPE"),
         ("empty.txt", b"", 422, "UPLOAD_EMPTY_FILE"),
-        ("broken.pdf", b"%PDF-1.7\ntruncated", 422, "UPLOAD_CORRUPTED_PDF"),
-        (
-            "binary.txt",
-            b"\x89PNG\r\n\x1a\nnot text",
-            422,
-            "UPLOAD_CORRUPTED_TEXT",
-        ),
     ],
-    ids=["unsupported", "empty", "corrupt-pdf", "binary-text"],
+    ids=["unsupported", "empty"],
 )
 def test_invalid_uploads_create_no_rows_or_files(
     upload_api,
@@ -244,6 +237,32 @@ def test_invalid_uploads_create_no_rows_or_files(
     assert response.json()["data"] == {"code": expected_code}
     assert document_count(upload_api) == 0
     assert stored_files(upload_api.storage_root) == []
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("broken.pdf", b"%PDF-1.7\ntruncated"),
+        ("binary.txt", b"\x89PNG\r\n\x1a\nnot text"),
+    ],
+    ids=["corrupt-pdf", "binary-text"],
+)
+def test_deep_validation_failures_are_queued_for_worker(
+    upload_api,
+    filename: str,
+    content: bytes,
+) -> None:
+    response = upload_document(upload_api, filename, content)
+
+    assert response.status_code == 201
+    assert response.json()["document"]["status"] == "uploaded"
+    with upload_api.session_factory() as session:
+        document = session.scalar(select(UploadedDocument))
+        job = session.scalar(select(ProcessingJob))
+        assert document is not None
+        assert job is not None
+        assert job.status == "queued"
+        assert upload_api.storage.read(document.storage_key) == content
 
 
 def test_oversized_upload_returns_413_without_side_effects(
@@ -459,7 +478,7 @@ def test_unique_race_returns_winner_and_deletes_losing_file(
         course_id=model_graph.course.id,
         storage_provider=storage.provider,
         storage_key=winner_key,
-        status="pending",
+        status="uploaded",
     )
     enqueue_document_job(db_session, winner)
     db_session.commit()

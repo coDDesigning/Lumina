@@ -162,7 +162,22 @@ Worker behavior is configured through:
 The worker verifies the stored byte count and SHA-256 digest before extraction.
 It also reuses upload page and byte limits, bounds extracted text and chunk
 count, and stores only curated public errors. Extraction runs in a killable
-subprocess with a hard per-attempt timeout. Text-poor PDF pages are recognized
-with local Tesseract OCR. Any existing searchable text is retained alongside
-recognized text. Install every language selected by `OCR_LANGUAGE`; the default
+subprocess with a hard per-attempt timeout.
+
+PDF, TXT, and Markdown files first produce a common raw extraction result. PDF
+content is retained per physical page with one-based page numbers; TXT and
+Markdown produce one content unit with a null page number. Decoded Markdown
+source is retained before cleaning so headings, code fences, indentation, and
+hard line breaks remain available to later stages.
+
+The worker claim-fences an atomic replacement of these raw units in
+`document_pages` before OCR, cleaning, or chunking continues. The rows remain
+available if a later stage fails and are replaced by the next successful raw
+extraction on retry. Existing documents are not backfilled because exact raw
+source text cannot be reconstructed safely from cleaned chunks. PDF pages are
+marked as OCR candidates only when they
+contain images and have less searchable text than `OCR_MIN_TEXT_CHARACTERS`;
+blank pages without images are not OCR candidates. Candidate pages are
+recognized with local Tesseract OCR while native text from other pages is
+retained. Install every language selected by `OCR_LANGUAGE`; the default
 container installs English (`eng`). Image understanding is not enabled.

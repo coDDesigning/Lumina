@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from math import ceil, isfinite
 from uuid import UUID, uuid4
 
 from sqlalchemy import case, delete, func, select, update
@@ -18,6 +19,7 @@ from backend.app.models import (
     JOB_TYPE_EXTRACT_DOCUMENT,
     Course,
     DocumentChunk,
+    DocumentPage,
     ProcessingJob,
     UploadedDocument,
 )
@@ -27,6 +29,16 @@ from backend.app.models import (
 class ChunkData:
     text: str
     page_number: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PageData:
+    content_index: int
+    text: str
+    page_number: int | None
+    extraction_method: str | None
+    has_images: bool
+    needs_ocr: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,6 +342,117 @@ def update_job_stage(
     if result.rowcount != 1:
         session.rollback()
         return False
+    session.commit()
+    return True
+
+
+def replace_document_pages(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    pages: list[PageData],
+    *,
+    now: datetime | None = None,
+    operation_timeout_seconds: float | None = None,
+) -> bool:
+    """Claim-fence an atomic replacement of canonical raw extraction units."""
+    if not pages:
+        raise ValueError("A raw extraction must contain at least one page")
+    if [page.content_index for page in pages] != list(range(len(pages))):
+        raise ValueError("Document page content indexes must be contiguous")
+    for page in pages:
+        if not isinstance(page.text, str):
+            raise ValueError("Document page text must be a string")
+        if page.page_number is not None and page.page_number < 1:
+            raise ValueError("Document page numbers must be positive")
+        if page.extraction_method not in {None, "native", "decoded"}:
+            raise ValueError("Document page extraction method is unsupported")
+        if type(page.has_images) is not bool or type(page.needs_ocr) is not bool:
+            raise ValueError("Document page detection flags must be boolean")
+        if page.needs_ocr and (page.page_number is None or not page.has_images):
+            raise ValueError("OCR candidates must be image-bearing physical pages")
+    if sum(len(page.text) for page in pages) > settings.max_extracted_characters:
+        raise ValueError("Document pages exceed the configured text limit")
+    if operation_timeout_seconds is not None and (
+        isinstance(operation_timeout_seconds, bool)
+        or not isinstance(operation_timeout_seconds, (int, float))
+        or not isfinite(operation_timeout_seconds)
+        or operation_timeout_seconds <= 0
+    ):
+        raise ValueError("Operation timeout must be a positive finite number")
+
+    dialect_name = session.get_bind().dialect.name
+    timeout_milliseconds = (
+        max(1, ceil(operation_timeout_seconds * 1000))
+        if operation_timeout_seconds is not None
+        else None
+    )
+    if dialect_name == "sqlite" and timeout_milliseconds is not None:
+        session.connection().exec_driver_sql(
+            f"PRAGMA busy_timeout={timeout_milliseconds}"
+        )
+    _start_transition(session)
+    if dialect_name == "postgresql" and timeout_milliseconds is not None:
+        timeout = f"{timeout_milliseconds}ms"
+        session.scalar(select(func.set_config("lock_timeout", timeout, True)))
+        session.scalar(select(func.set_config("statement_timeout", timeout, True)))
+    course_id = session.scalar(
+        select(ProcessingJob.course_id).where(ProcessingJob.id == job_id)
+    )
+    if course_id is None:
+        session.rollback()
+        return False
+
+    course_statement = select(Course).where(Course.id == course_id)
+    if dialect_name == "postgresql":
+        course_statement = course_statement.with_for_update(of=Course)
+    course = session.scalar(course_statement)
+    if course is None or course.is_deleted:
+        session.rollback()
+        return False
+
+    statement = (
+        select(ProcessingJob, UploadedDocument)
+        .join(UploadedDocument, UploadedDocument.id == ProcessingJob.document_id)
+        .where(ProcessingJob.id == job_id)
+    )
+    if dialect_name == "postgresql":
+        statement = statement.with_for_update(of=(ProcessingJob, UploadedDocument))
+    row = session.execute(statement).one_or_none()
+    if row is None:
+        session.rollback()
+        return False
+
+    job, document = row
+    recorded_at = _database_now(session, now)
+    if (
+        job.status != JOB_STATUS_RUNNING
+        or job.claim_token != claim_token
+        or job.lease_expires_at is None
+        or job.lease_expires_at <= recorded_at
+        or job.processing_stage != "extracting_text"
+        or document.status != "processing"
+    ):
+        session.rollback()
+        return False
+
+    session.execute(
+        delete(DocumentPage).where(DocumentPage.document_id == job.document_id)
+    )
+    session.add_all(
+        DocumentPage(
+            document_id=job.document_id,
+            course_id=job.course_id,
+            content_index=page.content_index,
+            page_number=page.page_number,
+            text=page.text.replace("\x00", ""),
+            extraction_method=page.extraction_method,
+            has_images=page.has_images,
+            needs_ocr=page.needs_ocr,
+        )
+        for page in pages
+    )
+    session.flush()
     session.commit()
     return True
 

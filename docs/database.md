@@ -15,6 +15,11 @@ python -m alembic current --check-heads
 python -m alembic check
 ```
 
+Exactly one deployment-owned process may apply migrations. API and worker
+entrypoints must never migrate or stamp the database. In the supported
+self-hosted container topology, the one-shot `migrate` service completes before
+Compose starts either runtime role; see [`deployment.md`](deployment.md).
+
 The processing-job revision is an additive child of the canonical SCRUM-30
 revision. During upgrade it creates one extraction job for every existing
 document:
@@ -40,7 +45,7 @@ The API registers documents and enqueues extraction in one database
 transaction. Extraction runs in a separate process:
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330
 python -m workers.document_processor
 ```
 
@@ -75,9 +80,10 @@ storage or operating-system I/O. A forced kill before draining completes leaves
 the lease to expire; recovery is safe, but the interrupted attempt still counts
 toward `PROCESSING_JOB_MAX_ATTEMPTS`.
 
-The API and worker must use the same `STORAGE_BACKEND`, `STORAGE_NAMESPACE`,
-and storage contents. With the current local provider, multiple hosts require a
-shared mounted directory at `UPLOAD_DIRECTORY`.
+The API and worker must use the same `DATABASE_URL`, `STORAGE_BACKEND`,
+`STORAGE_NAMESPACE`, and storage contents. The supported self-hosted Compose
+topology runs on one host and shares one named volume. Multiple hosts remain
+unsupported because no qualified durable shared storage topology exists.
 
 ## PostgreSQL qualification
 

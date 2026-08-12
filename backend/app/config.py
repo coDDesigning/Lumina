@@ -29,6 +29,7 @@ STORAGE_BACKEND_LOCAL = "local"
 DEFAULT_MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
 DEFAULT_MAX_REQUEST_SIZE_BYTES = 1024 * 1024
 DEFAULT_MAX_CONCURRENT_DOCUMENT_VALIDATIONS = 2
+DEFAULT_UPLOAD_REQUEST_TIMEOUT_SECONDS = 300
 DEFAULT_MAX_DOCUMENTS_PER_COURSE = 1000
 DEFAULT_MAX_COURSE_STORAGE_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_PDF_PAGES = 500
@@ -74,6 +75,7 @@ class Settings:
     max_upload_size_bytes: int
     max_request_size_bytes: int
     max_concurrent_document_validations: int
+    upload_request_timeout_seconds: int
     max_documents_per_course: int
     max_course_storage_bytes: int
     max_pdf_pages: int
@@ -208,6 +210,12 @@ def load_settings() -> Settings:
         "MAX_CONCURRENT_DOCUMENT_VALIDATIONS",
         DEFAULT_MAX_CONCURRENT_DOCUMENT_VALIDATIONS,
     )
+    upload_request_timeout_seconds = _bounded_positive_integer_setting(
+        "UPLOAD_REQUEST_TIMEOUT_SECONDS",
+        DEFAULT_UPLOAD_REQUEST_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=300,
+    )
     max_documents_per_course = _positive_integer_setting(
         "MAX_DOCUMENTS_PER_COURSE",
         DEFAULT_MAX_DOCUMENTS_PER_COURSE,
@@ -282,6 +290,7 @@ def load_settings() -> Settings:
         max_upload_size_bytes=max_upload_size_bytes,
         max_request_size_bytes=max_request_size_bytes,
         max_concurrent_document_validations=max_concurrent_document_validations,
+        upload_request_timeout_seconds=upload_request_timeout_seconds,
         max_documents_per_course=max_documents_per_course,
         max_course_storage_bytes=max_course_storage_bytes,
         max_pdf_pages=max_pdf_pages,

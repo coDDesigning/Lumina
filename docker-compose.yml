@@ -1,12 +1,104 @@
-version: '3.8'
+name: ${COMPOSE_PROJECT_NAME:?set a stable COMPOSE_PROJECT_NAME in .env}
+
+x-lumina-environment: &lumina-environment
+  APP_ENV: production
+  APP_DEBUG: "false"
+  DEPLOYMENT_MODE: self_hosted
+  DATABASE_URL: sqlite:////data/lumina.db
+  CHROMA_PERSIST_DIRECTORY: /data/chroma
+  UPLOAD_DIRECTORY: /data/uploads
+  STORAGE_BACKEND: local
+  STORAGE_NAMESPACE: ${STORAGE_NAMESPACE:-self-hosted}
+  MAX_UPLOAD_SIZE_BYTES: ${MAX_UPLOAD_SIZE_BYTES:-52428800}
+  MAX_REQUEST_SIZE_BYTES: ${MAX_REQUEST_SIZE_BYTES:-1048576}
+  MAX_CONCURRENT_DOCUMENT_VALIDATIONS: ${MAX_CONCURRENT_DOCUMENT_VALIDATIONS:-2}
+  UPLOAD_REQUEST_TIMEOUT_SECONDS: ${UPLOAD_REQUEST_TIMEOUT_SECONDS:-300}
+  MAX_DOCUMENTS_PER_COURSE: ${MAX_DOCUMENTS_PER_COURSE:-1000}
+  MAX_COURSE_STORAGE_BYTES: ${MAX_COURSE_STORAGE_BYTES:-2147483648}
+  MAX_PDF_PAGES: ${MAX_PDF_PAGES:-500}
+  MAX_PDF_PAGE_PIXELS: ${MAX_PDF_PAGE_PIXELS:-40000000}
+  MAX_PDF_TOTAL_PIXELS: ${MAX_PDF_TOTAL_PIXELS:-100000000}
+  MAX_PDF_CONTENT_STREAM_BYTES: ${MAX_PDF_CONTENT_STREAM_BYTES:-5242880}
+  MAX_PDF_DRAWING_OPERATIONS: ${MAX_PDF_DRAWING_OPERATIONS:-100000}
+  PROCESSING_JOB_LEASE_SECONDS: ${PROCESSING_JOB_LEASE_SECONDS:-60}
+  PROCESSING_JOB_MAX_ATTEMPTS: ${PROCESSING_JOB_MAX_ATTEMPTS:-3}
+  PROCESSING_JOB_POLL_SECONDS: ${PROCESSING_JOB_POLL_SECONDS:-1.0}
+  PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS: ${PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS:-300}
+  MAX_EXTRACTED_CHARACTERS: ${MAX_EXTRACTED_CHARACTERS:-2000000}
+  MAX_DOCUMENT_CHUNKS: ${MAX_DOCUMENT_CHUNKS:-1000}
+
+x-lumina-service: &lumina-service
+  image: ${LUMINA_IMAGE:-lumina:local}
+  build:
+    context: .
+  user: "10001:10001"
+  environment: *lumina-environment
+  volumes:
+    - lumina-data:/data
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=${LUMINA_TMPFS_SIZE_BYTES:-268435456}
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
 
 services:
-  lumina-backend:
-    build: .
-    ports:
-      - "8000:8000"
+  migrate:
+    <<: *lumina-service
     environment:
-      - DEPLOYMENT_MODE=self_hosted
-    volumes:
-      - ./data:/app/data
+      APP_ENV: production
+      DEPLOYMENT_MODE: self_hosted
+      DATABASE_URL: sqlite:////data/lumina.db
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    restart: "no"
+
+  api:
+    <<: *lumina-service
+    environment:
+      <<: *lumina-environment
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?set BOOTSTRAP_ADMIN_EMAIL in .env}
+      BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:?set BOOTSTRAP_ADMIN_TOKEN in .env}
+    command:
+      ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--limit-concurrency", "100", "--timeout-graceful-shutdown", "330"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    init: true
+    stop_grace_period: 345s
     restart: unless-stopped
+
+  worker:
+    <<: *lumina-service
+    environment:
+      <<: *lumina-environment
+      JWT_SECRET_KEY: worker-does-not-serve-authentication
+      BOOTSTRAP_ADMIN_EMAIL: worker@example.com
+      BOOTSTRAP_ADMIN_TOKEN: worker-does-not-accept-admin-bootstrap
+    command: ["python", "-m", "workers.document_processor"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-m", "workers.document_processor", "--check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    init: true
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-345s}
+    restart: unless-stopped
+
+volumes:
+  lumina-data:

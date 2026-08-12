@@ -22,6 +22,7 @@ from backend.app.config import (
     DEFAULT_PROCESSING_JOB_LEASE_SECONDS,
     DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS,
     DEFAULT_PROCESSING_JOB_POLL_SECONDS,
+    DEFAULT_UPLOAD_REQUEST_TIMEOUT_SECONDS,
     MODE_HOSTED,
     MODE_SELF_HOSTED,
     load_settings,
@@ -43,6 +44,7 @@ CONFIGURATION_KEYS = (
     "MAX_UPLOAD_SIZE_BYTES",
     "MAX_REQUEST_SIZE_BYTES",
     "MAX_CONCURRENT_DOCUMENT_VALIDATIONS",
+    "UPLOAD_REQUEST_TIMEOUT_SECONDS",
     "MAX_DOCUMENTS_PER_COURSE",
     "MAX_COURSE_STORAGE_BYTES",
     "MAX_PDF_PAGES",
@@ -96,6 +98,9 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
     assert (
         loaded.max_concurrent_document_validations
         == DEFAULT_MAX_CONCURRENT_DOCUMENT_VALIDATIONS
+    )
+    assert (
+        loaded.upload_request_timeout_seconds == DEFAULT_UPLOAD_REQUEST_TIMEOUT_SECONDS
     )
     assert loaded.max_documents_per_course == DEFAULT_MAX_DOCUMENTS_PER_COURSE
     assert loaded.max_course_storage_bytes == DEFAULT_MAX_COURSE_STORAGE_BYTES
@@ -284,6 +289,7 @@ def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MAX_UPLOAD_SIZE_BYTES", "1024")
     monkeypatch.setenv("MAX_REQUEST_SIZE_BYTES", "512")
     monkeypatch.setenv("MAX_CONCURRENT_DOCUMENT_VALIDATIONS", "3")
+    monkeypatch.setenv("UPLOAD_REQUEST_TIMEOUT_SECONDS", "45")
     monkeypatch.setenv("MAX_DOCUMENTS_PER_COURSE", "4")
     monkeypatch.setenv("MAX_COURSE_STORAGE_BYTES", "5000")
     monkeypatch.setenv("MAX_PDF_PAGES", "12")
@@ -301,6 +307,7 @@ def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     assert load_settings().max_upload_size_bytes == 1024
     assert load_settings().max_request_size_bytes == 512
     assert load_settings().max_concurrent_document_validations == 3
+    assert load_settings().upload_request_timeout_seconds == 45
     assert load_settings().max_documents_per_course == 4
     assert load_settings().max_course_storage_bytes == 5000
     assert load_settings().max_pdf_pages == 12
@@ -351,6 +358,7 @@ def test_processing_poll_interval_must_be_positive_and_finite(
         "PROCESSING_JOB_LEASE_SECONDS",
         "PROCESSING_JOB_MAX_ATTEMPTS",
         "PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS",
+        "UPLOAD_REQUEST_TIMEOUT_SECONDS",
         "MAX_EXTRACTED_CHARACTERS",
         "MAX_DOCUMENT_CHUNKS",
     ],
@@ -372,6 +380,7 @@ def test_processing_integer_limits_must_be_positive(
         ("PROCESSING_JOB_LEASE_SECONDS", "86401"),
         ("PROCESSING_JOB_MAX_ATTEMPTS", "101"),
         ("PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS", "86401"),
+        ("UPLOAD_REQUEST_TIMEOUT_SECONDS", "301"),
     ],
 )
 def test_processing_operational_limits_are_bounded(

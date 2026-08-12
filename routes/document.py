@@ -123,6 +123,7 @@ async def upload_http_error(
         401: {"description": "Authentication required"},
         403: {"description": "Account is not allowed to upload"},
         404: {"description": "Course not found"},
+        408: {"description": "Upload admission or body timeout"},
         409: {"model": UploadErrorResponse, "description": "Course document limit"},
         413: {"model": UploadErrorResponse, "description": "Document too large"},
         415: {"model": UploadErrorResponse, "description": "Unsupported file type"},

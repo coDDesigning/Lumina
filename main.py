@@ -26,6 +26,8 @@ app.add_middleware(
     RequestSizeLimitMiddleware,
     max_request_body_size=settings.max_request_size_bytes,
     max_upload_body_size=settings.max_upload_size_bytes + MULTIPART_OVERHEAD_BYTES,
+    max_concurrent_uploads=settings.max_concurrent_document_validations,
+    upload_request_timeout_seconds=settings.upload_request_timeout_seconds,
 )
 
 app.include_router(auth.router)

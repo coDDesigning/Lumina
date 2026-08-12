@@ -1,42 +1,54 @@
-FROM python:3.12-slim-bookworm
+FROM python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
 
-# Prevent Python from writing pyc files to disk and buffering stdout/stderr
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
+    PIP_NO_INPUT=1 \
+    HOME=/tmp \
+    TMPDIR=/tmp \
     TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         tesseract-ocr \
         tesseract-ocr-eng \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 lumina \
+    && useradd --uid 10001 --gid 10001 \
+        --no-create-home --home-dir /nonexistent \
+        --shell /usr/sbin/nologin lumina \
+    && mkdir -p /app /data/uploads /data/chroma \
+    && chown -R 10001:10001 /data \
+    && chmod 0750 /data /data/uploads /data/chroma
 
 WORKDIR /app
 
-# Copy requirement files
-COPY requirements.txt .
-
-# Install reviewed, hash-locked dependencies.
+COPY requirements.txt ./requirements.txt
 RUN python -m pip install \
-    --require-hashes \
-    --only-binary=:all: \
-    --requirement requirements.txt
+        --require-hashes \
+        --only-binary=:all: \
+        --requirement requirements.txt \
+    && python -m pip check
 
-# Copy the rest of the application
-COPY . .
+COPY alembic.ini main.py entrypoint.sh ./
+COPY alembic ./alembic
+COPY app ./app
+COPY backend ./backend
+COPY routes ./routes
+COPY schemas ./schemas
+COPY services ./services
+COPY storage ./storage
+COPY utils ./utils
+COPY workers ./workers
 
-# Ensure entrypoint is executable
-RUN chmod +x entrypoint.sh
+RUN find /app -type d -exec chmod 0555 {} + \
+    && find /app -type f -exec chmod 0444 {} + \
+    && chmod 0555 /app/entrypoint.sh
 
-# Ensure the data directory exists for SQLite and local storage
-RUN mkdir -p /app/data
-
-# Default to self_hosted mode, can be overridden by docker-compose
-ENV DEPLOYMENT_MODE=self_hosted
+USER 10001:10001
 
 EXPOSE 8000
 
-ENTRYPOINT ["./entrypoint.sh"]
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--limit-concurrency", "100", "--timeout-graceful-shutdown", "330"]

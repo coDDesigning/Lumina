@@ -132,7 +132,7 @@ def load_settings() -> Settings:
     if app_env == APP_ENV_PRODUCTION and mode == MODE_HOSTED:
         raise ValueError(
             "Hosted production is not supported until durable shared storage "
-            "and live PostgreSQL qualification are implemented."
+            "and deployment topology are qualified."
         )
     database_url = load_database_url(mode, app_env=app_env)
 

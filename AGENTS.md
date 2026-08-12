@@ -16,13 +16,13 @@ Operating instructions for coding agents in this repository.
 - `backend/app/config.py` owns application settings. `backend/app/database_config.py` reads the database-only subset for Alembic and currently loads `.env`; do not add environment reads elsewhere. Settings are frozen and import-cached.
 - `DEPLOYMENT_MODE=self_hosted` defaults to SQLite and local paths. Hosted staging requires PostgreSQL and is exercised by a pinned live CI service; hosted production remains blocked because shared storage, pgvector, and S3 adapters are not implemented.
 - `backend/app/database.py` creates SQLite parent directories outside production and enables `PRAGMA foreign_keys=ON` for every connection. Do not remove the listener; SQLite cascades depend on it.
-- `backend/app/models.py` defines the 12-table relational model. `DocumentChunk.course_id` is intentional denormalization for course-scoped reads.
+- `backend/app/models.py` defines the 13-table relational model. `DocumentChunk.course_id` and `DocumentPage.course_id` are intentional denormalization for course-scoped reads.
 - Keep DB `ondelete="CASCADE"` and ORM `cascade="all, delete-orphan", passive_deletes=True` together. `User -> Role` deliberately does not cascade.
 - Root `routes/`, `schemas/`, `services/`, and `utils/` belong to the FastAPI layer. Do not move them under `backend/app/` without an explicit team decision.
 - User, course, document, and processing services persist through SQLAlchemy sessions; do not reintroduce process-local stores.
 - `main:app` includes auth, course, admin, user, and document routers.
 - Document upload validates bytes and writes generated, content-derived paths. Never derive storage paths from client filenames.
-- Alembic is the only runtime schema-management mechanism. The canonical chain is `97d9fd86a3ba -> b6d8f2a4c901`; add schema changes as descendants and keep one base/head unless an explicit migration design requires otherwise.
+- Alembic is the only runtime schema-management mechanism. The canonical chain is `97d9fd86a3ba -> b6d8f2a4c901 -> d2a7f0c91e35 -> c4e6a8f1b203`; add schema changes as descendants and keep one base/head unless an explicit migration design requires otherwise.
 - `frontend/` is a React 19 + TypeScript + Vite application with its own npm lockfile and commands.
 - Vector retrieval is not implemented. Do not document or call planned vector components as available until dependencies, durable indexing, deletion, and retrieval contracts land with tests.
 - The root `Dockerfile` and `docker-compose.yml` are the supported single-host self-hosted container path. They run one-shot migrations before separate API and worker services as UID/GID 10001 on a shared named volume. `docker-compose.hosted.yml` remains experimental and unsupported for production.

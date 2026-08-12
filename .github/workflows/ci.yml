@@ -384,6 +384,8 @@ jobs:
           test "$(docker image inspect --format '{{.Config.User}}' "$LUMINA_IMAGE")" = "10001:10001"
           test "$(docker run --rm --entrypoint id "$LUMINA_IMAGE" -u)" = "10001"
           docker run --rm --entrypoint python "$LUMINA_IMAGE" -m pip check
+          docker run --rm --entrypoint tesseract "$LUMINA_IMAGE" --version
+          docker run --rm --entrypoint tesseract "$LUMINA_IMAGE" --list-langs | grep --line-regexp eng
           docker run --rm --read-only \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
             --entrypoint python "$LUMINA_IMAGE" -c '

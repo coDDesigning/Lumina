@@ -3,11 +3,18 @@ FROM python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e2631
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
     PIP_NO_INPUT=1 \
     HOME=/tmp \
-    TMPDIR=/tmp
+    TMPDIR=/tmp \
+    TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 
-RUN groupadd --gid 10001 lumina \
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 lumina \
     && useradd --uid 10001 --gid 10001 \
         --no-create-home --home-dir /nonexistent \
         --shell /usr/sbin/nologin lumina \
@@ -19,7 +26,6 @@ WORKDIR /app
 
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install \
-        --no-cache-dir \
         --require-hashes \
         --only-binary=:all: \
         --requirement requirements.txt \

@@ -14,7 +14,13 @@ from backend.app.config import (
     MODE_SELF_HOSTED,
     settings,
 )
-from backend.app.models import Course, DocumentChunk, UploadedDocument, User
+from backend.app.models import (
+    Course,
+    DocumentChunk,
+    DocumentPage,
+    UploadedDocument,
+    User,
+)
 from schemas.course import CourseCreate
 from schemas.user import Role, UserCreate, UserUpdate
 from services.course import CourseService
@@ -129,10 +135,21 @@ def test_user_delete_cascades_loaded_documents_and_chunks(
         page_number=None,
         text="cascade",
     )
-    db_session.add(chunk)
+    page = DocumentPage(
+        document=document,
+        course=model_graph.course,
+        content_index=0,
+        page_number=None,
+        text="raw cascade",
+        extraction_method="decoded",
+        has_images=False,
+        needs_ocr=False,
+    )
+    db_session.add_all((chunk, page))
     db_session.commit()
     document_id = document.id
     chunk_id = chunk.id
+    page_id = page.id
 
     assert list(model_graph.user.uploaded_documents) == [document]
     db_session.delete(model_graph.user)
@@ -140,6 +157,7 @@ def test_user_delete_cascades_loaded_documents_and_chunks(
 
     assert db_session.get(UploadedDocument, document_id) is None
     assert db_session.get(DocumentChunk, chunk_id) is None
+    assert db_session.get(DocumentPage, page_id) is None
 
 
 def test_course_creation_recovers_lost_commit_acknowledgement(

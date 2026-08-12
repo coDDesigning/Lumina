@@ -25,6 +25,11 @@
       "code": "UPLOAD_COURSE_DOCUMENT_LIMIT",
       "message": "The course document storage limit has been reached."
     },
+    "document_deletion_in_progress": {
+      "status_code": 409,
+      "code": "UPLOAD_DOCUMENT_DELETION_IN_PROGRESS",
+      "message": "A matching document is being deleted. Please retry the upload."
+    },
     "empty_file": {
       "status_code": 422,
       "code": "UPLOAD_EMPTY_FILE",

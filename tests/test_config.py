@@ -18,6 +18,11 @@ from backend.app.config import (
     DEFAULT_MAX_PDF_TOTAL_PIXELS,
     DEFAULT_MAX_REQUEST_SIZE_BYTES,
     DEFAULT_MAX_UPLOAD_SIZE_BYTES,
+    DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS,
+    DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS,
+    DEFAULT_OCR_DPI,
+    DEFAULT_OCR_LANGUAGE,
+    DEFAULT_OCR_MIN_TEXT_CHARACTERS,
     DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
     DEFAULT_PROCESSING_JOB_LEASE_SECONDS,
     DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS,
@@ -58,6 +63,11 @@ CONFIGURATION_KEYS = (
     "PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS",
     "MAX_EXTRACTED_CHARACTERS",
     "MAX_DOCUMENT_CHUNKS",
+    "OCR_LANGUAGE",
+    "OCR_DPI",
+    "OCR_MIN_TEXT_CHARACTERS",
+    "DOCUMENT_CHUNK_SIZE_CHARACTERS",
+    "DOCUMENT_CHUNK_OVERLAP_CHARACTERS",
 )
 
 
@@ -118,6 +128,16 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
     )
     assert loaded.max_extracted_characters == DEFAULT_MAX_EXTRACTED_CHARACTERS
     assert loaded.max_document_chunks == DEFAULT_MAX_DOCUMENT_CHUNKS
+    assert loaded.ocr_language == DEFAULT_OCR_LANGUAGE
+    assert loaded.ocr_dpi == DEFAULT_OCR_DPI
+    assert loaded.ocr_min_text_characters == DEFAULT_OCR_MIN_TEXT_CHARACTERS
+    assert (
+        loaded.document_chunk_size_characters == DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS
+    )
+    assert (
+        loaded.document_chunk_overlap_characters
+        == DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS
+    )
 
 
 def test_staging_defaults_to_debug_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -303,6 +323,11 @@ def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS", "120")
     monkeypatch.setenv("MAX_EXTRACTED_CHARACTERS", "6000")
     monkeypatch.setenv("MAX_DOCUMENT_CHUNKS", "7")
+    monkeypatch.setenv("OCR_LANGUAGE", "eng+deu")
+    monkeypatch.setenv("OCR_DPI", "400")
+    monkeypatch.setenv("OCR_MIN_TEXT_CHARACTERS", "0")
+    monkeypatch.setenv("DOCUMENT_CHUNK_SIZE_CHARACTERS", "500")
+    monkeypatch.setenv("DOCUMENT_CHUNK_OVERLAP_CHARACTERS", "0")
 
     assert load_settings().max_upload_size_bytes == 1024
     assert load_settings().max_request_size_bytes == 512
@@ -321,6 +346,11 @@ def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     assert load_settings().processing_job_attempt_timeout_seconds == 120
     assert load_settings().max_extracted_characters == 6000
     assert load_settings().max_document_chunks == 7
+    assert load_settings().ocr_language == "eng+deu"
+    assert load_settings().ocr_dpi == 400
+    assert load_settings().ocr_min_text_characters == 0
+    assert load_settings().document_chunk_size_characters == 500
+    assert load_settings().document_chunk_overlap_characters == 0
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
@@ -361,6 +391,8 @@ def test_processing_poll_interval_must_be_positive_and_finite(
         "UPLOAD_REQUEST_TIMEOUT_SECONDS",
         "MAX_EXTRACTED_CHARACTERS",
         "MAX_DOCUMENT_CHUNKS",
+        "OCR_DPI",
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS",
     ],
 )
 def test_processing_integer_limits_must_be_positive(
@@ -370,6 +402,45 @@ def test_processing_integer_limits_must_be_positive(
     monkeypatch.setenv(name, "0")
 
     with pytest.raises(ValueError, match=name):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("OCR_MIN_TEXT_CHARACTERS", "-1"),
+        ("DOCUMENT_CHUNK_OVERLAP_CHARACTERS", "-1"),
+    ],
+)
+def test_processing_nonnegative_settings_are_validated(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match=name):
+        load_settings()
+
+
+def test_chunk_overlap_must_be_smaller_than_chunk_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DOCUMENT_CHUNK_SIZE_CHARACTERS", "100")
+    monkeypatch.setenv("DOCUMENT_CHUNK_OVERLAP_CHARACTERS", "100")
+
+    with pytest.raises(ValueError, match="DOCUMENT_CHUNK_OVERLAP_CHARACTERS"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["", "eng fra", "+eng", "eng+"])
+def test_ocr_language_expression_must_be_safe(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("OCR_LANGUAGE", value)
+
+    with pytest.raises(ValueError, match="OCR_LANGUAGE"):
         load_settings()
 
 

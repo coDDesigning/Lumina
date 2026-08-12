@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from math import ceil, isfinite
 from uuid import UUID, uuid4
 
 from sqlalchemy import case, delete, func, select, update
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.database import begin_serialized_write
 from backend.app.models import (
+    DOCUMENT_PROCESSING_STAGES,
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
@@ -17,6 +19,7 @@ from backend.app.models import (
     JOB_TYPE_EXTRACT_DOCUMENT,
     Course,
     DocumentChunk,
+    DocumentPage,
     ProcessingJob,
     UploadedDocument,
 )
@@ -26,6 +29,16 @@ from backend.app.models import (
 class ChunkData:
     text: str
     page_number: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PageData:
+    content_index: int
+    text: str
+    page_number: int | None
+    extraction_method: str | None
+    has_images: bool
+    needs_ocr: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +58,25 @@ class ClaimedJob:
 
 class ProcessingJobStateError(RuntimeError):
     """A requested transition is not valid for the current durable state."""
+
+
+_EXPECTED_STAGES = {
+    "validating": ("validating",),
+    "extracting_text": ("validating", "extracting_text"),
+    "running_ocr": ("extracting_text", "running_ocr"),
+    "understanding_images": (
+        "extracting_text",
+        "running_ocr",
+        "understanding_images",
+    ),
+    "cleaning_text": (
+        "extracting_text",
+        "running_ocr",
+        "understanding_images",
+        "cleaning_text",
+    ),
+    "chunking": ("cleaning_text", "chunking"),
+}
 
 
 def _supplied_utc(value: datetime) -> datetime:
@@ -144,7 +176,7 @@ def claim_next_job(
             ProcessingJob.status == JOB_STATUS_QUEUED,
             ProcessingJob.available_at <= eligibility_time,
             ProcessingJob.attempt_count < ProcessingJob.max_attempts,
-            UploadedDocument.status == "pending",
+            UploadedDocument.status == "uploaded",
             UploadedDocument.storage_provider == storage_provider,
             Course.is_deleted.is_(False),
         )
@@ -175,7 +207,7 @@ def claim_next_job(
         .join(UploadedDocument, UploadedDocument.id == ProcessingJob.document_id)
         .where(
             ProcessingJob.id == job_id,
-            UploadedDocument.status == "pending",
+            UploadedDocument.status == "uploaded",
         )
     )
     if dialect_name == "postgresql":
@@ -211,6 +243,8 @@ def claim_next_job(
             finished_at=None,
             last_error_code=None,
             last_error_message=None,
+            processing_stage="validating",
+            failed_stage=None,
             updated_at=claimed_at,
         )
     )
@@ -223,7 +257,7 @@ def claim_next_job(
         .where(
             UploadedDocument.id == row.document_id,
             UploadedDocument.course_id == row.course_id,
-            UploadedDocument.status == "pending",
+            UploadedDocument.status == "uploaded",
         )
         .values(status="processing", processing_error=None, updated_at=claimed_at)
     )
@@ -277,6 +311,148 @@ def heartbeat_job(
     if result.rowcount != 1:
         session.rollback()
         return False
+    session.commit()
+    return True
+
+
+def update_job_stage(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    stage: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if stage not in DOCUMENT_PROCESSING_STAGES:
+        raise ValueError(f"Unsupported document processing stage: {stage}")
+
+    _start_transition(session)
+    updated_at = _database_now(session, now)
+    result = session.execute(
+        update(ProcessingJob)
+        .where(
+            ProcessingJob.id == job_id,
+            ProcessingJob.status == JOB_STATUS_RUNNING,
+            ProcessingJob.claim_token == claim_token,
+            ProcessingJob.lease_expires_at > updated_at,
+            ProcessingJob.processing_stage.in_(_EXPECTED_STAGES[stage]),
+        )
+        .values(processing_stage=stage, updated_at=updated_at)
+    )
+    if result.rowcount != 1:
+        session.rollback()
+        return False
+    session.commit()
+    return True
+
+
+def replace_document_pages(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    pages: list[PageData],
+    *,
+    now: datetime | None = None,
+    operation_timeout_seconds: float | None = None,
+) -> bool:
+    """Claim-fence an atomic replacement of canonical raw extraction units."""
+    if not pages:
+        raise ValueError("A raw extraction must contain at least one page")
+    if [page.content_index for page in pages] != list(range(len(pages))):
+        raise ValueError("Document page content indexes must be contiguous")
+    for page in pages:
+        if not isinstance(page.text, str):
+            raise ValueError("Document page text must be a string")
+        if page.page_number is not None and page.page_number < 1:
+            raise ValueError("Document page numbers must be positive")
+        if page.extraction_method not in {None, "native", "decoded"}:
+            raise ValueError("Document page extraction method is unsupported")
+        if type(page.has_images) is not bool or type(page.needs_ocr) is not bool:
+            raise ValueError("Document page detection flags must be boolean")
+        if page.needs_ocr and (page.page_number is None or not page.has_images):
+            raise ValueError("OCR candidates must be image-bearing physical pages")
+    if sum(len(page.text) for page in pages) > settings.max_extracted_characters:
+        raise ValueError("Document pages exceed the configured text limit")
+    if operation_timeout_seconds is not None and (
+        isinstance(operation_timeout_seconds, bool)
+        or not isinstance(operation_timeout_seconds, (int, float))
+        or not isfinite(operation_timeout_seconds)
+        or operation_timeout_seconds <= 0
+    ):
+        raise ValueError("Operation timeout must be a positive finite number")
+
+    dialect_name = session.get_bind().dialect.name
+    timeout_milliseconds = (
+        max(1, ceil(operation_timeout_seconds * 1000))
+        if operation_timeout_seconds is not None
+        else None
+    )
+    if dialect_name == "sqlite" and timeout_milliseconds is not None:
+        session.connection().exec_driver_sql(
+            f"PRAGMA busy_timeout={timeout_milliseconds}"
+        )
+    _start_transition(session)
+    if dialect_name == "postgresql" and timeout_milliseconds is not None:
+        timeout = f"{timeout_milliseconds}ms"
+        session.scalar(select(func.set_config("lock_timeout", timeout, True)))
+        session.scalar(select(func.set_config("statement_timeout", timeout, True)))
+    course_id = session.scalar(
+        select(ProcessingJob.course_id).where(ProcessingJob.id == job_id)
+    )
+    if course_id is None:
+        session.rollback()
+        return False
+
+    course_statement = select(Course).where(Course.id == course_id)
+    if dialect_name == "postgresql":
+        course_statement = course_statement.with_for_update(of=Course)
+    course = session.scalar(course_statement)
+    if course is None or course.is_deleted:
+        session.rollback()
+        return False
+
+    statement = (
+        select(ProcessingJob, UploadedDocument)
+        .join(UploadedDocument, UploadedDocument.id == ProcessingJob.document_id)
+        .where(ProcessingJob.id == job_id)
+    )
+    if dialect_name == "postgresql":
+        statement = statement.with_for_update(of=(ProcessingJob, UploadedDocument))
+    row = session.execute(statement).one_or_none()
+    if row is None:
+        session.rollback()
+        return False
+
+    job, document = row
+    recorded_at = _database_now(session, now)
+    if (
+        job.status != JOB_STATUS_RUNNING
+        or job.claim_token != claim_token
+        or job.lease_expires_at is None
+        or job.lease_expires_at <= recorded_at
+        or job.processing_stage != "extracting_text"
+        or document.status != "processing"
+    ):
+        session.rollback()
+        return False
+
+    session.execute(
+        delete(DocumentPage).where(DocumentPage.document_id == job.document_id)
+    )
+    session.add_all(
+        DocumentPage(
+            document_id=job.document_id,
+            course_id=job.course_id,
+            content_index=page.content_index,
+            page_number=page.page_number,
+            text=page.text.replace("\x00", ""),
+            extraction_method=page.extraction_method,
+            has_images=page.has_images,
+            needs_ocr=page.needs_ocr,
+        )
+        for page in pages
+    )
+    session.flush()
     session.commit()
     return True
 
@@ -342,6 +518,8 @@ def complete_job(
     job.finished_at = finished_at
     job.last_error_code = None
     job.last_error_message = None
+    job.processing_stage = None
+    job.failed_stage = None
     job.updated_at = finished_at
     _clear_lease(job)
 
@@ -358,7 +536,7 @@ def complete_job(
         )
         for index, chunk in enumerate(chunks)
     )
-    document.status = "completed"
+    document.status = "ready"
     document.processing_error = None
     document.updated_at = finished_at
     session.flush()
@@ -414,10 +592,12 @@ def fail_job(
     job.finished_at = None if should_retry else failed_at
     job.last_error_code = error_code.strip()[:100]
     job.last_error_message = message
+    job.failed_stage = None if should_retry else job.processing_stage
+    job.processing_stage = None
     job.updated_at = failed_at
     _clear_lease(job)
 
-    document.status = "pending" if should_retry else "failed"
+    document.status = "uploaded" if should_retry else "failed"
     document.processing_error = None if should_retry else message
     document.updated_at = failed_at
     session.commit()
@@ -466,13 +646,15 @@ def recover_expired_jobs(
         job.finished_at = None if should_retry else recovered_at
         job.last_error_code = "COURSE_DELETED" if course.is_deleted else "LEASE_EXPIRED"
         job.last_error_message = message
+        job.failed_stage = None if should_retry else job.processing_stage
+        job.processing_stage = None
         job.updated_at = recovered_at
         _clear_lease(job)
         document_updates.append((document, should_retry, message))
 
     session.flush()
     for document, should_retry, message in document_updates:
-        document.status = "pending" if should_retry else "failed"
+        document.status = "uploaded" if should_retry else "failed"
         document.processing_error = None if should_retry else message
         document.updated_at = recovered_at
 
@@ -507,6 +689,7 @@ def retry_failed_job(
         .where(
             UploadedDocument.id == document_id,
             UploadedDocument.course_id == course_id,
+            UploadedDocument.status != "deleting",
             ProcessingJob.job_type == JOB_TYPE_EXTRACT_DOCUMENT,
         )
     )
@@ -529,9 +712,11 @@ def retry_failed_job(
     job.finished_at = None
     job.last_error_code = None
     job.last_error_message = None
+    job.processing_stage = None
+    job.failed_stage = None
     job.updated_at = available_at
     _clear_lease(job)
-    document.status = "pending"
+    document.status = "uploaded"
     document.processing_error = None
     document.updated_at = available_at
     session.commit()
@@ -565,6 +750,8 @@ def fence_course_jobs(
         job.finished_at = fenced_at
         job.last_error_code = "COURSE_DELETED"
         job.last_error_message = message
+        job.failed_stage = job.processing_stage
+        job.processing_stage = None
         job.updated_at = fenced_at
         _clear_lease(job)
     # Keep the global lock order job -> document consistent with claims/recovery.
@@ -573,7 +760,7 @@ def fence_course_jobs(
         update(UploadedDocument)
         .where(
             UploadedDocument.id.in_(document_ids),
-            UploadedDocument.status.in_(("pending", "processing")),
+            UploadedDocument.status.in_(("uploaded", "processing")),
         )
         .values(
             status="failed",

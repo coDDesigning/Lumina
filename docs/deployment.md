@@ -174,6 +174,11 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-gr
 python -m workers.document_processor
 ```
 
+The image installs Tesseract with English language data. Custom `OCR_LANGUAGE`
+values require rebuilding the image with the matching `*.traineddata` packages.
+OCR-dependent documents fail with a safe `OCR_UNAVAILABLE` code when the runtime
+does not provide the selected language.
+
 ## Health probes
 
 The API exposes unauthenticated operational probes:

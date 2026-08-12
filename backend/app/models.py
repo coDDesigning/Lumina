@@ -31,6 +31,17 @@ JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_RUNNING = "running"
 JOB_STATUS_SUCCEEDED = "succeeded"
 JOB_STATUS_FAILED = "failed"
+DOCUMENT_PROCESSING_STAGES = (
+    "validating",
+    "extracting_text",
+    "running_ocr",
+    "understanding_images",
+    "cleaning_text",
+    "chunking",
+)
+_DOCUMENT_PROCESSING_STAGES_SQL = ", ".join(
+    f"'{stage}'" for stage in DOCUMENT_PROCESSING_STAGES
+)
 
 
 class UTCDateTime(TypeDecorator[datetime]):
@@ -148,6 +159,12 @@ class Course(Base):
         passive_deletes=True,
         overlaps="document,chunks",
     )
+    document_pages: Mapped[list["DocumentPage"]] = relationship(
+        back_populates="course",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        overlaps="document,document_pages",
+    )
 
     # AI-generated artifacts (summaries and similar) for this course.
     generated_outputs: Mapped[list["GeneratedOutput"]] = relationship(
@@ -181,7 +198,7 @@ class UploadedDocument(Base):
         CheckConstraint("length(file_hash) = 64", name="file_hash_length"),
         CheckConstraint("file_size >= 0", name="file_size_nonnegative"),
         CheckConstraint(
-            "status IN ('pending', 'processing', 'completed', 'failed')",
+            "status IN ('uploaded', 'processing', 'ready', 'failed', 'deleting')",
             name="status_valid",
         ),
     )
@@ -201,7 +218,7 @@ class UploadedDocument(Base):
     storage_provider: Mapped[str] = mapped_column(String(50))
     storage_key: Mapped[str] = mapped_column(String(500))
     status: Mapped[str] = mapped_column(
-        String(20), default="pending", server_default="pending"
+        String(20), default="uploaded", server_default="uploaded"
     )
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -218,6 +235,13 @@ class UploadedDocument(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         overlaps="course,chunks",
+    )
+    pages: Mapped[list["DocumentPage"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="DocumentPage.content_index",
+        overlaps="course,document_pages",
     )
     processing_jobs: Mapped[list["ProcessingJob"]] = relationship(
         back_populates="document",
@@ -269,6 +293,63 @@ class DocumentChunk(Base):
     )
 
 
+class DocumentPage(Base):
+    """Canonical raw extraction unit retained before downstream processing."""
+
+    __tablename__ = "document_pages"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "content_index",
+            name="uq_document_pages_document_content_index",
+        ),
+        CheckConstraint("content_index >= 0", name="content_index_nonnegative"),
+        CheckConstraint(
+            "page_number IS NULL OR page_number >= 1", name="page_number_positive"
+        ),
+        CheckConstraint(
+            "extraction_method IS NULL OR extraction_method IN ('native', 'decoded')",
+            name="extraction_method_valid",
+        ),
+        CheckConstraint(
+            "NOT needs_ocr OR (page_number IS NOT NULL AND has_images)",
+            name="ocr_candidate_valid",
+        ),
+        ForeignKeyConstraint(
+            ["document_id", "course_id"],
+            ["uploaded_documents.id", "uploaded_documents.course_id"],
+            name="fk_document_pages_document_course_uploaded_documents",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True))
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True
+    )
+    content_index: Mapped[int] = mapped_column(Integer)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    text: Mapped[str] = mapped_column(Text)
+    extraction_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    has_images: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    needs_ocr: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    document: Mapped["UploadedDocument"] = relationship(
+        back_populates="pages", overlaps="course,document_pages"
+    )
+    course: Mapped["Course"] = relationship(
+        back_populates="document_pages", overlaps="document,pages"
+    )
+
+
 class ProcessingJob(Base):
     __tablename__ = "processing_jobs"
     __table_args__ = (
@@ -311,6 +392,24 @@ class ProcessingJob(Base):
             "(status IN ('queued', 'running') AND finished_at IS NULL)",
             name="finished_state_valid",
         ),
+        CheckConstraint(
+            "processing_stage IS NULL OR processing_stage IN "
+            f"({_DOCUMENT_PROCESSING_STAGES_SQL})",
+            name="processing_stage_valid",
+        ),
+        CheckConstraint(
+            "failed_stage IS NULL OR failed_stage IN "
+            f"({_DOCUMENT_PROCESSING_STAGES_SQL})",
+            name="failed_stage_valid",
+        ),
+        CheckConstraint(
+            "processing_stage IS NULL OR status = 'running'",
+            name="processing_stage_status",
+        ),
+        CheckConstraint(
+            "failed_stage IS NULL OR status = 'failed'",
+            name="failed_stage_status",
+        ),
         Index("ix_processing_jobs_claimable", "status", "available_at", "id"),
         Index("ix_processing_jobs_recoverable", "status", "lease_expires_at", "id"),
         Index("ix_processing_jobs_course_created", "course_id", "created_at"),
@@ -337,6 +436,8 @@ class ProcessingJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processing_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    failed_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )

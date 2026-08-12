@@ -37,6 +37,8 @@ class ProcessingJobResponse(BaseModel):
     finished_at: datetime | None
     last_error_code: str | None
     last_error_message: str | None
+    processing_stage: str | None
+    failed_stage: str | None
 
 
 class DocumentStatusResponse(BaseModel):

@@ -11,7 +11,9 @@ from alembic.script import ScriptDirectory
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
 BASE_REVISION = "97d9fd86a3ba"
-HEAD_REVISION = "b6d8f2a4c901"
+PROCESSING_REVISION = "b6d8f2a4c901"
+STAGES_REVISION = "d2a7f0c91e35"
+HEAD_REVISION = "c4e6a8f1b203"
 
 
 def test_migration_graph_has_one_canonical_base_and_head() -> None:
@@ -25,7 +27,9 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: BASE_REVISION,
+        HEAD_REVISION: STAGES_REVISION,
+        STAGES_REVISION: PROCESSING_REVISION,
+        PROCESSING_REVISION: BASE_REVISION,
         BASE_REVISION: None,
     }
 
@@ -89,6 +93,7 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert "courses" in tables
         assert "uploaded_documents" in tables
         assert "document_chunks" in tables
+        assert "document_pages" in tables
         assert "processing_jobs" in tables
 
         roles = connection.execute("SELECT name FROM roles ORDER BY name").fetchall()
@@ -129,6 +134,20 @@ def assert_upgraded_schema(database_path: Path) -> None:
         normalized_job_sql = " ".join(job_sql[0].lower().split())
         assert "uq_processing_jobs_document_type" in normalized_job_sql
         assert "ck_processing_jobs_lease_state_valid" in normalized_job_sql
+        assert "ck_processing_jobs_processing_stage_valid" in normalized_job_sql
+        assert "ck_processing_jobs_failed_stage_valid" in normalized_job_sql
+        job_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(processing_jobs)")
+        }
+        assert {"processing_stage", "failed_stage"} <= job_columns
+        page_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'document_pages'"
+        ).fetchone()
+        assert page_sql is not None
+        normalized_page_sql = " ".join(page_sql[0].lower().split())
+        assert "uq_document_pages_document_content_index" in normalized_page_sql
+        assert "ck_document_pages_ocr_candidate_valid" in normalized_page_sql
 
 
 def test_production_migration_does_not_create_missing_database_parent(
@@ -254,13 +273,16 @@ def test_processing_migration_backfills_existing_documents(tmp_path: Path) -> No
             "ORDER BY d.storage_key"
         ).fetchall()
         assert rows == [
-            ("pending", "queued", 0, 3, None),
-            ("pending", "queued", 0, 3, None),
-            ("pending", "queued", 0, 3, None),
-            ("completed", "succeeded", 1, 3, None),
+            ("uploaded", "queued", 0, 3, None),
+            ("uploaded", "queued", 0, 3, None),
+            ("uploaded", "queued", 0, 3, None),
+            ("ready", "succeeded", 1, 3, None),
             ("failed", "failed", 3, 3, "LEGACY_PROCESSING_FAILED"),
             ("failed", "failed", 3, 3, "COURSE_DELETED"),
         ]
+        assert connection.execute("SELECT COUNT(*) FROM document_pages").fetchone() == (
+            0,
+        )
 
         connection.execute(
             "UPDATE processing_jobs SET status = 'running', attempt_count = 1, "

@@ -43,6 +43,11 @@ DEFAULT_PROCESSING_JOB_POLL_SECONDS = 1.0
 DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS = 300
 DEFAULT_MAX_EXTRACTED_CHARACTERS = 2_000_000
 DEFAULT_MAX_DOCUMENT_CHUNKS = 1_000
+DEFAULT_OCR_LANGUAGE = "eng"
+DEFAULT_OCR_DPI = 300
+DEFAULT_OCR_MIN_TEXT_CHARACTERS = 20
+DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS = 1_200
+DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS = 200
 
 
 @dataclass(frozen=True)
@@ -89,6 +94,11 @@ class Settings:
     processing_job_attempt_timeout_seconds: int
     max_extracted_characters: int
     max_document_chunks: int
+    ocr_language: str
+    ocr_dpi: int
+    ocr_min_text_characters: int
+    document_chunk_size_characters: int
+    document_chunk_overlap_characters: int
 
     @property
     def is_hosted(self) -> bool:
@@ -274,6 +284,32 @@ def load_settings() -> Settings:
         "MAX_DOCUMENT_CHUNKS",
         DEFAULT_MAX_DOCUMENT_CHUNKS,
     )
+    ocr_language = os.getenv("OCR_LANGUAGE", DEFAULT_OCR_LANGUAGE).strip()
+    if len(ocr_language) > 128 or not re.fullmatch(
+        r"[A-Za-z0-9_-]+(?:\+[A-Za-z0-9_-]+)*", ocr_language
+    ):
+        raise ValueError(
+            "OCR_LANGUAGE must be a 1-128 character expression of safe language "
+            "tokens joined by '+'."
+        )
+    ocr_dpi = _positive_integer_setting("OCR_DPI", DEFAULT_OCR_DPI)
+    ocr_min_text_characters = _nonnegative_integer_setting(
+        "OCR_MIN_TEXT_CHARACTERS",
+        DEFAULT_OCR_MIN_TEXT_CHARACTERS,
+    )
+    document_chunk_size_characters = _positive_integer_setting(
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS",
+        DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS,
+    )
+    document_chunk_overlap_characters = _nonnegative_integer_setting(
+        "DOCUMENT_CHUNK_OVERLAP_CHARACTERS",
+        DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS,
+    )
+    if document_chunk_overlap_characters >= document_chunk_size_characters:
+        raise ValueError(
+            "DOCUMENT_CHUNK_OVERLAP_CHARACTERS must be less than "
+            "DOCUMENT_CHUNK_SIZE_CHARACTERS."
+        )
 
     return Settings(
         app_env=app_env,
@@ -304,6 +340,11 @@ def load_settings() -> Settings:
         processing_job_attempt_timeout_seconds=processing_job_attempt_timeout_seconds,
         max_extracted_characters=max_extracted_characters,
         max_document_chunks=max_document_chunks,
+        ocr_language=ocr_language,
+        ocr_dpi=ocr_dpi,
+        ocr_min_text_characters=ocr_min_text_characters,
+        document_chunk_size_characters=document_chunk_size_characters,
+        document_chunk_overlap_characters=document_chunk_overlap_characters,
     )
 
 
@@ -315,6 +356,17 @@ def _positive_integer_setting(name: str, default: int) -> int:
         raise ValueError(f"{name} must be a positive integer.") from exc
     if value <= 0:
         raise ValueError(f"{name} must be a positive integer.")
+    return value
+
+
+def _nonnegative_integer_setting(name: str, default: int) -> int:
+    raw_value = os.getenv(name, str(default))
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a nonnegative integer.") from exc
+    if value < 0:
+        raise ValueError(f"{name} must be a nonnegative integer.")
     return value
 
 

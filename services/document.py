@@ -20,7 +20,7 @@ from backend.app.models import (
 )
 from backend.app.repositories.document import DocumentRepository
 from services.document_hash import calculate_file_hash
-from services.document_validation import validate_document
+from services.document_validation import validate_basic_upload
 from services.processing_jobs import (
     ProcessingJobStateError,
     enqueue_document_job,
@@ -40,6 +40,18 @@ class DocumentRegistrationError(Exception):
 
 class CourseDocumentLimitError(Exception):
     """The requested course cannot accept another document."""
+
+
+class DocumentActiveError(Exception):
+    """An active document cannot be deleted."""
+
+
+class DocumentDeletionInProgressError(Exception):
+    """A matching document is already being deleted."""
+
+
+class DocumentDeletionError(Exception):
+    """A document could not be deleted safely."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +91,7 @@ class DocumentService:
         except SQLAlchemyError as exc:
             raise DocumentRegistrationError from exc
 
-        metadata = validate_document(upload)
+        metadata = validate_basic_upload(upload)
         file_hash = calculate_file_hash(upload)
 
         try:
@@ -102,6 +114,9 @@ class DocumentService:
             raise DocumentRegistrationError from exc
 
         if existing is not None:
+            if existing.status == "deleting":
+                db.rollback()
+                raise DocumentDeletionInProgressError
             try:
                 file_exists = (
                     existing.storage_provider != storage.provider
@@ -188,7 +203,7 @@ class DocumentService:
                 course_id=course_id,
                 storage_provider=storage.provider,
                 storage_key=storage_key,
-                status="pending",
+                status="uploaded",
             )
             enqueue_document_job(db, document)
             db.refresh(document)
@@ -238,6 +253,7 @@ class DocumentService:
                 UploadedDocument.course_id == course_id,
                 ProcessingJob.job_type == JOB_TYPE_EXTRACT_DOCUMENT,
                 Course.is_deleted.is_(False),
+                UploadedDocument.status != "deleting",
             )
         ).one_or_none()
         if row is None:
@@ -259,6 +275,154 @@ class DocumentService:
         return result
 
     @staticmethod
+    def delete_document(
+        db: Session,
+        storage: Storage,
+        document_id: UUID,
+        course_id: int,
+    ) -> None:
+        """Tombstone a terminal document, remove its source, then delete metadata."""
+        try:
+            db.rollback()
+            begin_serialized_write(db)
+            course_statement = select(Course).where(
+                Course.id == course_id,
+                Course.is_deleted.is_(False),
+            )
+            if db.get_bind().dialect.name == "postgresql":
+                course_statement = course_statement.with_for_update(of=Course)
+            if db.scalar(course_statement) is None:
+                db.rollback()
+                raise NotFoundException("Document not found")
+
+            statement = (
+                select(UploadedDocument, ProcessingJob)
+                .join(
+                    ProcessingJob,
+                    (ProcessingJob.document_id == UploadedDocument.id)
+                    & (ProcessingJob.course_id == UploadedDocument.course_id),
+                )
+                .where(
+                    UploadedDocument.id == document_id,
+                    UploadedDocument.course_id == course_id,
+                    ProcessingJob.job_type == JOB_TYPE_EXTRACT_DOCUMENT,
+                )
+            )
+            if db.get_bind().dialect.name == "postgresql":
+                statement = statement.with_for_update(
+                    of=(ProcessingJob, UploadedDocument)
+                )
+            row = db.execute(statement).one_or_none()
+        except SQLAlchemyError as exc:
+            raise DocumentDeletionError from exc
+
+        if row is None:
+            db.rollback()
+            raise NotFoundException("Document not found")
+        document, job = row
+        if job.status in {"queued", "running"}:
+            db.rollback()
+            raise DocumentActiveError
+        if document.storage_provider != storage.provider:
+            db.rollback()
+            raise DocumentDeletionError
+
+        storage_provider = document.storage_provider
+        storage_key = document.storage_key
+        if document.status != "deleting":
+            document.status = "deleting"
+            try:
+                db.commit()
+            except SQLAlchemyError as exc:
+                try:
+                    db.rollback()
+                except SQLAlchemyError:
+                    pass
+                if not DocumentService._deletion_is_prepared(
+                    db,
+                    document_id,
+                    course_id,
+                    storage_provider,
+                    storage_key,
+                ):
+                    raise DocumentDeletionError from exc
+        else:
+            db.rollback()
+
+        try:
+            storage.delete(storage_key)
+        except (StorageError, ValueError) as exc:
+            raise DocumentDeletionError from exc
+
+        try:
+            begin_serialized_write(db)
+            course_statement = select(Course).where(Course.id == course_id)
+            if db.get_bind().dialect.name == "postgresql":
+                course_statement = course_statement.with_for_update(of=Course)
+            if db.scalar(course_statement) is None:
+                db.rollback()
+                return
+
+            document_statement = select(UploadedDocument).where(
+                UploadedDocument.id == document_id,
+                UploadedDocument.course_id == course_id,
+                UploadedDocument.status == "deleting",
+            )
+            if db.get_bind().dialect.name == "postgresql":
+                document_statement = document_statement.with_for_update(
+                    of=UploadedDocument
+                )
+            deleting_document = db.scalar(document_statement)
+            if deleting_document is None:
+                db.rollback()
+                if DocumentService._document_is_absent(db, document_id):
+                    return
+                raise DocumentDeletionError
+
+            db.delete(deleting_document)
+            db.commit()
+        except SQLAlchemyError as exc:
+            try:
+                db.rollback()
+            except SQLAlchemyError:
+                pass
+            if not DocumentService._document_is_absent(db, document_id):
+                raise DocumentDeletionError from exc
+
+    @staticmethod
+    def _deletion_is_prepared(
+        db: Session,
+        document_id: UUID,
+        course_id: int,
+        storage_provider: str,
+        storage_key: str,
+    ) -> bool:
+        try:
+            with Session(bind=db.get_bind()) as verification_db:
+                return (
+                    verification_db.scalar(
+                        select(UploadedDocument.id).where(
+                            UploadedDocument.id == document_id,
+                            UploadedDocument.course_id == course_id,
+                            UploadedDocument.status == "deleting",
+                            UploadedDocument.storage_provider == storage_provider,
+                            UploadedDocument.storage_key == storage_key,
+                        )
+                    )
+                    is not None
+                )
+        except SQLAlchemyError:
+            return False
+
+    @staticmethod
+    def _document_is_absent(db: Session, document_id: UUID) -> bool:
+        try:
+            with Session(bind=db.get_bind()) as verification_db:
+                return verification_db.get(UploadedDocument, document_id) is None
+        except SQLAlchemyError:
+            return False
+
+    @staticmethod
     def _wait_for_duplicate(
         db: Session,
         course_id: int,
@@ -274,6 +438,9 @@ class DocumentService:
             except SQLAlchemyError as exc:
                 raise DocumentRegistrationError from exc
             if existing is not None:
+                if existing.status == "deleting":
+                    db.rollback()
+                    raise DocumentDeletionInProgressError
                 db.refresh(existing)
                 db.expunge(existing)
                 db.rollback()

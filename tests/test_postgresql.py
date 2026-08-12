@@ -21,6 +21,7 @@ from backend.app.models import (
     Course,
     DocumentChunk,
     DocumentPage,
+    DocumentVisual,
     ProcessingJob,
     Role,
     UploadedDocument,
@@ -28,8 +29,11 @@ from backend.app.models import (
 )
 from backend.app.readiness import check_readiness
 from services.processing_jobs import (
+    ChunkData,
     PageData,
+    VisualData,
     claim_next_job,
+    complete_job,
     enqueue_document_job,
     replace_document_pages,
     update_job_stage,
@@ -41,7 +45,8 @@ ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
 EXPECTED_POSTGRESQL_MAJOR = 17
 EXPECTED_POSTGRESQL_VERSION_NUMBER = 170006
 BASE_REVISION = "97d9fd86a3ba"
-HEAD_REVISION = "c4e6a8f1b203"
+PAGES_REVISION = "c4e6a8f1b203"
+HEAD_REVISION = "f7a3c9d2e541"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -212,6 +217,87 @@ def _mark_migrated_job_running() -> None:
         engine.dispose()
 
 
+def _seed_page_revision() -> None:
+    engine = create_database_engine(settings.database_url)
+    try:
+        with engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    "INSERT INTO document_pages "
+                    "(document_id, course_id, content_index, page_number, text, "
+                    "extraction_method, has_images, needs_ocr) "
+                    "SELECT id, course_id, 0, 1, 'Legacy PostgreSQL page', "
+                    "'native', true, true FROM uploaded_documents "
+                    "WHERE storage_key = 'postgresql-migration/completed'"
+                )
+            )
+            assert result.rowcount == 1
+    finally:
+        engine.dispose()
+
+
+def _assert_visual_enrichment_backfill() -> None:
+    engine = create_database_engine(settings.database_url)
+    try:
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT p.raw_text, p.text, p.raw_extraction_method, "
+                    "p.extraction_method, p.raw_needs_ocr, "
+                    "p.has_visual_content, p.ocr_status, "
+                    "p.visual_analysis_status FROM document_pages AS p "
+                    "JOIN uploaded_documents AS d ON d.id = p.document_id "
+                    "WHERE d.storage_key = 'postgresql-migration/completed'"
+                )
+            ).one()
+        assert row == (
+            "Legacy PostgreSQL page",
+            "Legacy PostgreSQL page",
+            "native",
+            "native",
+            True,
+            False,
+            "pending",
+            "not_applicable",
+        )
+    finally:
+        engine.dispose()
+
+
+def _enrich_migrated_page() -> None:
+    engine = create_database_engine(settings.database_url)
+    try:
+        with engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    "UPDATE document_pages SET text = 'OCR PostgreSQL page', "
+                    "extraction_method = 'ocr', needs_ocr = false, "
+                    "ocr_status = 'succeeded' WHERE document_id = "
+                    "(SELECT id FROM uploaded_documents WHERE "
+                    "storage_key = 'postgresql-migration/completed')"
+                )
+            )
+            assert result.rowcount == 1
+    finally:
+        engine.dispose()
+
+
+def _assert_downgraded_page_is_raw() -> None:
+    engine = create_database_engine(settings.database_url)
+    try:
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT p.text, p.extraction_method FROM document_pages AS p "
+                    "JOIN uploaded_documents AS d ON d.id = p.document_id "
+                    "WHERE d.storage_key = 'postgresql-migration/completed'"
+                )
+            ).one()
+        assert row == ("Legacy PostgreSQL page", "native")
+    finally:
+        engine.dispose()
+
+
 @pytest.fixture(scope="module")
 def postgresql_engine() -> Iterator[Engine]:
     assert settings.is_hosted
@@ -226,8 +312,34 @@ def postgresql_engine() -> Iterator[Engine]:
 
     _run_alembic("upgrade", BASE_REVISION)
     _seed_base_revision()
-    _run_alembic("upgrade", HEAD_REVISION)
+    _run_alembic("upgrade", PAGES_REVISION)
     _assert_processing_backfill(deleted_error_code="COURSE_DELETED")
+    _seed_page_revision()
+    _run_alembic("upgrade", HEAD_REVISION)
+    _assert_visual_enrichment_backfill()
+    _enrich_migrated_page()
+    _run_alembic("downgrade", PAGES_REVISION)
+    _assert_downgraded_page_is_raw()
+
+    pages_engine = create_database_engine(settings.database_url)
+    try:
+        pages_inspector = inspect(pages_engine)
+        assert "document_visuals" not in pages_inspector.get_table_names()
+        assert {
+            "raw_text",
+            "raw_extraction_method",
+            "raw_needs_ocr",
+            "has_visual_content",
+            "ocr_status",
+            "visual_analysis_status",
+        }.isdisjoint(
+            column["name"] for column in pages_inspector.get_columns("document_pages")
+        )
+    finally:
+        pages_engine.dispose()
+
+    _run_alembic("upgrade", HEAD_REVISION)
+    _assert_visual_enrichment_backfill()
     _mark_migrated_job_running()
     _run_alembic("downgrade", BASE_REVISION)
 
@@ -344,11 +456,80 @@ def test_postgresql_schema_readiness_and_role_seeds(
     assert postgresql_engine.dialect.name == "postgresql"
     with postgresql_engine.connect() as connection:
         version_number = int(connection.scalar(text("SHOW server_version_num")))
+        revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
     assert version_number // 10_000 == EXPECTED_POSTGRESQL_MAJOR
     assert version_number == EXPECTED_POSTGRESQL_VERSION_NUMBER
-    assert set(Base.metadata.tables) <= set(
-        inspect(postgresql_engine).get_table_names()
-    )
+    assert revision == HEAD_REVISION
+
+    inspector = inspect(postgresql_engine)
+    assert set(Base.metadata.tables) <= set(inspector.get_table_names())
+    page_columns = {
+        column["name"]: column for column in inspector.get_columns("document_pages")
+    }
+    assert {
+        "raw_text",
+        "raw_extraction_method",
+        "raw_needs_ocr",
+        "has_visual_content",
+        "ocr_status",
+        "visual_analysis_status",
+    } <= set(page_columns)
+    assert not page_columns["raw_text"]["nullable"]
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("document_pages")
+    } >= {
+        "ck_document_pages_raw_extraction_method_valid",
+        "ck_document_pages_extraction_method_valid",
+        "ck_document_pages_ocr_candidate_valid",
+        "ck_document_pages_ocr_status_valid",
+        "ck_document_pages_visual_analysis_status_valid",
+    }
+
+    visual_columns = {
+        column["name"] for column in inspector.get_columns("document_visuals")
+    }
+    assert visual_columns >= {
+        "page_id",
+        "visual_index",
+        "visual_type",
+        "source",
+        "bbox_x0",
+        "bbox_y0",
+        "bbox_x1",
+        "bbox_y1",
+        "description",
+        "analysis_status",
+        "error_code",
+    }
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("document_visuals")
+    } >= {
+        "ck_document_visuals_visual_index_nonnegative",
+        "ck_document_visuals_visual_type_valid",
+        "ck_document_visuals_source_valid",
+        "ck_document_visuals_bbox_valid",
+        "ck_document_visuals_analysis_status_valid",
+        "ck_document_visuals_description_status_valid",
+        "ck_document_visuals_failed_error_code_required",
+    }
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("document_visuals")
+    } >= {"uq_visual_page_index"}
+    visual_foreign_keys = {
+        constraint["name"]: constraint
+        for constraint in inspector.get_foreign_keys("document_visuals")
+    }
+    visual_page_foreign_key = visual_foreign_keys[
+        "fk_document_visuals_page_id_document_pages"
+    ]
+    assert visual_page_foreign_key["referred_table"] == "document_pages"
+    assert visual_page_foreign_key["options"]["ondelete"] == "CASCADE"
+    assert {index["name"] for index in inspector.get_indexes("document_visuals")} >= {
+        "ix_document_visuals_page_id"
+    }
 
     storage = LocalStorage(tmp_path_factory.mktemp("postgresql-readiness"))
     with postgresql_sessions() as session:
@@ -387,16 +568,35 @@ def test_postgresql_uuid_timestamps_and_loaded_cascades(
             document=document,
             course=document.course,
             content_index=0,
-            page_number=None,
-            text="Raw PostgreSQL cascade",
-            extraction_method="decoded",
-            has_images=False,
-            needs_ocr=False,
+            page_number=1,
+            raw_text="Raw PostgreSQL cascade",
+            text="OCR PostgreSQL cascade",
+            raw_extraction_method="decoded",
+            extraction_method="ocr",
+            has_images=True,
+            needs_ocr=True,
+            ocr_status="succeeded",
+            has_visual_content=True,
+            visual_analysis_status="completed",
+            visuals=[
+                DocumentVisual(
+                    visual_index=0,
+                    visual_type="diagram",
+                    source="drawing",
+                    bbox_x0=1.0,
+                    bbox_y0=2.0,
+                    bbox_x1=10.0,
+                    bbox_y1=20.0,
+                    description="PostgreSQL diagram",
+                    analysis_status="succeeded",
+                )
+            ],
         )
         session.add_all((chunk, page))
         session.commit()
         chunk_id = chunk.id
         page_id = page.id
+        visual_id = page.visuals[0].id
 
     with postgresql_sessions() as session:
         document = session.get(UploadedDocument, document_ids[0])
@@ -414,6 +614,20 @@ def test_postgresql_uuid_timestamps_and_loaded_cascades(
         assert job.available_at == expected_time
         assert job.available_at.utcoffset() == timedelta(0)
         assert [item.id for item in user.uploaded_documents] == document_ids
+        persisted_page = session.scalar(
+            select(DocumentPage)
+            .options(selectinload(DocumentPage.visuals))
+            .where(DocumentPage.id == page_id)
+        )
+        assert persisted_page is not None
+        assert persisted_page.raw_text == "Raw PostgreSQL cascade"
+        assert persisted_page.text == "OCR PostgreSQL cascade"
+        assert persisted_page.raw_extraction_method == "decoded"
+        assert persisted_page.extraction_method == "ocr"
+        assert persisted_page.ocr_status == "succeeded"
+        assert persisted_page.visual_analysis_status == "completed"
+        assert len(persisted_page.visuals) == 1
+        assert persisted_page.visuals[0].description == "PostgreSQL diagram"
 
         session.delete(user)
         session.commit()
@@ -423,6 +637,7 @@ def test_postgresql_uuid_timestamps_and_loaded_cascades(
         assert session.get(UploadedDocument, document_ids[0]) is None
         assert session.get(DocumentChunk, chunk_id) is None
         assert session.get(DocumentPage, page_id) is None
+        assert session.get(DocumentVisual, visual_id) is None
         assert session.get(ProcessingJob, job_ids[0]) is None
 
 
@@ -500,19 +715,93 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
                 PageData(
                     content_index=0,
                     text="Raw PostgreSQL extraction",
-                    page_number=None,
+                    page_number=1,
                     extraction_method="decoded",
                     has_images=False,
                     needs_ocr=False,
+                    raw_text="Raw PostgreSQL extraction",
+                    raw_extraction_method="decoded",
+                    has_visual_content=True,
+                    ocr_status="not_required",
+                    visual_analysis_status="pending",
+                    visuals=(
+                        VisualData(
+                            visual_index=0,
+                            visual_type="chart",
+                            source="image",
+                            bbox=(1.0, 2.0, 10.0, 20.0),
+                            analysis_status="pending",
+                        ),
+                    ),
                 )
             ],
         )
     with postgresql_sessions() as session:
         page = session.scalar(
-            select(DocumentPage).where(DocumentPage.document_id == document_ids[0])
+            select(DocumentPage)
+            .options(selectinload(DocumentPage.visuals))
+            .where(DocumentPage.document_id == document_ids[0])
         )
         assert page is not None
+        assert page.raw_text == "Raw PostgreSQL extraction"
         assert page.text == "Raw PostgreSQL extraction"
+        assert page.raw_extraction_method == "decoded"
+        assert page.extraction_method == "decoded"
+        assert page.ocr_status == "not_required"
+        assert page.visual_analysis_status == "pending"
+        assert len(page.visuals) == 1
+        assert page.visuals[0].description is None
+    enriched_page = PageData(
+        content_index=0,
+        text="Enriched PostgreSQL extraction",
+        page_number=1,
+        extraction_method="ocr",
+        has_images=False,
+        needs_ocr=False,
+        raw_text="Raw PostgreSQL extraction",
+        raw_extraction_method="decoded",
+        has_visual_content=True,
+        ocr_status="succeeded",
+        visual_analysis_status="completed",
+        visuals=(
+            VisualData(
+                visual_index=0,
+                visual_type="chart",
+                source="image",
+                bbox=(1.0, 2.0, 10.0, 20.0),
+                description="PostgreSQL chart",
+                analysis_status="succeeded",
+            ),
+        ),
+    )
+    with postgresql_sessions() as session:
+        assert complete_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            [ChunkData(text="Enriched PostgreSQL extraction", page_number=1)],
+            [enriched_page],
+        )
+    with postgresql_sessions() as session:
+        enriched = session.scalar(
+            select(DocumentPage)
+            .options(selectinload(DocumentPage.visuals))
+            .where(DocumentPage.document_id == document_ids[0])
+        )
+        assert enriched is not None
+        assert enriched.extraction_method == "ocr"
+        assert enriched.ocr_status == "succeeded"
+        assert enriched.visuals[0].description == "PostgreSQL chart"
+        assert (
+            session.scalar(
+                select(DocumentChunk.text).where(
+                    DocumentChunk.document_id == document_ids[0]
+                )
+            )
+            == "Enriched PostgreSQL extraction"
+        )
+
+    with postgresql_sessions() as session:
         assert not replace_document_pages(
             session,
             claim.id,

@@ -12,11 +12,19 @@ from services.document_pipeline import (
     DocumentProcessingError,
     ExtractedDocument,
     ExtractionMethod,
+    OCRStatus,
     OCRUnavailableError,
+    PageVisualAnalysisStatus,
     PipelineOptions,
     PipelineStage,
     ProcessingErrorCode,
+    TemporaryVisualServiceError,
     TesseractOCRProvider,
+    VisualAnalysisError,
+    VisualAnalysisStatus,
+    VisualDescription,
+    VisualSource,
+    VisualType,
     extract_raw_document,
     process_document,
 )
@@ -57,6 +65,37 @@ def pdf_bytes(
     content = pdf.tobytes()
     pdf.close()
     return content
+
+
+def insert_test_image(
+    page: pymupdf.Page,
+    rect: pymupdf.Rect,
+    *,
+    shade: int = 255,
+) -> None:
+    pixel = pymupdf.Pixmap(
+        pymupdf.csRGB,
+        pymupdf.IRect(0, 0, 4, 4),
+        False,
+    )
+    pixel.clear_with(shade)
+    page.insert_image(rect, stream=pixel.tobytes("png"))
+
+
+def insert_test_drawing(page: pymupdf.Page, rect: pymupdf.Rect) -> None:
+    page.draw_rect(rect, color=(0, 0, 0), width=2)
+    page.draw_line(
+        (rect.x0, (rect.y0 + rect.y1) / 2),
+        (rect.x1, (rect.y0 + rect.y1) / 2),
+        color=(0, 0, 0),
+        width=2,
+    )
+    page.draw_line(
+        ((rect.x0 + rect.x1) / 2, rect.y0),
+        ((rect.x0 + rect.x1) / 2, rect.y1),
+        color=(0, 0, 0),
+        width=2,
+    )
 
 
 def scanned_pdf_bytes(text: str) -> bytes:
@@ -161,6 +200,7 @@ def assert_pipeline_error(
     *,
     options: PipelineOptions | None = None,
     ocr_provider: object | None = None,
+    image_provider: object | None = None,
 ) -> DocumentProcessingError:
     with pytest.raises(DocumentProcessingError) as raised:
         process_document(
@@ -168,6 +208,7 @@ def assert_pipeline_error(
             content,
             options=options or pipeline_options(),
             ocr_provider=ocr_provider,
+            image_provider=image_provider,
         )
     error = raised.value
     assert error.code == expected_code
@@ -192,6 +233,8 @@ def test_pipeline_defaults_use_worker_processing_settings() -> None:
         options.chunk_overlap_characters
         == pipeline.settings.document_chunk_overlap_characters
     )
+    assert options.max_visuals_per_page == 10
+    assert options.max_visuals_per_document == 500
     assert (
         options.max_extracted_characters == pipeline.settings.max_extracted_characters
     )
@@ -288,7 +331,17 @@ def test_text_encodings_are_decoded_once_with_nullable_page_provenance(
     result = process_document("txt", content, options=pipeline_options())
 
     assert calls == 1
-    assert result.pages == (pipeline.PageText(text=expected, page_number=None),)
+    assert len(result.pages) == 1
+    page = result.pages[0]
+    assert page.content_index == 0
+    assert page.raw_text == expected
+    assert page.text == expected
+    assert page.page_number is None
+    assert page.raw_extraction_method == ExtractionMethod.DECODED
+    assert page.extraction_method == ExtractionMethod.DECODED
+    assert page.ocr_status == OCRStatus.NOT_REQUIRED
+    assert page.visual_analysis_status == PageVisualAnalysisStatus.NOT_APPLICABLE
+    assert page.visuals == ()
     assert all(chunk.page_number is None for chunk in result.chunks)
 
 
@@ -339,24 +392,55 @@ def test_raw_markdown_extraction_preserves_decoded_source_exactly(
     assert extracted.contents[0].extraction_method == ExtractionMethod.DECODED
 
 
-def test_pdf_ocr_detection_requires_an_image_and_low_text() -> None:
+def test_pdf_ocr_detection_requires_meaningful_visual_content_and_low_text() -> None:
+    pdf = pymupdf.open()
+    native_page = pdf.new_page(width=400, height=400)
+    native_page.insert_text(
+        (36, 36),
+        "Searchable course content remains available and must be preserved.",
+    )
+    insert_test_image(native_page, pymupdf.Rect(40, 80, 180, 220))
+    pdf.new_page(width=400, height=400)
+    image_page = pdf.new_page(width=400, height=400)
+    insert_test_image(image_page, pymupdf.Rect(40, 80, 180, 220), shade=200)
+    drawing_page = pdf.new_page(width=400, height=400)
+    insert_test_drawing(drawing_page, pymupdf.Rect(40, 80, 180, 220))
+    content = pdf.tobytes()
+    pdf.close()
+
     extracted: list[ExtractedDocument] = []
     result = process_document(
         "pdf",
-        pdf_bytes(
-            "Searchable course content remains available.",
-            None,
-            None,
-            image_pages={3},
+        content,
+        options=pipeline_options(
+            ocr_enabled=False,
+            ocr_min_text_characters=30,
         ),
-        options=pipeline_options(ocr_enabled=False),
         extraction_callback=extracted.append,
     )
 
-    assert len(result.pages) == 3
-    assert [page.page_number for page in extracted[0].contents] == [1, 2, 3]
-    assert [page.has_images for page in extracted[0].contents] == [False, False, True]
-    assert [page.needs_ocr for page in extracted[0].contents] == [False, False, True]
+    raw_pages = extracted[0].contents
+    assert len(result.pages) == 4
+    assert [page.page_number for page in raw_pages] == [1, 2, 3, 4]
+    assert [page.has_images for page in raw_pages] == [True, False, True, False]
+    assert [page.has_visual_content for page in raw_pages] == [True, False, True, True]
+    assert [page.needs_ocr for page in raw_pages] == [False, False, True, True]
+    assert raw_pages[2].visuals[0].source == VisualSource.IMAGE
+    assert raw_pages[3].visuals[0].source == VisualSource.DRAWING
+
+    native_result, blank_result, image_result, drawing_result = result.pages
+    assert native_result.raw_text == raw_pages[0].text
+    assert native_result.text == raw_pages[0].text.strip()
+    assert native_result.raw_extraction_method == ExtractionMethod.NATIVE
+    assert native_result.extraction_method == ExtractionMethod.NATIVE
+    assert native_result.ocr_status == OCRStatus.NOT_REQUIRED
+    assert blank_result.raw_text == blank_result.text == ""
+    assert blank_result.needs_ocr is False
+    assert blank_result.ocr_status == OCRStatus.NOT_REQUIRED
+    assert image_result.needs_ocr is True
+    assert drawing_result.needs_ocr is True
+    assert image_result.ocr_status == OCRStatus.PENDING
+    assert drawing_result.ocr_status == OCRStatus.PENDING
 
 
 @pytest.mark.parametrize(
@@ -559,7 +643,7 @@ def test_direct_page_content_cannot_bypass_limits_with_image_subtype() -> None:
     )
 
 
-def test_ocr_runs_only_for_text_poor_pages_with_configured_values() -> None:
+def test_ocr_runs_only_for_poor_visual_pages_and_updates_provenance() -> None:
     class RecordingOCR:
         def __init__(self) -> None:
             self.calls: list[tuple[int, str, int]] = []
@@ -572,13 +656,22 @@ def test_ocr_runs_only_for_text_poor_pages_with_configured_values() -> None:
             dpi: int,
         ) -> str:
             self.calls.append((page.number + 1, language, dpi))
-            return "Recognized diagram labels from page two."
+            return f"Recognized visual labels from page {page.number + 1}."
 
-    content = pdf_bytes(
-        "This first page has enough searchable digital text to skip OCR.",
-        None,
-        image_pages={2},
-    )
+    pdf = pymupdf.open()
+    native_page = pdf.new_page(width=400, height=400)
+    native_text = "This first page has enough searchable digital text to preserve."
+    native_page.insert_text((36, 36), native_text)
+    insert_test_image(native_page, pymupdf.Rect(40, 80, 180, 220))
+    pdf.new_page(width=400, height=400)
+    image_page = pdf.new_page(width=400, height=400)
+    insert_test_image(image_page, pymupdf.Rect(40, 80, 180, 220), shade=180)
+    drawing_page = pdf.new_page(width=400, height=400)
+    insert_test_drawing(drawing_page, pymupdf.Rect(40, 80, 180, 220))
+    content = pdf.tobytes()
+    pdf.close()
+
+    extracted: list[ExtractedDocument] = []
     ocr = RecordingOCR()
     stages: list[PipelineStage] = []
 
@@ -592,12 +685,39 @@ def test_ocr_runs_only_for_text_poor_pages_with_configured_values() -> None:
             ocr_min_text_characters=30,
         ),
         stage_callback=stages.append,
+        extraction_callback=extracted.append,
         ocr_provider=ocr,
     )
 
-    assert ocr.calls == [(2, "eng+deu", 222)]
-    assert result.pages[0].text.startswith("This first page")
-    assert result.pages[1].text == "Recognized diagram labels from page two."
+    assert ocr.calls == [(3, "eng+deu", 222), (4, "eng+deu", 222)]
+    assert [page.needs_ocr for page in extracted[0].contents] == [
+        False,
+        False,
+        True,
+        True,
+    ]
+    native_result, blank_result, image_result, drawing_result = result.pages
+    assert native_result.raw_text == f"{native_text}\n"
+    assert native_result.text == native_text
+    assert native_result.raw_extraction_method == ExtractionMethod.NATIVE
+    assert native_result.extraction_method == ExtractionMethod.NATIVE
+    assert native_result.ocr_status == OCRStatus.NOT_REQUIRED
+    assert blank_result.raw_text == blank_result.text == ""
+    assert blank_result.extraction_method is None
+    assert blank_result.needs_ocr is False
+    assert blank_result.ocr_status == OCRStatus.NOT_REQUIRED
+    assert image_result.raw_text == ""
+    assert image_result.raw_extraction_method is None
+    assert image_result.text == "Recognized visual labels from page 3."
+    assert image_result.extraction_method == ExtractionMethod.OCR
+    assert image_result.needs_ocr is False
+    assert image_result.ocr_status == OCRStatus.SUCCEEDED
+    assert drawing_result.raw_text == ""
+    assert drawing_result.raw_extraction_method is None
+    assert drawing_result.text == "Recognized visual labels from page 4."
+    assert drawing_result.extraction_method == ExtractionMethod.OCR
+    assert drawing_result.needs_ocr is False
+    assert drawing_result.ocr_status == OCRStatus.SUCCEEDED
     assert stages == [
         PipelineStage.VALIDATING,
         PipelineStage.EXTRACTING_TEXT,
@@ -715,56 +835,256 @@ def test_missing_tesseract_produces_stable_safe_error() -> None:
     assert "private" not in str(error)
 
 
-def test_image_understanding_stage_is_skipped_when_provider_is_disabled() -> None:
+def test_visual_detection_orders_deduplicates_and_filters_regions() -> None:
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=400, height=400)
+    page.insert_text((36, 24), "Native text keeps this visual page processable.")
+
+    table_shape = page.new_shape()
+    for x in (40, 110, 180):
+        table_shape.draw_line((x, 40), (x, 180))
+    for y in (40, 110, 180):
+        table_shape.draw_line((40, y), (180, y))
+    table_shape.finish(color=(0, 0, 0), width=1)
+    table_shape.commit()
+    page.insert_text((50, 80), "A")
+    page.insert_text((120, 80), "B")
+    page.insert_text((50, 150), "C")
+    page.insert_text((120, 150), "D")
+
+    insert_test_image(page, pymupdf.Rect(220, 40, 360, 180), shade=180)
+    insert_test_drawing(page, pymupdf.Rect(40, 220, 180, 360))
+    insert_test_image(page, pymupdf.Rect(300, 300, 320, 320), shade=100)
+    content = pdf.tobytes()
+    pdf.close()
+
+    first = extract_raw_document("pdf", content, options=pipeline_options())
+    second = extract_raw_document("pdf", content, options=pipeline_options())
+
+    assert first == second
+    page_result = first.contents[0]
+    assert page_result.has_images is True
+    assert page_result.has_visual_content is True
+    assert [visual.visual_index for visual in page_result.visuals] == [0, 1, 2]
+    assert [visual.source for visual in page_result.visuals] == [
+        VisualSource.TABLE,
+        VisualSource.IMAGE,
+        VisualSource.DRAWING,
+    ]
+    assert [visual.visual_type for visual in page_result.visuals] == [
+        VisualType.TABLE,
+        VisualType.FIGURE,
+        VisualType.DIAGRAM,
+    ]
+    assert [visual.bbox for visual in page_result.visuals] == [
+        (40.0, 40.0, 180.0, 180.0),
+        (220.0, 40.0, 360.0, 180.0),
+        (40.0, 220.0, 180.0, 360.0),
+    ]
+
+
+def test_visual_selection_enforces_page_and_document_limits() -> None:
+    pdf = pymupdf.open()
+    for page_number in range(2):
+        page = pdf.new_page(width=400, height=400)
+        page.insert_text((36, 24), f"Searchable native content page {page_number + 1}.")
+        insert_test_image(page, pymupdf.Rect(40, 40, 140, 140), shade=50)
+        insert_test_image(page, pymupdf.Rect(200, 40, 300, 140), shade=200)
+    content = pdf.tobytes()
+    pdf.close()
+
+    page_limited = extract_raw_document(
+        "pdf",
+        content,
+        options=pipeline_options(max_visuals_per_page=1),
+    )
+    document_limited = extract_raw_document(
+        "pdf",
+        content,
+        options=pipeline_options(
+            max_visuals_per_page=2,
+            max_visuals_per_document=3,
+        ),
+    )
+
+    assert [len(page.visuals) for page in page_limited.contents] == [1, 1]
+    assert [len(page.visuals) for page in document_limited.contents] == [2, 1]
+    assert [visual.visual_index for visual in document_limited.contents[0].visuals] == [
+        0,
+        1,
+    ]
+    assert [visual.visual_index for visual in document_limited.contents[1].visuals] == [
+        0
+    ]
+
+
+def test_visual_document_limit_does_not_disable_ocr_candidates() -> None:
+    pdf = pymupdf.open()
+    for _ in range(2):
+        page = pdf.new_page(width=400, height=400)
+        insert_test_image(page, pymupdf.Rect(40, 40, 300, 300), shade=150)
+    content = pdf.tobytes()
+    pdf.close()
+
+    extracted = extract_raw_document(
+        "pdf",
+        content,
+        options=pipeline_options(max_visuals_per_document=1),
+    )
+
+    assert [len(page.visuals) for page in extracted.contents] == [1, 0]
+    assert [page.has_visual_content for page in extracted.contents] == [True, True]
+    assert [page.needs_ocr for page in extracted.contents] == [True, True]
+
+
+def test_repeated_small_images_are_filtered_as_decorative() -> None:
+    pdf = pymupdf.open()
+    image_xref = 0
+    for page_number in range(3):
+        page = pdf.new_page(width=400, height=400)
+        page.insert_text(
+            (36, 24),
+            f"Searchable course page {page_number + 1} has enough native text.",
+        )
+        if image_xref:
+            page.insert_image(pymupdf.Rect(40, 40, 100, 100), xref=image_xref)
+        else:
+            pixel = pymupdf.Pixmap(
+                pymupdf.csRGB,
+                pymupdf.IRect(0, 0, 4, 4),
+                False,
+            )
+            pixel.clear_with(175)
+            image_xref = page.insert_image(
+                pymupdf.Rect(40, 40, 100, 100),
+                stream=pixel.tobytes("png"),
+            )
+    content = pdf.tobytes()
+    pdf.close()
+
+    extracted = extract_raw_document("pdf", content, options=pipeline_options())
+
+    assert all(page.has_images for page in extracted.contents)
+    assert all(not page.has_visual_content for page in extracted.contents)
+    assert all(page.visuals == () for page in extracted.contents)
+    assert all(page.needs_ocr is False for page in extracted.contents)
+
+
+def test_distinct_images_with_matching_metadata_are_not_filtered() -> None:
+    pdf = pymupdf.open()
+    for page_number, shade in enumerate((50, 100, 150), start=1):
+        page = pdf.new_page(width=400, height=400)
+        page.insert_text(
+            (36, 24),
+            f"Searchable course page {page_number} has enough native text.",
+        )
+        insert_test_image(page, pymupdf.Rect(40, 40, 100, 100), shade=shade)
+    content = pdf.tobytes()
+    pdf.close()
+
+    extracted = extract_raw_document("pdf", content, options=pipeline_options())
+
+    assert all(page.has_visual_content for page in extracted.contents)
+    assert all(len(page.visuals) == 1 for page in extracted.contents)
+
+
+def test_disabled_visual_provider_returns_not_configured_without_stage() -> None:
     class DisabledProvider:
         enabled = False
 
-        def describe_page(self, page_png: bytes, *, page_number: int) -> str:
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> None:
             raise AssertionError("disabled provider must not be called")
 
     stages: list[PipelineStage] = []
 
-    process_document(
+    result = process_document(
         "pdf",
-        pdf_bytes("Searchable text that does not need enrichment."),
+        pdf_bytes(
+            "Searchable text that does not need enrichment.",
+            image_pages={1},
+            width=300,
+            height=300,
+        ),
         options=pipeline_options(),
         stage_callback=stages.append,
         image_provider=DisabledProvider(),
     )
 
     assert PipelineStage.UNDERSTANDING_IMAGES not in stages
+    assert result.pages[0].visual_analysis_status == (
+        PageVisualAnalysisStatus.NOT_CONFIGURED
+    )
+    assert result.pages[0].visuals[0].analysis_status == (
+        VisualAnalysisStatus.NOT_CONFIGURED
+    )
+    assert result.pages[0].visuals[0].description is None
 
 
-def test_enabled_image_provider_descriptions_are_merged_and_cleaned() -> None:
+def test_enabled_provider_receives_region_crops_and_returns_typed_descriptions() -> (
+    None
+):
     class EnabledProvider:
         enabled = True
 
         def __init__(self) -> None:
-            self.pages: list[int] = []
+            self.calls: list[tuple[int, int, VisualType, int, int]] = []
 
-        def describe_page(self, page_png: bytes, *, page_number: int) -> str:
-            assert page_png.startswith(b"\x89PNG\r\n\x1a\n")
-            self.pages.append(page_number)
-            return f"Diagram on page {page_number}\x00   \r\n  keeps indentation   "
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            with pymupdf.open(stream=visual_png, filetype="png") as image:
+                width = image[0].rect.width
+                height = image[0].rect.height
+            self.calls.append(
+                (page_number, visual_index, suggested_type, int(width), int(height))
+            )
+            return VisualDescription(
+                visual_type=VisualType.CHART,
+                description="Enrollment rises by quarter.\x00   \r\n  Peak: Q4.   ",
+            )
 
     provider = EnabledProvider()
     stages: list[PipelineStage] = []
 
     result = process_document(
         "pdf",
-        pdf_bytes(None, None),
-        options=pipeline_options(),
+        pdf_bytes(
+            "Native page text remains authoritative and separate.",
+            image_pages={1},
+            width=300,
+            height=300,
+        ),
+        options=pipeline_options(image_dpi=72),
         stage_callback=stages.append,
         image_provider=provider,
     )
 
-    assert provider.pages == [1, 2]
-    assert result.pages[0].text == (
-        "Image description: Diagram on page 1\n  keeps indentation"
-    )
-    assert result.pages[1].text == (
-        "Image description: Diagram on page 2\n  keeps indentation"
-    )
+    assert provider.calls == [(1, 0, VisualType.FIGURE, 72, 72)]
+    page = result.pages[0]
+    assert page.text == "Native page text remains authoritative and separate."
+    assert "Enrollment" not in page.text
+    assert page.visual_analysis_status == PageVisualAnalysisStatus.COMPLETED
+    assert len(page.visuals) == 1
+    visual = page.visuals[0]
+    assert visual.visual_type == VisualType.CHART
+    assert visual.analysis_status == VisualAnalysisStatus.SUCCEEDED
+    assert visual.description == "Enrollment rises by quarter.   \r\n  Peak: Q4."
+    merged_chunk_text = "\n".join(chunk.text for chunk in result.chunks)
+    assert "[Chart]" in merged_chunk_text
+    assert "Enrollment rises by quarter." in merged_chunk_text
+    assert "Peak: Q4." in merged_chunk_text
     assert stages == [
         PipelineStage.VALIDATING,
         PipelineStage.EXTRACTING_TEXT,
@@ -774,17 +1094,141 @@ def test_enabled_image_provider_descriptions_are_merged_and_cleaned() -> None:
     ]
 
 
-def test_image_rendering_obeys_configured_pdf_pixel_limits() -> None:
+def test_visual_analysis_error_is_nonfatal_and_page_specific() -> None:
+    class PageSpecificProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            if page_number == 1:
+                raise VisualAnalysisError("provider detail")
+            return VisualDescription(
+                visual_type=VisualType.DIAGRAM,
+                description="Second-page diagram description.",
+            )
+
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "First page has native fallback text.",
+            "Second page has native fallback text.",
+            image_pages={1, 2},
+            width=300,
+            height=300,
+        ),
+        options=pipeline_options(),
+        image_provider=PageSpecificProvider(),
+    )
+
+    first, second = result.pages
+    assert first.visual_analysis_status == PageVisualAnalysisStatus.FAILED
+    assert first.visuals[0].analysis_status == VisualAnalysisStatus.FAILED
+    assert first.visuals[0].error_code == "VISUAL_ANALYSIS_FAILED"
+    assert first.visuals[0].description is None
+    assert second.visual_analysis_status == PageVisualAnalysisStatus.COMPLETED
+    assert second.visuals[0].analysis_status == VisualAnalysisStatus.SUCCEEDED
+    assert second.visuals[0].description == "Second-page diagram description."
+    assert "First page has native fallback text." in first.text
+    assert any(
+        "Second-page diagram description." in chunk.text for chunk in result.chunks
+    )
+
+
+def test_temporary_visual_service_error_is_retryable_and_fatal() -> None:
+    class TemporaryFailureProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            raise TemporaryVisualServiceError("private provider detail")
+
+    error = assert_pipeline_error(
+        "pdf",
+        pdf_bytes(
+            "Searchable text survives visual analysis.",
+            image_pages={1},
+            width=300,
+            height=300,
+        ),
+        ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED,
+        PipelineStage.UNDERSTANDING_IMAGES,
+        image_provider=TemporaryFailureProvider(),
+    )
+
+    assert error.retryable is True
+    assert "private" not in str(error)
+
+
+def test_malformed_visual_description_is_nonfatal() -> None:
+    class MalformedProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            return VisualDescription(
+                visual_type=suggested_type,
+                description=1,  # type: ignore[arg-type]
+            )
+
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "Usable native text remains available.",
+            image_pages={1},
+            width=300,
+            height=300,
+        ),
+        options=pipeline_options(),
+        image_provider=MalformedProvider(),
+    )
+
+    assert result.pages[0].visual_analysis_status == PageVisualAnalysisStatus.FAILED
+    assert result.pages[0].visuals[0].analysis_status == VisualAnalysisStatus.FAILED
+    assert result.pages[0].visuals[0].error_code == "VISUAL_ANALYSIS_FAILED"
+    assert result.chunks[0].text == "Usable native text remains available."
+
+
+def test_visual_rendering_obeys_configured_pdf_pixel_limits() -> None:
     class UnexpectedProvider:
         enabled = True
 
-        def describe_page(self, page_png: bytes, *, page_number: int) -> str:
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
             raise AssertionError("over-limit page must not be rendered")
 
     with pytest.raises(DocumentProcessingError) as raised:
         process_document(
             "pdf",
-            pdf_bytes("Searchable text", width=100, height=100),
+            pdf_bytes(
+                "Searchable text",
+                image_pages={1},
+                width=100,
+                height=100,
+            ),
             options=pipeline_options(
                 image_dpi=300,
                 max_pdf_page_pixels=50_000,
@@ -797,7 +1241,7 @@ def test_image_rendering_obeys_configured_pdf_pixel_limits() -> None:
     assert raised.value.retryable is False
 
 
-def test_no_text_after_ocr_and_vision_fails_after_enrichment() -> None:
+def test_empty_ocr_is_recorded_and_visual_understanding_can_recover_content() -> None:
     class EmptyOCR:
         def extract_text(
             self,
@@ -808,33 +1252,95 @@ def test_no_text_after_ocr_and_vision_fails_after_enrichment() -> None:
         ) -> str:
             return " \r\n\t"
 
-    class EmptyVision:
+    class RecoveringVision:
         enabled = True
 
-        def describe_page(self, page_png: bytes, *, page_number: int) -> None:
-            return None
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            return VisualDescription(
+                visual_type=VisualType.DIAGRAM,
+                description="A diagram contains useful semantic content.",
+            )
 
     stages: list[PipelineStage] = []
-    with pytest.raises(DocumentProcessingError) as raised:
-        process_document(
-            "pdf",
-            pdf_bytes(None, image_pages={1}),
-            options=pipeline_options(ocr_enabled=True),
-            stage_callback=stages.append,
-            ocr_provider=EmptyOCR(),
-            image_provider=EmptyVision(),
-        )
+    result = process_document(
+        "pdf",
+        pdf_bytes(None, image_pages={1}),
+        options=pipeline_options(ocr_enabled=True),
+        stage_callback=stages.append,
+        ocr_provider=EmptyOCR(),
+        image_provider=RecoveringVision(),
+    )
 
-    assert raised.value.code == ProcessingErrorCode.NO_PROCESSABLE_TEXT
-    assert raised.value.stage == PipelineStage.CLEANING_TEXT
-    assert raised.value.retryable is False
+    assert result.pages[0].ocr_status == OCRStatus.NO_TEXT
+    assert result.pages[0].needs_ocr is False
+    assert result.pages[0].extraction_method is None
+    assert result.chunks[0].text == (
+        "[Diagram]\nA diagram contains useful semantic content."
+    )
     assert stages == [
         PipelineStage.VALIDATING,
         PipelineStage.EXTRACTING_TEXT,
         PipelineStage.RUNNING_OCR,
         PipelineStage.UNDERSTANDING_IMAGES,
         PipelineStage.CLEANING_TEXT,
+        PipelineStage.CHUNKING,
     ]
+
+
+def test_empty_required_ocr_without_visual_recovery_has_no_processable_text() -> None:
+    class EmptyOCR:
+        def extract_text(
+            self,
+            page: pymupdf.Page,
+            *,
+            language: str,
+            dpi: int,
+        ) -> str:
+            return " \r\n\t"
+
+    error = assert_pipeline_error(
+        "pdf",
+        pdf_bytes(None, image_pages={1}),
+        ProcessingErrorCode.NO_PROCESSABLE_TEXT,
+        PipelineStage.CLEANING_TEXT,
+        options=pipeline_options(ocr_enabled=True),
+        ocr_provider=EmptyOCR(),
+    )
+
+    assert error.retryable is False
+
+
+def test_empty_ocr_page_does_not_fail_other_usable_pages() -> None:
+    class EmptyOCR:
+        def extract_text(
+            self,
+            page: pymupdf.Page,
+            *,
+            language: str,
+            dpi: int,
+        ) -> str:
+            return ""
+
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "This native page keeps the document usable.",
+            None,
+            image_pages={2},
+        ),
+        options=pipeline_options(ocr_enabled=True),
+        ocr_provider=EmptyOCR(),
+    )
+
+    assert result.pages[1].ocr_status == OCRStatus.NO_TEXT
+    assert [chunk.page_number for chunk in result.chunks] == [1]
 
 
 def test_whitespace_text_fails_at_cleaning_without_optional_stages() -> None:

@@ -10,11 +10,12 @@ from services.document_pipeline import (
 )
 from services.document_pipeline import (
     ExtractedDocument,
+    EnrichedPage,
     PipelineOptions,
     PipelineStage,
     process_document,
 )
-from services.processing_jobs import ChunkData, PageData
+from services.processing_jobs import ChunkData, PageData, VisualData
 from storage.base import Storage, StorageError
 
 StageCallback = Callable[[PipelineStage], None]
@@ -123,6 +124,27 @@ def extract_document(
                 ),
                 has_images=content.has_images,
                 needs_ocr=content.needs_ocr,
+                raw_text=content.text,
+                raw_extraction_method=(
+                    content.extraction_method.value
+                    if content.extraction_method is not None
+                    else None
+                ),
+                has_visual_content=content.has_visual_content,
+                raw_needs_ocr=content.needs_ocr,
+                ocr_status="pending" if content.needs_ocr else "not_required",
+                visual_analysis_status=(
+                    "pending" if content.has_visual_content else "not_applicable"
+                ),
+                visuals=tuple(
+                    VisualData(
+                        visual_index=visual.visual_index,
+                        visual_type=visual.visual_type.value,
+                        source=visual.source.value,
+                        bbox=visual.bbox,
+                    )
+                    for visual in content.visuals
+                ),
             )
             for content in document.contents
         ]
@@ -149,9 +171,44 @@ def extract_document(
         ) from exc
 
     return ProcessedDocumentData(
-        pages=extracted_pages,
+        pages=[_page_data(page) for page in result.pages],
         chunks=[
             ChunkData(text=chunk.text, page_number=chunk.page_number)
             for chunk in result.chunks
         ],
+    )
+
+
+def _page_data(page: EnrichedPage) -> PageData:
+    return PageData(
+        content_index=page.content_index,
+        text=page.text,
+        page_number=page.page_number,
+        extraction_method=(
+            page.extraction_method.value if page.extraction_method is not None else None
+        ),
+        has_images=page.has_images,
+        needs_ocr=page.needs_ocr,
+        raw_text=page.raw_text,
+        raw_extraction_method=(
+            page.raw_extraction_method.value
+            if page.raw_extraction_method is not None
+            else None
+        ),
+        has_visual_content=page.has_visual_content,
+        raw_needs_ocr=page.raw_needs_ocr,
+        ocr_status=page.ocr_status.value,
+        visual_analysis_status=page.visual_analysis_status.value,
+        visuals=tuple(
+            VisualData(
+                visual_index=visual.visual_index,
+                visual_type=visual.visual_type.value,
+                source=visual.source.value,
+                bbox=visual.bbox,
+                description=visual.description,
+                analysis_status=visual.analysis_status.value,
+                error_code=visual.error_code,
+            )
+            for visual in page.visuals
+        ),
     )

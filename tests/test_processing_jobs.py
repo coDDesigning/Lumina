@@ -19,6 +19,7 @@ from backend.app.models import (
     JOB_STATUS_SUCCEEDED,
     Course,
     DocumentChunk,
+    DocumentPage,
     ProcessingJob,
     Role,
     UploadedDocument,
@@ -30,22 +31,28 @@ from services.course import CourseService
 from services.document import DocumentService
 from services.document_extraction import (
     DocumentProcessingError,
-    extract_document_chunks,
+    extract_document,
 )
 from services.processing_jobs import (
     ClaimedJob,
     ChunkData,
+    PageData,
     claim_next_job,
     complete_job,
     enqueue_document_job,
     fail_job,
     heartbeat_job,
     recover_expired_jobs,
+    replace_document_pages,
     update_job_stage,
 )
 from storage.local import LocalStorage
 from workers import document_processor
-from workers.document_processor import _extract_with_timeout, process_next_job
+from workers.document_processor import (
+    _chunks_from_process_result,
+    _extract_with_timeout,
+    process_next_job,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +77,16 @@ class CrashingStorage:
 
     def open(self, _key: str):
         os._exit(1)
+
+
+class ImmediateStorage:
+    provider = "immediate:test"
+
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+
+    def open(self, _key: str):
+        return BytesIO(self.content)
 
 
 def _queue_document(
@@ -168,6 +185,9 @@ def test_worker_processes_text_into_canonical_chunks(session_factory, tmp_path):
         chunks = session.scalars(
             select(DocumentChunk).order_by(DocumentChunk.chunk_index)
         ).all()
+        pages = session.scalars(
+            select(DocumentPage).order_by(DocumentPage.content_index)
+        ).all()
         assert document is not None
         assert job is not None
         assert document.status == "ready"
@@ -177,6 +197,12 @@ def test_worker_processes_text_into_canonical_chunks(session_factory, tmp_path):
         assert job.processing_stage is None
         assert job.failed_stage is None
         assert [chunk.text for chunk in chunks] == ["Durable processing notes"]
+        assert len(pages) == 1
+        assert pages[0].page_number is None
+        assert pages[0].text == "Durable processing notes"
+        assert pages[0].extraction_method == "decoded"
+        assert pages[0].has_images is False
+        assert pages[0].needs_ocr is False
 
 
 def test_image_pdf_fails_permanently_then_can_be_retried(session_factory, tmp_path):
@@ -204,6 +230,11 @@ def test_image_pdf_fails_permanently_then_can_be_retried(session_factory, tmp_pa
         assert job.last_error_code == "OCR_UNAVAILABLE"
         assert job.failed_stage == "running_ocr"
         assert job.finished_at is not None
+        page = session.scalar(select(DocumentPage))
+        assert page is not None
+        assert page.page_number == 1
+        assert page.has_images is True
+        assert page.needs_ocr is True
 
     with session_factory() as session:
         document, job = DocumentService.retry_document(
@@ -216,6 +247,60 @@ def test_image_pdf_fails_permanently_then_can_be_retried(session_factory, tmp_pa
         assert job.attempt_count == 0
         assert job.last_error_code is None
         assert job.failed_stage is None
+
+
+def test_corrupted_pdf_fails_worker_without_partial_content(session_factory, tmp_path):
+    queued = _queue_document(
+        session_factory,
+        tmp_path,
+        content=b"%PDF-1.7\ntruncated",
+        file_type="pdf",
+    )
+
+    assert process_next_job(
+        session_factory=session_factory,
+        storage=queued.storage,
+        worker_id="corrupt-pdf-worker",
+        lease_seconds=60,
+    )
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        job = session.get(ProcessingJob, queued.job_id)
+        assert document is not None
+        assert job is not None
+        assert document.status == "failed"
+        assert job.status == JOB_STATUS_FAILED
+        assert job.last_error_code == "CORRUPTED_PDF"
+        assert job.failed_stage == "validating"
+        assert session.scalar(select(func.count(DocumentPage.id))) == 0
+        assert session.scalar(select(func.count(DocumentChunk.id))) == 0
+
+
+def test_worker_persists_exact_raw_markdown_before_cleaning(session_factory, tmp_path):
+    content = b"# Heading  \r\n\r\nParagraph with a hard break.  \r\n"
+    queued = _queue_document(
+        session_factory,
+        tmp_path,
+        content=content,
+        file_type="markdown",
+    )
+
+    assert process_next_job(
+        session_factory=session_factory,
+        storage=queued.storage,
+        worker_id="markdown-worker",
+        lease_seconds=60,
+    )
+
+    with session_factory() as session:
+        page = session.scalar(select(DocumentPage))
+        chunk = session.scalar(select(DocumentChunk))
+        assert page is not None
+        assert chunk is not None
+        assert page.text == content.decode("utf-8")
+        assert page.page_number is None
+        assert chunk.text == "# Heading\n\nParagraph with a hard break."
 
 
 def test_processing_stage_transitions_are_ordered_and_claim_fenced(
@@ -316,6 +401,170 @@ def test_sqlite_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp
             [ChunkData("Canonical")],
             now=claim_time + timedelta(seconds=10),
         )
+
+
+def test_raw_pages_are_claim_fenced_and_atomically_replaced(session_factory, tmp_path):
+    queued = _queue_document(session_factory, tmp_path)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session,
+            "page-worker",
+            queued.storage.provider,
+            60,
+            now=queued.available_at + timedelta(seconds=1),
+        )
+    assert claim is not None
+    with session_factory() as session:
+        assert update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "extracting_text",
+            now=queued.available_at + timedelta(seconds=2),
+        )
+
+    first_pages = [
+        PageData(
+            content_index=0,
+            text="First extraction",
+            page_number=None,
+            extraction_method="decoded",
+            has_images=False,
+            needs_ocr=False,
+        )
+    ]
+    with session_factory() as session:
+        assert replace_document_pages(
+            session,
+            claim.id,
+            claim.claim_token,
+            first_pages,
+            now=queued.available_at + timedelta(seconds=3),
+        )
+    with session_factory() as session:
+        assert not replace_document_pages(
+            session,
+            claim.id,
+            "stale-claim",
+            [replace(first_pages[0], text="Stale extraction")],
+            now=queued.available_at + timedelta(seconds=4),
+        )
+    with session_factory() as session:
+        assert replace_document_pages(
+            session,
+            claim.id,
+            claim.claim_token,
+            [replace(first_pages[0], text="Replacement extraction")],
+            now=queued.available_at + timedelta(seconds=5),
+        )
+
+    with session_factory() as session:
+        pages = session.scalars(select(DocumentPage)).all()
+        assert len(pages) == 1
+        assert pages[0].text == "Replacement extraction"
+
+    with session_factory() as session:
+        assert (
+            fail_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                error_code="LATER_STAGE_FAILED",
+                error_message="Later processing failed",
+                retryable=False,
+                now=queued.available_at + timedelta(seconds=6),
+            )
+            == JOB_STATUS_FAILED
+        )
+    with session_factory() as session:
+        persisted = session.scalar(select(DocumentPage))
+        assert persisted is not None
+        assert persisted.text == "Replacement extraction"
+
+    with session_factory() as session:
+        DocumentService.retry_document(session, queued.document_id, queued.course_id)
+    with session_factory() as session:
+        retry_claim = claim_next_job(
+            session,
+            "retry-page-worker",
+            queued.storage.provider,
+            60,
+            now=queued.available_at + timedelta(seconds=7),
+        )
+    assert retry_claim is not None
+    with session_factory() as session:
+        assert update_job_stage(
+            session,
+            retry_claim.id,
+            retry_claim.claim_token,
+            "extracting_text",
+            now=queued.available_at + timedelta(seconds=8),
+        )
+    with session_factory() as session:
+        assert replace_document_pages(
+            session,
+            retry_claim.id,
+            retry_claim.claim_token,
+            [replace(first_pages[0], text="Successful retry extraction")],
+            now=queued.available_at + timedelta(seconds=9),
+        )
+    with session_factory() as session:
+        pages = session.scalars(select(DocumentPage)).all()
+        assert len(pages) == 1
+        assert pages[0].text == "Successful retry extraction"
+
+
+def test_raw_page_persistence_removes_postgresql_unsupported_nuls(
+    session_factory,
+    tmp_path,
+):
+    queued = _queue_document(session_factory, tmp_path)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session,
+            "nul-page-worker",
+            queued.storage.provider,
+            60,
+            now=queued.available_at + timedelta(seconds=1),
+        )
+    assert claim is not None
+    with session_factory() as session:
+        assert update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "extracting_text",
+            now=queued.available_at + timedelta(seconds=2),
+        )
+    with session_factory() as session:
+        assert replace_document_pages(
+            session,
+            claim.id,
+            claim.claim_token,
+            [
+                PageData(
+                    content_index=0,
+                    text="Before\x00After",
+                    page_number=1,
+                    extraction_method="native",
+                    has_images=False,
+                    needs_ocr=False,
+                )
+            ],
+            now=queued.available_at + timedelta(seconds=3),
+        )
+    with session_factory() as session:
+        page = session.scalar(select(DocumentPage))
+        assert page is not None
+        assert page.text == "BeforeAfter"
+
+
+def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path):
+    queued = _queue_document(session_factory, tmp_path)
+
+    with pytest.raises(ValueError, match="at least one page"):
+        with session_factory() as session:
+            replace_document_pages(session, queued.job_id, "claim", [])
 
 
 def test_transient_failure_requeues_then_exhausts_attempts(session_factory, tmp_path):
@@ -627,6 +876,49 @@ def test_extraction_process_crash_is_reaped_as_safe_failure():
     assert error.value.code == "UNEXPECTED_PROCESSING_ERROR"
 
 
+@pytest.mark.parametrize(
+    "result",
+    [
+        ("unexpected",),
+        ("extracted", []),
+        ("succeeded", [PageData(0, "raw", None, "decoded", False, False)]),
+        ("failed", "CODE", "message", "not-a-boolean"),
+        (),
+    ],
+)
+def test_unexpected_child_messages_never_complete_as_chunks(result):
+    with pytest.raises(DocumentProcessingError) as error:
+        _chunks_from_process_result(result)
+    assert error.value.code == "UNEXPECTED_PROCESSING_ERROR"
+
+
+def test_extraction_persistence_time_counts_toward_attempt_timeout():
+    content = b"Deadline bounded extraction"
+    storage = ImmediateStorage(content)
+    job = ClaimedJob(
+        id=1,
+        document_id=uuid4(),
+        course_id=1,
+        claim_token=str(uuid4()),
+        attempt_count=1,
+        max_attempts=3,
+        storage_provider=storage.provider,
+        storage_key="document.txt",
+        file_hash=hashlib.sha256(content).hexdigest(),
+        file_type="txt",
+        file_size=len(content),
+    )
+
+    with pytest.raises(DocumentProcessingError) as error:
+        _extract_with_timeout(
+            storage,
+            job,
+            timeout_seconds=1,
+            extraction_callback=lambda _pages, _remaining: time.sleep(1.1),
+        )
+    assert error.value.code == "PROCESSING_TIMEOUT"
+
+
 def test_extraction_preserves_pdf_pages_and_enforces_integrity(tmp_path):
     storage = LocalStorage(tmp_path / "extract", namespace="worker")
     pdf = pymupdf.open()
@@ -639,7 +931,7 @@ def test_extraction_preserves_pdf_pages_and_enforces_integrity(tmp_path):
     key = storage.generate_key(1, uuid4(), "pdf")
     storage.save(key, BytesIO(content))
 
-    chunks = extract_document_chunks(
+    result = extract_document(
         storage,
         storage_provider=storage.provider,
         storage_key=key,
@@ -647,10 +939,12 @@ def test_extraction_preserves_pdf_pages_and_enforces_integrity(tmp_path):
         expected_size=len(content),
         file_type="pdf",
     )
-    assert [chunk.page_number for chunk in chunks] == [1, 2]
+    assert [page.page_number for page in result.pages] == [1, 2]
+    assert [page.extraction_method for page in result.pages] == ["native", "native"]
+    assert [chunk.page_number for chunk in result.chunks] == [1, 2]
 
     with pytest.raises(DocumentProcessingError) as error:
-        extract_document_chunks(
+        extract_document(
             storage,
             storage_provider=storage.provider,
             storage_key=key,
@@ -674,7 +968,7 @@ def test_extraction_enforces_configured_text_limit(tmp_path, monkeypatch):
     )
 
     with pytest.raises(DocumentProcessingError) as error:
-        extract_document_chunks(
+        extract_document(
             storage,
             storage_provider=storage.provider,
             storage_key=key,

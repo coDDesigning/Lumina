@@ -19,15 +19,18 @@ from backend.app.database import SessionLocal
 from backend.app.readiness import ReadinessError, check_readiness
 from services.document_extraction import (
     DocumentProcessingError,
-    extract_document_chunks,
+    extract_document,
 )
 from services.processing_jobs import (
     ClaimedJob,
+    ChunkData,
+    PageData,
     claim_next_job,
     complete_job,
     fail_job,
     heartbeat_job,
     recover_expired_jobs,
+    replace_document_pages,
     update_job_stage,
 )
 from storage.base import Storage
@@ -128,7 +131,12 @@ def _extraction_process(connection, storage: Storage, job: ClaimedJob) -> None:
         def report_stage(stage) -> None:
             connection.send(("stage", stage.value))
 
-        chunks = extract_document_chunks(
+        def report_extraction(pages: list[PageData]) -> None:
+            connection.send(("extracted", pages))
+            if connection.recv() != ("continue",):
+                raise RuntimeError("Raw extraction persistence was rejected")
+
+        result = extract_document(
             storage,
             storage_provider=job.storage_provider,
             storage_key=job.storage_key,
@@ -136,9 +144,13 @@ def _extraction_process(connection, storage: Storage, job: ClaimedJob) -> None:
             expected_size=job.file_size,
             file_type=job.file_type,
             stage_callback=report_stage,
+            extraction_callback=report_extraction,
         )
-        connection.send(("succeeded", chunks))
+        connection.send(("succeeded", result.chunks))
     except DocumentProcessingError as exc:
+        logger.info(
+            "Document processing failed for job %s with code %s", job.id, exc.code
+        )
         connection.send(("failed", exc.code, str(exc), exc.retryable))
     except Exception:
         connection.send(("unexpected",))
@@ -151,9 +163,10 @@ def _extract_with_timeout(
     job: ClaimedJob,
     timeout_seconds: int,
     stage_callback: Callable[[str], None] | None = None,
+    extraction_callback: Callable[[list[PageData], float], None] | None = None,
 ):
     context = multiprocessing.get_context("spawn")
-    parent_connection, child_connection = context.Pipe(duplex=False)
+    parent_connection, child_connection = context.Pipe(duplex=True)
     process = context.Process(
         target=_extraction_process,
         args=(child_connection, storage, job),
@@ -176,9 +189,43 @@ def _extract_with_timeout(
             try:
                 if parent_connection.poll(min(0.1, remaining)):
                     result = parent_connection.recv()
+                    if not isinstance(result, tuple) or not result:
+                        break
                     if result[0] == "stage":
+                        if len(result) != 2 or not isinstance(result[1], str):
+                            break
                         if stage_callback is not None:
                             stage_callback(result[1])
+                        result = None
+                        continue
+                    if result[0] == "extracted":
+                        if (
+                            len(result) != 2
+                            or not isinstance(result[1], list)
+                            or any(not isinstance(page, PageData) for page in result[1])
+                        ):
+                            break
+                        try:
+                            if extraction_callback is not None:
+                                extraction_callback(
+                                    result[1],
+                                    max(0.001, deadline - time.monotonic()),
+                                )
+                        except Exception:
+                            try:
+                                parent_connection.send(("abort",))
+                            except (BrokenPipeError, EOFError, OSError):
+                                pass
+                            raise
+                        if time.monotonic() >= deadline:
+                            timed_out = True
+                            try:
+                                parent_connection.send(("abort",))
+                            except (BrokenPipeError, EOFError, OSError):
+                                pass
+                            result = None
+                            break
+                        parent_connection.send(("continue",))
                         result = None
                         continue
                     break
@@ -198,7 +245,28 @@ def _extract_with_timeout(
             "Document processing exceeded the attempt time limit.",
             retryable=True,
         )
-    if result is None or result[0] == "unexpected":
+    if result is None:
+        raise DocumentProcessingError(
+            "UNEXPECTED_PROCESSING_ERROR",
+            "Document processing failed unexpectedly.",
+            retryable=True,
+        )
+    return _chunks_from_process_result(result)
+
+
+def _chunks_from_process_result(result) -> list[ChunkData]:
+    if not isinstance(result, tuple) or not result:
+        raise DocumentProcessingError(
+            "UNEXPECTED_PROCESSING_ERROR",
+            "Document processing failed unexpectedly.",
+            retryable=True,
+        )
+    if result[0] == "failed" and (
+        len(result) != 4
+        or not isinstance(result[1], str)
+        or not isinstance(result[2], str)
+        or type(result[3]) is not bool
+    ):
         raise DocumentProcessingError(
             "UNEXPECTED_PROCESSING_ERROR",
             "Document processing failed unexpectedly.",
@@ -210,7 +278,22 @@ def _extract_with_timeout(
             result[2],
             retryable=result[3],
         )
-    return result[1]
+    if result[0] != "succeeded" or len(result) != 2:
+        raise DocumentProcessingError(
+            "UNEXPECTED_PROCESSING_ERROR",
+            "Document processing failed unexpectedly.",
+            retryable=True,
+        )
+    chunks = result[1]
+    if not isinstance(chunks, list) or any(
+        not isinstance(chunk, ChunkData) for chunk in chunks
+    ):
+        raise DocumentProcessingError(
+            "UNEXPECTED_PROCESSING_ERROR",
+            "Document processing failed unexpectedly.",
+            retryable=True,
+        )
+    return chunks
 
 
 def _reap_process(process) -> bool:
@@ -302,11 +385,42 @@ def process_next_job(
                     retryable=True,
                 )
 
+        def persist_extraction(
+            pages: list[PageData],
+            remaining_seconds: float,
+        ) -> None:
+            try:
+                with session_factory() as session:
+                    updated = replace_document_pages(
+                        session,
+                        job.id,
+                        job.claim_token,
+                        pages,
+                        operation_timeout_seconds=remaining_seconds,
+                    )
+            except Exception:
+                logger.exception("Failed to persist raw pages for job %s", job.id)
+                raise DocumentProcessingError(
+                    "EXTRACTION_PERSISTENCE_FAILED",
+                    "The extracted document content could not be recorded.",
+                    retryable=True,
+                    failed_stage="extracting_text",
+                ) from None
+            if not updated:
+                claim_lost.set()
+                raise DocumentProcessingError(
+                    "EXTRACTION_PERSISTENCE_CONFLICT",
+                    "The extracted document content could not be recorded.",
+                    retryable=True,
+                    failed_stage="extracting_text",
+                )
+
         chunks = _extract_with_timeout(
             storage,
             job,
             settings.processing_job_attempt_timeout_seconds,
             stage_callback=persist_stage,
+            extraction_callback=persist_extraction,
         )
     except WorkerProcessFatalError:
         _stop_heartbeat(stop, heartbeat, claim_lost)

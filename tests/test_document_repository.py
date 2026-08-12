@@ -5,7 +5,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backend.app.models import DocumentChunk, DocumentPage, UploadedDocument
+from backend.app.models import (
+    DocumentChunk,
+    DocumentPage,
+    DocumentVisual,
+    UploadedDocument,
+)
 from backend.app.repositories.document import DocumentRepository
 
 
@@ -221,27 +226,112 @@ def test_document_chunk_course_must_match_its_document(
     assert db_session.scalar(select(func.count()).select_from(DocumentChunk)) == 0
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"page_number": None, "has_images": False, "needs_ocr": True},
+        {"raw_extraction_method": "ocr"},
+        {"extraction_method": "unknown"},
+        {"ocr_status": "unknown"},
+        {"visual_analysis_status": "unknown"},
+    ],
+    ids=[
+        "ocr-candidate",
+        "raw-extraction-method",
+        "extraction-method",
+        "ocr-status",
+        "visual-status",
+    ],
+)
 def test_document_page_constraints_are_enforced(
     db_session: Session,
     model_graph,
+    overrides: dict[str, object],
 ) -> None:
     document = DocumentRepository.create(db_session, **document_values(model_graph))
     db_session.commit()
 
-    db_session.add(
-        DocumentPage(
-            document_id=document.id,
-            course_id=model_graph.course.id,
-            content_index=0,
-            page_number=None,
-            text="Invalid OCR candidate",
-            extraction_method="decoded",
-            has_images=False,
-            needs_ocr=True,
-        )
-    )
+    values: dict[str, object] = {
+        "document_id": document.id,
+        "course_id": model_graph.course.id,
+        "content_index": 0,
+        "page_number": 1,
+        "raw_text": "Raw page",
+        "text": "Effective page",
+        "raw_extraction_method": "native",
+        "extraction_method": "ocr",
+        "has_images": True,
+        "needs_ocr": False,
+        "ocr_status": "succeeded",
+        "has_visual_content": False,
+        "visual_analysis_status": "not_applicable",
+    }
+    values.update(overrides)
+    db_session.add(DocumentPage(**values))
     with pytest.raises(IntegrityError):
         db_session.commit()
     db_session.rollback()
 
     assert db_session.scalar(select(func.count()).select_from(DocumentPage)) == 0
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"visual_index": -1},
+        {"visual_type": "photograph"},
+        {"source": "unknown"},
+        {"bbox_x1": 0.0},
+        {"analysis_status": "unknown"},
+        {"description": "Not analyzed"},
+        {"analysis_status": "failed"},
+    ],
+    ids=[
+        "visual-index",
+        "visual-type",
+        "source",
+        "bbox",
+        "analysis-status",
+        "description-status",
+        "failed-error-code",
+    ],
+)
+def test_document_visual_constraints_are_enforced(
+    db_session: Session,
+    model_graph,
+    overrides: dict[str, object],
+) -> None:
+    document = DocumentRepository.create(db_session, **document_values(model_graph))
+    page = DocumentPage(
+        document=document,
+        course=model_graph.course,
+        content_index=0,
+        page_number=1,
+        raw_text="Raw page",
+        text="Effective page",
+        raw_extraction_method="native",
+        extraction_method="native",
+        has_images=True,
+        needs_ocr=False,
+        has_visual_content=True,
+        visual_analysis_status="pending",
+    )
+    values: dict[str, object] = {
+        "page": page,
+        "visual_index": 0,
+        "visual_type": "figure",
+        "source": "image",
+        "bbox_x0": 0.0,
+        "bbox_y0": 0.0,
+        "bbox_x1": 10.0,
+        "bbox_y1": 10.0,
+        "analysis_status": "pending",
+    }
+    values.update(overrides)
+    db_session.add(DocumentVisual(**values))
+
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+    assert db_session.scalar(select(func.count()).select_from(DocumentVisual)) == 0

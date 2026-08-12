@@ -294,7 +294,7 @@ class DocumentChunk(Base):
 
 
 class DocumentPage(Base):
-    """Canonical raw extraction unit retained before downstream processing."""
+    """Canonical raw and enriched content for one document page."""
 
     __tablename__ = "document_pages"
     __table_args__ = (
@@ -308,12 +308,34 @@ class DocumentPage(Base):
             "page_number IS NULL OR page_number >= 1", name="page_number_positive"
         ),
         CheckConstraint(
-            "extraction_method IS NULL OR extraction_method IN ('native', 'decoded')",
+            "raw_extraction_method IS NULL OR "
+            "raw_extraction_method IN ('native', 'decoded')",
+            name="raw_extraction_method_valid",
+        ),
+        CheckConstraint(
+            "extraction_method IS NULL OR "
+            "extraction_method IN ('native', 'decoded', 'ocr')",
             name="extraction_method_valid",
         ),
         CheckConstraint(
-            "NOT needs_ocr OR (page_number IS NOT NULL AND has_images)",
+            "NOT needs_ocr OR (page_number IS NOT NULL AND "
+            "(has_images OR has_visual_content))",
             name="ocr_candidate_valid",
+        ),
+        CheckConstraint(
+            "NOT raw_needs_ocr OR (page_number IS NOT NULL AND "
+            "(has_images OR has_visual_content))",
+            name="raw_ocr_candidate_valid",
+        ),
+        CheckConstraint(
+            "ocr_status IN ('not_required', 'pending', 'succeeded', 'no_text')",
+            name="ocr_status_valid",
+        ),
+        CheckConstraint(
+            "visual_analysis_status IN "
+            "('not_applicable', 'pending', 'not_configured', 'completed', "
+            "'partial', 'failed')",
+            name="visual_analysis_status_valid",
         ),
         ForeignKeyConstraint(
             ["document_id", "course_id"],
@@ -330,13 +352,27 @@ class DocumentPage(Base):
     )
     content_index: Mapped[int] = mapped_column(Integer)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_text: Mapped[str] = mapped_column(Text)
     text: Mapped[str] = mapped_column(Text)
+    raw_extraction_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
     extraction_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
     has_images: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )
     needs_ocr: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
+    )
+    raw_needs_ocr: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    ocr_status: Mapped[str] = mapped_column(
+        String(20), default="not_required", server_default="not_required"
+    )
+    has_visual_content: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    visual_analysis_status: Mapped[str] = mapped_column(
+        String(20), default="not_applicable", server_default="not_applicable"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -348,6 +384,68 @@ class DocumentPage(Base):
     course: Mapped["Course"] = relationship(
         back_populates="document_pages", overlaps="document,pages"
     )
+    visuals: Mapped[list["DocumentVisual"]] = relationship(
+        back_populates="page",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="DocumentVisual.visual_index",
+    )
+
+
+class DocumentVisual(Base):
+    """One meaningful visual region detected on a physical PDF page."""
+
+    __tablename__ = "document_visuals"
+    __table_args__ = (
+        UniqueConstraint("page_id", "visual_index", name="uq_visual_page_index"),
+        CheckConstraint("visual_index >= 0", name="visual_index_nonnegative"),
+        CheckConstraint(
+            "visual_type IN "
+            "('diagram', 'table', 'chart', 'screenshot', 'figure', 'flowchart', "
+            "'other')",
+            name="visual_type_valid",
+        ),
+        CheckConstraint("source IN ('image', 'table', 'drawing')", name="source_valid"),
+        CheckConstraint(
+            "bbox_x0 >= 0 AND bbox_y0 >= 0 AND bbox_x1 > bbox_x0 AND bbox_y1 > bbox_y0",
+            name="bbox_valid",
+        ),
+        CheckConstraint(
+            "analysis_status IN "
+            "('pending', 'not_configured', 'succeeded', 'skipped', 'failed')",
+            name="analysis_status_valid",
+        ),
+        CheckConstraint(
+            "description IS NULL OR analysis_status = 'succeeded'",
+            name="description_status_valid",
+        ),
+        CheckConstraint(
+            "analysis_status <> 'failed' OR error_code IS NOT NULL",
+            name="failed_error_code_required",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    page_id: Mapped[int] = mapped_column(
+        ForeignKey("document_pages.id", ondelete="CASCADE"), index=True
+    )
+    visual_index: Mapped[int] = mapped_column(Integer)
+    visual_type: Mapped[str] = mapped_column(String(20))
+    source: Mapped[str] = mapped_column(String(20))
+    bbox_x0: Mapped[float] = mapped_column(Float)
+    bbox_y0: Mapped[float] = mapped_column(Float)
+    bbox_x1: Mapped[float] = mapped_column(Float)
+    bbox_y1: Mapped[float] = mapped_column(Float)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analysis_status: Mapped[str] = mapped_column(
+        String(20), default="pending", server_default="pending"
+    )
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    page: Mapped["DocumentPage"] = relationship(back_populates="visuals")
 
 
 class ProcessingJob(Base):

@@ -20,6 +20,7 @@ from backend.app.models import (
     Course,
     DocumentChunk,
     DocumentPage,
+    DocumentVisual,
     ProcessingJob,
     UploadedDocument,
 )
@@ -32,6 +33,17 @@ class ChunkData:
 
 
 @dataclass(frozen=True, slots=True)
+class VisualData:
+    visual_index: int
+    visual_type: str
+    source: str
+    bbox: tuple[float, float, float, float]
+    description: str | None = None
+    analysis_status: str = "pending"
+    error_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PageData:
     content_index: int
     text: str
@@ -39,6 +51,13 @@ class PageData:
     extraction_method: str | None
     has_images: bool
     needs_ocr: bool
+    raw_text: str | None = None
+    raw_extraction_method: str | None = None
+    has_visual_content: bool = False
+    raw_needs_ocr: bool | None = None
+    ocr_status: str | None = None
+    visual_analysis_status: str = "not_applicable"
+    visuals: tuple[VisualData, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,16 +380,7 @@ def replace_document_pages(
     if [page.content_index for page in pages] != list(range(len(pages))):
         raise ValueError("Document page content indexes must be contiguous")
     for page in pages:
-        if not isinstance(page.text, str):
-            raise ValueError("Document page text must be a string")
-        if page.page_number is not None and page.page_number < 1:
-            raise ValueError("Document page numbers must be positive")
-        if page.extraction_method not in {None, "native", "decoded"}:
-            raise ValueError("Document page extraction method is unsupported")
-        if type(page.has_images) is not bool or type(page.needs_ocr) is not bool:
-            raise ValueError("Document page detection flags must be boolean")
-        if page.needs_ocr and (page.page_number is None or not page.has_images):
-            raise ValueError("OCR candidates must be image-bearing physical pages")
+        _validate_page_data(page, raw=True)
     if sum(len(page.text) for page in pages) > settings.max_extracted_characters:
         raise ValueError("Document pages exceed the configured text limit")
     if operation_timeout_seconds is not None and (
@@ -445,10 +455,26 @@ def replace_document_pages(
             course_id=job.course_id,
             content_index=page.content_index,
             page_number=page.page_number,
+            raw_text=(
+                page.raw_text if page.raw_text is not None else page.text
+            ).replace("\x00", ""),
             text=page.text.replace("\x00", ""),
+            raw_extraction_method=(
+                page.raw_extraction_method
+                if page.raw_extraction_method is not None
+                else page.extraction_method
+            ),
             extraction_method=page.extraction_method,
             has_images=page.has_images,
             needs_ocr=page.needs_ocr,
+            raw_needs_ocr=(
+                page.raw_needs_ocr if page.raw_needs_ocr is not None else page.needs_ocr
+            ),
+            ocr_status=page.ocr_status
+            or ("pending" if page.needs_ocr else "not_required"),
+            has_visual_content=page.has_visual_content,
+            visual_analysis_status=page.visual_analysis_status,
+            visuals=[_document_visual(visual) for visual in page.visuals],
         )
         for page in pages
     )
@@ -462,6 +488,7 @@ def complete_job(
     job_id: int,
     claim_token: str,
     chunks: list[ChunkData],
+    pages: list[PageData] | None = None,
     *,
     now: datetime | None = None,
 ) -> bool:
@@ -474,6 +501,13 @@ def complete_job(
             raise ValueError("Document chunks must contain text")
         if chunk.page_number is not None and chunk.page_number < 1:
             raise ValueError("Document chunk page numbers must be positive")
+    if pages is not None:
+        if not pages:
+            raise ValueError("A completed document must contain at least one page")
+        if [page.content_index for page in pages] != list(range(len(pages))):
+            raise ValueError("Document page content indexes must be contiguous")
+        for page in pages:
+            _validate_page_data(page, raw=False)
 
     _start_transition(session)
     course_id = session.scalar(
@@ -526,6 +560,34 @@ def complete_job(
     session.execute(
         delete(DocumentChunk).where(DocumentChunk.document_id == job.document_id)
     )
+    if pages is not None:
+        session.execute(
+            delete(DocumentPage).where(DocumentPage.document_id == job.document_id)
+        )
+        session.add_all(
+            DocumentPage(
+                document_id=job.document_id,
+                course_id=job.course_id,
+                content_index=page.content_index,
+                page_number=page.page_number,
+                raw_text=(page.raw_text or "").replace("\x00", ""),
+                text=page.text.replace("\x00", ""),
+                raw_extraction_method=page.raw_extraction_method,
+                extraction_method=page.extraction_method,
+                has_images=page.has_images,
+                needs_ocr=page.needs_ocr,
+                raw_needs_ocr=(
+                    page.raw_needs_ocr
+                    if page.raw_needs_ocr is not None
+                    else page.needs_ocr
+                ),
+                ocr_status=page.ocr_status or "not_required",
+                has_visual_content=page.has_visual_content,
+                visual_analysis_status=page.visual_analysis_status,
+                visuals=[_document_visual(visual) for visual in page.visuals],
+            )
+            for page in pages
+        )
     session.add_all(
         DocumentChunk(
             document_id=job.document_id,
@@ -542,6 +604,122 @@ def complete_job(
     session.flush()
     session.commit()
     return True
+
+
+def _validate_page_data(page: PageData, *, raw: bool) -> None:
+    if not isinstance(page.text, str):
+        raise ValueError("Document page text must be a string")
+    if not raw and not isinstance(page.raw_text, str):
+        raise ValueError("Completed document page raw text must be a string")
+    if page.raw_text is not None and not isinstance(page.raw_text, str):
+        raise ValueError("Document page raw text must be a string")
+    if page.page_number is not None and page.page_number < 1:
+        raise ValueError("Document page numbers must be positive")
+    allowed_methods = (
+        {None, "native", "decoded"}
+        if raw
+        else {
+            None,
+            "native",
+            "decoded",
+            "ocr",
+        }
+    )
+    if page.extraction_method not in allowed_methods:
+        raise ValueError("Document page extraction method is unsupported")
+    if page.raw_extraction_method not in {None, "native", "decoded"}:
+        raise ValueError("Document page raw extraction method is unsupported")
+    if (
+        type(page.has_images) is not bool
+        or type(page.needs_ocr) is not bool
+        or type(page.has_visual_content) is not bool
+    ):
+        raise ValueError("Document page detection flags must be boolean")
+    if page.raw_needs_ocr is not None and type(page.raw_needs_ocr) is not bool:
+        raise ValueError("Document page raw OCR flag must be boolean")
+    if page.raw_needs_ocr and (
+        page.page_number is None or not (page.has_images or page.has_visual_content)
+    ):
+        raise ValueError("Raw OCR candidates must contain renderable physical content")
+    if page.needs_ocr and (
+        page.page_number is None or not (page.has_images or page.has_visual_content)
+    ):
+        raise ValueError("OCR candidates must contain renderable physical content")
+    if page.ocr_status not in {None, "not_required", "pending", "succeeded", "no_text"}:
+        raise ValueError("Document page OCR status is unsupported")
+    if page.visual_analysis_status not in {
+        "not_applicable",
+        "pending",
+        "not_configured",
+        "completed",
+        "partial",
+        "failed",
+    }:
+        raise ValueError("Document page visual status is unsupported")
+    if page.visuals and not page.has_visual_content:
+        raise ValueError("Document page visual detection flag is inconsistent")
+    for index, visual in enumerate(page.visuals):
+        if visual.visual_index != index:
+            raise ValueError("Document visual indexes must be contiguous")
+        if visual.visual_type not in {
+            "diagram",
+            "table",
+            "chart",
+            "screenshot",
+            "figure",
+            "flowchart",
+            "other",
+        }:
+            raise ValueError("Document visual type is unsupported")
+        if visual.source not in {"image", "table", "drawing"}:
+            raise ValueError("Document visual source is unsupported")
+        if (
+            not isinstance(visual.bbox, tuple)
+            or len(visual.bbox) != 4
+            or any(
+                isinstance(value, bool) or not isinstance(value, (int, float))
+                for value in visual.bbox
+            )
+            or visual.bbox[0] < 0
+            or visual.bbox[1] < 0
+            or visual.bbox[2] <= visual.bbox[0]
+            or visual.bbox[3] <= visual.bbox[1]
+        ):
+            raise ValueError("Document visual bounding box is invalid")
+        if visual.analysis_status not in {
+            "pending",
+            "not_configured",
+            "succeeded",
+            "skipped",
+            "failed",
+        }:
+            raise ValueError("Document visual analysis status is unsupported")
+        if visual.description is not None and (
+            not isinstance(visual.description, str)
+            or visual.analysis_status != "succeeded"
+        ):
+            raise ValueError("Document visual description is invalid")
+        if visual.analysis_status == "failed" and not visual.error_code:
+            raise ValueError("Failed document visuals require an error code")
+
+
+def _document_visual(visual: VisualData) -> DocumentVisual:
+    return DocumentVisual(
+        visual_index=visual.visual_index,
+        visual_type=visual.visual_type,
+        source=visual.source,
+        bbox_x0=visual.bbox[0],
+        bbox_y0=visual.bbox[1],
+        bbox_x1=visual.bbox[2],
+        bbox_y1=visual.bbox[3],
+        description=(
+            visual.description.replace("\x00", "")
+            if visual.description is not None
+            else None
+        ),
+        analysis_status=visual.analysis_status,
+        error_code=visual.error_code,
+    )
 
 
 def fail_job(

@@ -18,6 +18,7 @@ from backend.app.models import (
     Course,
     DocumentChunk,
     DocumentPage,
+    DocumentVisual,
     UploadedDocument,
     User,
 )
@@ -113,7 +114,7 @@ def test_registration_login_and_admin_course_creation_persist(api_context) -> No
         assert session.scalar(select(func.count()).select_from(Course)) == 1
 
 
-def test_user_delete_cascades_loaded_documents_and_chunks(
+def test_user_delete_cascades_loaded_document_content(
     db_session,
     model_graph,
 ) -> None:
@@ -140,24 +141,43 @@ def test_user_delete_cascades_loaded_documents_and_chunks(
         course=model_graph.course,
         content_index=0,
         page_number=None,
+        raw_text="raw cascade",
         text="raw cascade",
+        raw_extraction_method="decoded",
         extraction_method="decoded",
         has_images=False,
         needs_ocr=False,
+        has_visual_content=True,
+        visual_analysis_status="completed",
     )
-    db_session.add_all((chunk, page))
+    visual = DocumentVisual(
+        page=page,
+        visual_index=0,
+        visual_type="diagram",
+        source="drawing",
+        bbox_x0=1.0,
+        bbox_y0=2.0,
+        bbox_x1=20.0,
+        bbox_y1=30.0,
+        description="Cascade visual",
+        analysis_status="succeeded",
+    )
+    db_session.add_all((chunk, page, visual))
     db_session.commit()
     document_id = document.id
     chunk_id = chunk.id
     page_id = page.id
+    visual_id = visual.id
 
     assert list(model_graph.user.uploaded_documents) == [document]
+    assert list(page.visuals) == [visual]
     db_session.delete(model_graph.user)
     db_session.commit()
 
     assert db_session.get(UploadedDocument, document_id) is None
     assert db_session.get(DocumentChunk, chunk_id) is None
     assert db_session.get(DocumentPage, page_id) is None
+    assert db_session.get(DocumentVisual, visual_id) is None
 
 
 def test_course_creation_recovers_lost_commit_acknowledgement(

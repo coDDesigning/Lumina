@@ -20,6 +20,7 @@ from backend.app.models import (
     Course,
     DocumentChunk,
     DocumentPage,
+    DocumentVisual,
     ProcessingJob,
     Role,
     UploadedDocument,
@@ -37,6 +38,7 @@ from services.processing_jobs import (
     ClaimedJob,
     ChunkData,
     PageData,
+    VisualData,
     claim_next_job,
     complete_job,
     enqueue_document_job,
@@ -49,7 +51,7 @@ from services.processing_jobs import (
 from storage.local import LocalStorage
 from workers import document_processor
 from workers.document_processor import (
-    _chunks_from_process_result,
+    _document_data_from_process_result,
     _extract_with_timeout,
     process_next_job,
 )
@@ -199,13 +201,24 @@ def test_worker_processes_text_into_canonical_chunks(session_factory, tmp_path):
         assert [chunk.text for chunk in chunks] == ["Durable processing notes"]
         assert len(pages) == 1
         assert pages[0].page_number is None
+        assert pages[0].raw_text == "Durable processing notes"
         assert pages[0].text == "Durable processing notes"
+        assert pages[0].raw_extraction_method == "decoded"
         assert pages[0].extraction_method == "decoded"
         assert pages[0].has_images is False
         assert pages[0].needs_ocr is False
+        assert pages[0].ocr_status == "not_required"
+        assert pages[0].has_visual_content is False
+        assert pages[0].visual_analysis_status == "not_applicable"
+        assert pages[0].visuals == []
 
 
-def test_image_pdf_fails_permanently_then_can_be_retried(session_factory, tmp_path):
+def test_image_pdf_fails_permanently_then_can_be_retried(
+    session_factory,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("OCR_LANGUAGE", "lumina_missing_language")
     queued = _queue_document(
         session_factory,
         tmp_path,
@@ -233,8 +246,20 @@ def test_image_pdf_fails_permanently_then_can_be_retried(session_factory, tmp_pa
         page = session.scalar(select(DocumentPage))
         assert page is not None
         assert page.page_number == 1
+        assert page.raw_text == ""
+        assert page.text == ""
         assert page.has_images is True
+        assert page.has_visual_content is True
         assert page.needs_ocr is True
+        assert page.ocr_status == "pending"
+        assert page.visual_analysis_status == "pending"
+        visual = session.scalar(select(DocumentVisual))
+        assert visual is not None
+        assert visual.page_id == page.id
+        assert visual.visual_index == 0
+        assert visual.visual_type == "figure"
+        assert visual.source == "image"
+        assert visual.analysis_status == "pending"
 
     with session_factory() as session:
         document, job = DocumentService.retry_document(
@@ -298,7 +323,8 @@ def test_worker_persists_exact_raw_markdown_before_cleaning(session_factory, tmp
         chunk = session.scalar(select(DocumentChunk))
         assert page is not None
         assert chunk is not None
-        assert page.text == content.decode("utf-8")
+        assert page.raw_text == content.decode("utf-8")
+        assert page.text == "# Heading\n\nParagraph with a hard break."
         assert page.page_number is None
         assert chunk.text == "# Heading\n\nParagraph with a hard break."
 
@@ -427,6 +453,7 @@ def test_raw_pages_are_claim_fenced_and_atomically_replaced(session_factory, tmp
         PageData(
             content_index=0,
             text="First extraction",
+            raw_text="First extraction",
             page_number=None,
             extraction_method="decoded",
             has_images=False,
@@ -446,7 +473,13 @@ def test_raw_pages_are_claim_fenced_and_atomically_replaced(session_factory, tmp
             session,
             claim.id,
             "stale-claim",
-            [replace(first_pages[0], text="Stale extraction")],
+            [
+                replace(
+                    first_pages[0],
+                    raw_text="Stale extraction",
+                    text="Stale extraction",
+                )
+            ],
             now=queued.available_at + timedelta(seconds=4),
         )
     with session_factory() as session:
@@ -454,14 +487,22 @@ def test_raw_pages_are_claim_fenced_and_atomically_replaced(session_factory, tmp
             session,
             claim.id,
             claim.claim_token,
-            [replace(first_pages[0], text="Replacement extraction")],
+            [
+                replace(
+                    first_pages[0],
+                    raw_text="Replacement extraction",
+                    text="Replacement extraction",
+                )
+            ],
             now=queued.available_at + timedelta(seconds=5),
         )
 
     with session_factory() as session:
         pages = session.scalars(select(DocumentPage)).all()
         assert len(pages) == 1
+        assert pages[0].raw_text == "Replacement extraction"
         assert pages[0].text == "Replacement extraction"
+        assert pages[0].raw_extraction_method == "decoded"
 
     with session_factory() as session:
         assert (
@@ -479,6 +520,7 @@ def test_raw_pages_are_claim_fenced_and_atomically_replaced(session_factory, tmp
     with session_factory() as session:
         persisted = session.scalar(select(DocumentPage))
         assert persisted is not None
+        assert persisted.raw_text == "Replacement extraction"
         assert persisted.text == "Replacement extraction"
 
     with session_factory() as session:
@@ -505,13 +547,174 @@ def test_raw_pages_are_claim_fenced_and_atomically_replaced(session_factory, tmp
             session,
             retry_claim.id,
             retry_claim.claim_token,
-            [replace(first_pages[0], text="Successful retry extraction")],
+            [
+                replace(
+                    first_pages[0],
+                    raw_text="Successful retry extraction",
+                    text="Successful retry extraction",
+                )
+            ],
             now=queued.available_at + timedelta(seconds=9),
         )
     with session_factory() as session:
         pages = session.scalars(select(DocumentPage)).all()
         assert len(pages) == 1
+        assert pages[0].raw_text == "Successful retry extraction"
         assert pages[0].text == "Successful retry extraction"
+
+
+def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
+    session_factory,
+    tmp_path,
+):
+    queued = _queue_document(session_factory, tmp_path)
+    claim_time = queued.available_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session,
+            "enrichment-worker",
+            queued.storage.provider,
+            60,
+            now=claim_time,
+        )
+    assert claim is not None
+    with session_factory() as session:
+        assert update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "extracting_text",
+            now=claim_time + timedelta(seconds=1),
+        )
+
+    raw_pages = [
+        PageData(
+            content_index=0,
+            raw_text="Sparse native text",
+            text="Sparse native text",
+            page_number=1,
+            raw_extraction_method="native",
+            extraction_method="native",
+            has_images=True,
+            needs_ocr=True,
+            ocr_status="pending",
+            has_visual_content=True,
+            visual_analysis_status="pending",
+            visuals=(
+                VisualData(
+                    visual_index=0,
+                    visual_type="figure",
+                    source="image",
+                    bbox=(10.0, 20.0, 110.0, 220.0),
+                ),
+            ),
+        )
+    ]
+    with session_factory() as session:
+        assert replace_document_pages(
+            session,
+            claim.id,
+            claim.claim_token,
+            raw_pages,
+            now=claim_time + timedelta(seconds=2),
+        )
+
+    enriched_pages = [
+        PageData(
+            content_index=0,
+            raw_text="Sparse\x00 native text",
+            text="Recognized effective text",
+            page_number=1,
+            raw_extraction_method="native",
+            extraction_method="ocr",
+            has_images=True,
+            needs_ocr=False,
+            ocr_status="succeeded",
+            has_visual_content=True,
+            visual_analysis_status="completed",
+            visuals=(
+                VisualData(
+                    visual_index=0,
+                    visual_type="chart",
+                    source="image",
+                    bbox=(10.0, 20.0, 110.0, 220.0),
+                    description="Revenue grew\x00 year over year.",
+                    analysis_status="succeeded",
+                ),
+            ),
+        )
+    ]
+    chunks = [
+        ChunkData(
+            "Recognized effective text\n\n[Chart]\nRevenue grew year over year.",
+            page_number=1,
+        )
+    ]
+    with session_factory() as session:
+        assert not complete_job(
+            session,
+            claim.id,
+            "stale-token",
+            chunks,
+            enriched_pages,
+            now=claim_time + timedelta(seconds=3),
+        )
+    with session_factory() as session:
+        page = session.scalar(select(DocumentPage))
+        visual = session.scalar(select(DocumentVisual))
+        job = session.get(ProcessingJob, queued.job_id)
+        assert page is not None
+        assert visual is not None
+        assert job is not None
+        assert page.raw_text == "Sparse native text"
+        assert page.text == "Sparse native text"
+        assert page.extraction_method == "native"
+        assert visual.visual_type == "figure"
+        assert visual.analysis_status == "pending"
+        assert job.status == JOB_STATUS_RUNNING
+
+    with session_factory() as session:
+        assert complete_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            chunks,
+            enriched_pages,
+            now=claim_time + timedelta(seconds=4),
+        )
+
+    with session_factory() as session:
+        page = session.scalar(select(DocumentPage))
+        visual = session.scalar(select(DocumentVisual))
+        chunk = session.scalar(select(DocumentChunk))
+        assert page is not None
+        assert visual is not None
+        assert chunk is not None
+        assert page.raw_text == "Sparse native text"
+        assert page.text == "Recognized effective text"
+        assert page.raw_extraction_method == "native"
+        assert page.extraction_method == "ocr"
+        assert page.needs_ocr is False
+        assert page.ocr_status == "succeeded"
+        assert page.has_visual_content is True
+        assert page.visual_analysis_status == "completed"
+        assert visual.page_id == page.id
+        assert visual.visual_index == 0
+        assert visual.visual_type == "chart"
+        assert visual.source == "image"
+        assert (
+            visual.bbox_x0,
+            visual.bbox_y0,
+            visual.bbox_x1,
+            visual.bbox_y1,
+        ) == (10.0, 20.0, 110.0, 220.0)
+        assert visual.description == "Revenue grew year over year."
+        assert visual.analysis_status == "succeeded"
+        assert visual.error_code is None
+        assert chunk.text == chunks[0].text
+        assert session.scalar(select(func.count(DocumentPage.id))) == 1
+        assert session.scalar(select(func.count(DocumentVisual.id))) == 1
+        assert session.scalar(select(func.count(DocumentChunk.id))) == 1
 
 
 def test_raw_page_persistence_removes_postgresql_unsupported_nuls(
@@ -545,6 +748,7 @@ def test_raw_page_persistence_removes_postgresql_unsupported_nuls(
                 PageData(
                     content_index=0,
                     text="Before\x00After",
+                    raw_text="Raw\x00Text",
                     page_number=1,
                     extraction_method="native",
                     has_images=False,
@@ -556,6 +760,7 @@ def test_raw_page_persistence_removes_postgresql_unsupported_nuls(
     with session_factory() as session:
         page = session.scalar(select(DocumentPage))
         assert page is not None
+        assert page.raw_text == "RawText"
         assert page.text == "BeforeAfter"
 
 
@@ -565,6 +770,148 @@ def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path)
     with pytest.raises(ValueError, match="at least one page"):
         with session_factory() as session:
             replace_document_pages(session, queued.job_id, "claim", [])
+
+
+@pytest.mark.parametrize(
+    ("page", "message"),
+    [
+        (
+            PageData(0, "text", None, "decoded", False, False, raw_text=1),
+            "raw text must be a string",
+        ),
+        (
+            PageData(0, "text", None, "ocr", False, False),
+            "extraction method is unsupported",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                None,
+                "decoded",
+                False,
+                False,
+                ocr_status="unknown",
+            ),
+            "OCR status is unsupported",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                None,
+                "decoded",
+                False,
+                False,
+                visual_analysis_status="unknown",
+            ),
+            "visual status is unsupported",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=False,
+                visuals=(VisualData(0, "figure", "image", (0.0, 0.0, 10.0, 10.0)),),
+            ),
+            "visual detection flag is inconsistent",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(VisualData(1, "figure", "image", (0.0, 0.0, 10.0, 10.0)),),
+            ),
+            "visual indexes must be contiguous",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(VisualData(0, "figure", "image", (0.0, 0.0, 0.0, 10.0)),),
+            ),
+            "visual bounding box is invalid",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
+                        (0.0, 0.0, 10.0, 10.0),
+                        description="Premature description",
+                    ),
+                ),
+            ),
+            "visual description is invalid",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
+                        (0.0, 0.0, 10.0, 10.0),
+                        analysis_status="failed",
+                    ),
+                ),
+            ),
+            "require an error code",
+        ),
+    ],
+    ids=[
+        "raw-text-type",
+        "raw-ocr-method",
+        "ocr-status",
+        "visual-status",
+        "visual-flag",
+        "visual-index",
+        "visual-bbox",
+        "visual-description-status",
+        "visual-failure-code",
+    ],
+)
+def test_raw_page_persistence_validates_enrichment_data(
+    session_factory,
+    tmp_path,
+    page,
+    message,
+):
+    queued = _queue_document(session_factory, tmp_path)
+
+    with pytest.raises(ValueError, match=message):
+        with session_factory() as session:
+            replace_document_pages(session, queued.job_id, "claim", [page])
 
 
 def test_transient_failure_requeues_then_exhausts_attempts(session_factory, tmp_path):
@@ -793,6 +1140,30 @@ def test_completion_failure_rolls_back_chunks_and_state(
                 claim.id,
                 claim.claim_token,
                 [ChunkData("Atomic result")],
+                [
+                    PageData(
+                        content_index=0,
+                        raw_text="Raw result",
+                        text="Effective result",
+                        page_number=1,
+                        raw_extraction_method="native",
+                        extraction_method="native",
+                        has_images=True,
+                        needs_ocr=False,
+                        has_visual_content=True,
+                        visual_analysis_status="completed",
+                        visuals=(
+                            VisualData(
+                                visual_index=0,
+                                visual_type="diagram",
+                                source="image",
+                                bbox=(1.0, 2.0, 30.0, 40.0),
+                                description="Atomic visual",
+                                analysis_status="succeeded",
+                            ),
+                        ),
+                    )
+                ],
                 now=claim_time + timedelta(seconds=1),
             )
         session.rollback()
@@ -807,6 +1178,8 @@ def test_completion_failure_rolls_back_chunks_and_state(
         assert job.status == JOB_STATUS_RUNNING
         assert document.status == "processing"
         assert verification.scalar(select(func.count(DocumentChunk.id))) == 0
+        assert verification.scalar(select(func.count(DocumentPage.id))) == 0
+        assert verification.scalar(select(func.count(DocumentVisual.id))) == 0
 
 
 def test_worker_contains_finalization_errors_until_lease_recovery(
@@ -882,14 +1255,30 @@ def test_extraction_process_crash_is_reaped_as_safe_failure():
         ("unexpected",),
         ("extracted", []),
         ("succeeded", [PageData(0, "raw", None, "decoded", False, False)]),
+        ("succeeded", [ChunkData("not a page")], [ChunkData("chunk")]),
+        (
+            "succeeded",
+            [PageData(0, "raw", None, "decoded", False, False)],
+            [PageData(0, "not a chunk", None, "decoded", False, False)],
+        ),
         ("failed", "CODE", "message", "not-a-boolean"),
         (),
     ],
 )
-def test_unexpected_child_messages_never_complete_as_chunks(result):
+def test_unexpected_child_messages_never_complete_as_document_data(result):
     with pytest.raises(DocumentProcessingError) as error:
-        _chunks_from_process_result(result)
+        _document_data_from_process_result(result)
     assert error.value.code == "UNEXPECTED_PROCESSING_ERROR"
+
+
+def test_child_succeeded_message_returns_pages_and_chunks():
+    pages = [PageData(0, "effective", None, "decoded", False, False, raw_text="raw")]
+    chunks = [ChunkData("effective")]
+
+    assert _document_data_from_process_result(("succeeded", pages, chunks)) == (
+        pages,
+        chunks,
+    )
 
 
 def test_extraction_persistence_time_counts_toward_attempt_timeout():

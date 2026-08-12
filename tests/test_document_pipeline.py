@@ -10,11 +10,14 @@ import pytest
 import services.document_pipeline as pipeline
 from services.document_pipeline import (
     DocumentProcessingError,
+    ExtractedDocument,
+    ExtractionMethod,
     OCRUnavailableError,
     PipelineOptions,
     PipelineStage,
     ProcessingErrorCode,
     TesseractOCRProvider,
+    extract_raw_document,
     process_document,
 )
 
@@ -318,6 +321,44 @@ def test_markdown_structure_and_conservative_cleaning_are_preserved() -> None:
     assert result.chunks[0].text == result.pages[0].text
 
 
+@pytest.mark.parametrize("file_type", ["md", "markdown"])
+def test_raw_markdown_extraction_preserves_decoded_source_exactly(
+    file_type: str,
+) -> None:
+    content = b"# Heading  \r\n\r\nParagraph with a hard break.  \r\n"
+
+    extracted = extract_raw_document(
+        file_type,
+        content,
+        options=pipeline_options(),
+    )
+
+    assert extracted.file_type == file_type
+    assert extracted.contents[0].text == content.decode("utf-8")
+    assert extracted.contents[0].page_number is None
+    assert extracted.contents[0].extraction_method == ExtractionMethod.DECODED
+
+
+def test_pdf_ocr_detection_requires_an_image_and_low_text() -> None:
+    extracted: list[ExtractedDocument] = []
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "Searchable course content remains available.",
+            None,
+            None,
+            image_pages={3},
+        ),
+        options=pipeline_options(ocr_enabled=False),
+        extraction_callback=extracted.append,
+    )
+
+    assert len(result.pages) == 3
+    assert [page.page_number for page in extracted[0].contents] == [1, 2, 3]
+    assert [page.has_images for page in extracted[0].contents] == [False, False, True]
+    assert [page.needs_ocr for page in extracted[0].contents] == [False, False, True]
+
+
 @pytest.mark.parametrize(
     "content_factory",
     [
@@ -536,6 +577,7 @@ def test_ocr_runs_only_for_text_poor_pages_with_configured_values() -> None:
     content = pdf_bytes(
         "This first page has enough searchable digital text to skip OCR.",
         None,
+        image_pages={2},
     )
     ocr = RecordingOCR()
     stages: list[PipelineStage] = []
@@ -578,7 +620,7 @@ def test_ocr_rendering_obeys_configured_pdf_pixel_limits() -> None:
 
     error = assert_pipeline_error(
         "pdf",
-        pdf_bytes(None, width=100, height=100),
+        pdf_bytes(None, image_pages={1}, width=100, height=100),
         ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
         PipelineStage.RUNNING_OCR,
         options=pipeline_options(
@@ -636,7 +678,7 @@ def test_partial_ocr_does_not_duplicate_sparse_searchable_text() -> None:
 
     result = process_document(
         "pdf",
-        pdf_bytes("Title"),
+        pdf_bytes("Title", image_pages={1}),
         options=pipeline_options(
             ocr_enabled=True,
             ocr_min_text_characters=20,
@@ -661,7 +703,7 @@ def test_missing_tesseract_produces_stable_safe_error() -> None:
 
     error = assert_pipeline_error(
         "pdf",
-        pdf_bytes(None),
+        pdf_bytes(None, image_pages={1}),
         ProcessingErrorCode.OCR_UNAVAILABLE,
         PipelineStage.RUNNING_OCR,
         options=pipeline_options(ocr_enabled=True),
@@ -776,7 +818,7 @@ def test_no_text_after_ocr_and_vision_fails_after_enrichment() -> None:
     with pytest.raises(DocumentProcessingError) as raised:
         process_document(
             "pdf",
-            pdf_bytes(None),
+            pdf_bytes(None, image_pages={1}),
             options=pipeline_options(ocr_enabled=True),
             stage_callback=stages.append,
             ocr_provider=EmptyOCR(),
@@ -806,11 +848,10 @@ def test_whitespace_text_fails_at_cleaning_without_optional_stages() -> None:
         )
 
     assert raised.value.code == ProcessingErrorCode.NO_PROCESSABLE_TEXT
-    assert raised.value.stage == PipelineStage.CLEANING_TEXT
+    assert raised.value.stage == PipelineStage.EXTRACTING_TEXT
     assert stages == [
         PipelineStage.VALIDATING,
         PipelineStage.EXTRACTING_TEXT,
-        PipelineStage.CLEANING_TEXT,
     ]
 
 
@@ -915,6 +956,21 @@ def test_stage_callback_failure_is_wrapped_without_private_detail() -> None:
     assert raised.value.stage == PipelineStage.VALIDATING
     assert raised.value.retryable is True
     assert "private" not in str(raised.value)
+
+
+def test_callback_failure_does_not_log_private_detail(caplog) -> None:
+    def fail_callback(stage: PipelineStage) -> None:
+        raise RuntimeError("private callback traceback detail")
+
+    with pytest.raises(DocumentProcessingError):
+        process_document(
+            "txt",
+            b"Course notes",
+            options=pipeline_options(),
+            stage_callback=fail_callback,
+        )
+
+    assert "private callback traceback detail" not in caplog.text
 
 
 def test_pipeline_concurrency_uses_configured_processing_bound(

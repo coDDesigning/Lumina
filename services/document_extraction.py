@@ -2,16 +2,29 @@
 
 import hashlib
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from backend.app.config import settings
 from services.document_pipeline import (
     DocumentProcessingError as PipelineProcessingError,
 )
-from services.document_pipeline import PipelineOptions, PipelineStage, process_document
-from services.processing_jobs import ChunkData
+from services.document_pipeline import (
+    ExtractedDocument,
+    PipelineOptions,
+    PipelineStage,
+    process_document,
+)
+from services.processing_jobs import ChunkData, PageData
 from storage.base import Storage, StorageError
 
 StageCallback = Callable[[PipelineStage], None]
+ExtractionCallback = Callable[[list[PageData]], None]
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessedDocumentData:
+    pages: list[PageData]
+    chunks: list[ChunkData]
 
 
 class DocumentProcessingError(RuntimeError):
@@ -29,7 +42,7 @@ class DocumentProcessingError(RuntimeError):
         super().__init__(message)
 
 
-def extract_document_chunks(
+def extract_document(
     storage: Storage,
     *,
     storage_provider: str,
@@ -38,7 +51,8 @@ def extract_document_chunks(
     expected_size: int,
     file_type: str,
     stage_callback: StageCallback | None = None,
-) -> list[ChunkData]:
+    extraction_callback: ExtractionCallback | None = None,
+) -> ProcessedDocumentData:
     if storage.provider != storage_provider:
         raise DocumentProcessingError(
             "STORAGE_PROVIDER_UNAVAILABLE",
@@ -93,6 +107,28 @@ def extract_document_chunks(
             retryable=False,
         )
 
+    extracted_pages: list[PageData] = []
+
+    def report_extraction(document: ExtractedDocument) -> None:
+        nonlocal extracted_pages
+        extracted_pages = [
+            PageData(
+                content_index=content.content_index,
+                text=content.text,
+                page_number=content.page_number,
+                extraction_method=(
+                    content.extraction_method.value
+                    if content.extraction_method is not None
+                    else None
+                ),
+                has_images=content.has_images,
+                needs_ocr=content.needs_ocr,
+            )
+            for content in document.contents
+        ]
+        if extraction_callback is not None:
+            extraction_callback(extracted_pages)
+
     try:
         result = process_document(
             file_type,
@@ -102,6 +138,7 @@ def extract_document_chunks(
                 max_document_chunks=settings.max_document_chunks,
             ),
             stage_callback=stage_callback,
+            extraction_callback=report_extraction,
         )
     except PipelineProcessingError as exc:
         raise DocumentProcessingError(
@@ -111,7 +148,10 @@ def extract_document_chunks(
             failed_stage=exc.failed_stage.value,
         ) from exc
 
-    return [
-        ChunkData(text=chunk.text, page_number=chunk.page_number)
-        for chunk in result.chunks
-    ]
+    return ProcessedDocumentData(
+        pages=extracted_pages,
+        chunks=[
+            ChunkData(text=chunk.text, page_number=chunk.page_number)
+            for chunk in result.chunks
+        ],
+    )

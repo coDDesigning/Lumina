@@ -1,5 +1,6 @@
 """Pure document validation, extraction, enrichment, cleaning, and chunking."""
 
+import logging
 import re
 import threading
 import zlib
@@ -14,6 +15,8 @@ from charset_normalizer import from_bytes
 
 from backend.app.config import settings
 from services.document_validation import FILE_TYPES
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineStage(StrEnum):
@@ -43,6 +46,7 @@ class ProcessingErrorCode(StrEnum):
     IMAGE_UNDERSTANDING_FAILED = "image_understanding_failed"
     NO_PROCESSABLE_TEXT = "no_processable_text"
     STAGE_CALLBACK_FAILED = "stage_callback_failed"
+    EXTRACTION_CALLBACK_FAILED = "extraction_callback_failed"
     PROCESSING_FAILED = "processing_failed"
 
 
@@ -75,6 +79,9 @@ _ERROR_MESSAGES = {
     ),
     ProcessingErrorCode.STAGE_CALLBACK_FAILED: (
         "The processing stage could not be recorded."
+    ),
+    ProcessingErrorCode.EXTRACTION_CALLBACK_FAILED: (
+        "The extracted document content could not be recorded."
     ),
     ProcessingErrorCode.PROCESSING_FAILED: "Document processing failed.",
 }
@@ -169,6 +176,33 @@ class PageText:
     page_number: int | None
 
 
+class ExtractionMethod(StrEnum):
+    """Provenance for text produced by raw document extraction."""
+
+    NATIVE = "native"
+    DECODED = "decoded"
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedPage:
+    """One ordered raw content unit before OCR, cleaning, or chunking."""
+
+    content_index: int
+    text: str
+    page_number: int | None
+    extraction_method: ExtractionMethod | None
+    has_images: bool
+    needs_ocr: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedDocument:
+    """Format-independent raw text and provenance for one document."""
+
+    file_type: str
+    contents: tuple[ExtractedPage, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class DocumentChunk:
     """A deterministic chunk ready for downstream embedding."""
@@ -189,6 +223,72 @@ class DocumentPipelineResult:
 
 class StageCallback(Protocol):
     def __call__(self, stage: PipelineStage) -> None: ...
+
+
+class ExtractionCallback(Protocol):
+    def __call__(self, document: ExtractedDocument) -> None: ...
+
+
+class DocumentExtractor(Protocol):
+    """Validate and extract one configured family of document types."""
+
+    def validate(self, content: bytes, options: PipelineOptions) -> str | None: ...
+
+    def extract(
+        self,
+        file_type: str,
+        content: bytes,
+        validated_text: str | None,
+        options: PipelineOptions,
+    ) -> ExtractedDocument: ...
+
+
+class PDFExtractor:
+    def validate(self, content: bytes, options: PipelineOptions) -> None:
+        _validate_pdf(content, options)
+
+    def extract(
+        self,
+        file_type: str,
+        content: bytes,
+        validated_text: str | None,
+        options: PipelineOptions,
+    ) -> ExtractedDocument:
+        return _extract_pdf_document(file_type, content, options)
+
+
+class TextExtractor:
+    def validate(self, content: bytes, options: PipelineOptions) -> str:
+        return _validate_and_decode_text(content)
+
+    def extract(
+        self,
+        file_type: str,
+        content: bytes,
+        validated_text: str | None,
+        options: PipelineOptions,
+    ) -> ExtractedDocument:
+        if validated_text is None:
+            raise RuntimeError("validated text is required")
+        if len(validated_text) > options.max_extracted_characters:
+            raise _failure(
+                ProcessingErrorCode.EXTRACTED_TEXT_LIMIT_EXCEEDED,
+                PipelineStage.EXTRACTING_TEXT,
+                retryable=False,
+            )
+        return ExtractedDocument(
+            file_type=file_type,
+            contents=(
+                ExtractedPage(
+                    content_index=0,
+                    text=validated_text,
+                    page_number=None,
+                    extraction_method=ExtractionMethod.DECODED,
+                    has_images=False,
+                    needs_ocr=False,
+                ),
+            ),
+        )
 
 
 class OCRProvider(Protocol):
@@ -265,6 +365,10 @@ class DisabledImageUnderstandingProvider:
 
 _DEFAULT_OCR_PROVIDER = TesseractOCRProvider()
 _DISABLED_IMAGE_PROVIDER = DisabledImageUnderstandingProvider()
+_EXTRACTORS: dict[str, DocumentExtractor] = {
+    "pdf": PDFExtractor(),
+    "text": TextExtractor(),
+}
 
 # MuPDF stores parser warnings globally. Every operation that clears or reads
 # the warning buffer must be isolated from other PDF processing threads.
@@ -290,6 +394,7 @@ def process_document(
     *,
     options: PipelineOptions | None = None,
     stage_callback: StageCallback | None = None,
+    extraction_callback: ExtractionCallback | None = None,
     ocr_provider: OCRProvider | None = None,
     image_provider: ImageUnderstandingProvider | None = None,
 ) -> DocumentPipelineResult:
@@ -299,9 +404,7 @@ def process_document(
     if not isinstance(content, bytes):
         raise TypeError("content must be bytes")
 
-    resolved_options = options or PipelineOptions()
-    if not isinstance(resolved_options, PipelineOptions):
-        raise TypeError("options must be PipelineOptions")
+    resolved_options = _resolve_options(options)
     resolved_ocr_provider = ocr_provider or _DEFAULT_OCR_PROVIDER
     resolved_image_provider = image_provider or _DISABLED_IMAGE_PROVIDER
     if type(resolved_image_provider.enabled) is not bool:
@@ -313,25 +416,59 @@ def process_document(
             content,
             options=resolved_options,
             stage_callback=stage_callback,
+            extraction_callback=extraction_callback,
             ocr_provider=resolved_ocr_provider,
             image_provider=resolved_image_provider,
         )
 
 
-def _process_document(
+def extract_raw_document(
+    file_type: str,
+    content: bytes,
+    *,
+    options: PipelineOptions | None = None,
+    stage_callback: StageCallback | None = None,
+) -> ExtractedDocument:
+    """Validate bytes and return raw content before downstream processing."""
+    if not isinstance(file_type, str):
+        raise TypeError("file_type must be a string")
+    if not isinstance(content, bytes):
+        raise TypeError("content must be bytes")
+
+    resolved_options = _resolve_options(options)
+    with _PIPELINE_SEMAPHORE:
+        return _extract_raw_document(
+            file_type,
+            content,
+            options=resolved_options,
+            stage_callback=stage_callback,
+        )
+
+
+def _resolve_options(options: PipelineOptions | None) -> PipelineOptions:
+    resolved = options or PipelineOptions()
+    if not isinstance(resolved, PipelineOptions):
+        raise TypeError("options must be PipelineOptions")
+    return resolved
+
+
+def _extract_raw_document(
     file_type: str,
     content: bytes,
     *,
     options: PipelineOptions,
     stage_callback: StageCallback | None,
-    ocr_provider: OCRProvider,
-    image_provider: ImageUnderstandingProvider,
-) -> DocumentPipelineResult:
+) -> ExtractedDocument:
     current_stage = PipelineStage.VALIDATING
     try:
         _emit_stage(stage_callback, current_stage)
-        validator_name = FILE_TYPES.get(file_type, {}).get("validator")
-        if validator_name not in {"pdf", "text"}:
+        type_definition = FILE_TYPES.get(file_type)
+        extractor = (
+            _EXTRACTORS.get(type_definition["validator"])
+            if type_definition is not None
+            else None
+        )
+        if extractor is None:
             raise _failure(
                 ProcessingErrorCode.UNSUPPORTED_FILE_TYPE,
                 current_stage,
@@ -350,24 +487,80 @@ def _process_document(
                 retryable=False,
             )
 
-        decoded_text: str | None = None
-        if validator_name == "pdf":
-            _validate_pdf(content, options)
-        else:
-            decoded_text = _validate_and_decode_text(content)
-
+        validated_text = extractor.validate(content, options)
         current_stage = PipelineStage.EXTRACTING_TEXT
         _emit_stage(stage_callback, current_stage)
-        if validator_name == "pdf":
-            pages = _extract_pdf_text(content)
-        else:
-            pages = (PageText(text=decoded_text or "", page_number=None),)
+        extracted_document = extractor.extract(
+            file_type,
+            content,
+            validated_text,
+            options,
+        )
+        if not extracted_document.contents:
+            raise _failure(
+                ProcessingErrorCode.NO_PROCESSABLE_TEXT,
+                current_stage,
+                retryable=False,
+            )
+        if (
+            sum(len(content.text) for content in extracted_document.contents)
+            > options.max_extracted_characters
+        ):
+            raise _failure(
+                ProcessingErrorCode.EXTRACTED_TEXT_LIMIT_EXCEEDED,
+                current_stage,
+                retryable=False,
+            )
+        if type_definition["validator"] != "pdf" and not any(
+            content.text.strip() for content in extracted_document.contents
+        ):
+            raise _failure(
+                ProcessingErrorCode.NO_PROCESSABLE_TEXT,
+                current_stage,
+                retryable=False,
+            )
+        return extracted_document
+    except DocumentProcessingError:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected raw extraction failure at stage %s", current_stage.value
+        )
+        raise _failure(
+            ProcessingErrorCode.PROCESSING_FAILED,
+            current_stage,
+            retryable=True,
+        ) from None
+
+
+def _process_document(
+    file_type: str,
+    content: bytes,
+    *,
+    options: PipelineOptions,
+    stage_callback: StageCallback | None,
+    extraction_callback: ExtractionCallback | None,
+    ocr_provider: OCRProvider,
+    image_provider: ImageUnderstandingProvider,
+) -> DocumentPipelineResult:
+    current_stage = PipelineStage.EXTRACTING_TEXT
+    try:
+        extracted_document = _extract_raw_document(
+            file_type,
+            content,
+            options=options,
+            stage_callback=stage_callback,
+        )
+        _emit_extraction(extraction_callback, extracted_document)
+        pages = tuple(
+            PageText(text=content.text, page_number=content.page_number)
+            for content in extracted_document.contents
+        )
 
         poor_page_numbers = tuple(
-            page.page_number
-            for page in pages
-            if page.page_number is not None
-            and _text_character_count(page.text) < options.ocr_min_text_characters
+            content.page_number
+            for content in extracted_document.contents
+            if content.page_number is not None and content.needs_ocr
         )
         if options.ocr_enabled and poor_page_numbers:
             current_stage = PipelineStage.RUNNING_OCR
@@ -380,7 +573,7 @@ def _process_document(
                 provider=ocr_provider,
             )
 
-        if validator_name == "pdf" and image_provider.enabled:
+        if file_type == "pdf" and image_provider.enabled:
             current_stage = PipelineStage.UNDERSTANDING_IMAGES
             _emit_stage(stage_callback, current_stage)
             pages = _apply_image_understanding(
@@ -425,6 +618,9 @@ def _process_document(
     except DocumentProcessingError:
         raise
     except Exception:
+        logger.exception(
+            "Unexpected document processing failure at stage %s", current_stage.value
+        )
         raise _failure(
             ProcessingErrorCode.PROCESSING_FAILED,
             current_stage,
@@ -441,9 +637,27 @@ def _emit_stage(
     try:
         callback(stage)
     except Exception:
+        logger.error("Document stage callback failed at stage %s", stage.value)
         raise _failure(
             ProcessingErrorCode.STAGE_CALLBACK_FAILED,
             stage,
+            retryable=True,
+        ) from None
+
+
+def _emit_extraction(
+    callback: ExtractionCallback | None,
+    document: ExtractedDocument,
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(document)
+    except Exception:
+        logger.error("Raw extraction callback failed")
+        raise _failure(
+            ProcessingErrorCode.EXTRACTION_CALLBACK_FAILED,
+            PipelineStage.EXTRACTING_TEXT,
             retryable=True,
         ) from None
 
@@ -672,6 +886,7 @@ def _validate_pdf_locked(content: bytes, options: PipelineOptions) -> None:
     except DocumentProcessingError:
         raise
     except Exception:
+        logger.exception("PDF validation failed")
         raise _failure(
             ProcessingErrorCode.CORRUPTED_PDF,
             PipelineStage.VALIDATING,
@@ -705,6 +920,7 @@ def _validate_and_decode_text(content: bytes) -> str:
     try:
         detected = from_bytes(content, enable_fallback=False).best()
     except Exception:
+        logger.exception("Text document decoding failed")
         raise _failure(
             ProcessingErrorCode.CORRUPTED_TEXT,
             PipelineStage.VALIDATING,
@@ -732,7 +948,11 @@ def _validate_and_decode_text(content: bytes) -> str:
     return decoded
 
 
-def _extract_pdf_text(content: bytes) -> tuple[PageText, ...]:
+def _extract_pdf_document(
+    file_type: str,
+    content: bytes,
+    options: PipelineOptions,
+) -> ExtractedDocument:
     with _PDF_WARNING_LOCK:
         pymupdf.TOOLS.reset_mupdf_warnings()
         try:
@@ -743,23 +963,45 @@ def _extract_pdf_text(content: bytes) -> tuple[PageText, ...]:
                         PipelineStage.EXTRACTING_TEXT,
                         retryable=False,
                     )
-                pages = tuple(
-                    PageText(
-                        text=page.get_text("text"),
-                        page_number=page.number + 1,
+                pages: list[ExtractedPage] = []
+                character_count = 0
+                for page in pdf:
+                    text = page.get_text("text").replace("\x00", "")
+                    character_count += len(text)
+                    if character_count > options.max_extracted_characters:
+                        raise _failure(
+                            ProcessingErrorCode.EXTRACTED_TEXT_LIMIT_EXCEEDED,
+                            PipelineStage.EXTRACTING_TEXT,
+                            retryable=False,
+                        )
+                    has_images = bool(page.get_image_info())
+                    pages.append(
+                        ExtractedPage(
+                            content_index=page.number,
+                            text=text,
+                            page_number=page.number + 1,
+                            extraction_method=(
+                                ExtractionMethod.NATIVE if text.strip() else None
+                            ),
+                            has_images=has_images,
+                            needs_ocr=(
+                                has_images
+                                and _text_character_count(text)
+                                < options.ocr_min_text_characters
+                            ),
+                        )
                     )
-                    for page in pdf
-                )
                 if pymupdf.TOOLS.mupdf_warnings():
                     raise _failure(
                         ProcessingErrorCode.CORRUPTED_PDF,
                         PipelineStage.EXTRACTING_TEXT,
                         retryable=False,
                     )
-                return pages
+                return ExtractedDocument(file_type=file_type, contents=tuple(pages))
         except DocumentProcessingError:
             raise
         except Exception:
+            logger.exception("PDF text extraction failed")
             raise _failure(
                 ProcessingErrorCode.CORRUPTED_PDF,
                 PipelineStage.EXTRACTING_TEXT,

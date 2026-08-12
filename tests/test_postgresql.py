@@ -34,7 +34,7 @@ ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
 EXPECTED_POSTGRESQL_MAJOR = 17
 EXPECTED_POSTGRESQL_VERSION_NUMBER = 170006
 BASE_REVISION = "97d9fd86a3ba"
-HEAD_REVISION = "b6d8f2a4c901"
+HEAD_REVISION = "d2a7f0c91e35"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -155,7 +155,7 @@ def _assert_processing_backfill(*, deleted_error_code: str) -> None:
         assert rows == [
             (
                 "postgresql-migration/completed",
-                "completed",
+                "ready",
                 "succeeded",
                 1,
                 None,
@@ -167,8 +167,8 @@ def _assert_processing_backfill(*, deleted_error_code: str) -> None:
                 3,
                 deleted_error_code,
             ),
-            ("postgresql-migration/pending", "pending", "queued", 0, None),
-            ("postgresql-migration/processing", "pending", "queued", 0, None),
+            ("postgresql-migration/pending", "uploaded", "queued", 0, None),
+            ("postgresql-migration/processing", "uploaded", "queued", 0, None),
         ]
     finally:
         engine.dispose()
@@ -317,7 +317,7 @@ def _queue_documents(
             course=course,
             storage_provider="local:postgresql-ci",
             storage_key=f"postgresql/{document_id}.txt",
-            status="pending",
+            status="uploaded",
         )
         session.add(document)
         session.flush()

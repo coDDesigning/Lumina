@@ -9,4 +9,27 @@ services:
       - DEPLOYMENT_MODE=self_hosted
     volumes:
       - ./data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=2)
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  lumina-worker:
+    build: .
+    command: ["python", "-m", "workers.document_processor"]
+    environment:
+      - DEPLOYMENT_MODE=self_hosted
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      lumina-backend:
+        condition: service_healthy
+    stop_grace_period: 345s
     restart: unless-stopped

@@ -22,6 +22,7 @@ application. Production requires:
 | `DATABASE_URL` | Explicit SQLite URL with an absolute database path |
 | `UPLOAD_DIRECTORY` | Absolute persistent document-storage path |
 | `CHROMA_PERSIST_DIRECTORY` | Absolute reserved vector-data path |
+| `OCR_LANGUAGE` | Tesseract language data installed in the worker runtime |
 
 The database and document-storage directory must be retained across application
 restarts. Before migration, provision the parent directory of the SQLite file.
@@ -50,6 +51,13 @@ Run the API and worker under separate supervisors. Configure the worker's
 termination grace as described in [`database.md`](database.md).
 Register `BOOTSTRAP_ADMIN_EMAIL` with the configured token in the
 `X-Bootstrap-Token` header over a trusted route before opening public ingress.
+
+The default `docker-compose.yml` starts both processes with the same `data`
+volume and waits for API readiness before starting the worker. The image installs
+Tesseract with English language data. Custom `OCR_LANGUAGE` values require the
+matching `*.traineddata` packages in the image. OCR-dependent documents fail
+with a safe `OCR_UNAVAILABLE` code when the runtime does not provide the selected
+language.
 
 ## Health probes
 

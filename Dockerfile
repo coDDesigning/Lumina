@@ -1,16 +1,28 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 # Prevent Python from writing pyc files to disk and buffering stdout/stderr
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copy requirement files
 COPY requirements.txt .
 
-# Install dependencies using pip (lockfile from uv)
-RUN pip install --no-cache-dir -r requirements.txt
+# Install reviewed, hash-locked dependencies.
+RUN python -m pip install \
+    --require-hashes \
+    --only-binary=:all: \
+    --requirement requirements.txt
 
 # Copy the rest of the application
 COPY . .

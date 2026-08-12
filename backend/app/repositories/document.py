@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.models import UploadedDocument
 
-DOCUMENT_STATUSES = frozenset({"pending", "processing", "completed", "failed"})
+DOCUMENT_STATUSES = frozenset({"uploaded", "processing", "ready", "failed", "deleting"})
 
 
 class DocumentRepository:

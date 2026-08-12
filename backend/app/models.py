@@ -31,6 +31,17 @@ JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_RUNNING = "running"
 JOB_STATUS_SUCCEEDED = "succeeded"
 JOB_STATUS_FAILED = "failed"
+DOCUMENT_PROCESSING_STAGES = (
+    "validating",
+    "extracting_text",
+    "running_ocr",
+    "understanding_images",
+    "cleaning_text",
+    "chunking",
+)
+_DOCUMENT_PROCESSING_STAGES_SQL = ", ".join(
+    f"'{stage}'" for stage in DOCUMENT_PROCESSING_STAGES
+)
 
 
 class UTCDateTime(TypeDecorator[datetime]):
@@ -179,7 +190,7 @@ class UploadedDocument(Base):
         CheckConstraint("length(file_hash) = 64", name="file_hash_length"),
         CheckConstraint("file_size >= 0", name="file_size_nonnegative"),
         CheckConstraint(
-            "status IN ('pending', 'processing', 'completed', 'failed')",
+            "status IN ('uploaded', 'processing', 'ready', 'failed', 'deleting')",
             name="status_valid",
         ),
     )
@@ -199,7 +210,7 @@ class UploadedDocument(Base):
     storage_provider: Mapped[str] = mapped_column(String(50))
     storage_key: Mapped[str] = mapped_column(String(500))
     status: Mapped[str] = mapped_column(
-        String(20), default="pending", server_default="pending"
+        String(20), default="uploaded", server_default="uploaded"
     )
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -309,6 +320,24 @@ class ProcessingJob(Base):
             "(status IN ('queued', 'running') AND finished_at IS NULL)",
             name="finished_state_valid",
         ),
+        CheckConstraint(
+            "processing_stage IS NULL OR processing_stage IN "
+            f"({_DOCUMENT_PROCESSING_STAGES_SQL})",
+            name="processing_stage_valid",
+        ),
+        CheckConstraint(
+            "failed_stage IS NULL OR failed_stage IN "
+            f"({_DOCUMENT_PROCESSING_STAGES_SQL})",
+            name="failed_stage_valid",
+        ),
+        CheckConstraint(
+            "processing_stage IS NULL OR status = 'running'",
+            name="processing_stage_status",
+        ),
+        CheckConstraint(
+            "failed_stage IS NULL OR status = 'failed'",
+            name="failed_stage_status",
+        ),
         Index("ix_processing_jobs_claimable", "status", "available_at", "id"),
         Index("ix_processing_jobs_recoverable", "status", "lease_expires_at", "id"),
         Index("ix_processing_jobs_course_created", "course_id", "created_at"),
@@ -335,6 +364,8 @@ class ProcessingJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processing_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    failed_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )
@@ -562,9 +593,3 @@ class ProfileKnowledge(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="knowledge_items")
-
-
-
-#BLOB özellikle dosyaları vector search olarak tutup buradaki design choice semantic search eden -> vector database
-
-#database de documentlar nasıl tutulacak 

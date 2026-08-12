@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backend.app.models import DocumentChunk, UploadedDocument
+from backend.app.models import DocumentChunk, DocumentPage, UploadedDocument
 from backend.app.repositories.document import DocumentRepository
 
 
@@ -219,3 +219,29 @@ def test_document_chunk_course_must_match_its_document(
     db_session.rollback()
 
     assert db_session.scalar(select(func.count()).select_from(DocumentChunk)) == 0
+
+
+def test_document_page_constraints_are_enforced(
+    db_session: Session,
+    model_graph,
+) -> None:
+    document = DocumentRepository.create(db_session, **document_values(model_graph))
+    db_session.commit()
+
+    db_session.add(
+        DocumentPage(
+            document_id=document.id,
+            course_id=model_graph.course.id,
+            content_index=0,
+            page_number=None,
+            text="Invalid OCR candidate",
+            extraction_method="decoded",
+            has_images=False,
+            needs_ocr=True,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+    assert db_session.scalar(select(func.count()).select_from(DocumentPage)) == 0

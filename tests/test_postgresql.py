@@ -20,13 +20,20 @@ from backend.app.models import (
     JOB_STATUS_RUNNING,
     Course,
     DocumentChunk,
+    DocumentPage,
     ProcessingJob,
     Role,
     UploadedDocument,
     User,
 )
 from backend.app.readiness import check_readiness
-from services.processing_jobs import claim_next_job, enqueue_document_job
+from services.processing_jobs import (
+    PageData,
+    claim_next_job,
+    enqueue_document_job,
+    replace_document_pages,
+    update_job_stage,
+)
 from storage.local import LocalStorage
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +41,7 @@ ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
 EXPECTED_POSTGRESQL_MAJOR = 17
 EXPECTED_POSTGRESQL_VERSION_NUMBER = 170006
 BASE_REVISION = "97d9fd86a3ba"
-HEAD_REVISION = "d2a7f0c91e35"
+HEAD_REVISION = "c4e6a8f1b203"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -376,9 +383,20 @@ def test_postgresql_uuid_timestamps_and_loaded_cascades(
             page_number=None,
             text="PostgreSQL cascade",
         )
-        session.add(chunk)
+        page = DocumentPage(
+            document=document,
+            course=document.course,
+            content_index=0,
+            page_number=None,
+            text="Raw PostgreSQL cascade",
+            extraction_method="decoded",
+            has_images=False,
+            needs_ocr=False,
+        )
+        session.add_all((chunk, page))
         session.commit()
         chunk_id = chunk.id
+        page_id = page.id
 
     with postgresql_sessions() as session:
         document = session.get(UploadedDocument, document_ids[0])
@@ -404,6 +422,7 @@ def test_postgresql_uuid_timestamps_and_loaded_cascades(
         assert session.get(User, user_id) is None
         assert session.get(UploadedDocument, document_ids[0]) is None
         assert session.get(DocumentChunk, chunk_id) is None
+        assert session.get(DocumentPage, page_id) is None
         assert session.get(ProcessingJob, job_ids[0]) is None
 
 
@@ -446,6 +465,70 @@ def test_postgresql_claim_skips_locked_job(
             job_ids[0]: JOB_STATUS_QUEUED,
             job_ids[1]: JOB_STATUS_RUNNING,
         }
+        user = session.get(User, user_id)
+        assert user is not None
+        session.delete(user)
+        session.commit()
+
+
+def test_postgresql_raw_page_replacement_is_claim_fenced(
+    postgresql_sessions: sessionmaker[Session],
+) -> None:
+    with postgresql_sessions() as session:
+        user_id, document_ids, _job_ids = _queue_documents(session, count=1)
+    with postgresql_sessions() as session:
+        claim = claim_next_job(
+            session,
+            "postgresql-page-worker",
+            "local:postgresql-ci",
+            60,
+        )
+    assert claim is not None
+    with postgresql_sessions() as session:
+        assert update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "extracting_text",
+        )
+    with postgresql_sessions() as session:
+        assert replace_document_pages(
+            session,
+            claim.id,
+            claim.claim_token,
+            [
+                PageData(
+                    content_index=0,
+                    text="Raw PostgreSQL extraction",
+                    page_number=None,
+                    extraction_method="decoded",
+                    has_images=False,
+                    needs_ocr=False,
+                )
+            ],
+        )
+    with postgresql_sessions() as session:
+        page = session.scalar(
+            select(DocumentPage).where(DocumentPage.document_id == document_ids[0])
+        )
+        assert page is not None
+        assert page.text == "Raw PostgreSQL extraction"
+        assert not replace_document_pages(
+            session,
+            claim.id,
+            "stale-claim",
+            [
+                PageData(
+                    content_index=0,
+                    text="Stale extraction",
+                    page_number=None,
+                    extraction_method="decoded",
+                    has_images=False,
+                    needs_ocr=False,
+                )
+            ],
+        )
+    with postgresql_sessions() as session:
         user = session.get(User, user_id)
         assert user is not None
         session.delete(user)

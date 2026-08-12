@@ -159,6 +159,12 @@ class Course(Base):
         passive_deletes=True,
         overlaps="document,chunks",
     )
+    document_pages: Mapped[list["DocumentPage"]] = relationship(
+        back_populates="course",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        overlaps="document,document_pages",
+    )
 
     # AI-generated artifacts (summaries and similar) for this course.
     generated_outputs: Mapped[list["GeneratedOutput"]] = relationship(
@@ -230,6 +236,13 @@ class UploadedDocument(Base):
         passive_deletes=True,
         overlaps="course,chunks",
     )
+    pages: Mapped[list["DocumentPage"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="DocumentPage.content_index",
+        overlaps="course,document_pages",
+    )
     processing_jobs: Mapped[list["ProcessingJob"]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",
@@ -277,6 +290,63 @@ class DocumentChunk(Base):
     )
     course: Mapped["Course"] = relationship(
         back_populates="chunks", overlaps="document,chunks"
+    )
+
+
+class DocumentPage(Base):
+    """Canonical raw extraction unit retained before downstream processing."""
+
+    __tablename__ = "document_pages"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "content_index",
+            name="uq_document_pages_document_content_index",
+        ),
+        CheckConstraint("content_index >= 0", name="content_index_nonnegative"),
+        CheckConstraint(
+            "page_number IS NULL OR page_number >= 1", name="page_number_positive"
+        ),
+        CheckConstraint(
+            "extraction_method IS NULL OR extraction_method IN ('native', 'decoded')",
+            name="extraction_method_valid",
+        ),
+        CheckConstraint(
+            "NOT needs_ocr OR (page_number IS NOT NULL AND has_images)",
+            name="ocr_candidate_valid",
+        ),
+        ForeignKeyConstraint(
+            ["document_id", "course_id"],
+            ["uploaded_documents.id", "uploaded_documents.course_id"],
+            name="fk_document_pages_document_course_uploaded_documents",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True))
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True
+    )
+    content_index: Mapped[int] = mapped_column(Integer)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    text: Mapped[str] = mapped_column(Text)
+    extraction_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    has_images: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    needs_ocr: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    document: Mapped["UploadedDocument"] = relationship(
+        back_populates="pages", overlaps="course,document_pages"
+    )
+    course: Mapped["Course"] = relationship(
+        back_populates="document_pages", overlaps="document,pages"
     )
 
 

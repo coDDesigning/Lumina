@@ -74,8 +74,8 @@ def load_database_url(
     if app_env == APP_ENV_PRODUCTION:
         if backend != "sqlite":
             raise ValueError(
-                "Production PostgreSQL is not supported until live qualification is "
-                "implemented."
+                "Production PostgreSQL is not supported until durable shared storage "
+                "and deployment topology are qualified."
             )
         database_path = Path(parsed_url.database or "")
         if not database_path.is_absolute():

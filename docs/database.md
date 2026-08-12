@@ -79,6 +79,18 @@ The API and worker must use the same `STORAGE_BACKEND`, `STORAGE_NAMESPACE`,
 and storage contents. With the current local provider, multiple hosts require a
 shared mounted directory at `UPLOAD_DIRECTORY`.
 
+## PostgreSQL qualification
+
+CI runs the relational database contract against PostgreSQL 17.6 from an
+immutable official image digest. The live job verifies the complete Alembic
+upgrade/downgrade/re-upgrade cycle, schema drift, role seeds, readiness, UUID and
+timezone round trips, loaded ORM/database cascades, and `SKIP LOCKED` worker
+claims.
+
+This qualification does not enable hosted production. Hosted staging still uses
+local document storage, and production remains blocked until API and worker
+processes have qualified durable shared storage and deployment topology.
+
 ## Durable state machine
 
 Each document has one `extract_document` job.

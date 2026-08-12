@@ -331,6 +331,127 @@ jobs:
       - name: PostgreSQL checks leave the repository unchanged
         run: git diff --exit-code
 
+  container-quality:
+    name: Container quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BACKEND_PORT: "18000"
+      BOOTSTRAP_ADMIN_EMAIL: admin@example.com
+      BOOTSTRAP_ADMIN_TOKEN: ci-only-bootstrap-token-0123456789abcdef
+      COMPOSE_PROJECT_NAME: lumina-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      JWT_SECRET_KEY: ci-only-jwt-secret-key-0123456789abcdef
+      LUMINA_IMAGE: lumina:ci
+      STORAGE_NAMESPACE: container-ci
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Validate immutable base and Compose configuration
+        run: |
+          set -euo pipefail
+          mapfile -t references < <(
+            awk 'toupper($1) == "FROM" {
+              for (field = 2; field <= NF; field++) {
+                if ($field !~ /^--/) {
+                  print $field
+                  next
+                }
+              }
+            }' Dockerfile
+          )
+          if [ "${#references[@]}" -eq 0 ]; then
+            echo "Dockerfile contains no base image." >&2
+            exit 1
+          fi
+          for reference in "${references[@]}"; do
+            if [[ ! "$reference" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
+              echo "Docker base image is not pinned by digest: $reference" >&2
+              exit 1
+            fi
+          done
+          docker compose version
+          docker compose config --quiet
+
+      - name: Build production image
+        run: docker build --pull --tag "$LUMINA_IMAGE" .
+
+      - name: Validate image contract
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect --format '{{.Config.User}}' "$LUMINA_IMAGE")" = "10001:10001"
+          test "$(docker run --rm --entrypoint id "$LUMINA_IMAGE" -u)" = "10001"
+          docker run --rm --entrypoint python "$LUMINA_IMAGE" -m pip check
+          docker run --rm --entrypoint tesseract "$LUMINA_IMAGE" --version
+          docker run --rm --entrypoint tesseract "$LUMINA_IMAGE" --list-langs | grep --line-regexp eng
+          docker run --rm --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
+            --entrypoint python "$LUMINA_IMAGE" -c '
+          from pathlib import Path
+
+          required = ("app/config.json", "app/messages.json", "alembic.ini", "main.py")
+          excluded = (".env", ".git", "docs", "frontend", "tests", "requirements-dev.txt")
+          assert all(Path("/app", path).is_file() for path in required)
+          assert not any(Path("/app", path).exists() for path in excluded)
+          assert not Path("/app").stat().st_mode & 0o222
+          '
+
+      - name: Exercise self-hosted topology
+        run: |
+          set -euo pipefail
+
+          cleanup() {
+            result=$?
+            trap - EXIT
+            if [ "$result" -ne 0 ]; then
+              docker compose ps --all || true
+              docker compose logs --no-color || true
+            fi
+            docker compose down --volumes --remove-orphans || true
+            exit "$result"
+          }
+          trap cleanup EXIT
+
+          docker compose up --detach --no-build --wait --wait-timeout 180
+          curl --fail --silent --show-error http://127.0.0.1:18000/health/ready
+
+          migrate_id="$(docker compose ps --all --quiet migrate)"
+          test "$(docker inspect --format '{{.State.Status}}' "$migrate_id")" = "exited"
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$migrate_id")" = "0"
+          docker compose exec -T api sh -c 'test ! -w /app && test -w /data && test -w /tmp && test -f /data/lumina.db'
+          test "$(docker compose exec -T api id -u | tr -d '\r')" = "10001"
+          test "$(docker compose exec -T worker id -u | tr -d '\r')" = "10001"
+          docker compose exec -T api python -c '
+          import shutil
+
+          from backend.app.config import settings
+          from backend.app.request_size import MULTIPART_OVERHEAD_BYTES
+
+          required = 2 * settings.max_concurrent_document_validations * (
+              settings.max_upload_size_bytes + MULTIPART_OVERHEAD_BYTES
+          )
+          assert shutil.disk_usage("/tmp").total >= required
+          '
+
+          docker compose stop api worker
+          docker compose start api worker
+          for service in api worker; do
+            container_id="$(docker compose ps --quiet "$service")"
+            for _ in $(seq 1 60); do
+              if [ "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = "healthy" ]; then
+                break
+              fi
+              sleep 2
+            done
+            test "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = "healthy"
+          done
+          curl --fail --silent --show-error http://127.0.0.1:18000/health/ready
+
+      - name: Reject tracked-file mutations
+        run: git diff --exit-code
+
   frontend-quality:
     name: Frontend quality and build
     runs-on: ubuntu-24.04

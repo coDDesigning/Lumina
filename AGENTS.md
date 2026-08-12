@@ -25,7 +25,7 @@ Operating instructions for coding agents in this repository.
 - Alembic is the only runtime schema-management mechanism. The canonical chain is `97d9fd86a3ba -> b6d8f2a4c901 -> d2a7f0c91e35 -> c4e6a8f1b203`; add schema changes as descendants and keep one base/head unless an explicit migration design requires otherwise.
 - `frontend/` is a React 19 + TypeScript + Vite application with its own npm lockfile and commands.
 - Vector retrieval is not implemented. Do not document or call planned vector components as available until dependencies, durable indexing, deletion, and retrieval contracts land with tests.
-- Docker and Compose files are experimental development artifacts, not a supported deployment path. Production remains self-hosted SQLite/local storage per `docs/deployment.md`.
+- The root `Dockerfile` and `docker-compose.yml` are the supported single-host self-hosted container path. They run one-shot migrations before separate API and worker services as UID/GID 10001 on a shared named volume. `docker-compose.hosted.yml` remains experimental and unsupported for production.
 
 ## Dependencies
 
@@ -75,7 +75,7 @@ npm run build
 
 ## CI Contract
 
-- Current `dev` job names are `Branch and PR policy`, `Repository quality`, `Backend quality and tests`, `PostgreSQL quality`, and `Frontend quality and build`.
+- Current `dev` job names are `Branch and PR policy`, `Repository quality`, `Backend quality and tests`, `PostgreSQL quality`, `Container quality`, and `Frontend quality and build`.
 - Job names are referenced by dormant rulesets. Flag the corresponding ruleset update before renaming one.
 - CI must verify, never modify: no `--fix`, generated changes, or auto-commits. Keep `permissions: contents: read`.
 - Third-party Actions must remain pinned to immutable 40-character commit SHAs.

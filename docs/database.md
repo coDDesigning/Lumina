@@ -176,14 +176,32 @@ Markdown produce one content unit with a null page number. Decoded Markdown
 source is retained before cleaning so headings, code fences, indentation, and
 hard line breaks remain available to later stages.
 
-The worker claim-fences an atomic replacement of these raw units in
-`document_pages` before OCR, cleaning, or chunking continues. The rows remain
-available if a later stage fails and are replaced by the next successful raw
-extraction on retry. Existing documents are not backfilled because exact raw
-source text cannot be reconstructed safely from cleaned chunks. PDF pages are
-marked as OCR candidates only when they
-contain images and have less searchable text than `OCR_MIN_TEXT_CHARACTERS`;
-blank pages without images are not OCR candidates. Candidate pages are
-recognized with local Tesseract OCR while native text from other pages is
-retained. Install every language selected by `OCR_LANGUAGE`; the default
-container installs English (`eng`). Image understanding is not enabled.
+The worker claim-fences an atomic raw checkpoint in `document_pages` before OCR,
+visual analysis, cleaning, or chunking continues. Successful completion then
+atomically replaces that checkpoint with enriched pages and final chunks.
+`raw_text` and `raw_extraction_method` retain SCRUM-36 provenance while `text`,
+`extraction_method`, and `ocr_status` record the effective native, decoded, or
+OCR result. A later-stage failure leaves the raw checkpoint available for
+diagnosis and retry.
+
+PDF pages are OCR candidates when they have less searchable text than
+`OCR_MIN_TEXT_CHARACTERS` and contain a meaningful embedded image, detected
+table, or vector-drawing region. Blank pages and repeated small decorative
+images are skipped. Candidate pages are recognized individually with local
+Tesseract while native text from other pages remains authoritative. Install
+every language selected by `OCR_LANGUAGE`; the default container installs
+English (`eng`). An OCR engine error fails the attempt; a successful OCR call
+that finds no text is recorded as `no_text`, allowing configured visual analysis
+to recover semantic content before the final no-processable-text check.
+
+Meaningful images, tables, and drawing clusters are retained as ordered
+`document_visuals` rows with page-relative point coordinates, coarse type,
+source, status, and an optional description. Selection is bounded per page and
+document, repeated small images are filtered, and regions are rendered and
+released one at a time. Descriptions remain structured until cleaning, which
+adds successful descriptions to page-scoped chunk input without overwriting
+native or OCR text. The production visual provider is currently disabled;
+disabled analysis is explicitly recorded as `not_configured`. The provider
+contract and deterministic test providers qualify non-fatal per-visual failures
+and retryable temporary service failures without selecting a production AI
+backend.

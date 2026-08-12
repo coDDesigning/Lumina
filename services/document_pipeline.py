@@ -4,8 +4,9 @@ import logging
 import re
 import threading
 import zlib
+from collections import Counter
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from math import ceil
 from typing import Protocol
@@ -43,6 +44,8 @@ class ProcessingErrorCode(StrEnum):
     CORRUPTED_TEXT = "corrupted_text"
     OCR_UNAVAILABLE = "ocr_unavailable"
     OCR_FAILED = "ocr_failed"
+    PAGE_RENDER_FAILED = "page_render_failed"
+    VISUAL_DETECTION_FAILED = "visual_detection_failed"
     IMAGE_UNDERSTANDING_FAILED = "image_understanding_failed"
     NO_PROCESSABLE_TEXT = "no_processable_text"
     STAGE_CALLBACK_FAILED = "stage_callback_failed"
@@ -73,6 +76,10 @@ _ERROR_MESSAGES = {
     ),
     ProcessingErrorCode.OCR_UNAVAILABLE: "Local OCR is unavailable.",
     ProcessingErrorCode.OCR_FAILED: "Text recognition failed.",
+    ProcessingErrorCode.PAGE_RENDER_FAILED: "A document page could not be rendered.",
+    ProcessingErrorCode.VISUAL_DETECTION_FAILED: (
+        "Visual content could not be detected."
+    ),
     ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED: ("Image understanding failed."),
     ProcessingErrorCode.NO_PROCESSABLE_TEXT: (
         "The document contains no processable text."
@@ -123,6 +130,8 @@ class PipelineOptions:
     ocr_dpi: int = settings.ocr_dpi
     ocr_min_text_characters: int = settings.ocr_min_text_characters
     image_dpi: int = 72
+    max_visuals_per_page: int = 10
+    max_visuals_per_document: int = 500
     chunk_target_characters: int = settings.document_chunk_size_characters
     chunk_overlap_characters: int = settings.document_chunk_overlap_characters
     max_extracted_characters: int = settings.max_extracted_characters
@@ -138,6 +147,8 @@ class PipelineOptions:
             "max_pdf_drawing_operations",
             "ocr_dpi",
             "image_dpi",
+            "max_visuals_per_page",
+            "max_visuals_per_document",
             "chunk_target_characters",
             "max_extracted_characters",
             "max_document_chunks",
@@ -181,6 +192,78 @@ class ExtractionMethod(StrEnum):
 
     NATIVE = "native"
     DECODED = "decoded"
+    OCR = "ocr"
+
+
+class VisualType(StrEnum):
+    """Coarse visual categories retained for retrieval provenance."""
+
+    DIAGRAM = "diagram"
+    TABLE = "table"
+    CHART = "chart"
+    SCREENSHOT = "screenshot"
+    FIGURE = "figure"
+    FLOWCHART = "flowchart"
+    OTHER = "other"
+
+
+class VisualSource(StrEnum):
+    """PDF primitive that produced a visual candidate."""
+
+    IMAGE = "image"
+    TABLE = "table"
+    DRAWING = "drawing"
+
+
+class VisualAnalysisStatus(StrEnum):
+    """Outcome for one detected visual region."""
+
+    PENDING = "pending"
+    NOT_CONFIGURED = "not_configured"
+    SUCCEEDED = "succeeded"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
+class PageVisualAnalysisStatus(StrEnum):
+    """Aggregate visual-analysis outcome for one page."""
+
+    NOT_APPLICABLE = "not_applicable"
+    PENDING = "pending"
+    NOT_CONFIGURED = "not_configured"
+    COMPLETED = "completed"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
+class OCRStatus(StrEnum):
+    """OCR requirement and outcome for one page."""
+
+    NOT_REQUIRED = "not_required"
+    PENDING = "pending"
+    SUCCEEDED = "succeeded"
+    NO_TEXT = "no_text"
+
+
+@dataclass(frozen=True, slots=True)
+class VisualContent:
+    """One selected visual region and its optional semantic description."""
+
+    visual_index: int
+    visual_type: VisualType
+    source: VisualSource
+    bbox: tuple[float, float, float, float]
+    description: str | None = None
+    analysis_status: VisualAnalysisStatus = VisualAnalysisStatus.PENDING
+    error_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VisualDescription:
+    """Validated semantic result returned by a visual provider."""
+
+    visual_type: VisualType
+    description: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,7 +275,9 @@ class ExtractedPage:
     page_number: int | None
     extraction_method: ExtractionMethod | None
     has_images: bool
+    has_visual_content: bool
     needs_ocr: bool
+    visuals: tuple[VisualContent, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +286,25 @@ class ExtractedDocument:
 
     file_type: str
     contents: tuple[ExtractedPage, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EnrichedPage:
+    """Effective page text plus raw provenance and structured visuals."""
+
+    content_index: int
+    raw_text: str
+    text: str
+    page_number: int | None
+    raw_extraction_method: ExtractionMethod | None
+    extraction_method: ExtractionMethod | None
+    has_images: bool
+    has_visual_content: bool
+    needs_ocr: bool
+    raw_needs_ocr: bool
+    ocr_status: OCRStatus
+    visual_analysis_status: PageVisualAnalysisStatus
+    visuals: tuple[VisualContent, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,7 +321,7 @@ class DocumentChunk:
 class DocumentPipelineResult:
     """Clean page-level text and its deterministic chunks."""
 
-    pages: tuple[PageText, ...]
+    pages: tuple[EnrichedPage, ...]
     chunks: tuple[DocumentChunk, ...]
 
 
@@ -285,7 +389,9 @@ class TextExtractor:
                     page_number=None,
                     extraction_method=ExtractionMethod.DECODED,
                     has_images=False,
+                    has_visual_content=False,
                     needs_ocr=False,
+                    visuals=(),
                 ),
             ),
         )
@@ -336,17 +442,27 @@ class TesseractOCRProvider:
 
 
 class ImageUnderstandingProvider(Protocol):
-    """Return a safe text description for a rendered physical PDF page."""
+    """Describe one selected visual region without coupling to a provider."""
 
     @property
     def enabled(self) -> bool: ...
 
-    def describe_page(
+    def describe_visual(
         self,
-        page_png: bytes,
+        visual_png: bytes,
         *,
         page_number: int,
-    ) -> str | None: ...
+        visual_index: int,
+        suggested_type: VisualType,
+    ) -> VisualDescription | None: ...
+
+
+class TemporaryVisualServiceError(RuntimeError):
+    """The visual provider failed transiently and the job should retry."""
+
+
+class VisualAnalysisError(RuntimeError):
+    """One visual cannot be described but other document content can continue."""
 
 
 class DisabledImageUnderstandingProvider:
@@ -354,11 +470,13 @@ class DisabledImageUnderstandingProvider:
 
     enabled = False
 
-    def describe_page(
+    def describe_visual(
         self,
-        page_png: bytes,
+        visual_png: bytes,
         *,
         page_number: int,
+        visual_index: int,
+        suggested_type: VisualType,
     ) -> None:
         return None
 
@@ -386,6 +504,21 @@ _LEADING_BINARY_SIGNATURES = (
 _PARAGRAPH_BOUNDARY = re.compile(r"\n[ \t]*\n+")
 _LINE_BOUNDARY = re.compile(r"\n")
 _WORD_BOUNDARY = re.compile(r"[ \t]+")
+_MAX_VISUAL_DESCRIPTION_CHARACTERS = 2_000
+_MIN_VISUAL_DIMENSION_POINTS = 36.0
+_MIN_VISUAL_PAGE_AREA_RATIO = 0.01
+_VISUAL_SOURCE_PRIORITY = {
+    VisualSource.TABLE: 0,
+    VisualSource.IMAGE: 1,
+    VisualSource.DRAWING: 2,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _VisualCandidate:
+    visual: VisualContent
+    fingerprint: tuple[int, ...] | None
+    page_area_ratio: float
 
 
 def process_document(
@@ -553,8 +686,7 @@ def _process_document(
         )
         _emit_extraction(extraction_callback, extracted_document)
         pages = tuple(
-            PageText(text=content.text, page_number=content.page_number)
-            for content in extracted_document.contents
+            _initial_enriched_page(content) for content in extracted_document.contents
         )
 
         poor_page_numbers = tuple(
@@ -573,10 +705,11 @@ def _process_document(
                 provider=ocr_provider,
             )
 
-        if file_type == "pdf" and image_provider.enabled:
-            current_stage = PipelineStage.UNDERSTANDING_IMAGES
-            _emit_stage(stage_callback, current_stage)
-            pages = _apply_image_understanding(
+        if file_type == "pdf" and any(page.has_visual_content for page in pages):
+            if image_provider.enabled:
+                current_stage = PipelineStage.UNDERSTANDING_IMAGES
+                _emit_stage(stage_callback, current_stage)
+            pages = _apply_visual_understanding(
                 content,
                 pages,
                 options=options,
@@ -585,8 +718,9 @@ def _process_document(
 
         current_stage = PipelineStage.CLEANING_TEXT
         _emit_stage(stage_callback, current_stage)
+        pages = tuple(replace(page, text=_clean_text(page.text)) for page in pages)
         clean_pages = tuple(
-            PageText(text=_clean_text(page.text), page_number=page.page_number)
+            PageText(text=_merge_page_content(page), page_number=page.page_number)
             for page in pages
         )
         if (
@@ -614,7 +748,7 @@ def _process_document(
                 current_stage,
                 retryable=False,
             )
-        return DocumentPipelineResult(pages=clean_pages, chunks=chunks)
+        return DocumentPipelineResult(pages=pages, chunks=chunks)
     except DocumentProcessingError:
         raise
     except Exception:
@@ -963,7 +1097,10 @@ def _extract_pdf_document(
                         PipelineStage.EXTRACTING_TEXT,
                         retryable=False,
                     )
-                pages: list[ExtractedPage] = []
+                extracted_values: list[
+                    tuple[int, str, int, ExtractionMethod | None, bool]
+                ] = []
+                candidate_pages: list[tuple[list[_VisualCandidate], bool]] = []
                 character_count = 0
                 for page in pdf:
                     text = page.get_text("text").replace("\x00", "")
@@ -974,30 +1111,64 @@ def _extract_pdf_document(
                             PipelineStage.EXTRACTING_TEXT,
                             retryable=False,
                         )
-                    has_images = bool(page.get_image_info())
-                    pages.append(
-                        ExtractedPage(
-                            content_index=page.number,
-                            text=text,
-                            page_number=page.number + 1,
-                            extraction_method=(
-                                ExtractionMethod.NATIVE if text.strip() else None
-                            ),
-                            has_images=has_images,
-                            needs_ocr=(
-                                has_images
-                                and _text_character_count(text)
-                                < options.ocr_min_text_characters
-                            ),
+                    image_info = page.get_image_info()
+                    image_xrefs = page.get_images(full=True)
+                    for image in image_info:
+                        image_bbox = pymupdf.Rect(image.get("bbox"))
+                        for image_xref in image_xrefs:
+                            if page.get_image_bbox(image_xref) == image_bbox:
+                                image["xref"] = image_xref[0]
+                                break
+                    extracted_values.append(
+                        (
+                            page.number,
+                            text,
+                            page.number + 1,
+                            ExtractionMethod.NATIVE if text.strip() else None,
+                            bool(image_info),
                         )
                     )
+                    candidate_pages.append(
+                        _detect_visual_candidates(page, image_info, options)
+                    )
+                selected_visuals, meaningful_visual_pages = _select_document_visuals(
+                    candidate_pages, options
+                )
+                pages = tuple(
+                    ExtractedPage(
+                        content_index=content_index,
+                        text=text,
+                        page_number=page_number,
+                        extraction_method=extraction_method,
+                        has_images=has_images,
+                        has_visual_content=has_visual_content,
+                        needs_ocr=(
+                            has_visual_content
+                            and _text_character_count(text)
+                            < options.ocr_min_text_characters
+                        ),
+                        visuals=visuals,
+                    )
+                    for (
+                        content_index,
+                        text,
+                        page_number,
+                        extraction_method,
+                        has_images,
+                    ), visuals, has_visual_content in zip(
+                        extracted_values,
+                        selected_visuals,
+                        meaningful_visual_pages,
+                        strict=True,
+                    )
+                )
                 if pymupdf.TOOLS.mupdf_warnings():
                     raise _failure(
                         ProcessingErrorCode.CORRUPTED_PDF,
                         PipelineStage.EXTRACTING_TEXT,
                         retryable=False,
                     )
-                return ExtractedDocument(file_type=file_type, contents=tuple(pages))
+                return ExtractedDocument(file_type=file_type, contents=pages)
         except DocumentProcessingError:
             raise
         except Exception:
@@ -1015,14 +1186,233 @@ def _text_character_count(text: str) -> int:
     return sum(not character.isspace() for character in text)
 
 
+def _detect_visual_candidates(
+    page: pymupdf.Page,
+    image_info: list[dict],
+    options: PipelineOptions,
+) -> tuple[list[_VisualCandidate], bool]:
+    page_rect = page.rect
+    candidates: list[_VisualCandidate] = []
+    candidate_limit = options.max_visuals_per_page * 2
+    overflowed = False
+    image_fingerprints: set[tuple[int, ...]] = set()
+
+    try:
+        tables = page.find_tables().tables
+    except Exception:
+        logger.exception("Table detection failed on PDF page %s", page.number + 1)
+        tables = ()
+    for table in tables:
+        candidate = _make_visual_candidate(
+            table.bbox,
+            page_rect,
+            visual_type=VisualType.TABLE,
+            source=VisualSource.TABLE,
+        )
+        if candidate is not None:
+            overflowed = (
+                _retain_visual_candidate(candidates, candidate, candidate_limit)
+                or overflowed
+            )
+
+    for image in image_info:
+        candidate = _make_visual_candidate(
+            image.get("bbox"),
+            page_rect,
+            visual_type=VisualType.FIGURE,
+            source=VisualSource.IMAGE,
+            fingerprint=_image_fingerprint(image),
+        )
+        if candidate is not None:
+            if (
+                candidate.fingerprint is not None
+                and candidate.fingerprint in image_fingerprints
+            ):
+                continue
+            if candidate.fingerprint is not None:
+                image_fingerprints.add(candidate.fingerprint)
+            overflowed = (
+                _retain_visual_candidate(candidates, candidate, candidate_limit)
+                or overflowed
+            )
+
+    try:
+        drawing_rects = page.cluster_drawings()
+    except Exception:
+        logger.exception("Drawing detection failed on PDF page %s", page.number + 1)
+        drawing_rects = (page_rect,)
+    for drawing_rect in drawing_rects:
+        candidate = _make_visual_candidate(
+            drawing_rect,
+            page_rect,
+            visual_type=VisualType.DIAGRAM,
+            source=VisualSource.DRAWING,
+        )
+        if candidate is not None:
+            overflowed = (
+                _retain_visual_candidate(candidates, candidate, candidate_limit)
+                or overflowed
+            )
+
+    candidates.sort(
+        key=lambda candidate: (
+            candidate.visual.bbox[1],
+            candidate.visual.bbox[0],
+            -candidate.page_area_ratio,
+            _VISUAL_SOURCE_PRIORITY[candidate.visual.source],
+        )
+    )
+    selected: list[_VisualCandidate] = []
+    for candidate in candidates:
+        if any(
+            _visual_overlap(candidate.visual, item.visual) >= 0.8 for item in selected
+        ):
+            continue
+        selected.append(candidate)
+    return selected, overflowed
+
+
+def _retain_visual_candidate(
+    candidates: list[_VisualCandidate],
+    candidate: _VisualCandidate,
+    limit: int,
+) -> bool:
+    if len(candidates) >= limit:
+        return True
+    candidates.append(candidate)
+    return False
+
+
+def _make_visual_candidate(
+    bbox,
+    page_rect: pymupdf.Rect,
+    *,
+    visual_type: VisualType,
+    source: VisualSource,
+    fingerprint: tuple[int, ...] | None = None,
+) -> _VisualCandidate | None:
+    try:
+        rect = pymupdf.Rect(bbox) & page_rect
+    except Exception:
+        return None
+    if rect.is_empty or rect.width < _MIN_VISUAL_DIMENSION_POINTS:
+        return None
+    if rect.height < _MIN_VISUAL_DIMENSION_POINTS:
+        return None
+    page_area = page_rect.width * page_rect.height
+    if page_area <= 0:
+        return None
+    page_area_ratio = rect.width * rect.height / page_area
+    if page_area_ratio < _MIN_VISUAL_PAGE_AREA_RATIO:
+        return None
+    return _VisualCandidate(
+        visual=VisualContent(
+            visual_index=0,
+            visual_type=visual_type,
+            source=source,
+            bbox=(float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)),
+        ),
+        fingerprint=fingerprint,
+        page_area_ratio=page_area_ratio,
+    )
+
+
+def _image_fingerprint(image: dict) -> tuple[int, ...] | None:
+    xref = image.get("xref")
+    if type(xref) is not int or xref <= 0:
+        return None
+    return (xref,)
+
+
+def _visual_overlap(first: VisualContent, second: VisualContent) -> float:
+    first_rect = pymupdf.Rect(first.bbox)
+    second_rect = pymupdf.Rect(second.bbox)
+    intersection = first_rect & second_rect
+    if intersection.is_empty:
+        return 0.0
+    intersection_area = intersection.width * intersection.height
+    smaller_area = min(
+        first_rect.width * first_rect.height,
+        second_rect.width * second_rect.height,
+    )
+    return intersection_area / smaller_area if smaller_area else 0.0
+
+
+def _select_document_visuals(
+    candidate_pages: list[tuple[list[_VisualCandidate], bool]],
+    options: PipelineOptions,
+) -> tuple[tuple[tuple[VisualContent, ...], ...], tuple[bool, ...]]:
+    fingerprints = Counter(
+        candidate.fingerprint
+        for candidates, _overflowed in candidate_pages
+        for candidate in candidates
+        if candidate.fingerprint is not None
+    )
+    selected_pages: list[tuple[VisualContent, ...]] = []
+    meaningful_visual_pages: list[bool] = []
+    selected_total = 0
+    for candidates, overflowed in candidate_pages:
+        page_visuals: list[VisualContent] = []
+        meaningful_candidates = tuple(
+            candidate
+            for candidate in candidates
+            if not (
+                candidate.fingerprint is not None
+                and fingerprints[candidate.fingerprint] >= 3
+                and candidate.page_area_ratio < 0.05
+            )
+        )
+        meaningful_visual_pages.append(bool(meaningful_candidates) or overflowed)
+        for candidate in sorted(
+            meaningful_candidates,
+            key=lambda item: (
+                item.visual.bbox[1],
+                item.visual.bbox[0],
+                _VISUAL_SOURCE_PRIORITY[item.visual.source],
+            ),
+        ):
+            if selected_total >= options.max_visuals_per_document:
+                continue
+            if len(page_visuals) >= options.max_visuals_per_page:
+                continue
+            page_visuals.append(
+                replace(candidate.visual, visual_index=len(page_visuals))
+            )
+            selected_total += 1
+        selected_pages.append(tuple(page_visuals))
+    return tuple(selected_pages), tuple(meaningful_visual_pages)
+
+
+def _initial_enriched_page(page: ExtractedPage) -> EnrichedPage:
+    return EnrichedPage(
+        content_index=page.content_index,
+        raw_text=page.text,
+        text=page.text,
+        page_number=page.page_number,
+        raw_extraction_method=page.extraction_method,
+        extraction_method=page.extraction_method,
+        has_images=page.has_images,
+        has_visual_content=page.has_visual_content,
+        needs_ocr=page.needs_ocr,
+        raw_needs_ocr=page.needs_ocr,
+        ocr_status=OCRStatus.PENDING if page.needs_ocr else OCRStatus.NOT_REQUIRED,
+        visual_analysis_status=(
+            PageVisualAnalysisStatus.PENDING
+            if page.has_visual_content
+            else PageVisualAnalysisStatus.NOT_APPLICABLE
+        ),
+        visuals=page.visuals,
+    )
+
+
 def _apply_ocr(
     content: bytes,
-    pages: tuple[PageText, ...],
+    pages: tuple[EnrichedPage, ...],
     page_numbers: tuple[int, ...],
     *,
     options: PipelineOptions,
     provider: OCRProvider,
-) -> tuple[PageText, ...]:
+) -> tuple[EnrichedPage, ...]:
     _validate_render_budget(
         content,
         page_numbers,
@@ -1070,89 +1460,239 @@ def _apply_ocr(
         finally:
             pymupdf.TOOLS.reset_mupdf_warnings()
 
-    return tuple(
-        PageText(
-            text=recognized.get(page.page_number, "").strip() or page.text,
-            page_number=page.page_number,
-        )
-        for page in pages
-    )
-
-
-def _apply_image_understanding(
-    content: bytes,
-    pages: tuple[PageText, ...],
-    *,
-    options: PipelineOptions,
-    provider: ImageUnderstandingProvider,
-) -> tuple[PageText, ...]:
-    page_numbers = tuple(
-        page.page_number for page in pages if page.page_number is not None
-    )
-    _validate_render_budget(
-        content,
-        page_numbers,
-        dpi=options.image_dpi,
-        options=options,
-        stage=PipelineStage.UNDERSTANDING_IMAGES,
-    )
-    enriched_pages: list[PageText] = []
+    enriched_pages: list[EnrichedPage] = []
     for page in pages:
-        if page.page_number is None:
+        if page.page_number not in recognized:
             enriched_pages.append(page)
             continue
-        page_png = _render_pdf_page(content, page.page_number, options.image_dpi)
-        try:
-            description = provider.describe_page(
-                page_png,
-                page_number=page.page_number,
+        text = recognized[page.page_number].replace("\x00", "").strip()
+        if not text:
+            enriched_pages.append(
+                replace(
+                    page,
+                    needs_ocr=False,
+                    ocr_status=OCRStatus.NO_TEXT,
+                )
             )
-        except Exception:
-            raise _failure(
-                ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED,
-                PipelineStage.UNDERSTANDING_IMAGES,
-                retryable=True,
-            ) from None
-        if description is not None and not isinstance(description, str):
-            raise _failure(
-                ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED,
-                PipelineStage.UNDERSTANDING_IMAGES,
-                retryable=False,
-            )
-        if description is None or not description.replace("\x00", "").strip():
-            enriched_pages.append(page)
             continue
-
-        separator = "\n\n" if page.text.strip() else ""
         enriched_pages.append(
-            PageText(
-                text=(
-                    f"{page.text.rstrip()}{separator}Image description: {description}"
-                ),
-                page_number=page.page_number,
+            replace(
+                page,
+                text=text,
+                extraction_method=ExtractionMethod.OCR,
+                needs_ocr=False,
+                ocr_status=OCRStatus.SUCCEEDED,
             )
         )
     return tuple(enriched_pages)
 
 
-def _render_pdf_page(content: bytes, page_number: int, dpi: int) -> bytes:
+def _apply_visual_understanding(
+    content: bytes,
+    pages: tuple[EnrichedPage, ...],
+    *,
+    options: PipelineOptions,
+    provider: ImageUnderstandingProvider,
+) -> tuple[EnrichedPage, ...]:
+    if not provider.enabled:
+        return tuple(
+            replace(
+                page,
+                visual_analysis_status=PageVisualAnalysisStatus.NOT_CONFIGURED,
+                visuals=tuple(
+                    replace(
+                        visual,
+                        analysis_status=VisualAnalysisStatus.NOT_CONFIGURED,
+                    )
+                    for visual in page.visuals
+                ),
+            )
+            if page.has_visual_content
+            else page
+            for page in pages
+        )
+
+    _validate_visual_render_budget(pages, options)
+    enriched_pages: list[EnrichedPage] = []
+    for page in pages:
+        if page.page_number is None:
+            enriched_pages.append(page)
+            continue
+        if not page.visuals:
+            enriched_pages.append(
+                replace(page, visual_analysis_status=PageVisualAnalysisStatus.PARTIAL)
+            )
+            continue
+        analyzed_visuals: list[VisualContent] = []
+        for visual in page.visuals:
+            visual_png = _render_pdf_visual(
+                content,
+                page.page_number,
+                visual,
+                options.image_dpi,
+            )
+            try:
+                result = provider.describe_visual(
+                    visual_png,
+                    page_number=page.page_number,
+                    visual_index=visual.visual_index,
+                    suggested_type=visual.visual_type,
+                )
+            except VisualAnalysisError:
+                logger.warning(
+                    "Visual analysis failed for PDF page %s visual %s",
+                    page.page_number,
+                    visual.visual_index,
+                )
+                analyzed_visuals.append(
+                    replace(
+                        visual,
+                        analysis_status=VisualAnalysisStatus.FAILED,
+                        error_code="VISUAL_ANALYSIS_FAILED",
+                    )
+                )
+                continue
+            except TemporaryVisualServiceError:
+                raise _failure(
+                    ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED,
+                    PipelineStage.UNDERSTANDING_IMAGES,
+                    retryable=True,
+                ) from None
+            except Exception:
+                logger.exception(
+                    "Unexpected visual provider failure on PDF page %s visual %s",
+                    page.page_number,
+                    visual.visual_index,
+                )
+                raise _failure(
+                    ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED,
+                    PipelineStage.UNDERSTANDING_IMAGES,
+                    retryable=True,
+                ) from None
+
+            if result is None:
+                analyzed_visuals.append(
+                    replace(visual, analysis_status=VisualAnalysisStatus.SKIPPED)
+                )
+                continue
+            if (
+                not isinstance(result, VisualDescription)
+                or not isinstance(result.visual_type, VisualType)
+                or not isinstance(result.description, str)
+            ):
+                analyzed_visuals.append(
+                    replace(
+                        visual,
+                        analysis_status=VisualAnalysisStatus.FAILED,
+                        error_code="VISUAL_ANALYSIS_FAILED",
+                    )
+                )
+                continue
+            description = result.description.replace("\x00", "").strip()
+            if not description or len(description) > _MAX_VISUAL_DESCRIPTION_CHARACTERS:
+                analyzed_visuals.append(
+                    replace(
+                        visual,
+                        analysis_status=VisualAnalysisStatus.FAILED,
+                        error_code="VISUAL_ANALYSIS_FAILED",
+                    )
+                )
+                continue
+            analyzed_visuals.append(
+                replace(
+                    visual,
+                    visual_type=result.visual_type,
+                    description=description,
+                    analysis_status=VisualAnalysisStatus.SUCCEEDED,
+                )
+            )
+        enriched_pages.append(
+            replace(
+                page,
+                visual_analysis_status=_page_visual_status(analyzed_visuals),
+                visuals=tuple(analyzed_visuals),
+            )
+        )
+    return tuple(enriched_pages)
+
+
+def _page_visual_status(
+    visuals: list[VisualContent],
+) -> PageVisualAnalysisStatus:
+    failed = sum(
+        visual.analysis_status == VisualAnalysisStatus.FAILED for visual in visuals
+    )
+    if failed == len(visuals):
+        return PageVisualAnalysisStatus.FAILED
+    if failed:
+        return PageVisualAnalysisStatus.PARTIAL
+    return PageVisualAnalysisStatus.COMPLETED
+
+
+def _validate_visual_render_budget(
+    pages: tuple[EnrichedPage, ...],
+    options: PipelineOptions,
+) -> None:
+    total_pixels = 0
+    scale = options.image_dpi / 72
+    for page in pages:
+        for visual in page.visuals:
+            rect = pymupdf.Rect(visual.bbox)
+            pixels = max(1, ceil(rect.width * scale)) * max(
+                1, ceil(rect.height * scale)
+            )
+            total_pixels += pixels
+            if (
+                pixels > options.max_pdf_page_pixels
+                or total_pixels > options.max_pdf_total_pixels
+            ):
+                raise _failure(
+                    ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
+                    PipelineStage.UNDERSTANDING_IMAGES,
+                    retryable=False,
+                )
+
+
+def _render_pdf_visual(
+    content: bytes,
+    page_number: int,
+    visual: VisualContent,
+    dpi: int,
+) -> bytes:
     with _PDF_WARNING_LOCK:
         pymupdf.TOOLS.reset_mupdf_warnings()
         try:
             with pymupdf.open(stream=content, filetype="pdf") as pdf:
                 page = pdf.load_page(page_number - 1)
-                rendered = page.get_pixmap(dpi=dpi, alpha=False).tobytes("png")
+                rendered = page.get_pixmap(
+                    dpi=dpi,
+                    alpha=False,
+                    clip=pymupdf.Rect(visual.bbox),
+                ).tobytes("png")
                 if pymupdf.TOOLS.mupdf_warnings():
                     raise RuntimeError
                 return rendered
+        except DocumentProcessingError:
+            raise
         except Exception:
             raise _failure(
-                ProcessingErrorCode.CORRUPTED_PDF,
+                ProcessingErrorCode.PAGE_RENDER_FAILED,
                 PipelineStage.UNDERSTANDING_IMAGES,
-                retryable=False,
+                retryable=True,
             ) from None
         finally:
             pymupdf.TOOLS.reset_mupdf_warnings()
+
+
+def _merge_page_content(page: EnrichedPage) -> str:
+    sections = [_clean_text(page.text)] if page.text.strip() else []
+    sections.extend(
+        f"[{visual.visual_type.value.title()}]\n{_clean_text(visual.description)}"
+        for visual in page.visuals
+        if visual.analysis_status == VisualAnalysisStatus.SUCCEEDED
+        and visual.description is not None
+    )
+    return "\n\n".join(section for section in sections if section)
 
 
 def _validate_render_budget(

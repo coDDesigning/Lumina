@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import shutil
 from threading import BoundedSemaphore, Lock
 from time import sleep
+import unicodedata
 
 import pymupdf
 import pytest
@@ -361,13 +362,13 @@ def test_markdown_structure_and_conservative_cleaning_are_preserved() -> None:
     result = process_document("md", content, options=pipeline_options())
 
     assert result.pages[0].text == (
-        "# Heading\n"
+        "# Heading  \n"
         "\n"
         "- first item\n"
-        "    - nested item\n"
+        "    - nested item  \n"
         "\n"
         "```python\n"
-        "def example():\n"
+        "def example():    \n"
         "    return 1\n"
         "```"
     )
@@ -810,6 +811,32 @@ def test_partial_ocr_does_not_duplicate_sparse_searchable_text() -> None:
     assert "Recognized diagram label" in result.pages[0].text
 
 
+def test_unusable_ocr_does_not_replace_sparse_native_text() -> None:
+    class InvisibleOCR:
+        def extract_text(
+            self,
+            page: pymupdf.Page,
+            *,
+            language: str,
+            dpi: int,
+        ) -> str:
+            return "\u200b\ufeff"
+
+    result = process_document(
+        "pdf",
+        pdf_bytes("Title", image_pages={1}),
+        options=pipeline_options(
+            ocr_enabled=True,
+            ocr_min_text_characters=20,
+        ),
+        ocr_provider=InvisibleOCR(),
+    )
+
+    assert result.pages[0].text == "Title"
+    assert result.pages[0].extraction_method == ExtractionMethod.NATIVE
+    assert result.pages[0].ocr_status == OCRStatus.NO_TEXT
+
+
 def test_missing_tesseract_produces_stable_safe_error() -> None:
     class UnavailableOCR:
         def extract_text(
@@ -1073,8 +1100,10 @@ def test_enabled_provider_receives_region_crops_and_returns_typed_descriptions()
 
     assert provider.calls == [(1, 0, VisualType.FIGURE, 72, 72)]
     page = result.pages[0]
-    assert page.text == "Native page text remains authoritative and separate."
-    assert "Enrollment" not in page.text
+    assert page.text == (
+        "Native page text remains authoritative and separate.\n\n"
+        "[Chart]\nEnrollment rises by quarter.\nPeak: Q4."
+    )
     assert page.visual_analysis_status == PageVisualAnalysisStatus.COMPLETED
     assert len(page.visuals) == 1
     visual = page.visuals[0]
@@ -1092,6 +1121,482 @@ def test_enabled_provider_receives_region_crops_and_returns_typed_descriptions()
         PipelineStage.CLEANING_TEXT,
         PipelineStage.CHUNKING,
     ]
+
+
+def test_text_cleaning_normalizes_unicode_controls_and_whitespace() -> None:
+    assert (
+        pipeline._clean_text(
+            "C\u0327alıs\u0327ma\u00a0  gu\u0308zel.\u200b\n\n\n\ufffd\ufffd\ufffd\nSon.",
+            file_type="txt",
+        )
+        == "Çalışma güzel.\n\nSon."
+    )
+    assert pipeline._clean_text("Before\x00After", file_type="txt") == "BeforeAfter"
+    cleaned = pipeline._clean_text("One   line.\n\n\nNext.", file_type="txt")
+    assert pipeline._clean_text(cleaned, file_type="txt") == cleaned
+    assert (
+        pipeline._clean_text(
+            "First\fSecond\u2028Third\u2029Fourth",
+            file_type="txt",
+        )
+        == "First\nSecond\nThird\n\nFourth"
+    )
+
+
+def test_pdf_cleaning_repairs_guarded_line_wraps_and_hyphenation() -> None:
+    assert pipeline._clean_text(
+        "The operating sys-\ntem manages hard-\nware.\n\n"
+        "client-\nserver and well-\nknown remain hyphenated.\n\n"
+        "soft\u00ad\nhyphen joins.\n\n"
+        "- list item\n- next item",
+        file_type="pdf",
+    ) == (
+        "The operating sys-tem manages hard-ware.\n\n"
+        "client-server and well-known remain hyphenated.\n\n"
+        "softhyphen joins.\n\n"
+        "- list item\n- next item"
+    )
+
+
+def test_pdf_cleaning_preserves_separate_layout_blocks() -> None:
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=595, height=842)
+    page.insert_text((36, 100), "Introduction")
+    page.insert_text((36, 250), "this starts a separate paragraph.")
+    content = pdf.tobytes()
+    pdf.close()
+
+    result = process_document("pdf", content, options=pipeline_options())
+
+    assert result.pages[0].text == ("Introduction\n\nthis starts a separate paragraph.")
+
+
+def test_pdf_layout_content_uses_text_blocks_only() -> None:
+    class BlockPage:
+        rect = pymupdf.Rect(0, 0, 595, 842)
+
+        def get_text(self, kind: str, **options: object):
+            assert kind == "blocks"
+            assert options == {"flags": pymupdf.TEXTFLAGS_TEXT, "sort": True}
+            return [
+                (36.0, 10.0, 200.0, 30.0, "Header\n", 0, 0),
+                (36.0, 100.0, 500.0, 140.0, "Body text\n", 1, 0),
+                (250.0, 812.0, 320.0, 832.0, "1\n", 2, 0),
+            ]
+
+    assert pipeline._pdf_layout_content(BlockPage()) == (
+        ("Header", "Body text", "1"),
+        ("Header",),
+        ("1",),
+    )
+
+
+def test_pdf_layout_content_rejects_blocks_crossing_edge_band() -> None:
+    class MixedBlockPage:
+        rect = pymupdf.Rect(0, 0, 595, 842)
+
+        def get_text(self, kind: str, **options: object):
+            assert kind == "blocks"
+            return [
+                (
+                    36.0,
+                    10.0,
+                    500.0,
+                    120.0,
+                    "CS 201\nLearning objectives\nBody text\n",
+                    0,
+                    0,
+                ),
+                (
+                    36.0,
+                    760.0,
+                    500.0,
+                    830.0,
+                    "References\n1\n",
+                    1,
+                    0,
+                ),
+            ]
+
+    assert pipeline._pdf_layout_content(MixedBlockPage()) == (
+        ("CS 201\nLearning objectives\nBody text", "References\n1"),
+        (),
+        (),
+    )
+
+
+def test_pdf_cleaning_reflows_large_input_in_linear_time() -> None:
+    line = "a" * 40
+    text = "\n".join(line for _ in range(40_000))
+
+    cleaned = pipeline._clean_text(text, file_type="pdf")
+
+    assert len(cleaned) == 1_639_999
+    assert cleaned.startswith(f"{line} {line}")
+    assert cleaned.endswith(f"{line} {line}")
+
+
+def test_repeated_pdf_headers_footers_and_page_numbers_are_removed() -> None:
+    pdf = pymupdf.open()
+    bodies = (
+        "Binary trees are hierarchical.",
+        "Graphs connect vertices.",
+        "Hash tables map keys.",
+    )
+    for page_number, body in enumerate(bodies, start=1):
+        page = pdf.new_page(width=595, height=842)
+        page.insert_text((36, 24), "CS 201")
+        page.insert_text((36, 100), body)
+        page.insert_text((290, 825), str(page_number))
+    content = pdf.tobytes()
+    pdf.close()
+
+    result = process_document(
+        "pdf",
+        content,
+        options=pipeline_options(),
+    )
+
+    assert [page.page_number for page in result.pages] == [1, 2, 3]
+    assert [page.text for page in result.pages] == [
+        "Binary trees are hierarchical.",
+        "Graphs connect vertices.",
+        "Hash tables map keys.",
+    ]
+
+
+def test_multiple_repeated_pdf_edge_lines_are_removed() -> None:
+    pdf = pymupdf.open()
+    for page_number in range(1, 4):
+        page = pdf.new_page(width=595, height=842)
+        page.insert_text((36, 16), "University")
+        page.insert_text((36, 32), "CS 201")
+        page.insert_text((36, 200), f"Body {page_number}.")
+        page.insert_text((36, 806), "Confidential")
+        page.insert_text((290, 825), str(page_number))
+    content = pdf.tobytes()
+    pdf.close()
+
+    result = process_document("pdf", content, options=pipeline_options())
+
+    assert [page.text for page in result.pages] == [
+        "Body 1.",
+        "Body 2.",
+        "Body 3.",
+    ]
+
+
+def test_repeated_header_text_is_preserved_when_repeated_in_body() -> None:
+    pdf = pymupdf.open()
+    for page_number in range(1, 4):
+        page = pdf.new_page(width=595, height=842)
+        page.insert_text((36, 24), "CS 201")
+        page.insert_text((36, 200), "CS 201")
+        page.insert_text((36, 240), f"Body {page_number}.")
+    content = pdf.tobytes()
+    pdf.close()
+
+    result = process_document("pdf", content, options=pipeline_options())
+
+    assert all(page.text.count("CS 201") == 1 for page in result.pages)
+
+
+def test_ocr_edge_lines_are_preserved_without_layout_evidence() -> None:
+    class PagedOCR:
+        def extract_text(
+            self,
+            page: pymupdf.Page,
+            *,
+            language: str,
+            dpi: int,
+        ) -> str:
+            page_number = page.number + 1
+            return f"Course Header\nOCR body {page_number}.\nPage {page_number}"
+
+    pdf = pymupdf.open()
+    for shade in (80, 160, 240):
+        page = pdf.new_page(width=400, height=400)
+        insert_test_image(page, pymupdf.Rect(40, 80, 180, 220), shade=shade)
+    content = pdf.tobytes()
+    pdf.close()
+
+    result = process_document(
+        "pdf",
+        content,
+        options=pipeline_options(ocr_enabled=True),
+        ocr_provider=PagedOCR(),
+    )
+
+    assert [page.text for page in result.pages] == [
+        "Course Header\nOCR body 1.\nPage 1",
+        "Course Header\nOCR body 2.\nPage 2",
+        "Course Header\nOCR body 3.\nPage 3",
+    ]
+
+
+def test_ocr_numeric_content_is_not_mistaken_for_a_page_number() -> None:
+    class AnswerOCR:
+        def extract_text(
+            self,
+            page: pymupdf.Page,
+            *,
+            language: str,
+            dpi: int,
+        ) -> str:
+            return "Question\nThe answer is\n1"
+
+    result = process_document(
+        "pdf",
+        pdf_bytes(None, image_pages={1}),
+        options=pipeline_options(ocr_enabled=True),
+        ocr_provider=AnswerOCR(),
+    )
+
+    assert result.pages[0].text == "Question\nThe answer is\n1"
+
+
+def test_repeated_pdf_content_is_kept_below_confidence_threshold() -> None:
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "Shared heading\nFirst topic.",
+            "Shared heading\nSecond topic.",
+        ),
+        options=pipeline_options(),
+    )
+
+    assert all(page.text.startswith("Shared heading") for page in result.pages)
+
+
+def test_repeated_visual_descriptions_are_omitted_from_merged_pages() -> None:
+    class LogoProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            return VisualDescription(
+                visual_type=VisualType.FIGURE,
+                description="A blue university logo appears in the corner.",
+            )
+
+    pdf = pymupdf.open()
+    for page_number, shade in enumerate((80, 160, 240), start=1):
+        page = pdf.new_page(width=400, height=400)
+        page.insert_text((36, 24), f"Page {page_number} body is useful.")
+        insert_test_image(page, pymupdf.Rect(40, 80, 180, 220), shade=shade)
+    content = pdf.tobytes()
+    pdf.close()
+
+    result = process_document(
+        "pdf",
+        content,
+        options=pipeline_options(),
+        image_provider=LogoProvider(),
+    )
+
+    assert sum("university logo" in page.text for page in result.pages) == 1
+    assert all(
+        page.visuals[0].description == "A blue university logo appears in the corner."
+        for page in result.pages
+    )
+
+
+def test_short_repeated_pdf_body_content_is_not_removed() -> None:
+    pdf = pymupdf.open()
+    for _ in range(3):
+        page = pdf.new_page(width=595, height=842)
+        page.insert_text((36, 200), "Same important formula.")
+    content = pdf.tobytes()
+    pdf.close()
+
+    result = process_document(
+        "pdf",
+        content,
+        options=pipeline_options(),
+    )
+
+    assert all(page.text == "Same important formula." for page in result.pages)
+
+
+def test_numeric_only_pdf_page_is_not_removed_as_a_page_number() -> None:
+    result = process_document("pdf", pdf_bytes("1"), options=pipeline_options())
+
+    assert result.pages[0].text == "1"
+
+
+def test_markdown_long_fences_preserve_short_fence_content() -> None:
+    cleaned = pipeline._clean_text(
+        "````markdown\n```\ninside   code  \n```\n````\n\nBody.  ",
+        file_type="md",
+    )
+
+    assert cleaned == ("````markdown\n```\ninside   code  \n```\n````\n\nBody.  ")
+
+
+def test_markdown_garbage_cleanup_preserves_fenced_code() -> None:
+    cleaned = pipeline._clean_text(
+        "```text\n\ufffd\ufffd\ufffd\n```\n\n\ufffd\ufffd\ufffd\nBody.",
+        file_type="md",
+    )
+
+    assert cleaned == "```text\n\ufffd\ufffd\ufffd\n```\n\n\ufffd\ufffd\ufffd\nBody."
+
+
+def test_markdown_soft_hyphen_does_not_join_structural_lines() -> None:
+    cleaned = pipeline._clean_text(
+        "Text\u00ad\n- item\n\n```text\nsoft\u00ad\nhyphen\n```",
+        file_type="md",
+    )
+
+    assert cleaned == "Text\n- item\n\n```text\nsoft\nhyphen\n```"
+
+
+def test_markdown_code_blocks_preserve_consecutive_blank_lines() -> None:
+    cleaned = pipeline._clean_text(
+        "    first\n\n\n    second\n\n<pre>\nfirst\n\n\nsecond\n</pre>",
+        file_type="md",
+    )
+
+    assert cleaned == "    first\n\n\n    second\n\n<pre>\nfirst\n\n\nsecond\n</pre>"
+
+
+def test_visual_description_duplicate_of_primary_text_is_not_appended() -> None:
+    class DuplicateProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            return VisualDescription(
+                visual_type=VisualType.DIAGRAM,
+                description="Native page text remains authoritative.",
+            )
+
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "Native page text remains authoritative.",
+            image_pages={1},
+            width=300,
+            height=300,
+        ),
+        options=pipeline_options(),
+        image_provider=DuplicateProvider(),
+    )
+
+    assert result.pages[0].text == "Native page text remains authoritative."
+    assert result.pages[0].visuals[0].analysis_status == VisualAnalysisStatus.SUCCEEDED
+
+
+def test_visual_description_duplicate_of_primary_line_is_not_appended() -> None:
+    class DuplicateProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            return VisualDescription(
+                visual_type=VisualType.DIAGRAM,
+                description="Diagram label.",
+            )
+
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "Intro line.\nDiagram label.",
+            image_pages={1},
+            width=300,
+            height=300,
+        ),
+        options=pipeline_options(),
+        image_provider=DuplicateProvider(),
+    )
+
+    assert result.pages[0].text.count("Diagram label.") == 1
+
+
+def test_cleaning_normalizes_after_removing_invisible_characters() -> None:
+    cleaned = pipeline._clean_text("e\u200b\u0301", file_type="txt")
+
+    assert cleaned == "é"
+    assert unicodedata.is_normalized("NFC", cleaned)
+
+
+def test_empty_pdf_pages_remain_identifiable_after_cleaning() -> None:
+    result = process_document(
+        "pdf",
+        pdf_bytes("Useful first page.", None, "Useful third page."),
+        options=pipeline_options(),
+    )
+
+    assert [page.page_number for page in result.pages] == [1, 2, 3]
+    assert result.pages[1].text == ""
+    assert [chunk.page_number for chunk in result.chunks] == [1, 3]
+
+
+def test_cleaning_failure_has_dedicated_retryable_error(monkeypatch) -> None:
+    def fail_cleaning(*_args, **_kwargs):
+        raise RuntimeError("private cleaning detail")
+
+    monkeypatch.setattr(pipeline, "_clean_and_merge_pages", fail_cleaning)
+
+    error = assert_pipeline_error(
+        "txt",
+        b"Course notes",
+        ProcessingErrorCode.TEXT_CLEANING_FAILED,
+        PipelineStage.CLEANING_TEXT,
+    )
+
+    assert error.retryable is True
+    assert error.safe_message == (
+        "The extracted document content could not be prepared for processing."
+    )
+    assert "private" not in str(error)
+
+
+def test_merged_visual_content_obeys_extracted_text_limit() -> None:
+    class VerboseProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            return VisualDescription(
+                visual_type=VisualType.DIAGRAM,
+                description="A description that pushes merged content over the limit.",
+            )
+
+    error = assert_pipeline_error(
+        "pdf",
+        pdf_bytes("Body", image_pages={1}, width=300, height=300),
+        ProcessingErrorCode.EXTRACTED_TEXT_LIMIT_EXCEEDED,
+        PipelineStage.CLEANING_TEXT,
+        options=pipeline_options(max_extracted_characters=30),
+        image_provider=VerboseProvider(),
+    )
+
+    assert error.retryable is False
 
 
 def test_visual_analysis_error_is_nonfatal_and_page_specific() -> None:

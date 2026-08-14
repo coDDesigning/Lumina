@@ -294,7 +294,7 @@ class DocumentChunk(Base):
 
 
 class DocumentPage(Base):
-    """Canonical raw and enriched content for one document page."""
+    """Canonical raw and cleaned merged content for one document page."""
 
     __tablename__ = "document_pages"
     __table_args__ = (

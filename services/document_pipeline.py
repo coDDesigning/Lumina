@@ -3,6 +3,7 @@
 import logging
 import re
 import threading
+import unicodedata
 import zlib
 from collections import Counter
 from collections.abc import Iterator
@@ -47,6 +48,7 @@ class ProcessingErrorCode(StrEnum):
     PAGE_RENDER_FAILED = "page_render_failed"
     VISUAL_DETECTION_FAILED = "visual_detection_failed"
     IMAGE_UNDERSTANDING_FAILED = "image_understanding_failed"
+    TEXT_CLEANING_FAILED = "text_cleaning_failed"
     NO_PROCESSABLE_TEXT = "no_processable_text"
     STAGE_CALLBACK_FAILED = "stage_callback_failed"
     EXTRACTION_CALLBACK_FAILED = "extraction_callback_failed"
@@ -81,6 +83,9 @@ _ERROR_MESSAGES = {
         "Visual content could not be detected."
     ),
     ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED: ("Image understanding failed."),
+    ProcessingErrorCode.TEXT_CLEANING_FAILED: (
+        "The extracted document content could not be prepared for processing."
+    ),
     ProcessingErrorCode.NO_PROCESSABLE_TEXT: (
         "The document contains no processable text."
     ),
@@ -278,6 +283,9 @@ class ExtractedPage:
     has_visual_content: bool
     needs_ocr: bool
     visuals: tuple[VisualContent, ...]
+    header_candidates: tuple[str, ...] = ()
+    footer_candidates: tuple[str, ...] = ()
+    text_blocks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,7 +298,7 @@ class ExtractedDocument:
 
 @dataclass(frozen=True, slots=True)
 class EnrichedPage:
-    """Effective page text plus raw provenance and structured visuals."""
+    """Clean merged page text plus raw provenance and structured visuals."""
 
     content_index: int
     raw_text: str
@@ -305,6 +313,9 @@ class EnrichedPage:
     ocr_status: OCRStatus
     visual_analysis_status: PageVisualAnalysisStatus
     visuals: tuple[VisualContent, ...]
+    header_candidates: tuple[str, ...]
+    footer_candidates: tuple[str, ...]
+    text_blocks: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -504,6 +515,23 @@ _LEADING_BINARY_SIGNATURES = (
 _PARAGRAPH_BOUNDARY = re.compile(r"\n[ \t]*\n+")
 _LINE_BOUNDARY = re.compile(r"\n")
 _WORD_BOUNDARY = re.compile(r"[ \t]+")
+_HORIZONTAL_WHITESPACE = re.compile(r"[^\S\n]+")
+_EXCESSIVE_BLANK_LINES = re.compile(r"\n[ \t]*\n(?:[ \t]*\n)+")
+_PDF_PAGE_NUMBER = re.compile(
+    r"^(?:page[ \t]+)?[-–—]?[ \t]*(?P<number>\d+)[ \t]*[-–—]?$",
+    re.IGNORECASE,
+)
+_PDF_LIST_ITEM = re.compile(r"^(?:[-+*•]|\d+[.)]|[A-Za-z][.)])(?:[ \t]+|$)")
+_PDF_HEADING = re.compile(r"^#{1,6}(?:[ \t]+|$)")
+_PDF_TABLE_LINE = re.compile(r"^\|.*\|$")
+_PDF_CODE_LINE = re.compile(
+    r"^(?:```|~~~|>>>|\.\.\.|(?:def|class|function|SELECT|INSERT|UPDATE|DELETE)\b)"
+)
+_SENTENCE_END = frozenset(".!?:;。！？")
+_REMOVED_FORMAT_CHARACTERS = frozenset({"\u00ad", "\u200b", "\u2060", "\ufeff"})
+_PDF_WRAP_MIN_CHARACTERS = 40
+_REPEATED_CONTENT_MIN_PAGES = 3
+_REPEATED_CONTENT_MIN_RATIO = 0.6
 _MAX_VISUAL_DESCRIPTION_CHARACTERS = 2_000
 _MIN_VISUAL_DIMENSION_POINTS = 36.0
 _MIN_VISUAL_PAGE_AREA_RATIO = 0.01
@@ -718,10 +746,17 @@ def _process_document(
 
         current_stage = PipelineStage.CLEANING_TEXT
         _emit_stage(stage_callback, current_stage)
-        pages = tuple(replace(page, text=_clean_text(page.text)) for page in pages)
+        try:
+            pages = _clean_and_merge_pages(pages, file_type=file_type)
+        except Exception:
+            logger.exception("Document text cleaning failed")
+            raise _failure(
+                ProcessingErrorCode.TEXT_CLEANING_FAILED,
+                current_stage,
+                retryable=True,
+            ) from None
         clean_pages = tuple(
-            PageText(text=_merge_page_content(page), page_number=page.page_number)
-            for page in pages
+            PageText(text=page.text, page_number=page.page_number) for page in pages
         )
         if (
             sum(len(page.text) for page in clean_pages)
@@ -1068,7 +1103,7 @@ def _validate_and_decode_text(content: bytes) -> str:
         )
 
     decoded = str(detected)
-    allowed_controls = "\n\r\t\f"
+    allowed_controls = "\n\r\t\f\u0085"
     if any(
         character not in allowed_controls
         and (ord(character) < 32 or 127 <= ord(character) <= 159)
@@ -1098,7 +1133,16 @@ def _extract_pdf_document(
                         retryable=False,
                     )
                 extracted_values: list[
-                    tuple[int, str, int, ExtractionMethod | None, bool]
+                    tuple[
+                        int,
+                        str,
+                        int,
+                        ExtractionMethod | None,
+                        bool,
+                        tuple[str, ...],
+                        tuple[str, ...],
+                        tuple[str, ...],
+                    ]
                 ] = []
                 candidate_pages: list[tuple[list[_VisualCandidate], bool]] = []
                 character_count = 0
@@ -1119,6 +1163,9 @@ def _extract_pdf_document(
                             if page.get_image_bbox(image_xref) == image_bbox:
                                 image["xref"] = image_xref[0]
                                 break
+                    text_blocks, header_candidates, footer_candidates = (
+                        _pdf_layout_content(page)
+                    )
                     extracted_values.append(
                         (
                             page.number,
@@ -1126,6 +1173,9 @@ def _extract_pdf_document(
                             page.number + 1,
                             ExtractionMethod.NATIVE if text.strip() else None,
                             bool(image_info),
+                            header_candidates,
+                            footer_candidates,
+                            text_blocks,
                         )
                     )
                     candidate_pages.append(
@@ -1148,6 +1198,9 @@ def _extract_pdf_document(
                             < options.ocr_min_text_characters
                         ),
                         visuals=visuals,
+                        header_candidates=header_candidates,
+                        footer_candidates=footer_candidates,
+                        text_blocks=text_blocks,
                     )
                     for (
                         content_index,
@@ -1155,6 +1208,9 @@ def _extract_pdf_document(
                         page_number,
                         extraction_method,
                         has_images,
+                        header_candidates,
+                        footer_candidates,
+                        text_blocks,
                     ), visuals, has_visual_content in zip(
                         extracted_values,
                         selected_visuals,
@@ -1184,6 +1240,29 @@ def _extract_pdf_document(
 
 def _text_character_count(text: str) -> int:
     return sum(not character.isspace() for character in text)
+
+
+def _pdf_layout_content(
+    page: pymupdf.Page,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    text_blocks: list[str] = []
+    header_lines: list[str] = []
+    footer_lines: list[str] = []
+    edge_height = min(54.0, page.rect.height * 0.07)
+    blocks = page.get_text("blocks", flags=pymupdf.TEXTFLAGS_TEXT, sort=True)
+    for block in blocks:
+        if len(block) <= 6 or block[6] != 0:
+            continue
+        text = str(block[4]).strip("\n")
+        if not text:
+            continue
+        text_blocks.append(text)
+        lines = tuple(line.strip() for line in text.splitlines() if line.strip())
+        if float(block[3]) <= page.rect.y0 + edge_height:
+            header_lines.extend(lines)
+        if float(block[1]) >= page.rect.y1 - edge_height:
+            footer_lines.extend(lines)
+    return tuple(text_blocks), tuple(header_lines), tuple(footer_lines)
 
 
 def _detect_visual_candidates(
@@ -1402,6 +1481,9 @@ def _initial_enriched_page(page: ExtractedPage) -> EnrichedPage:
             else PageVisualAnalysisStatus.NOT_APPLICABLE
         ),
         visuals=page.visuals,
+        header_candidates=page.header_candidates,
+        footer_candidates=page.footer_candidates,
+        text_blocks=page.text_blocks,
     )
 
 
@@ -1466,7 +1548,7 @@ def _apply_ocr(
             enriched_pages.append(page)
             continue
         text = recognized[page.page_number].replace("\x00", "").strip()
-        if not text:
+        if not _clean_text(text, file_type="pdf", reflow_pdf=False).strip():
             enriched_pages.append(
                 replace(
                     page,
@@ -1684,15 +1766,222 @@ def _render_pdf_visual(
             pymupdf.TOOLS.reset_mupdf_warnings()
 
 
-def _merge_page_content(page: EnrichedPage) -> str:
-    sections = [_clean_text(page.text)] if page.text.strip() else []
-    sections.extend(
-        f"[{visual.visual_type.value.title()}]\n{_clean_text(visual.description)}"
-        for visual in page.visuals
-        if visual.analysis_status == VisualAnalysisStatus.SUCCEEDED
-        and visual.description is not None
+def _clean_and_merge_pages(
+    pages: tuple[EnrichedPage, ...],
+    *,
+    file_type: str,
+) -> tuple[EnrichedPage, ...]:
+    primary_texts = tuple(
+        _clean_text(page.text, file_type=file_type, reflow_pdf=False) for page in pages
     )
-    return "\n\n".join(section for section in sections if section)
+    repeated_edge_lines = (
+        _repeated_pdf_edge_lines(pages, primary_texts) if file_type == "pdf" else set()
+    )
+    repeated_visuals = _repeated_visual_descriptions(pages, file_type=file_type)
+
+    cleaned_pages: list[EnrichedPage] = []
+    seen_repeated_visuals: set[str] = set()
+    for page, primary_text in zip(pages, primary_texts, strict=True):
+        if file_type == "pdf":
+            primary_text, header_candidates, footer_candidates = _pdf_cleaning_source(
+                page,
+                primary_text,
+            )
+            primary_text = _remove_pdf_edge_noise(
+                primary_text,
+                page,
+                repeated_edge_lines,
+                header_candidates=header_candidates,
+                footer_candidates=footer_candidates,
+            )
+            primary_text = _clean_text(
+                primary_text,
+                file_type=file_type,
+                reflow_pdf=True,
+            )
+
+        sections = [primary_text] if primary_text else []
+        seen_sections = {_content_key(primary_text)} if primary_text else set()
+        for visual in page.visuals:
+            if (
+                visual.analysis_status != VisualAnalysisStatus.SUCCEEDED
+                or visual.description is None
+            ):
+                continue
+            description = _clean_text(visual.description, file_type="pdf")
+            description_key = _content_key(description)
+            if not description:
+                continue
+            is_repeated = description_key in repeated_visuals
+            is_duplicate = (
+                description_key in seen_sections
+                or _contains_duplicate_paragraph(primary_text, description)
+            )
+            if is_repeated and description_key in seen_repeated_visuals:
+                continue
+            if is_duplicate:
+                if is_repeated:
+                    seen_repeated_visuals.add(description_key)
+                continue
+            sections.append(f"[{visual.visual_type.value.title()}]\n{description}")
+            seen_sections.add(description_key)
+            if is_repeated:
+                seen_repeated_visuals.add(description_key)
+
+        cleaned_pages.append(replace(page, text="\n\n".join(sections)))
+    return tuple(cleaned_pages)
+
+
+def _repeated_pdf_edge_lines(
+    pages: tuple[EnrichedPage, ...],
+    texts: tuple[str, ...],
+) -> set[tuple[str, str]]:
+    physical_pages = sum(page.page_number is not None for page in pages)
+    minimum_count = _repeated_content_minimum(physical_pages)
+    if minimum_count is None:
+        return set()
+
+    header_pages: dict[str, set[int]] = {}
+    footer_pages: dict[str, set[int]] = {}
+    for page, text in zip(pages, texts, strict=True):
+        if page.page_number is None:
+            continue
+        _, header_candidates, footer_candidates = _pdf_cleaning_source(page, text)
+        for key in {_content_key(line) for line in header_candidates}:
+            header_pages.setdefault(key, set()).add(page.page_number)
+        for key in {_content_key(line) for line in footer_candidates}:
+            footer_pages.setdefault(key, set()).add(page.page_number)
+
+    return {
+        (position, key)
+        for position, positions in (("header", header_pages), ("footer", footer_pages))
+        for key, page_numbers in positions.items()
+        if key and len(page_numbers) >= minimum_count
+    }
+
+
+def _repeated_visual_descriptions(
+    pages: tuple[EnrichedPage, ...],
+    *,
+    file_type: str,
+) -> set[str]:
+    physical_pages = sum(page.page_number is not None for page in pages)
+    minimum_count = _repeated_content_minimum(physical_pages)
+    if file_type != "pdf" or minimum_count is None:
+        return set()
+
+    description_pages: dict[str, set[int]] = {}
+    for page in pages:
+        if page.page_number is None:
+            continue
+        for visual in page.visuals:
+            if (
+                visual.analysis_status == VisualAnalysisStatus.SUCCEEDED
+                and visual.description is not None
+            ):
+                key = _content_key(_clean_text(visual.description, file_type="pdf"))
+                if key:
+                    description_pages.setdefault(key, set()).add(page.page_number)
+    return {
+        key
+        for key, page_numbers in description_pages.items()
+        if len(page_numbers) >= minimum_count
+    }
+
+
+def _repeated_content_minimum(page_count: int) -> int | None:
+    if page_count < _REPEATED_CONTENT_MIN_PAGES:
+        return None
+    return max(
+        _REPEATED_CONTENT_MIN_PAGES,
+        ceil(page_count * _REPEATED_CONTENT_MIN_RATIO),
+    )
+
+
+def _remove_pdf_edge_noise(
+    text: str,
+    page: EnrichedPage,
+    repeated_lines: set[tuple[str, str]],
+    *,
+    header_candidates: tuple[str, ...],
+    footer_candidates: tuple[str, ...],
+) -> str:
+    lines = text.splitlines()
+    nonempty_indexes = [index for index, line in enumerate(lines) if line.strip()]
+    if not nonempty_indexes:
+        return text
+    header_counts = Counter(
+        key
+        for candidate in header_candidates
+        if (key := _content_key(candidate))
+        and (
+            ("header", key) in repeated_lines
+            or (
+                len(nonempty_indexes) > 1
+                and _is_pdf_page_number(candidate, page.page_number, is_edge=True)
+            )
+        )
+    )
+    footer_counts = Counter(
+        key
+        for candidate in footer_candidates
+        if (key := _content_key(candidate))
+        and (
+            ("footer", key) in repeated_lines
+            or (
+                len(nonempty_indexes) > 1
+                and _is_pdf_page_number(candidate, page.page_number, is_edge=True)
+            )
+        )
+    )
+    for indexes, counts in (
+        (nonempty_indexes, header_counts),
+        (reversed(nonempty_indexes), footer_counts),
+    ):
+        for index in indexes:
+            key = _content_key(lines[index])
+            if counts[key] > 0:
+                lines[index] = ""
+                counts[key] -= 1
+    return "\n".join(lines)
+
+
+def _pdf_cleaning_source(
+    page: EnrichedPage,
+    text: str,
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    if page.extraction_method != ExtractionMethod.OCR:
+        block_text = "\n\n".join(page.text_blocks) if page.text_blocks else text
+        return block_text, page.header_candidates, page.footer_candidates
+    return text, (), ()
+
+
+def _is_pdf_page_number(
+    line: str,
+    page_number: int | None,
+    *,
+    is_edge: bool,
+) -> bool:
+    if page_number is None or not is_edge:
+        return False
+    match = _PDF_PAGE_NUMBER.fullmatch(_normalize_horizontal_whitespace(line).strip())
+    if match is None:
+        return False
+    number = match.group("number").lstrip("0") or "0"
+    return number == str(page_number)
+
+
+def _contains_duplicate_paragraph(text: str, candidate: str) -> bool:
+    candidate_key = _content_key(candidate)
+    return any(
+        _content_key(section) == candidate_key
+        for paragraph in _PARAGRAPH_BOUNDARY.split(text)
+        for section in (paragraph, *paragraph.splitlines())
+    )
+
+
+def _content_key(text: str) -> str:
+    return _normalize_horizontal_whitespace(text).strip().casefold()
 
 
 def _validate_render_budget(
@@ -1741,10 +2030,217 @@ def _validate_render_budget(
             pymupdf.TOOLS.reset_mupdf_warnings()
 
 
-def _clean_text(text: str) -> str:
-    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-    normalized = normalized.replace("\x00", "")
-    return "\n".join(line.rstrip(" \t") for line in normalized.split("\n")).strip("\n")
+def _clean_text(text: str, *, file_type: str, reflow_pdf: bool = True) -> str:
+    normalized = unicodedata.normalize("NFC", text)
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    if file_type == "pdf":
+        normalized = re.sub(r"(?<=[^\W\d_])\u00ad\n(?=[^\W\d_])", "", normalized)
+    normalized = normalized.replace("\u2029", "\n\n")
+    normalized = re.sub(r"[\v\f\u0085\u2028]", "\n", normalized)
+    normalized = "".join(
+        character
+        for character in normalized
+        if character in "\n\t"
+        or (
+            character not in _REMOVED_FORMAT_CHARACTERS
+            and unicodedata.category(character) not in {"Cc", "Cs"}
+        )
+    )
+    normalized = normalized.replace("\u00a0", " ").replace("\u00ad", "")
+    lines = normalized.split("\n")
+    if file_type in {"md", "markdown"}:
+        normalized = _clean_markdown_lines(lines)
+    elif file_type == "pdf":
+        normalized = (
+            _clean_pdf_lines(lines)
+            if reflow_pdf
+            else "\n".join(_clean_pdf_line(line) for line in lines)
+        )
+    else:
+        normalized = "\n".join(_clean_text_line(line) for line in lines)
+    if file_type not in {"md", "markdown"}:
+        normalized = _remove_garbage_lines(normalized)
+    if file_type not in {"md", "markdown"}:
+        normalized = _EXCESSIVE_BLANK_LINES.sub("\n\n", normalized)
+    return unicodedata.normalize("NFC", normalized.strip("\n"))
+
+
+def _clean_markdown_lines(lines: list[str]) -> str:
+    cleaned: list[str] = []
+    fence: tuple[str, int] | None = None
+    html_block: str | None = None
+    in_indented_code = False
+    previous_blank = False
+    for line in lines:
+        if fence is not None:
+            cleaned.append(line)
+            if _is_markdown_fence_end(line, fence):
+                fence = None
+            continue
+        if html_block is not None:
+            cleaned.append(line)
+            if _is_markdown_html_block_end(line, html_block):
+                html_block = None
+            continue
+        html_block = _markdown_html_block_start(line)
+        if html_block is not None:
+            cleaned.append(line)
+            if _is_markdown_html_block_end(line, html_block):
+                html_block = None
+            previous_blank = False
+            continue
+        fence = _markdown_fence_start(line)
+        if fence is not None:
+            cleaned.append(line.rstrip(" \t"))
+            previous_blank = False
+            continue
+        if line.startswith(("    ", "\t")):
+            cleaned.append(line)
+            in_indented_code = True
+            previous_blank = False
+            continue
+        if not line and in_indented_code:
+            cleaned.append(line)
+            continue
+        in_indented_code = False
+        trailing_spaces = len(line) - len(line.rstrip(" "))
+        line = line.rstrip(" \t")
+        if trailing_spaces >= 2 and line:
+            line += "  "
+        if not line:
+            if previous_blank:
+                continue
+            previous_blank = True
+        else:
+            previous_blank = False
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
+def _markdown_fence_start(line: str) -> tuple[str, int] | None:
+    match = re.match(r"^[ ]{0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$", line)
+    if match is None:
+        return None
+    marker = match.group("fence")
+    if marker[0] == "`" and "`" in match.group("info"):
+        return None
+    return marker[0], len(marker)
+
+
+def _is_markdown_fence_end(line: str, fence: tuple[str, int]) -> bool:
+    marker, minimum_length = fence
+    return (
+        re.fullmatch(rf"[ ]{{0,3}}{re.escape(marker)}{{{minimum_length},}}[ \t]*", line)
+        is not None
+    )
+
+
+def _markdown_html_block_start(line: str) -> str | None:
+    match = re.match(
+        r"^[ ]{0,3}<(?P<tag>pre|script|style|textarea)(?:[ \t>]|$)", line, re.I
+    )
+    return match.group("tag").casefold() if match is not None else None
+
+
+def _is_markdown_html_block_end(line: str, tag: str) -> bool:
+    return re.search(rf"</{re.escape(tag)}[ \t]*>", line, re.I) is not None
+
+
+def _clean_pdf_lines(lines: list[str]) -> str:
+    cleaned = [_clean_pdf_line(line) for line in lines]
+    output: list[str] = []
+    paragraph: list[str] = []
+    previous_line = ""
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph
+        if paragraph:
+            output.append("".join(paragraph))
+            paragraph = []
+
+    for line in cleaned:
+        if not line:
+            flush_paragraph()
+            if output and output[-1]:
+                output.append("")
+            continue
+        if not paragraph:
+            paragraph = [line]
+            previous_line = line
+            continue
+        if _pdf_lines_are_wrapped(previous_line, line):
+            separator = "" if previous_line.rstrip().endswith("-") else " "
+            paragraph.append(f"{separator}{line.lstrip()}")
+        else:
+            flush_paragraph()
+            paragraph = [line]
+        previous_line = line
+    flush_paragraph()
+    return "\n".join(output)
+
+
+def _pdf_lines_are_wrapped(previous: str, current: str) -> bool:
+    if _is_protected_pdf_line(previous) or _is_protected_pdf_line(current):
+        return False
+    previous_stripped = previous.strip()
+    current_stripped = current.strip()
+    if not previous_stripped or not current_stripped:
+        return False
+    if previous_stripped[-1] in _SENTENCE_END:
+        return False
+    return (
+        previous_stripped.endswith("-")
+        or len(previous_stripped) >= _PDF_WRAP_MIN_CHARACTERS
+    ) and _starts_with_lowercase(current_stripped)
+
+
+def _starts_with_lowercase(text: str) -> bool:
+    stripped = text.lstrip()
+    return bool(stripped and stripped[0].isalpha() and stripped[0].islower())
+
+
+def _is_protected_pdf_line(line: str) -> bool:
+    return bool(
+        _PDF_LIST_ITEM.match(line)
+        or _PDF_HEADING.match(line)
+        or _PDF_TABLE_LINE.match(line)
+        or _PDF_CODE_LINE.match(line)
+        or line.startswith(("    ", "\t"))
+    )
+
+
+def _clean_pdf_line(line: str) -> str:
+    line = line.replace("\t", "    ").rstrip()
+    if _is_protected_pdf_line(line):
+        return line
+    return _normalize_horizontal_whitespace(line).strip()
+
+
+def _clean_text_line(line: str) -> str:
+    line = line.replace("\t", "    ").rstrip()
+    if not line or _is_protected_pdf_line(line):
+        return line
+    leading_spaces = len(line) - len(line.lstrip(" "))
+    return (" " * leading_spaces) + _normalize_horizontal_whitespace(line.lstrip())
+
+
+def _normalize_horizontal_whitespace(text: str) -> str:
+    return _HORIZONTAL_WHITESPACE.sub(" ", text)
+
+
+def _remove_garbage_lines(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines():
+        if _is_garbage_line(line):
+            lines.append("")
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _is_garbage_line(line: str) -> bool:
+    visible = [character for character in line if not character.isspace()]
+    return bool(visible and all(character == "\ufffd" for character in visible))
 
 
 def _chunk_pages(

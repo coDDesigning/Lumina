@@ -182,10 +182,12 @@ hard line breaks remain available to later stages.
 The worker claim-fences an atomic raw checkpoint in `document_pages` before OCR,
 visual analysis, cleaning, or chunking continues. Successful completion then
 atomically replaces that checkpoint with enriched pages and final chunks.
-`raw_text` and `raw_extraction_method` retain SCRUM-36 provenance while `text`,
-`extraction_method`, and `ocr_status` record the effective native, decoded, or
-OCR result. A later-stage failure leaves the raw checkpoint available for
-diagnosis and retry.
+`raw_text` and `raw_extraction_method` retain SCRUM-36 provenance while
+`extraction_method` and `ocr_status` identify the primary native, decoded, or
+OCR source. After cleaning, `text` is the canonical page-level representation:
+clean primary text followed by labeled successful visual descriptions. A
+later-stage failure leaves the raw checkpoint available for diagnosis and
+retry.
 
 PDF pages are OCR candidates when they have less searchable text than
 `OCR_MIN_TEXT_CHARACTERS` and contain a meaningful embedded image, detected
@@ -201,9 +203,13 @@ Meaningful images, tables, and drawing clusters are retained as ordered
 `document_visuals` rows with page-relative point coordinates, coarse type,
 source, status, and an optional description. Selection is bounded per page and
 document, repeated small images are filtered, and regions are rendered and
-released one at a time. Descriptions remain structured until cleaning, which
-adds successful descriptions to page-scoped chunk input without overwriting
-native or OCR text. The production visual provider is currently disabled;
+released one at a time. Cleaning normalizes Unicode and format-specific
+whitespace, conservatively repairs PDF wrapping, and removes high-confidence
+repeated PDF edge content without crossing page boundaries. Successful visual
+descriptions remain structured and are also appended to `document_pages.text`
+with labels such as `[Diagram]`; repeated or exact duplicate descriptions are
+omitted from merged text without deleting their provenance rows. The production
+visual provider is currently disabled;
 disabled analysis is explicitly recorded as `not_configured`. The provider
 contract and deterministic test providers qualify non-fatal per-visual failures
 and retryable temporary service failures without selecting a production AI

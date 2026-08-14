@@ -336,9 +336,9 @@ def test_worker_persists_exact_raw_markdown_before_cleaning(session_factory, tmp
         assert page is not None
         assert chunk is not None
         assert page.raw_text == content.decode("utf-8")
-        assert page.text == "# Heading\n\nParagraph with a hard break."
+        assert page.text == "# Heading  \n\nParagraph with a hard break.  "
         assert page.page_number is None
-        assert chunk.text == "# Heading\n\nParagraph with a hard break."
+        assert chunk.text == "# Heading  \n\nParagraph with a hard break.  "
 
 
 def test_processing_stage_transitions_are_ordered_and_claim_fenced(
@@ -694,7 +694,7 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
         PageData(
             content_index=0,
             raw_text="Sparse\x00 native text",
-            text="Recognized effective text",
+            text=("Recognized effective text\n\n[Chart]\nRevenue grew year over year."),
             page_number=1,
             raw_extraction_method="native",
             extraction_method="ocr",
@@ -763,7 +763,9 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
         assert visual is not None
         assert chunk is not None
         assert page.raw_text == "Sparse native text"
-        assert page.text == "Recognized effective text"
+        assert page.text == (
+            "Recognized effective text\n\n[Chart]\nRevenue grew year over year."
+        )
         assert page.raw_extraction_method == "native"
         assert page.extraction_method == "ocr"
         assert page.needs_ocr is False
@@ -1155,6 +1157,73 @@ def test_job_failure_rejects_a_nul_only_error_code(session_factory) -> None:
                 error_message="failure",
                 retryable=False,
             )
+
+
+def test_terminal_cleaning_failure_preserves_raw_checkpoint(session_factory, tmp_path):
+    queued = _queue_document(session_factory, tmp_path, max_attempts=1)
+    claim_time = queued.available_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session,
+            "cleaning-worker",
+            queued.storage.provider,
+            60,
+            now=claim_time,
+        )
+    assert claim is not None
+
+    with session_factory() as session:
+        assert update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "extracting_text",
+            now=claim_time + timedelta(seconds=1),
+        )
+    with session_factory() as session:
+        assert replace_document_pages(
+            session,
+            claim.id,
+            claim.claim_token,
+            [PageData(0, "Raw checkpoint", None, "decoded", False, False)],
+            now=claim_time + timedelta(seconds=2),
+        )
+    with session_factory() as session:
+        assert update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "cleaning_text",
+            now=claim_time + timedelta(seconds=3),
+        )
+    with session_factory() as session:
+        assert (
+            fail_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                error_code="TEXT_CLEANING_FAILED",
+                error_message=(
+                    "The extracted document content could not be prepared for processing."
+                ),
+                retryable=True,
+                now=claim_time + timedelta(seconds=4),
+            )
+            == JOB_STATUS_FAILED
+        )
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        job = session.get(ProcessingJob, queued.job_id)
+        page = session.scalar(select(DocumentPage))
+        assert document is not None
+        assert job is not None
+        assert page is not None
+        assert document.status == "failed"
+        assert job.last_error_code == "TEXT_CLEANING_FAILED"
+        assert job.failed_stage == "cleaning_text"
+        assert page.raw_text == "Raw checkpoint"
+        assert page.text == "Raw checkpoint"
 
 
 def test_expired_leases_are_requeued_then_failed(session_factory, tmp_path):

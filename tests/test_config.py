@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,6 +36,8 @@ from backend.app.config import (
     load_settings,
 )
 from backend.app.database_config import load_database_url
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 CONFIGURATION_KEYS = (
     "APP_ENV",
@@ -138,6 +143,34 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
         loaded.document_chunk_overlap_characters
         == DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS
     )
+
+
+def test_application_does_not_load_discovered_dotenv_file(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        "APP_ENV=production\nDEPLOYMENT_MODE=hosted\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment.pop("APP_ENV", None)
+    environment.pop("DEPLOYMENT_MODE", None)
+    environment["PYTHONPATH"] = str(PROJECT_ROOT)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from backend.app.database_config import load_app_environment; "
+            "print(load_app_environment())",
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "development"
 
 
 def test_staging_defaults_to_debug_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

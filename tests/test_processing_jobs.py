@@ -12,6 +12,7 @@ import pymupdf
 import pytest
 from sqlalchemy import func, select
 
+from backend.app.database_engine import SQLITE_BUSY_TIMEOUT_MILLISECONDS
 from backend.app.models import (
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
@@ -27,7 +28,7 @@ from backend.app.models import (
     User,
 )
 from schemas.course import CourseUpdate
-from services import document_extraction
+from services import document_extraction, processing_jobs
 from services.course import CourseService
 from services.document import DocumentService
 from services.document_extraction import (
@@ -89,6 +90,17 @@ class ImmediateStorage:
 
     def open(self, _key: str):
         return BytesIO(self.content)
+
+
+def _advance_to_chunking(session_factory, claim: ClaimedJob) -> None:
+    for stage in ("extracting_text", "cleaning_text", "chunking"):
+        with session_factory() as session:
+            assert update_job_stage(
+                session,
+                claim.id,
+                claim.claim_token,
+                stage,
+            )
 
 
 def _queue_document(
@@ -415,6 +427,43 @@ def test_sqlite_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp
         assert not complete_job(
             session,
             winner.id,
+            winner.claim_token,
+            [ChunkData("Too early")],
+            now=claim_time + timedelta(seconds=6),
+        )
+    for stage, offset in (("extracting_text", 7), ("cleaning_text", 8)):
+        with session_factory() as session:
+            assert update_job_stage(
+                session,
+                winner.id,
+                winner.claim_token,
+                stage,
+                now=claim_time + timedelta(seconds=offset),
+            )
+    with session_factory() as session:
+        assert not complete_job(
+            session,
+            winner.id,
+            winner.claim_token,
+            [ChunkData("Still too early")],
+            now=claim_time + timedelta(seconds=9),
+        )
+    with session_factory() as session:
+        job = session.get(ProcessingJob, winner.id)
+        assert job is not None
+        assert job.processing_stage == "cleaning_text"
+        assert session.scalar(select(func.count(DocumentChunk.id))) == 0
+        assert update_job_stage(
+            session,
+            winner.id,
+            winner.claim_token,
+            "chunking",
+            now=claim_time + timedelta(seconds=9),
+        )
+    with session_factory() as session:
+        assert not complete_job(
+            session,
+            winner.id,
             "stale-token",
             [ChunkData("Stale")],
             now=claim_time + timedelta(seconds=10),
@@ -429,7 +478,11 @@ def test_sqlite_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp
         )
 
 
-def test_raw_pages_are_claim_fenced_and_atomically_replaced(session_factory, tmp_path):
+def test_raw_pages_are_claim_fenced_and_atomically_replaced(
+    session_factory,
+    tmp_path,
+    monkeypatch,
+):
     queued = _queue_document(session_factory, tmp_path)
     with session_factory() as session:
         claim = claim_next_job(
@@ -460,13 +513,31 @@ def test_raw_pages_are_claim_fenced_and_atomically_replaced(session_factory, tmp
             needs_ocr=False,
         )
     ]
+    observed_timeouts = []
+    original_begin_serialized_write = processing_jobs.begin_serialized_write
+
+    def capture_timeout(session) -> None:
+        observed_timeouts.append(
+            session.connection().exec_driver_sql("PRAGMA busy_timeout").scalar()
+        )
+        original_begin_serialized_write(session)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(processing_jobs, "begin_serialized_write", capture_timeout)
+        with session_factory() as session:
+            assert replace_document_pages(
+                session,
+                claim.id,
+                claim.claim_token,
+                first_pages,
+                now=queued.available_at + timedelta(seconds=3),
+                operation_timeout_seconds=123,
+            )
+    assert observed_timeouts == [123_000]
     with session_factory() as session:
-        assert replace_document_pages(
-            session,
-            claim.id,
-            claim.claim_token,
-            first_pages,
-            now=queued.available_at + timedelta(seconds=3),
+        assert (
+            session.connection().exec_driver_sql("PRAGMA busy_timeout").scalar()
+            == SQLITE_BUSY_TIMEOUT_MILLISECONDS
         )
     with session_factory() as session:
         assert not replace_document_pages(
@@ -646,7 +717,7 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
     ]
     chunks = [
         ChunkData(
-            "Recognized effective text\n\n[Chart]\nRevenue grew year over year.",
+            "Recognized effective text\x00\n\n[Chart]\nRevenue grew year over year.",
             page_number=1,
         )
     ]
@@ -673,6 +744,7 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
         assert visual.analysis_status == "pending"
         assert job.status == JOB_STATUS_RUNNING
 
+    _advance_to_chunking(session_factory, claim)
     with session_factory() as session:
         assert complete_job(
             session,
@@ -711,13 +783,13 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
         assert visual.description == "Revenue grew year over year."
         assert visual.analysis_status == "succeeded"
         assert visual.error_code is None
-        assert chunk.text == chunks[0].text
+        assert chunk.text == chunks[0].text.replace("\x00", "")
         assert session.scalar(select(func.count(DocumentPage.id))) == 1
         assert session.scalar(select(func.count(DocumentVisual.id))) == 1
         assert session.scalar(select(func.count(DocumentChunk.id))) == 1
 
 
-def test_raw_page_persistence_removes_postgresql_unsupported_nuls(
+def test_raw_page_persistence_sanitizes_database_text(
     session_factory,
     tmp_path,
 ):
@@ -753,15 +825,30 @@ def test_raw_page_persistence_removes_postgresql_unsupported_nuls(
                     extraction_method="native",
                     has_images=False,
                     needs_ocr=False,
+                    has_visual_content=True,
+                    visual_analysis_status="failed",
+                    visuals=(
+                        VisualData(
+                            0,
+                            "figure",
+                            "image",
+                            (0.0, 0.0, 10.0, 10.0),
+                            analysis_status="failed",
+                            error_code=" " * 100 + "VISUAL\x00_" + "X" * 100,
+                        ),
+                    ),
                 )
             ],
             now=queued.available_at + timedelta(seconds=3),
         )
     with session_factory() as session:
         page = session.scalar(select(DocumentPage))
+        visual = session.scalar(select(DocumentVisual))
         assert page is not None
+        assert visual is not None
         assert page.raw_text == "RawText"
         assert page.text == "BeforeAfter"
+        assert visual.error_code == ("VISUAL_" + "X" * 100)[:100]
 
 
 def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path):
@@ -770,6 +857,12 @@ def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path)
     with pytest.raises(ValueError, match="at least one page"):
         with session_factory() as session:
             replace_document_pages(session, queued.job_id, "claim", [])
+
+
+def test_completion_rejects_a_chunk_that_sanitizes_to_empty(session_factory) -> None:
+    with pytest.raises(ValueError, match="must contain text"):
+        with session_factory() as session:
+            complete_job(session, 1, "claim", [ChunkData("\x00\x00")])
 
 
 @pytest.mark.parametrize(
@@ -888,6 +981,50 @@ def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path)
             ),
             "require an error code",
         ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
+                        (0.0, 0.0, 10.0, 10.0),
+                        analysis_status="failed",
+                        error_code="\x00",
+                    ),
+                ),
+            ),
+            "require an error code",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
+                        (0.0, 0.0, 10.0, 10.0),
+                        description="",
+                        analysis_status="succeeded",
+                    ),
+                ),
+            ),
+            None,
+        ),
     ],
     ids=[
         "raw-text-type",
@@ -899,6 +1036,8 @@ def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path)
         "visual-bbox",
         "visual-description-status",
         "visual-failure-code",
+        "visual-nul-only-failure-code",
+        "empty-successful-visual-description",
     ],
 )
 def test_raw_page_persistence_validates_enrichment_data(
@@ -909,9 +1048,17 @@ def test_raw_page_persistence_validates_enrichment_data(
 ):
     queued = _queue_document(session_factory, tmp_path)
 
-    with pytest.raises(ValueError, match=message):
-        with session_factory() as session:
-            replace_document_pages(session, queued.job_id, "claim", [page])
+    with session_factory() as session:
+        if message is None:
+            assert not replace_document_pages(
+                session,
+                queued.job_id,
+                "claim",
+                [page],
+            )
+        else:
+            with pytest.raises(ValueError, match=message):
+                replace_document_pages(session, queued.job_id, "claim", [page])
 
 
 def test_transient_failure_requeues_then_exhausts_attempts(session_factory, tmp_path):
@@ -934,14 +1081,20 @@ def test_transient_failure_requeues_then_exhausts_attempts(session_factory, tmp_
                 session,
                 first.id,
                 first.claim_token,
-                error_code="TEMPORARY_PROVIDER_ERROR",
-                error_message="temporary   provider\nerror",
+                error_code="TEMPORARY\x00_PROVIDER_ERROR",
+                error_message="temporary\x00   provider\nerror",
                 retryable=True,
                 retry_delay_seconds=10,
                 now=first_failure_at,
             )
             == JOB_STATUS_QUEUED
         )
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        assert job is not None
+        assert job.last_error_code == "TEMPORARY_PROVIDER_ERROR"
+        assert job.last_error_message == "temporary provider error"
 
     with session_factory() as session:
         assert (
@@ -971,8 +1124,8 @@ def test_transient_failure_requeues_then_exhausts_attempts(session_factory, tmp_
                 session,
                 second.id,
                 second.claim_token,
-                error_code="TEMPORARY_PROVIDER_ERROR",
-                error_message="still unavailable",
+                error_code="TEMPORARY\x00_PROVIDER_ERROR",
+                error_message="still\x00 unavailable",
                 retryable=True,
                 now=first_failure_at + timedelta(seconds=11),
             )
@@ -985,8 +1138,23 @@ def test_transient_failure_requeues_then_exhausts_attempts(session_factory, tmp_
         assert job is not None
         assert document is not None
         assert job.status == JOB_STATUS_FAILED
+        assert job.last_error_code == "TEMPORARY_PROVIDER_ERROR"
         assert job.last_error_message == "still unavailable"
         assert document.status == "failed"
+        assert document.processing_error == "still unavailable"
+
+
+def test_job_failure_rejects_a_nul_only_error_code(session_factory) -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        with session_factory() as session:
+            fail_job(
+                session,
+                1,
+                "claim",
+                error_code="\x00",
+                error_message="failure",
+                retryable=False,
+            )
 
 
 def test_expired_leases_are_requeued_then_failed(session_factory, tmp_path):
@@ -1125,6 +1293,7 @@ def test_completion_failure_rolls_back_chunks_and_state(
             now=claim_time,
         )
     assert claim is not None
+    _advance_to_chunking(session_factory, claim)
 
     session = session_factory()
     try:

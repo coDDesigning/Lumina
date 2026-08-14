@@ -6,7 +6,7 @@ from pathlib import Path
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from backend.app.models import Role as DatabaseRole
@@ -49,6 +49,19 @@ def check_readiness(db: Session, storage: Storage) -> None:
         )
         if role_names != REQUIRED_ROLE_NAMES:
             raise ReadinessError("Required database roles are missing.")
+
+        # Updating a guaranteed seed row to its current value forces SQLite to
+        # open its journal and proves that the runtime identity has DML access.
+        try:
+            result = db.execute(
+                update(DatabaseRole)
+                .where(DatabaseRole.name == Role.ADMIN.value)
+                .values(name=DatabaseRole.name)
+            )
+            if result.rowcount != 1:
+                raise ReadinessError("Database write probe did not find its seed row.")
+        finally:
+            db.rollback()
 
         storage.check_ready()
     except ReadinessError:

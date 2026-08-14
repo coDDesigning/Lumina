@@ -4,6 +4,7 @@ from threading import Barrier
 from urllib.parse import quote
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -22,8 +23,8 @@ from backend.app.models import (
     UploadedDocument,
     User,
 )
-from schemas.course import CourseCreate
-from schemas.user import Role, UserCreate, UserUpdate
+from schemas.course import CourseCreate, CourseResponse
+from schemas.user import Role, UserCreate, UserResponse, UserUpdate
 from services.course import CourseService
 from services.user import UserService
 from utils.exceptions import BadRequestException
@@ -271,6 +272,139 @@ def test_database_length_and_nullability_rules_are_validated_by_api(
         params={"model_name": "x" * 101},
     )
     assert invalid_model.status_code == 422
+
+
+def test_registration_rejects_nul_name(api_context) -> None:
+    response = api_context.client.post(
+        "/api/auth/register",
+        json={
+            "name": "Unsafe\x00name",
+            "email": "name@example.com",
+            "password": "password",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_nul_password_round_trips_through_bcrypt(api_context) -> None:
+    password = "pass\x00word"
+    registered = api_context.client.post(
+        "/api/auth/register",
+        json={
+            "name": "NUL Password",
+            "email": "nul-password@example.com",
+            "password": password,
+        },
+    )
+    login = api_context.client.post(
+        "/api/auth/login",
+        data={"username": "nul-password@example.com", "password": password},
+    )
+
+    assert registered.status_code == 200
+    assert login.status_code == 200
+
+
+@pytest.mark.parametrize("field", ["title", "description", "instructor"])
+def test_course_writes_reject_nul_text(api_context, field: str) -> None:
+    registered = api_context.client.post(
+        "/api/auth/register",
+        json={
+            "name": "Admin",
+            "email": f"{field}@example.com",
+            "password": "admin-password",
+        },
+    )
+    assert registered.status_code == 200
+    login = api_context.client.post(
+        "/api/auth/login",
+        data={"username": f"{field}@example.com", "password": "admin-password"},
+    )
+    authorization = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    payload = {
+        "title": "Course",
+        "description": "Description",
+        "instructor": "Admin",
+        "price": 0,
+    }
+    payload[field] = "Unsafe\x00value"
+
+    response = api_context.client.post(
+        "/api/courses/",
+        headers=authorization,
+        json=payload,
+    )
+    assert response.status_code == 422
+
+    payload[field] = "Valid value"
+    created = api_context.client.post(
+        "/api/courses/",
+        headers=authorization,
+        json=payload,
+    )
+    assert created.status_code == 201
+
+    updated = api_context.client.put(
+        f"/api/courses/{created.json()['data']['id']}",
+        headers=authorization,
+        json={field: "Unsafe\x00value"},
+    )
+    assert updated.status_code == 422
+
+
+def test_preferred_model_rejects_nul_text(api_context) -> None:
+    registered = api_context.client.post(
+        "/api/auth/register",
+        json={
+            "name": "Admin",
+            "email": "model-nul@example.com",
+            "password": "admin-password",
+        },
+    )
+    assert registered.status_code == 200
+    login = api_context.client.post(
+        "/api/auth/login",
+        data={
+            "username": "model-nul@example.com",
+            "password": "admin-password",
+        },
+    )
+
+    response = api_context.client.put(
+        "/api/users/me/model",
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        params={"model_name": "unsafe\x00model"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_response_schemas_can_read_legacy_nul_text() -> None:
+    with pytest.raises(ValidationError):
+        UserUpdate(preferred_model="unsafe\x00model")
+
+    course = CourseResponse(
+        id=1,
+        title="Legacy\x00 course",
+        description=None,
+        instructor="Instructor",
+        price=0,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    user = UserResponse(
+        id=1,
+        name="Legacy\x00 user",
+        email="legacy@example.com",
+        role=Role.USER,
+        is_banned=False,
+        credits=100,
+        preferred_model="legacy\x00model",
+    )
+
+    assert course.title == "Legacy\x00 course"
+    assert user.name == "Legacy\x00 user"
+    assert user.preferred_model == "legacy\x00model"
 
 
 def test_passwords_over_bcrypt_byte_limit_are_rejected(api_context) -> None:

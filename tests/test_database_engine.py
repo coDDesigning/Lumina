@@ -5,6 +5,7 @@ from sqlalchemy.exc import OperationalError
 
 from backend.app import database_engine
 from backend.app.database_engine import (
+    SQLITE_BUSY_TIMEOUT_MILLISECONDS,
     create_database_engine,
     is_sqlite_database,
     normalize_database_url,
@@ -28,8 +29,65 @@ def test_sqlite_engine_creates_parent_and_enables_foreign_keys(
         assert engine.hide_parameters is True
         with engine.connect() as connection:
             foreign_keys = connection.exec_driver_sql("PRAGMA foreign_keys").scalar()
+            busy_timeout = connection.exec_driver_sql("PRAGMA busy_timeout").scalar()
         assert database_path.exists()
         assert foreign_keys == 1
+        assert busy_timeout == SQLITE_BUSY_TIMEOUT_MILLISECONDS
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_engine_restores_busy_timeout_when_connection_returns_to_pool(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "lumina.db"
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql("PRAGMA busy_timeout=123456")
+            assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar() == 123456
+
+        with engine.connect() as connection:
+            assert (
+                connection.exec_driver_sql("PRAGMA busy_timeout").scalar()
+                == SQLITE_BUSY_TIMEOUT_MILLISECONDS
+            )
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_engine_preserves_custom_busy_timeout_baseline(tmp_path: Path) -> None:
+    database_path = tmp_path / "custom-timeout.db"
+    engine = create_database_engine(
+        f"sqlite:///{database_path.as_posix()}?timeout=0.234",
+        connect_args={"timeout": 0.123},
+    )
+
+    try:
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar() == 123
+            connection.exec_driver_sql("PRAGMA busy_timeout=999")
+
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar() == 123
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_engine_honors_url_busy_timeout_baseline(tmp_path: Path) -> None:
+    database_path = tmp_path / "url-timeout.db"
+    engine = create_database_engine(
+        f"sqlite:///{database_path.as_posix()}?timeout=0.234"
+    )
+
+    try:
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar() == 234
+            connection.exec_driver_sql("PRAGMA busy_timeout=999")
+
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar() == 234
     finally:
         engine.dispose()
 

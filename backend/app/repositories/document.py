@@ -52,7 +52,11 @@ class DocumentRepository:
             return None
 
         document.status = status
-        document.processing_error = processing_error
+        document.processing_error = (
+            processing_error.replace("\x00", "")
+            if processing_error is not None
+            else None
+        )
         db.flush()
         return document
 

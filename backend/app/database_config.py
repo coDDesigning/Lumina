@@ -3,7 +3,6 @@
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 from sqlalchemy.engine import make_url
 
 MODE_SELF_HOSTED = "self_hosted"
@@ -12,8 +11,6 @@ APP_ENV_DEVELOPMENT = "development"
 APP_ENV_STAGING = "staging"
 APP_ENV_PRODUCTION = "production"
 APP_ENVIRONMENTS = (APP_ENV_DEVELOPMENT, APP_ENV_STAGING, APP_ENV_PRODUCTION)
-
-load_dotenv()
 
 
 def load_deployment_mode() -> str:

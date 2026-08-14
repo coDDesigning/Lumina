@@ -14,7 +14,10 @@ router = APIRouter(prefix="/api/users", tags=["Users"])
 
 @router.put("/me/model", response_model=BaseResponse[UserResponse])
 def update_preferred_model(
-    model_name: Annotated[str, Query(min_length=1, max_length=100)],
+    model_name: Annotated[
+        str,
+        Query(min_length=1, max_length=100, pattern=r"^[^\x00]*$"),
+    ],
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):

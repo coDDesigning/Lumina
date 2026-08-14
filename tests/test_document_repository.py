@@ -147,7 +147,7 @@ def test_update_status_and_processing_error(
         db_session,
         document.id,
         "failed",
-        "OCR failed",
+        "OCR\x00 failed",
     )
     db_session.commit()
 

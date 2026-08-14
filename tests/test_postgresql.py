@@ -16,6 +16,7 @@ from backend.app.base import Base
 from backend.app.config import settings
 from backend.app.database_engine import create_database_engine
 from backend.app.models import (
+    JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
     Course,
@@ -27,7 +28,7 @@ from backend.app.models import (
     UploadedDocument,
     User,
 )
-from backend.app.readiness import check_readiness
+from backend.app.readiness import ReadinessError, check_readiness
 from services.processing_jobs import (
     ChunkData,
     PageData,
@@ -35,6 +36,7 @@ from services.processing_jobs import (
     claim_next_job,
     complete_job,
     enqueue_document_job,
+    fail_job,
     replace_document_pages,
     update_job_stage,
 )
@@ -535,6 +537,10 @@ def test_postgresql_schema_readiness_and_role_seeds(
     with postgresql_sessions() as session:
         assert set(session.scalars(select(Role.name))) >= {"admin", "user"}
         check_readiness(session, storage)
+    with postgresql_sessions() as session:
+        session.execute(text("SET TRANSACTION READ ONLY"))
+        with pytest.raises(ReadinessError):
+            check_readiness(session, storage)
 
 
 def test_postgresql_uuid_timestamps_and_loaded_cascades(
@@ -714,12 +720,12 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
             [
                 PageData(
                     content_index=0,
-                    text="Raw PostgreSQL extraction",
+                    text="Raw\x00 PostgreSQL extraction",
                     page_number=1,
                     extraction_method="decoded",
                     has_images=False,
                     needs_ocr=False,
-                    raw_text="Raw PostgreSQL extraction",
+                    raw_text="Raw\x00 PostgreSQL extraction",
                     raw_extraction_method="decoded",
                     has_visual_content=True,
                     ocr_status="not_required",
@@ -735,6 +741,38 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
                     ),
                 )
             ],
+        )
+    with postgresql_sessions() as session:
+        assert update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "cleaning_text",
+        )
+    with postgresql_sessions() as session:
+        assert not complete_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            [ChunkData(text="Too early")],
+        )
+    with postgresql_sessions() as session:
+        job = session.get(ProcessingJob, claim.id)
+        assert job is not None
+        assert job.processing_stage == "cleaning_text"
+        assert (
+            session.scalar(
+                select(DocumentChunk.id).where(
+                    DocumentChunk.document_id == document_ids[0]
+                )
+            )
+            is None
+        )
+        assert update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "chunking",
         )
     with postgresql_sessions() as session:
         page = session.scalar(
@@ -753,24 +791,32 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
         assert page.visuals[0].description is None
     enriched_page = PageData(
         content_index=0,
-        text="Enriched PostgreSQL extraction",
+        text="Enriched\x00 PostgreSQL extraction",
         page_number=1,
         extraction_method="ocr",
         has_images=False,
         needs_ocr=False,
-        raw_text="Raw PostgreSQL extraction",
+        raw_text="Raw\x00 PostgreSQL extraction",
         raw_extraction_method="decoded",
         has_visual_content=True,
         ocr_status="succeeded",
-        visual_analysis_status="completed",
+        visual_analysis_status="partial",
         visuals=(
             VisualData(
                 visual_index=0,
                 visual_type="chart",
                 source="image",
                 bbox=(1.0, 2.0, 10.0, 20.0),
-                description="PostgreSQL chart",
+                description="PostgreSQL\x00 chart",
                 analysis_status="succeeded",
+            ),
+            VisualData(
+                visual_index=1,
+                visual_type="figure",
+                source="image",
+                bbox=(11.0, 2.0, 20.0, 20.0),
+                analysis_status="failed",
+                error_code=" " * 100 + "POSTGRESQL\x00_" + "X" * 100,
             ),
         ),
     )
@@ -779,7 +825,7 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
             session,
             claim.id,
             claim.claim_token,
-            [ChunkData(text="Enriched PostgreSQL extraction", page_number=1)],
+            [ChunkData(text="Enriched\x00 PostgreSQL extraction", page_number=1)],
             [enriched_page],
         )
     with postgresql_sessions() as session:
@@ -789,9 +835,13 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
             .where(DocumentPage.document_id == document_ids[0])
         )
         assert enriched is not None
+        assert enriched.raw_text == "Raw PostgreSQL extraction"
+        assert enriched.text == "Enriched PostgreSQL extraction"
         assert enriched.extraction_method == "ocr"
         assert enriched.ocr_status == "succeeded"
+        assert enriched.visual_analysis_status == "partial"
         assert enriched.visuals[0].description == "PostgreSQL chart"
+        assert enriched.visuals[1].error_code == ("POSTGRESQL_" + "X" * 100)[:100]
         assert (
             session.scalar(
                 select(DocumentChunk.text).where(
@@ -820,5 +870,45 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
     with postgresql_sessions() as session:
         user = session.get(User, user_id)
         assert user is not None
+        session.delete(user)
+        session.commit()
+
+
+def test_postgresql_terminal_failure_sanitizes_error_text(
+    postgresql_sessions: sessionmaker[Session],
+) -> None:
+    with postgresql_sessions() as session:
+        user_id, document_ids, _job_ids = _queue_documents(session, count=1)
+    with postgresql_sessions() as session:
+        claim = claim_next_job(
+            session,
+            "postgresql-failure-worker",
+            "local:postgresql-ci",
+            60,
+        )
+    assert claim is not None
+
+    with postgresql_sessions() as session:
+        assert (
+            fail_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                error_code="PROVIDER\x00_FAILURE",
+                error_message="Provider\x00 failed",
+                retryable=False,
+            )
+            == JOB_STATUS_FAILED
+        )
+    with postgresql_sessions() as session:
+        job = session.get(ProcessingJob, claim.id)
+        document = session.get(UploadedDocument, document_ids[0])
+        user = session.get(User, user_id)
+        assert job is not None
+        assert document is not None
+        assert user is not None
+        assert job.last_error_code == "PROVIDER_FAILURE"
+        assert job.last_error_message == "Provider failed"
+        assert document.processing_error == "Provider failed"
         session.delete(user)
         session.commit()

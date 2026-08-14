@@ -3,10 +3,12 @@ from pathlib import Path
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import delete, text
+import pytest
+from sqlalchemy import delete, func, select, text
 
 from backend.app.database import get_db
-from backend.app.models import Role
+from backend.app.models import Role, UploadedDocument
+from backend.app.readiness import ReadinessError, check_readiness
 from main import app
 from storage.base import StorageError
 from storage.dependencies import get_storage
@@ -63,6 +65,42 @@ def test_current_database_with_roles_and_storage_is_ready(api_context) -> None:
     assert response.json() == {"status": "ready"}
     assert api_context.storage_root.is_dir()
     assert list(api_context.storage_root.iterdir()) == []
+    with api_context.session_factory() as session:
+        assert session.scalar(select(func.count(UploadedDocument.id))) == 0
+
+
+def test_read_only_database_is_not_ready(api_context) -> None:
+    _prepare_ready_dependencies(api_context)
+
+    with api_context.session_factory() as session:
+        session.connection().exec_driver_sql("PRAGMA query_only=ON")
+        with pytest.raises(ReadinessError):
+            check_readiness(session, api_context.storage)
+        session.connection().exec_driver_sql("PRAGMA query_only=OFF")
+
+
+def test_readiness_write_probe_leaves_role_seed_unchanged(api_context) -> None:
+    _prepare_ready_dependencies(api_context)
+
+    with api_context.session_factory() as session:
+        check_readiness(session, api_context.storage)
+    with api_context.session_factory() as session:
+        assert set(session.scalars(select(Role.name))) >= {"admin", "user"}
+
+
+def test_database_that_cannot_create_a_journal_is_not_ready(api_context) -> None:
+    _prepare_ready_dependencies(api_context)
+
+    with api_context.session_factory() as session:
+        database_path = Path(session.get_bind().url.database)
+        session.scalar(select(Role.id).limit(1))
+        journal_path = Path(f"{database_path}-journal")
+        journal_path.mkdir()
+        try:
+            with pytest.raises(ReadinessError):
+                check_readiness(session, api_context.storage)
+        finally:
+            journal_path.rmdir()
 
 
 def test_stale_or_additional_migration_heads_are_not_ready(api_context) -> None:

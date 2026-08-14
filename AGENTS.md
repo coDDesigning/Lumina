@@ -13,7 +13,7 @@ Operating instructions for coding agents in this repository.
 ## Current Architecture
 
 - Python is pinned to 3.12. Backend code uses FastAPI, Pydantic 2, and SQLAlchemy 2 typed declarative models.
-- `backend/app/config.py` owns application settings. `backend/app/database_config.py` reads the database-only subset for Alembic and currently loads `.env`; do not add environment reads elsewhere. Settings are frozen and import-cached.
+- `backend/app/config.py` owns application settings. `backend/app/database_config.py` reads the database-only subset for Alembic. `.env` is not loaded automatically; launchers must inject configuration. Do not add environment reads elsewhere. Settings are frozen and import-cached.
 - `DEPLOYMENT_MODE=self_hosted` defaults to SQLite and local paths. Hosted staging requires PostgreSQL and is exercised by a pinned live CI service; hosted production remains blocked because shared storage, pgvector, and S3 adapters are not implemented.
 - `backend/app/database.py` creates SQLite parent directories outside production and enables `PRAGMA foreign_keys=ON` for every connection. Do not remove the listener; SQLite cascades depend on it.
 - `backend/app/models.py` defines the 14-table relational model. `DocumentChunk.course_id` and `DocumentPage.course_id` are intentional denormalization for course-scoped reads.

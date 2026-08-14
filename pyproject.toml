@@ -17,3 +17,6 @@ line-ending = "lf"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "database_contract: shared relational behavior qualified on SQLite and PostgreSQL",
+]

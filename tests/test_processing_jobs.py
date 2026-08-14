@@ -341,6 +341,7 @@ def test_worker_persists_exact_raw_markdown_before_cleaning(session_factory, tmp
         assert chunk.text == "# Heading  \n\nParagraph with a hard break.  "
 
 
+@pytest.mark.database_contract
 def test_processing_stage_transitions_are_ordered_and_claim_fenced(
     session_factory,
     tmp_path,
@@ -386,7 +387,8 @@ def test_processing_stage_transitions_are_ordered_and_claim_fenced(
         )
 
 
-def test_sqlite_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp_path):
+@pytest.mark.database_contract
+def test_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path)
     claim_time = queued.available_at + timedelta(seconds=1)
 
@@ -634,6 +636,7 @@ def test_raw_pages_are_claim_fenced_and_atomically_replaced(
         assert pages[0].text == "Successful retry extraction"
 
 
+@pytest.mark.database_contract
 def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
     session_factory,
     tmp_path,
@@ -791,6 +794,7 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
         assert session.scalar(select(func.count(DocumentChunk.id))) == 1
 
 
+@pytest.mark.database_contract
 def test_raw_page_persistence_sanitizes_database_text(
     session_factory,
     tmp_path,
@@ -955,6 +959,66 @@ def test_completion_rejects_a_chunk_that_sanitizes_to_empty(session_factory) -> 
                         0,
                         "figure",
                         "image",
+                        (0, 0, 10**1000, 10),
+                    ),
+                ),
+            ),
+            "visual bounding box is invalid",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
+                        (0.0, 0.0, float("nan"), 10.0),
+                    ),
+                ),
+            ),
+            "visual bounding box is invalid",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
+                        (0.0, 0.0, float("inf"), 10.0),
+                    ),
+                ),
+            ),
+            "visual bounding box is invalid",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
                         (0.0, 0.0, 10.0, 10.0),
                         description="Premature description",
                     ),
@@ -1036,12 +1100,16 @@ def test_completion_rejects_a_chunk_that_sanitizes_to_empty(session_factory) -> 
         "visual-flag",
         "visual-index",
         "visual-bbox",
+        "visual-overflowing-integer-bbox",
+        "visual-nan-bbox",
+        "visual-infinite-bbox",
         "visual-description-status",
         "visual-failure-code",
         "visual-nul-only-failure-code",
         "empty-successful-visual-description",
     ],
 )
+@pytest.mark.database_contract
 def test_raw_page_persistence_validates_enrichment_data(
     session_factory,
     tmp_path,
@@ -1063,6 +1131,7 @@ def test_raw_page_persistence_validates_enrichment_data(
                 replace_document_pages(session, queued.job_id, "claim", [page])
 
 
+@pytest.mark.database_contract
 def test_transient_failure_requeues_then_exhausts_attempts(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path, max_attempts=2)
     first_claim_at = queued.available_at + timedelta(seconds=1)
@@ -1159,6 +1228,7 @@ def test_job_failure_rejects_a_nul_only_error_code(session_factory) -> None:
             )
 
 
+@pytest.mark.database_contract
 def test_terminal_cleaning_failure_preserves_raw_checkpoint(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path, max_attempts=1)
     claim_time = queued.available_at + timedelta(seconds=1)
@@ -1226,6 +1296,7 @@ def test_terminal_cleaning_failure_preserves_raw_checkpoint(session_factory, tmp
         assert page.text == "Raw checkpoint"
 
 
+@pytest.mark.database_contract
 def test_expired_leases_are_requeued_then_failed(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path, max_attempts=2)
     first_claim_at = queued.available_at + timedelta(seconds=1)
@@ -1293,6 +1364,7 @@ def test_expired_leases_are_requeued_then_failed(session_factory, tmp_path):
         assert document.status == "failed"
 
 
+@pytest.mark.database_contract
 def test_course_deletion_immediately_fences_running_claim(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path)
     claim_time = queued.available_at + timedelta(seconds=1)
@@ -1327,6 +1399,7 @@ def test_course_deletion_immediately_fences_running_claim(session_factory, tmp_p
         assert document.status == "failed"
 
 
+@pytest.mark.database_contract
 def test_generic_course_update_cannot_bypass_job_fencing(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path)
 
@@ -1348,6 +1421,7 @@ def test_generic_course_update_cannot_bypass_job_fencing(session_factory, tmp_pa
         assert document.status == "failed"
 
 
+@pytest.mark.database_contract
 def test_completion_failure_rolls_back_chunks_and_state(
     session_factory, tmp_path, monkeypatch
 ):
@@ -1606,6 +1680,7 @@ def test_extraction_enforces_configured_text_limit(tmp_path, monkeypatch):
     assert error.value.code == "EXTRACTED_TEXT_LIMIT_EXCEEDED"
 
 
+@pytest.mark.database_contract
 def test_claim_skips_documents_for_another_storage_provider(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path)
     with session_factory() as session:

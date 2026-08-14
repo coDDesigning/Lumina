@@ -115,6 +115,7 @@ def test_registration_login_and_admin_course_creation_persist(api_context) -> No
         assert session.scalar(select(func.count()).select_from(Course)) == 1
 
 
+@pytest.mark.database_contract
 def test_user_delete_cascades_loaded_document_content(
     db_session,
     model_graph,
@@ -181,6 +182,7 @@ def test_user_delete_cascades_loaded_document_content(
     assert db_session.get(DocumentVisual, visual_id) is None
 
 
+@pytest.mark.database_contract
 def test_course_creation_recovers_lost_commit_acknowledgement(
     session_factory,
     monkeypatch: pytest.MonkeyPatch,

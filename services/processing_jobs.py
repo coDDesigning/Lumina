@@ -691,10 +691,7 @@ def _validate_page_data(page: PageData, *, raw: bool) -> None:
         if (
             not isinstance(visual.bbox, tuple)
             or len(visual.bbox) != 4
-            or any(
-                isinstance(value, bool) or not isinstance(value, (int, float))
-                for value in visual.bbox
-            )
+            or any(not _is_finite_coordinate(value) for value in visual.bbox)
             or visual.bbox[0] < 0
             or visual.bbox[1] < 0
             or visual.bbox[2] <= visual.bbox[0]
@@ -741,6 +738,15 @@ def _document_visual(visual: VisualData) -> DocumentVisual:
             else None
         ),
     )
+
+
+def _is_finite_coordinate(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return isfinite(value)
+    except OverflowError:
+        return False
 
 
 def fail_job(

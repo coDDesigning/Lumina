@@ -9,6 +9,9 @@ runtime schema-management mechanism. The API never calls
 Set `DEPLOYMENT_MODE` and `DATABASE_URL`, then run migrations before starting
 the API or worker:
 
+Lumina does not load `.env` files itself. Export variables in the process
+environment or use a launcher such as Docker Compose that injects them.
+
 ```bash
 python -m alembic upgrade head
 python -m alembic current --check-heads

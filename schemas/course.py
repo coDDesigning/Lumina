@@ -1,6 +1,12 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def _reject_nul(value: str | None) -> str | None:
+    if value is not None and "\x00" in value:
+        raise ValueError("Text fields cannot contain NUL characters")
+    return value
 
 
 class CourseBase(BaseModel):
@@ -11,7 +17,10 @@ class CourseBase(BaseModel):
 
 
 class CourseCreate(CourseBase):
-    pass
+    @field_validator("title", "description", "instructor")
+    @classmethod
+    def reject_nul(cls, value: str | None) -> str | None:
+        return _reject_nul(value)
 
 
 class CourseUpdate(BaseModel):
@@ -20,6 +29,11 @@ class CourseUpdate(BaseModel):
     instructor: str | None = Field(default=None, min_length=1, max_length=200)
     price: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     is_deleted: bool | None = None
+
+    @field_validator("title", "description", "instructor")
+    @classmethod
+    def reject_nul(cls, value: str | None) -> str | None:
+        return _reject_nul(value)
 
     @model_validator(mode="after")
     def reject_null_for_required_columns(self) -> "CourseUpdate":

@@ -119,9 +119,20 @@ def _database_now(session: Session, supplied: datetime | None = None) -> datetim
     return value.astimezone(timezone.utc)
 
 
-def _start_transition(session: Session) -> None:
+def _start_transition(
+    session: Session,
+    *,
+    sqlite_busy_timeout_milliseconds: int | None = None,
+) -> None:
     if session.in_transaction():
         session.rollback()
+    if (
+        session.get_bind().dialect.name == "sqlite"
+        and sqlite_busy_timeout_milliseconds is not None
+    ):
+        session.connection().exec_driver_sql(
+            f"PRAGMA busy_timeout={sqlite_busy_timeout_milliseconds}"
+        )
     begin_serialized_write(session)
 
 
@@ -134,7 +145,7 @@ def _clear_lease(job: ProcessingJob) -> None:
 
 
 def _public_error_message(message: str) -> str:
-    normalized = " ".join(message.split())
+    normalized = " ".join(message.replace("\x00", "").split())
     return (normalized or "Document processing failed.")[:500]
 
 
@@ -397,11 +408,10 @@ def replace_document_pages(
         if operation_timeout_seconds is not None
         else None
     )
-    if dialect_name == "sqlite" and timeout_milliseconds is not None:
-        session.connection().exec_driver_sql(
-            f"PRAGMA busy_timeout={timeout_milliseconds}"
-        )
-    _start_transition(session)
+    _start_transition(
+        session,
+        sqlite_busy_timeout_milliseconds=timeout_milliseconds,
+    )
     if dialect_name == "postgresql" and timeout_milliseconds is not None:
         timeout = f"{timeout_milliseconds}ms"
         session.scalar(select(func.set_config("lock_timeout", timeout, True)))
@@ -497,7 +507,11 @@ def complete_job(
     if len(chunks) > settings.max_document_chunks:
         raise ValueError("Document chunk count exceeds the configured limit")
     for chunk in chunks:
-        if not isinstance(chunk.text, str) or not chunk.text:
+        if (
+            not isinstance(chunk.text, str)
+            or not chunk.text
+            or not chunk.text.replace("\x00", "")
+        ):
             raise ValueError("Document chunks must contain text")
         if chunk.page_number is not None and chunk.page_number < 1:
             raise ValueError("Document chunk page numbers must be positive")
@@ -543,6 +557,7 @@ def complete_job(
         or job.claim_token != claim_token
         or job.lease_expires_at is None
         or job.lease_expires_at <= finished_at
+        or job.processing_stage != "chunking"
         or document.status != "processing"
     ):
         session.rollback()
@@ -594,7 +609,7 @@ def complete_job(
             course_id=job.course_id,
             chunk_index=index,
             page_number=chunk.page_number,
-            text=chunk.text,
+            text=chunk.text.replace("\x00", ""),
         )
         for index, chunk in enumerate(chunks)
     )
@@ -699,7 +714,9 @@ def _validate_page_data(page: PageData, *, raw: bool) -> None:
             or visual.analysis_status != "succeeded"
         ):
             raise ValueError("Document visual description is invalid")
-        if visual.analysis_status == "failed" and not visual.error_code:
+        if visual.analysis_status == "failed" and (
+            not visual.error_code or not visual.error_code.replace("\x00", "").strip()
+        ):
             raise ValueError("Failed document visuals require an error code")
 
 
@@ -718,7 +735,11 @@ def _document_visual(visual: VisualData) -> DocumentVisual:
             else None
         ),
         analysis_status=visual.analysis_status,
-        error_code=visual.error_code,
+        error_code=(
+            visual.error_code.replace("\x00", "").strip()[:100]
+            if visual.error_code is not None
+            else None
+        ),
     )
 
 
@@ -733,7 +754,8 @@ def fail_job(
     retry_delay_seconds: float = 0,
     now: datetime | None = None,
 ) -> str | None:
-    if not error_code.strip():
+    sanitized_error_code = error_code.replace("\x00", "").strip()
+    if not sanitized_error_code:
         raise ValueError("error_code must not be empty")
 
     _start_transition(session)
@@ -768,7 +790,7 @@ def fail_job(
         else failed_at
     )
     job.finished_at = None if should_retry else failed_at
-    job.last_error_code = error_code.strip()[:100]
+    job.last_error_code = sanitized_error_code[:100]
     job.last_error_message = message
     job.failed_stage = None if should_retry else job.processing_stage
     job.processing_stage = None

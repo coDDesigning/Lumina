@@ -13,6 +13,8 @@ from backend.app.models import (
 )
 from backend.app.repositories.document import DocumentRepository
 
+pytestmark = pytest.mark.database_contract
+
 
 def document_values(
     model_graph,
@@ -39,7 +41,7 @@ def document_values(
     return values
 
 
-def test_uuid_primary_key_roundtrips_through_sqlite(
+def test_uuid_primary_key_roundtrips_through_database(
     db_session: Session,
     model_graph,
 ) -> None:
@@ -193,7 +195,6 @@ def test_document_database_constraints_are_enforced(
     field: str,
     invalid_value: object,
 ) -> None:
-    assert db_session.connection().exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
     values = document_values(model_graph)
     values[field] = invalid_value
 

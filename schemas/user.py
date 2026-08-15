@@ -29,6 +29,13 @@ class UserCreate(UserBase):
 
     password: str = Field(min_length=8)
 
+    @field_validator("name")
+    @classmethod
+    def reject_name_nul(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("Text fields cannot contain NUL characters")
+        return value
+
     @field_validator("password")
     @classmethod
     def validate_bcrypt_length(cls, password: str) -> str:
@@ -56,6 +63,13 @@ class UserUpdate(BaseModel):
     is_banned: bool | None = None
     credits: float | None = None
     preferred_model: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator("preferred_model")
+    @classmethod
+    def reject_model_nul(cls, value: str | None) -> str | None:
+        if value is not None and "\x00" in value:
+            raise ValueError("Text fields cannot contain NUL characters")
+        return value
 
     @model_validator(mode="after")
     def reject_null_for_required_columns(self) -> "UserUpdate":

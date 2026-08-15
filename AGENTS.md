@@ -13,7 +13,7 @@ Operating instructions for coding agents in this repository.
 ## Current Architecture
 
 - Python is pinned to 3.12. Backend code uses FastAPI, Pydantic 2, and SQLAlchemy 2 typed declarative models.
-- `backend/app/config.py` owns application settings. `backend/app/database_config.py` reads the database-only subset for Alembic and currently loads `.env`; do not add environment reads elsewhere. Settings are frozen and import-cached.
+- `backend/app/config.py` owns application settings. `backend/app/database_config.py` reads the database-only subset for Alembic. `.env` is not loaded automatically; launchers must inject configuration. Do not add environment reads elsewhere. Settings are frozen and import-cached.
 - `DEPLOYMENT_MODE=self_hosted` defaults to SQLite and local paths. Hosted staging requires PostgreSQL and is exercised by a pinned live CI service; hosted production remains blocked because shared storage, pgvector, and S3 adapters are not implemented.
 - `backend/app/database.py` creates SQLite parent directories outside production and enables `PRAGMA foreign_keys=ON` for every connection. Do not remove the listener; SQLite cascades depend on it.
 - `backend/app/models.py` defines the 14-table relational model. `DocumentChunk.course_id` and `DocumentPage.course_id` are intentional denormalization for course-scoped reads.
@@ -22,7 +22,7 @@ Operating instructions for coding agents in this repository.
 - User, course, document, and processing services persist through SQLAlchemy sessions; do not reintroduce process-local stores.
 - `main:app` includes auth, course, admin, user, and document routers.
 - Document upload validates bytes and writes generated, content-derived paths. Never derive storage paths from client filenames.
-- Alembic is the only runtime schema-management mechanism. The canonical chain is `97d9fd86a3ba -> b6d8f2a4c901 -> d2a7f0c91e35 -> c4e6a8f1b203 -> f7a3c9d2e541`; add schema changes as descendants and keep one base/head unless an explicit migration design requires otherwise.
+- Alembic is the only runtime schema-management mechanism. The canonical chain is `97d9fd86a3ba -> b6d8f2a4c901 -> d2a7f0c91e35 -> c4e6a8f1b203 -> f7a3c9d2e541 -> a8c4e2f7b913`; add schema changes as descendants and keep one base/head unless an explicit migration design requires otherwise.
 - `frontend/` is a React 19 + TypeScript + Vite application with its own npm lockfile and commands.
 - Vector retrieval is not implemented. Do not document or call planned vector components as available until dependencies, durable indexing, deletion, and retrieval contracts land with tests.
 - The root `Dockerfile` and `docker-compose.yml` are the supported single-host self-hosted container path. They run one-shot migrations before separate API and worker services as UID/GID 10001 on a shared named volume. `docker-compose.hosted.yml` remains experimental and unsupported for production.

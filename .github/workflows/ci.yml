@@ -325,6 +325,15 @@ jobs:
           --basetemp="$RUNNER_TEMP/pytest-postgresql"
           tests/test_postgresql.py
 
+      - name: Run shared database contract on PostgreSQL
+        run: >-
+          python -m pytest
+          -q
+          -p no:cacheprovider
+          --basetemp="$RUNNER_TEMP/pytest-postgresql-contract"
+          -m database_contract
+          tests
+
       - name: Check document worker readiness
         run: python -m workers.document_processor --check
 

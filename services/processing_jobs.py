@@ -30,6 +30,7 @@ from backend.app.models import (
 class ChunkData:
     text: str
     page_number: int | None = None
+    end_page_number: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -499,8 +500,12 @@ def complete_job(
     for chunk in chunks:
         if not isinstance(chunk.text, str) or not chunk.text:
             raise ValueError("Document chunks must contain text")
-        if chunk.page_number is not None and chunk.page_number < 1:
-            raise ValueError("Document chunk page numbers must be positive")
+        if (chunk.page_number is None) != (chunk.end_page_number is None):
+            raise ValueError("Document chunk page ranges must be complete")
+        if chunk.page_number is not None and (
+            chunk.page_number < 1 or chunk.end_page_number < chunk.page_number
+        ):
+            raise ValueError("Document chunk page ranges must be positive and ordered")
     if pages is not None:
         if not pages:
             raise ValueError("A completed document must contain at least one page")
@@ -537,6 +542,11 @@ def complete_job(
         session.rollback()
         return False
     job, document = row
+    try:
+        _validate_chunk_provenance(document.file_type, chunks, pages)
+    except ValueError:
+        session.rollback()
+        raise
     finished_at = _database_now(session, now)
     if (
         job.status != JOB_STATUS_RUNNING
@@ -594,6 +604,7 @@ def complete_job(
             course_id=job.course_id,
             chunk_index=index,
             page_number=chunk.page_number,
+            end_page_number=chunk.end_page_number,
             text=chunk.text,
         )
         for index, chunk in enumerate(chunks)
@@ -604,6 +615,30 @@ def complete_job(
     session.flush()
     session.commit()
     return True
+
+
+def _validate_chunk_provenance(
+    file_type: str,
+    chunks: list[ChunkData],
+    pages: list[PageData] | None,
+) -> None:
+    if file_type != "pdf":
+        if any(chunk.page_number is not None for chunk in chunks):
+            raise ValueError("Non-PDF document chunks cannot contain page ranges")
+        return
+
+    if any(chunk.page_number is None for chunk in chunks):
+        raise ValueError("PDF document chunks must contain page ranges")
+    if pages is None:
+        return
+
+    page_numbers = {page.page_number for page in pages if page.page_number is not None}
+    if not page_numbers or any(
+        chunk.page_number not in page_numbers
+        or chunk.end_page_number not in page_numbers
+        for chunk in chunks
+    ):
+        raise ValueError("PDF document chunk page ranges must reference document pages")
 
 
 def _validate_page_data(page: PageData, *, raw: bool) -> None:

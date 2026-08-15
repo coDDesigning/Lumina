@@ -285,10 +285,7 @@ def test_digital_pdf_extracts_physical_pages_with_one_based_provenance() -> None
     assert "First physical page" in result.pages[0].text
     assert "Second physical page" in result.pages[1].text
     assert {chunk.page_number for chunk in result.chunks} == {1, 2}
-    assert not any(
-        "First physical page" in chunk.text and "Second physical page" in chunk.text
-        for chunk in result.chunks
-    )
+    assert all(chunk.page_number <= chunk.end_page_number for chunk in result.chunks)
     assert stages == [
         PipelineStage.VALIDATING,
         PipelineStage.EXTRACTING_TEXT,
@@ -344,6 +341,7 @@ def test_text_encodings_are_decoded_once_with_nullable_page_provenance(
     assert page.visual_analysis_status == PageVisualAnalysisStatus.NOT_APPLICABLE
     assert page.visuals == ()
     assert all(chunk.page_number is None for chunk in result.chunks)
+    assert all(chunk.end_page_number is None for chunk in result.chunks)
 
 
 def test_markdown_structure_and_conservative_cleaning_are_preserved() -> None:
@@ -1547,7 +1545,9 @@ def test_empty_pdf_pages_remain_identifiable_after_cleaning() -> None:
 
     assert [page.page_number for page in result.pages] == [1, 2, 3]
     assert result.pages[1].text == ""
-    assert [chunk.page_number for chunk in result.chunks] == [1, 3]
+    assert [(chunk.page_number, chunk.end_page_number) for chunk in result.chunks] == [
+        (1, 3)
+    ]
 
 
 def test_cleaning_failure_has_dedicated_retryable_error(monkeypatch) -> None:
@@ -1846,6 +1846,7 @@ def test_empty_ocr_page_does_not_fail_other_usable_pages() -> None:
 
     assert result.pages[1].ocr_status == OCRStatus.NO_TEXT
     assert [chunk.page_number for chunk in result.chunks] == [1]
+    assert [chunk.end_page_number for chunk in result.chunks] == [1]
 
 
 def test_whitespace_text_fails_at_cleaning_without_optional_stages() -> None:
@@ -1888,6 +1889,7 @@ def test_chunks_are_deterministic_nonempty_and_boundary_aligned() -> None:
     assert all(chunk.text.strip() for chunk in first.chunks)
     assert all(chunk.character_count == len(chunk.text) for chunk in first.chunks)
     assert all(chunk.page_number is None for chunk in first.chunks)
+    assert all(chunk.end_page_number is None for chunk in first.chunks)
     assert first.chunks[0].text.endswith("chunking.")
     assert all(not chunk.text.startswith(" ") for chunk in first.chunks[1:])
 
@@ -1925,31 +1927,31 @@ def test_chunk_limit_stops_materialization() -> None:
     assert error.retryable is False
 
 
-def test_pdf_chunks_never_cross_physical_page_boundaries() -> None:
-    page_one = "PAGE_ONE " * 16
-    page_two = "PAGE_TWO " * 16
-    result = process_document(
-        "pdf",
-        pdf_bytes(page_one, page_two, width=2_000),
-        options=pipeline_options(
-            chunk_target_characters=45,
+def test_chunks_span_pages_with_inclusive_page_ranges() -> None:
+    chunks = pipeline._chunk_pages(
+        (
+            pipeline.PageText("First page is short.", 1),
+            pipeline.PageText("Second page continues with enough text to split.", 2),
+            pipeline.PageText("   ", 3),
+            pipeline.PageText("Fourth page closes the document.", 4),
+        ),
+        pipeline_options(
+            chunk_target_characters=60,
             chunk_overlap_characters=10,
         ),
     )
 
-    assert len(result.chunks) > 2
-    assert [chunk.chunk_index for chunk in result.chunks] == list(
-        range(len(result.chunks))
+    assert [chunk.chunk_index for chunk in chunks] == list(range(len(chunks)))
+    assert any(
+        chunk.page_number == 1
+        and chunk.end_page_number == 2
+        and "First page" in chunk.text
+        and "Second page" in chunk.text
+        for chunk in chunks
     )
-    assert all(
-        not ("PAGE_ONE" in chunk.text and "PAGE_TWO" in chunk.text)
-        for chunk in result.chunks
-    )
-    assert all(
-        (chunk.page_number == 1 and "PAGE_TWO" not in chunk.text)
-        or (chunk.page_number == 2 and "PAGE_ONE" not in chunk.text)
-        for chunk in result.chunks
-    )
+    assert chunks[-1].page_number == 2
+    assert chunks[-1].end_page_number == 4
+    assert all(chunk.page_number != 3 for chunk in chunks)
 
 
 def test_stage_callback_failure_is_wrapped_without_private_detail() -> None:

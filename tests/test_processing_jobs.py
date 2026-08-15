@@ -12,6 +12,7 @@ import pymupdf
 import pytest
 from sqlalchemy import func, select
 
+from backend.app.database_engine import SQLITE_BUSY_TIMEOUT_MILLISECONDS
 from backend.app.models import (
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
@@ -27,7 +28,7 @@ from backend.app.models import (
     User,
 )
 from schemas.course import CourseUpdate
-from services import document_extraction
+from services import document_extraction, processing_jobs
 from services.course import CourseService
 from services.document import DocumentService
 from services.document_extraction import (
@@ -89,6 +90,17 @@ class ImmediateStorage:
 
     def open(self, _key: str):
         return BytesIO(self.content)
+
+
+def _advance_to_chunking(session_factory, claim: ClaimedJob) -> None:
+    for stage in ("extracting_text", "cleaning_text", "chunking"):
+        with session_factory() as session:
+            assert update_job_stage(
+                session,
+                claim.id,
+                claim.claim_token,
+                stage,
+            )
 
 
 def _queue_document(
@@ -373,6 +385,7 @@ def test_worker_persists_exact_raw_markdown_before_cleaning(session_factory, tmp
         assert chunk.text == "# Heading  \n\nParagraph with a hard break.  "
 
 
+@pytest.mark.database_contract
 def test_processing_stage_transitions_are_ordered_and_claim_fenced(
     session_factory,
     tmp_path,
@@ -418,7 +431,8 @@ def test_processing_stage_transitions_are_ordered_and_claim_fenced(
         )
 
 
-def test_sqlite_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp_path):
+@pytest.mark.database_contract
+def test_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path)
     claim_time = queued.available_at + timedelta(seconds=1)
 
@@ -459,6 +473,43 @@ def test_sqlite_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp
         assert not complete_job(
             session,
             winner.id,
+            winner.claim_token,
+            [ChunkData("Too early")],
+            now=claim_time + timedelta(seconds=6),
+        )
+    for stage, offset in (("extracting_text", 7), ("cleaning_text", 8)):
+        with session_factory() as session:
+            assert update_job_stage(
+                session,
+                winner.id,
+                winner.claim_token,
+                stage,
+                now=claim_time + timedelta(seconds=offset),
+            )
+    with session_factory() as session:
+        assert not complete_job(
+            session,
+            winner.id,
+            winner.claim_token,
+            [ChunkData("Still too early")],
+            now=claim_time + timedelta(seconds=9),
+        )
+    with session_factory() as session:
+        job = session.get(ProcessingJob, winner.id)
+        assert job is not None
+        assert job.processing_stage == "cleaning_text"
+        assert session.scalar(select(func.count(DocumentChunk.id))) == 0
+        assert update_job_stage(
+            session,
+            winner.id,
+            winner.claim_token,
+            "chunking",
+            now=claim_time + timedelta(seconds=9),
+        )
+    with session_factory() as session:
+        assert not complete_job(
+            session,
+            winner.id,
             "stale-token",
             [ChunkData("Stale")],
             now=claim_time + timedelta(seconds=10),
@@ -473,7 +524,11 @@ def test_sqlite_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp
         )
 
 
-def test_raw_pages_are_claim_fenced_and_atomically_replaced(session_factory, tmp_path):
+def test_raw_pages_are_claim_fenced_and_atomically_replaced(
+    session_factory,
+    tmp_path,
+    monkeypatch,
+):
     queued = _queue_document(session_factory, tmp_path)
     with session_factory() as session:
         claim = claim_next_job(
@@ -504,13 +559,31 @@ def test_raw_pages_are_claim_fenced_and_atomically_replaced(session_factory, tmp
             needs_ocr=False,
         )
     ]
+    observed_timeouts = []
+    original_begin_serialized_write = processing_jobs.begin_serialized_write
+
+    def capture_timeout(session) -> None:
+        observed_timeouts.append(
+            session.connection().exec_driver_sql("PRAGMA busy_timeout").scalar()
+        )
+        original_begin_serialized_write(session)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(processing_jobs, "begin_serialized_write", capture_timeout)
+        with session_factory() as session:
+            assert replace_document_pages(
+                session,
+                claim.id,
+                claim.claim_token,
+                first_pages,
+                now=queued.available_at + timedelta(seconds=3),
+                operation_timeout_seconds=123,
+            )
+    assert observed_timeouts == [123_000]
     with session_factory() as session:
-        assert replace_document_pages(
-            session,
-            claim.id,
-            claim.claim_token,
-            first_pages,
-            now=queued.available_at + timedelta(seconds=3),
+        assert (
+            session.connection().exec_driver_sql("PRAGMA busy_timeout").scalar()
+            == SQLITE_BUSY_TIMEOUT_MILLISECONDS
         )
     with session_factory() as session:
         assert not replace_document_pages(
@@ -607,6 +680,7 @@ def test_raw_pages_are_claim_fenced_and_atomically_replaced(session_factory, tmp
         assert pages[0].text == "Successful retry extraction"
 
 
+@pytest.mark.database_contract
 def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
     session_factory,
     tmp_path,
@@ -695,7 +769,7 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
     ]
     chunks = [
         ChunkData(
-            "Recognized effective text\n\n[Chart]\nRevenue grew year over year.",
+            "Recognized effective text\x00\n\n[Chart]\nRevenue grew year over year.",
             page_number=1,
             end_page_number=1,
         )
@@ -723,6 +797,7 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
         assert visual.analysis_status == "pending"
         assert job.status == JOB_STATUS_RUNNING
 
+    _advance_to_chunking(session_factory, claim)
     with session_factory() as session:
         assert complete_job(
             session,
@@ -763,7 +838,7 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
         assert visual.description == "Revenue grew year over year."
         assert visual.analysis_status == "succeeded"
         assert visual.error_code is None
-        assert chunk.text == chunks[0].text
+        assert chunk.text == chunks[0].text.replace("\x00", "")
         assert chunk.page_number == 1
         assert chunk.end_page_number == 1
         assert session.scalar(select(func.count(DocumentPage.id))) == 1
@@ -777,8 +852,10 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
         ChunkData("missing end", page_number=1),
         ChunkData("missing start", end_page_number=1),
         ChunkData("reversed", page_number=2, end_page_number=1),
+        ChunkData("boolean", page_number=True, end_page_number=True),
+        ChunkData("fractional", page_number=1.5, end_page_number=2.5),
     ],
-    ids=["missing-end", "missing-start", "reversed"],
+    ids=["missing-end", "missing-start", "reversed", "boolean", "fractional"],
 )
 def test_completion_rejects_invalid_chunk_page_ranges(session_factory, chunk):
     with session_factory() as session:
@@ -787,18 +864,73 @@ def test_completion_rejects_invalid_chunk_page_ranges(session_factory, chunk):
 
 
 @pytest.mark.parametrize(
-    ("file_type", "chunk"),
+    ("file_type", "chunk", "pages"),
     [
-        ("pdf", ChunkData("missing PDF range")),
-        ("txt", ChunkData("unexpected text range", page_number=1, end_page_number=1)),
+        ("pdf", ChunkData("missing PDF range"), None),
+        (
+            "pdf",
+            ChunkData("unknown PDF range", page_number=1, end_page_number=1),
+            None,
+        ),
+        (
+            "txt",
+            ChunkData("unexpected text range", page_number=1, end_page_number=1),
+            None,
+        ),
+        (
+            "txt",
+            ChunkData("text chunk"),
+            [
+                PageData(
+                    0,
+                    "numbered text page",
+                    1,
+                    "decoded",
+                    False,
+                    False,
+                    raw_text="numbered text page",
+                )
+            ],
+        ),
+        (
+            "pdf",
+            ChunkData("discontinuous PDF range", page_number=1, end_page_number=3),
+            [
+                PageData(
+                    0,
+                    "first page",
+                    1,
+                    "native",
+                    False,
+                    False,
+                    raw_text="first page",
+                ),
+                PageData(
+                    1,
+                    "third page",
+                    3,
+                    "native",
+                    False,
+                    False,
+                    raw_text="third page",
+                ),
+            ],
+        ),
     ],
-    ids=["pdf-without-range", "text-with-range"],
+    ids=[
+        "pdf-without-range",
+        "pdf-without-pages",
+        "text-with-range",
+        "text-with-numbered-page",
+        "pdf-with-discontinuous-pages",
+    ],
 )
 def test_completion_rejects_ranges_inconsistent_with_document_type(
     session_factory,
     tmp_path,
     file_type,
     chunk,
+    pages,
 ):
     queued = _queue_document(
         session_factory,
@@ -817,12 +949,13 @@ def test_completion_rejects_ranges_inconsistent_with_document_type(
     assert claim is not None
 
     with session_factory() as session:
-        with pytest.raises(ValueError, match="page ranges"):
+        with pytest.raises(ValueError, match="page"):
             complete_job(
                 session,
                 claim.id,
                 claim.claim_token,
                 [chunk],
+                pages,
                 now=queued.available_at + timedelta(seconds=2),
             )
 
@@ -832,7 +965,8 @@ def test_completion_rejects_ranges_inconsistent_with_document_type(
         assert job.status == JOB_STATUS_RUNNING
 
 
-def test_raw_page_persistence_removes_postgresql_unsupported_nuls(
+@pytest.mark.database_contract
+def test_raw_page_persistence_sanitizes_database_text(
     session_factory,
     tmp_path,
 ):
@@ -868,15 +1002,30 @@ def test_raw_page_persistence_removes_postgresql_unsupported_nuls(
                     extraction_method="native",
                     has_images=False,
                     needs_ocr=False,
+                    has_visual_content=True,
+                    visual_analysis_status="failed",
+                    visuals=(
+                        VisualData(
+                            0,
+                            "figure",
+                            "image",
+                            (0.0, 0.0, 10.0, 10.0),
+                            analysis_status="failed",
+                            error_code=" " * 100 + "VISUAL\x00_" + "X" * 100,
+                        ),
+                    ),
                 )
             ],
             now=queued.available_at + timedelta(seconds=3),
         )
     with session_factory() as session:
         page = session.scalar(select(DocumentPage))
+        visual = session.scalar(select(DocumentVisual))
         assert page is not None
+        assert visual is not None
         assert page.raw_text == "RawText"
         assert page.text == "BeforeAfter"
+        assert visual.error_code == ("VISUAL_" + "X" * 100)[:100]
 
 
 def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path):
@@ -887,9 +1036,23 @@ def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path)
             replace_document_pages(session, queued.job_id, "claim", [])
 
 
+def test_completion_rejects_a_chunk_that_sanitizes_to_empty(session_factory) -> None:
+    with pytest.raises(ValueError, match="must contain text"):
+        with session_factory() as session:
+            complete_job(session, 1, "claim", [ChunkData("\x00\x00")])
+
+
 @pytest.mark.parametrize(
     ("page", "message"),
     [
+        (
+            PageData(False, "text", None, "decoded", False, False),
+            "content index must be a non-negative integer",
+        ),
+        (
+            PageData(0, "text", 1.5, "decoded", False, False),
+            "page numbers must be positive integers",
+        ),
         (
             PageData(0, "text", None, "decoded", False, False, raw_text=1),
             "raw text must be a string",
@@ -975,6 +1138,66 @@ def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path)
                         0,
                         "figure",
                         "image",
+                        (0, 0, 10**1000, 10),
+                    ),
+                ),
+            ),
+            "visual bounding box is invalid",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
+                        (0.0, 0.0, float("nan"), 10.0),
+                    ),
+                ),
+            ),
+            "visual bounding box is invalid",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
+                        (0.0, 0.0, float("inf"), 10.0),
+                    ),
+                ),
+            ),
+            "visual bounding box is invalid",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
                         (0.0, 0.0, 10.0, 10.0),
                         description="Premature description",
                     ),
@@ -1003,8 +1226,54 @@ def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path)
             ),
             "require an error code",
         ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
+                        (0.0, 0.0, 10.0, 10.0),
+                        analysis_status="failed",
+                        error_code="\x00",
+                    ),
+                ),
+            ),
+            "require an error code",
+        ),
+        (
+            PageData(
+                0,
+                "text",
+                1,
+                "native",
+                True,
+                False,
+                has_visual_content=True,
+                visuals=(
+                    VisualData(
+                        0,
+                        "figure",
+                        "image",
+                        (0.0, 0.0, 10.0, 10.0),
+                        description="",
+                        analysis_status="succeeded",
+                    ),
+                ),
+            ),
+            None,
+        ),
     ],
     ids=[
+        "content-index",
+        "page-number",
         "raw-text-type",
         "raw-ocr-method",
         "ocr-status",
@@ -1012,10 +1281,16 @@ def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path)
         "visual-flag",
         "visual-index",
         "visual-bbox",
+        "visual-overflowing-integer-bbox",
+        "visual-nan-bbox",
+        "visual-infinite-bbox",
         "visual-description-status",
         "visual-failure-code",
+        "visual-nul-only-failure-code",
+        "empty-successful-visual-description",
     ],
 )
+@pytest.mark.database_contract
 def test_raw_page_persistence_validates_enrichment_data(
     session_factory,
     tmp_path,
@@ -1024,11 +1299,20 @@ def test_raw_page_persistence_validates_enrichment_data(
 ):
     queued = _queue_document(session_factory, tmp_path)
 
-    with pytest.raises(ValueError, match=message):
-        with session_factory() as session:
-            replace_document_pages(session, queued.job_id, "claim", [page])
+    with session_factory() as session:
+        if message is None:
+            assert not replace_document_pages(
+                session,
+                queued.job_id,
+                "claim",
+                [page],
+            )
+        else:
+            with pytest.raises(ValueError, match=message):
+                replace_document_pages(session, queued.job_id, "claim", [page])
 
 
+@pytest.mark.database_contract
 def test_transient_failure_requeues_then_exhausts_attempts(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path, max_attempts=2)
     first_claim_at = queued.available_at + timedelta(seconds=1)
@@ -1049,14 +1333,20 @@ def test_transient_failure_requeues_then_exhausts_attempts(session_factory, tmp_
                 session,
                 first.id,
                 first.claim_token,
-                error_code="TEMPORARY_PROVIDER_ERROR",
-                error_message="temporary   provider\nerror",
+                error_code="TEMPORARY\x00_PROVIDER_ERROR",
+                error_message="temporary\x00   provider\nerror",
                 retryable=True,
                 retry_delay_seconds=10,
                 now=first_failure_at,
             )
             == JOB_STATUS_QUEUED
         )
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        assert job is not None
+        assert job.last_error_code == "TEMPORARY_PROVIDER_ERROR"
+        assert job.last_error_message == "temporary provider error"
 
     with session_factory() as session:
         assert (
@@ -1086,8 +1376,8 @@ def test_transient_failure_requeues_then_exhausts_attempts(session_factory, tmp_
                 session,
                 second.id,
                 second.claim_token,
-                error_code="TEMPORARY_PROVIDER_ERROR",
-                error_message="still unavailable",
+                error_code="TEMPORARY\x00_PROVIDER_ERROR",
+                error_message="still\x00 unavailable",
                 retryable=True,
                 now=first_failure_at + timedelta(seconds=11),
             )
@@ -1100,10 +1390,26 @@ def test_transient_failure_requeues_then_exhausts_attempts(session_factory, tmp_
         assert job is not None
         assert document is not None
         assert job.status == JOB_STATUS_FAILED
+        assert job.last_error_code == "TEMPORARY_PROVIDER_ERROR"
         assert job.last_error_message == "still unavailable"
         assert document.status == "failed"
+        assert document.processing_error == "still unavailable"
 
 
+def test_job_failure_rejects_a_nul_only_error_code(session_factory) -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        with session_factory() as session:
+            fail_job(
+                session,
+                1,
+                "claim",
+                error_code="\x00",
+                error_message="failure",
+                retryable=False,
+            )
+
+
+@pytest.mark.database_contract
 def test_terminal_cleaning_failure_preserves_raw_checkpoint(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path, max_attempts=1)
     claim_time = queued.available_at + timedelta(seconds=1)
@@ -1171,6 +1477,7 @@ def test_terminal_cleaning_failure_preserves_raw_checkpoint(session_factory, tmp
         assert page.text == "Raw checkpoint"
 
 
+@pytest.mark.database_contract
 def test_expired_leases_are_requeued_then_failed(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path, max_attempts=2)
     first_claim_at = queued.available_at + timedelta(seconds=1)
@@ -1238,6 +1545,7 @@ def test_expired_leases_are_requeued_then_failed(session_factory, tmp_path):
         assert document.status == "failed"
 
 
+@pytest.mark.database_contract
 def test_course_deletion_immediately_fences_running_claim(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path)
     claim_time = queued.available_at + timedelta(seconds=1)
@@ -1272,6 +1580,7 @@ def test_course_deletion_immediately_fences_running_claim(session_factory, tmp_p
         assert document.status == "failed"
 
 
+@pytest.mark.database_contract
 def test_generic_course_update_cannot_bypass_job_fencing(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path)
 
@@ -1293,10 +1602,16 @@ def test_generic_course_update_cannot_bypass_job_fencing(session_factory, tmp_pa
         assert document.status == "failed"
 
 
+@pytest.mark.database_contract
 def test_completion_failure_rolls_back_chunks_and_state(
     session_factory, tmp_path, monkeypatch
 ):
-    queued = _queue_document(session_factory, tmp_path)
+    queued = _queue_document(
+        session_factory,
+        tmp_path,
+        content=b"synthetic PDF content",
+        file_type="pdf",
+    )
     claim_time = queued.available_at + timedelta(seconds=1)
     with session_factory() as session:
         claim = claim_next_job(
@@ -1307,6 +1622,7 @@ def test_completion_failure_rolls_back_chunks_and_state(
             now=claim_time,
         )
     assert claim is not None
+    _advance_to_chunking(session_factory, claim)
 
     session = session_factory()
     try:
@@ -1321,7 +1637,7 @@ def test_completion_failure_rolls_back_chunks_and_state(
                 session,
                 claim.id,
                 claim.claim_token,
-                [ChunkData("Atomic result")],
+                [ChunkData("Atomic result", page_number=1, end_page_number=1)],
                 [
                     PageData(
                         content_index=0,
@@ -1552,6 +1868,7 @@ def test_extraction_enforces_configured_text_limit(tmp_path, monkeypatch):
     assert error.value.code == "EXTRACTED_TEXT_LIMIT_EXCEEDED"
 
 
+@pytest.mark.database_contract
 def test_claim_skips_documents_for_another_storage_provider(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path)
     with session_factory() as session:

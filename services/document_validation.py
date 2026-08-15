@@ -155,7 +155,7 @@ def check_file_type(filename: str | None) -> bool:
 
 
 def _derive_file_type_and_mime_type(filename: str | None) -> tuple[str, str]:
-    if filename and len(filename) > 255:
+    if filename and (len(filename) > 255 or "\x00" in filename):
         raise DocumentValidationError("invalid_file_name")
     if not filename or not check_file_type(filename):
         raise DocumentValidationError("unsupported_file_type")

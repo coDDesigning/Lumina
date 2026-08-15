@@ -120,9 +120,20 @@ def _database_now(session: Session, supplied: datetime | None = None) -> datetim
     return value.astimezone(timezone.utc)
 
 
-def _start_transition(session: Session) -> None:
+def _start_transition(
+    session: Session,
+    *,
+    sqlite_busy_timeout_milliseconds: int | None = None,
+) -> None:
     if session.in_transaction():
         session.rollback()
+    if (
+        session.get_bind().dialect.name == "sqlite"
+        and sqlite_busy_timeout_milliseconds is not None
+    ):
+        session.connection().exec_driver_sql(
+            f"PRAGMA busy_timeout={sqlite_busy_timeout_milliseconds}"
+        )
     begin_serialized_write(session)
 
 
@@ -135,7 +146,7 @@ def _clear_lease(job: ProcessingJob) -> None:
 
 
 def _public_error_message(message: str) -> str:
-    normalized = " ".join(message.split())
+    normalized = " ".join(message.replace("\x00", "").split())
     return (normalized or "Document processing failed.")[:500]
 
 
@@ -398,11 +409,10 @@ def replace_document_pages(
         if operation_timeout_seconds is not None
         else None
     )
-    if dialect_name == "sqlite" and timeout_milliseconds is not None:
-        session.connection().exec_driver_sql(
-            f"PRAGMA busy_timeout={timeout_milliseconds}"
-        )
-    _start_transition(session)
+    _start_transition(
+        session,
+        sqlite_busy_timeout_milliseconds=timeout_milliseconds,
+    )
     if dialect_name == "postgresql" and timeout_milliseconds is not None:
         timeout = f"{timeout_milliseconds}ms"
         session.scalar(select(func.set_config("lock_timeout", timeout, True)))
@@ -498,14 +508,24 @@ def complete_job(
     if len(chunks) > settings.max_document_chunks:
         raise ValueError("Document chunk count exceeds the configured limit")
     for chunk in chunks:
-        if not isinstance(chunk.text, str) or not chunk.text:
+        if (
+            not isinstance(chunk.text, str)
+            or not chunk.text
+            or not chunk.text.replace("\x00", "")
+        ):
             raise ValueError("Document chunks must contain text")
         if (chunk.page_number is None) != (chunk.end_page_number is None):
             raise ValueError("Document chunk page ranges must be complete")
-        if chunk.page_number is not None and (
-            chunk.page_number < 1 or chunk.end_page_number < chunk.page_number
-        ):
-            raise ValueError("Document chunk page ranges must be positive and ordered")
+        if chunk.page_number is not None:
+            if (
+                type(chunk.page_number) is not int
+                or type(chunk.end_page_number) is not int
+            ):
+                raise ValueError("Document chunk page ranges must contain integers")
+            if chunk.page_number < 1 or chunk.end_page_number < chunk.page_number:
+                raise ValueError(
+                    "Document chunk page ranges must be positive and ordered"
+                )
     if pages is not None:
         if not pages:
             raise ValueError("A completed document must contain at least one page")
@@ -543,7 +563,13 @@ def complete_job(
         return False
     job, document = row
     try:
-        _validate_chunk_provenance(document.file_type, chunks, pages)
+        _validate_document_provenance(
+            session,
+            document.id,
+            document.file_type,
+            chunks,
+            pages,
+        )
     except ValueError:
         session.rollback()
         raise
@@ -553,6 +579,7 @@ def complete_job(
         or job.claim_token != claim_token
         or job.lease_expires_at is None
         or job.lease_expires_at <= finished_at
+        or job.processing_stage != "chunking"
         or document.status != "processing"
     ):
         session.rollback()
@@ -605,7 +632,7 @@ def complete_job(
             chunk_index=index,
             page_number=chunk.page_number,
             end_page_number=chunk.end_page_number,
-            text=chunk.text,
+            text=chunk.text.replace("\x00", ""),
         )
         for index, chunk in enumerate(chunks)
     )
@@ -617,39 +644,57 @@ def complete_job(
     return True
 
 
-def _validate_chunk_provenance(
+def _validate_document_provenance(
+    session: Session,
+    document_id: UUID,
     file_type: str,
     chunks: list[ChunkData],
     pages: list[PageData] | None,
 ) -> None:
+    page_numbers = (
+        [page.page_number for page in pages]
+        if pages is not None
+        else list(
+            session.scalars(
+                select(DocumentPage.page_number)
+                .where(DocumentPage.document_id == document_id)
+                .order_by(DocumentPage.content_index)
+            )
+        )
+    )
     if file_type != "pdf":
+        if any(page_number is not None for page_number in page_numbers):
+            raise ValueError("Non-PDF document pages cannot contain page numbers")
         if any(chunk.page_number is not None for chunk in chunks):
             raise ValueError("Non-PDF document chunks cannot contain page ranges")
         return
 
+    if not page_numbers or page_numbers != list(range(1, len(page_numbers) + 1)):
+        raise ValueError("PDF document page numbers must be contiguous and one-based")
     if any(chunk.page_number is None for chunk in chunks):
         raise ValueError("PDF document chunks must contain page ranges")
-    if pages is None:
-        return
-
-    page_numbers = {page.page_number for page in pages if page.page_number is not None}
+    page_number_set = set(page_numbers)
     if not page_numbers or any(
-        chunk.page_number not in page_numbers
-        or chunk.end_page_number not in page_numbers
+        chunk.page_number not in page_number_set
+        or chunk.end_page_number not in page_number_set
         for chunk in chunks
     ):
         raise ValueError("PDF document chunk page ranges must reference document pages")
 
 
 def _validate_page_data(page: PageData, *, raw: bool) -> None:
+    if type(page.content_index) is not int or page.content_index < 0:
+        raise ValueError("Document page content index must be a non-negative integer")
     if not isinstance(page.text, str):
         raise ValueError("Document page text must be a string")
     if not raw and not isinstance(page.raw_text, str):
         raise ValueError("Completed document page raw text must be a string")
     if page.raw_text is not None and not isinstance(page.raw_text, str):
         raise ValueError("Document page raw text must be a string")
-    if page.page_number is not None and page.page_number < 1:
-        raise ValueError("Document page numbers must be positive")
+    if page.page_number is not None and (
+        type(page.page_number) is not int or page.page_number < 1
+    ):
+        raise ValueError("Document page numbers must be positive integers")
     allowed_methods = (
         {None, "native", "decoded"}
         if raw
@@ -711,10 +756,7 @@ def _validate_page_data(page: PageData, *, raw: bool) -> None:
         if (
             not isinstance(visual.bbox, tuple)
             or len(visual.bbox) != 4
-            or any(
-                isinstance(value, bool) or not isinstance(value, (int, float))
-                for value in visual.bbox
-            )
+            or any(not _is_finite_coordinate(value) for value in visual.bbox)
             or visual.bbox[0] < 0
             or visual.bbox[1] < 0
             or visual.bbox[2] <= visual.bbox[0]
@@ -734,7 +776,9 @@ def _validate_page_data(page: PageData, *, raw: bool) -> None:
             or visual.analysis_status != "succeeded"
         ):
             raise ValueError("Document visual description is invalid")
-        if visual.analysis_status == "failed" and not visual.error_code:
+        if visual.analysis_status == "failed" and (
+            not visual.error_code or not visual.error_code.replace("\x00", "").strip()
+        ):
             raise ValueError("Failed document visuals require an error code")
 
 
@@ -753,8 +797,21 @@ def _document_visual(visual: VisualData) -> DocumentVisual:
             else None
         ),
         analysis_status=visual.analysis_status,
-        error_code=visual.error_code,
+        error_code=(
+            visual.error_code.replace("\x00", "").strip()[:100]
+            if visual.error_code is not None
+            else None
+        ),
     )
+
+
+def _is_finite_coordinate(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return isfinite(value)
+    except OverflowError:
+        return False
 
 
 def fail_job(
@@ -768,7 +825,8 @@ def fail_job(
     retry_delay_seconds: float = 0,
     now: datetime | None = None,
 ) -> str | None:
-    if not error_code.strip():
+    sanitized_error_code = error_code.replace("\x00", "").strip()
+    if not sanitized_error_code:
         raise ValueError("error_code must not be empty")
 
     _start_transition(session)
@@ -803,7 +861,7 @@ def fail_job(
         else failed_at
     )
     job.finished_at = None if should_retry else failed_at
-    job.last_error_code = error_code.strip()[:100]
+    job.last_error_code = sanitized_error_code[:100]
     job.last_error_message = message
     job.failed_stage = None if should_retry else job.processing_stage
     job.processing_stage = None

@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import os
+import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.base import Base
+from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.database_engine import create_database_engine
 from backend.app.models import Course, Role, User
@@ -17,6 +22,8 @@ from main import app
 from storage.dependencies import get_storage
 from storage.local import LocalStorage
 from utils.security import create_access_token
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 @dataclass(frozen=True)
@@ -43,9 +50,78 @@ class ModelGraph:
     other_course: Course
 
 
+def _reset_postgresql_contract_data(engine: Engine) -> None:
+    table_names = ", ".join(
+        engine.dialect.identifier_preparer.quote(table.name)
+        for table in Base.metadata.sorted_tables
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE")
+        )
+        connection.execute(
+            Role.__table__.insert(),
+            [{"name": "admin"}, {"name": "user"}],
+        )
+
+
+@pytest.fixture(scope="session")
+def sqlite_contract_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    database_path = tmp_path_factory.mktemp("database-contract") / "template.sqlite3"
+    database_url = f"sqlite:///{database_path.as_posix()}"
+    previous_database_url = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = database_url
+    try:
+        config = Config()
+        config.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
+        config.set_main_option("prepend_sys_path", str(PROJECT_ROOT))
+        config.set_main_option("path_separator", "os")
+        command.upgrade(config, "head")
+    finally:
+        if previous_database_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous_database_url
+    return database_path
+
+
 @pytest.fixture
-def sqlite_engine(tmp_path: Path) -> Iterator[Engine]:
+def database_engine(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> Iterator[Engine]:
+    if settings.is_hosted:
+        engine = create_database_engine(settings.database_url)
+        validated_database = False
+        try:
+            with engine.connect() as connection:
+                database_name = connection.scalar(text("SELECT current_database()"))
+            if database_name != "lumina_ci":
+                raise RuntimeError(
+                    "PostgreSQL contract tests require the disposable lumina_ci database"
+                )
+            validated_database = True
+            _reset_postgresql_contract_data(engine)
+            yield engine
+        finally:
+            try:
+                if validated_database:
+                    _reset_postgresql_contract_data(engine)
+            finally:
+                engine.dispose()
+        return
+
     database_path = tmp_path / "test.sqlite3"
+    if request.node.get_closest_marker("database_contract") is not None:
+        template = request.getfixturevalue("sqlite_contract_template")
+        shutil.copyfile(template, database_path)
+        engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+        try:
+            yield engine
+        finally:
+            engine.dispose()
+        return
+
     engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
 
     Base.metadata.create_all(engine)
@@ -59,9 +135,9 @@ def sqlite_engine(tmp_path: Path) -> Iterator[Engine]:
 
 
 @pytest.fixture
-def session_factory(sqlite_engine: Engine) -> sessionmaker[Session]:
+def session_factory(database_engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(
-        bind=sqlite_engine,
+        bind=database_engine,
         class_=Session,
         expire_on_commit=False,
         autoflush=False,

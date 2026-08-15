@@ -1,10 +1,13 @@
 """Shared SQLAlchemy engine configuration for runtime and migrations."""
 
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import URL, Engine, make_url
+
+SQLITE_BUSY_TIMEOUT_MILLISECONDS = 5_000
 
 
 def normalize_database_url(value: str) -> URL:
@@ -39,7 +42,14 @@ def create_database_engine(
 
         connect_args = dict(engine_options.pop("connect_args", {}))
         connect_args.setdefault("check_same_thread", False)
-        connect_args.setdefault("timeout", 5)
+        url_timeout = url.query.get("timeout")
+        if "timeout" not in connect_args:
+            connect_args["timeout"] = (
+                float(url_timeout)
+                if url_timeout is not None
+                else SQLITE_BUSY_TIMEOUT_MILLISECONDS / 1000
+            )
+        sqlite_busy_timeout_milliseconds = int(float(connect_args["timeout"]) * 1000)
         engine_options["connect_args"] = connect_args
     elif url.get_backend_name() == "postgresql":
         connect_args = dict(engine_options.pop("connect_args", {}))
@@ -61,11 +71,45 @@ def create_database_engine(
     engine_options.setdefault("hide_parameters", True)
     engine = create_engine(url, **engine_options)
     if is_sqlite_database(url):
-        event.listen(engine, "connect", _enable_sqlite_foreign_keys)
+        event.listen(
+            engine,
+            "connect",
+            partial(
+                _configure_sqlite_connection,
+                busy_timeout_milliseconds=sqlite_busy_timeout_milliseconds,
+            ),
+        )
+        event.listen(
+            engine,
+            "checkin",
+            partial(
+                _restore_sqlite_busy_timeout,
+                busy_timeout_milliseconds=sqlite_busy_timeout_milliseconds,
+            ),
+        )
     return engine
 
 
-def _enable_sqlite_foreign_keys(dbapi_connection: Any, _connection_record: Any) -> None:
+def _configure_sqlite_connection(
+    dbapi_connection: Any,
+    _connection_record: Any,
+    *,
+    busy_timeout_milliseconds: int,
+) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute(f"PRAGMA busy_timeout={busy_timeout_milliseconds}")
+    cursor.close()
+
+
+def _restore_sqlite_busy_timeout(
+    dbapi_connection: Any | None,
+    _connection_record: Any,
+    *,
+    busy_timeout_milliseconds: int,
+) -> None:
+    if dbapi_connection is None:
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute(f"PRAGMA busy_timeout={busy_timeout_milliseconds}")
     cursor.close()

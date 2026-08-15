@@ -218,6 +218,10 @@ def test_filename_longer_than_database_limit_is_rejected() -> None:
     assert_validation_error("a" * 252 + ".txt", b"content", "invalid_file_name")
 
 
+def test_filename_with_nul_is_rejected() -> None:
+    assert_validation_error("unsafe\x00.txt", b"content", "invalid_file_name")
+
+
 def test_exact_zero_byte_file_is_rejected_but_whitespace_is_not() -> None:
     assert_validation_error("empty.txt", b"", "empty_file")
 

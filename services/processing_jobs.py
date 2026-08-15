@@ -30,6 +30,7 @@ from backend.app.models import (
 class ChunkData:
     text: str
     page_number: int | None = None
+    end_page_number: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -513,8 +514,18 @@ def complete_job(
             or not chunk.text.replace("\x00", "")
         ):
             raise ValueError("Document chunks must contain text")
-        if chunk.page_number is not None and chunk.page_number < 1:
-            raise ValueError("Document chunk page numbers must be positive")
+        if (chunk.page_number is None) != (chunk.end_page_number is None):
+            raise ValueError("Document chunk page ranges must be complete")
+        if chunk.page_number is not None:
+            if (
+                type(chunk.page_number) is not int
+                or type(chunk.end_page_number) is not int
+            ):
+                raise ValueError("Document chunk page ranges must contain integers")
+            if chunk.page_number < 1 or chunk.end_page_number < chunk.page_number:
+                raise ValueError(
+                    "Document chunk page ranges must be positive and ordered"
+                )
     if pages is not None:
         if not pages:
             raise ValueError("A completed document must contain at least one page")
@@ -551,6 +562,17 @@ def complete_job(
         session.rollback()
         return False
     job, document = row
+    try:
+        _validate_document_provenance(
+            session,
+            document.id,
+            document.file_type,
+            chunks,
+            pages,
+        )
+    except ValueError:
+        session.rollback()
+        raise
     finished_at = _database_now(session, now)
     if (
         job.status != JOB_STATUS_RUNNING
@@ -609,6 +631,7 @@ def complete_job(
             course_id=job.course_id,
             chunk_index=index,
             page_number=chunk.page_number,
+            end_page_number=chunk.end_page_number,
             text=chunk.text.replace("\x00", ""),
         )
         for index, chunk in enumerate(chunks)
@@ -621,15 +644,57 @@ def complete_job(
     return True
 
 
+def _validate_document_provenance(
+    session: Session,
+    document_id: UUID,
+    file_type: str,
+    chunks: list[ChunkData],
+    pages: list[PageData] | None,
+) -> None:
+    page_numbers = (
+        [page.page_number for page in pages]
+        if pages is not None
+        else list(
+            session.scalars(
+                select(DocumentPage.page_number)
+                .where(DocumentPage.document_id == document_id)
+                .order_by(DocumentPage.content_index)
+            )
+        )
+    )
+    if file_type != "pdf":
+        if any(page_number is not None for page_number in page_numbers):
+            raise ValueError("Non-PDF document pages cannot contain page numbers")
+        if any(chunk.page_number is not None for chunk in chunks):
+            raise ValueError("Non-PDF document chunks cannot contain page ranges")
+        return
+
+    if not page_numbers or page_numbers != list(range(1, len(page_numbers) + 1)):
+        raise ValueError("PDF document page numbers must be contiguous and one-based")
+    if any(chunk.page_number is None for chunk in chunks):
+        raise ValueError("PDF document chunks must contain page ranges")
+    page_number_set = set(page_numbers)
+    if not page_numbers or any(
+        chunk.page_number not in page_number_set
+        or chunk.end_page_number not in page_number_set
+        for chunk in chunks
+    ):
+        raise ValueError("PDF document chunk page ranges must reference document pages")
+
+
 def _validate_page_data(page: PageData, *, raw: bool) -> None:
+    if type(page.content_index) is not int or page.content_index < 0:
+        raise ValueError("Document page content index must be a non-negative integer")
     if not isinstance(page.text, str):
         raise ValueError("Document page text must be a string")
     if not raw and not isinstance(page.raw_text, str):
         raise ValueError("Completed document page raw text must be a string")
     if page.raw_text is not None and not isinstance(page.raw_text, str):
         raise ValueError("Document page raw text must be a string")
-    if page.page_number is not None and page.page_number < 1:
-        raise ValueError("Document page numbers must be positive")
+    if page.page_number is not None and (
+        type(page.page_number) is not int or page.page_number < 1
+    ):
+        raise ValueError("Document page numbers must be positive integers")
     allowed_methods = (
         {None, "native", "decoded"}
         if raw

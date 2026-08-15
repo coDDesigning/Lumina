@@ -177,6 +177,16 @@ def _image_pdf() -> bytes:
     return content
 
 
+def _text_pdf(*page_texts: str) -> bytes:
+    pdf = pymupdf.open()
+    for text in page_texts:
+        page = pdf.new_page()
+        page.insert_text((72, 72), text)
+    content = pdf.tobytes()
+    pdf.close()
+    return content
+
+
 def test_worker_processes_text_into_canonical_chunks(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path)
 
@@ -211,6 +221,8 @@ def test_worker_processes_text_into_canonical_chunks(session_factory, tmp_path):
         assert job.processing_stage is None
         assert job.failed_stage is None
         assert [chunk.text for chunk in chunks] == ["Durable processing notes"]
+        assert chunks[0].page_number is None
+        assert chunks[0].end_page_number is None
         assert len(pages) == 1
         assert pages[0].page_number is None
         assert pages[0].raw_text == "Durable processing notes"
@@ -223,6 +235,38 @@ def test_worker_processes_text_into_canonical_chunks(session_factory, tmp_path):
         assert pages[0].has_visual_content is False
         assert pages[0].visual_analysis_status == "not_applicable"
         assert pages[0].visuals == []
+
+
+def test_worker_persists_cross_page_pdf_chunk_ranges(session_factory, tmp_path):
+    queued = _queue_document(
+        session_factory,
+        tmp_path,
+        content=_text_pdf(
+            "First searchable page has course material.",
+            "Second searchable page continues the lesson.",
+        ),
+        file_type="pdf",
+    )
+
+    assert process_next_job(
+        session_factory=session_factory,
+        storage=queued.storage,
+        worker_id="pdf-chunk-worker",
+        lease_seconds=60,
+    )
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        chunks = session.scalars(
+            select(DocumentChunk).where(DocumentChunk.document_id == queued.document_id)
+        ).all()
+
+        assert document is not None
+        assert document.status == "ready"
+        assert len(chunks) == 1
+        assert "First searchable page" in chunks[0].text
+        assert "Second searchable page" in chunks[0].text
+        assert (chunks[0].page_number, chunks[0].end_page_number) == (1, 2)
 
 
 def test_image_pdf_fails_permanently_then_can_be_retried(
@@ -641,7 +685,12 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
     session_factory,
     tmp_path,
 ):
-    queued = _queue_document(session_factory, tmp_path)
+    queued = _queue_document(
+        session_factory,
+        tmp_path,
+        content=b"synthetic PDF content",
+        file_type="pdf",
+    )
     claim_time = queued.available_at + timedelta(seconds=1)
     with session_factory() as session:
         claim = claim_next_job(
@@ -722,6 +771,7 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
         ChunkData(
             "Recognized effective text\x00\n\n[Chart]\nRevenue grew year over year.",
             page_number=1,
+            end_page_number=1,
         )
     ]
     with session_factory() as session:
@@ -789,9 +839,130 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
         assert visual.analysis_status == "succeeded"
         assert visual.error_code is None
         assert chunk.text == chunks[0].text.replace("\x00", "")
+        assert chunk.page_number == 1
+        assert chunk.end_page_number == 1
         assert session.scalar(select(func.count(DocumentPage.id))) == 1
         assert session.scalar(select(func.count(DocumentVisual.id))) == 1
         assert session.scalar(select(func.count(DocumentChunk.id))) == 1
+
+
+@pytest.mark.parametrize(
+    "chunk",
+    [
+        ChunkData("missing end", page_number=1),
+        ChunkData("missing start", end_page_number=1),
+        ChunkData("reversed", page_number=2, end_page_number=1),
+        ChunkData("boolean", page_number=True, end_page_number=True),
+        ChunkData("fractional", page_number=1.5, end_page_number=2.5),
+    ],
+    ids=["missing-end", "missing-start", "reversed", "boolean", "fractional"],
+)
+def test_completion_rejects_invalid_chunk_page_ranges(session_factory, chunk):
+    with session_factory() as session:
+        with pytest.raises(ValueError, match="page range"):
+            complete_job(session, 1, "claim", [chunk])
+
+
+@pytest.mark.parametrize(
+    ("file_type", "chunk", "pages"),
+    [
+        ("pdf", ChunkData("missing PDF range"), None),
+        (
+            "pdf",
+            ChunkData("unknown PDF range", page_number=1, end_page_number=1),
+            None,
+        ),
+        (
+            "txt",
+            ChunkData("unexpected text range", page_number=1, end_page_number=1),
+            None,
+        ),
+        (
+            "txt",
+            ChunkData("text chunk"),
+            [
+                PageData(
+                    0,
+                    "numbered text page",
+                    1,
+                    "decoded",
+                    False,
+                    False,
+                    raw_text="numbered text page",
+                )
+            ],
+        ),
+        (
+            "pdf",
+            ChunkData("discontinuous PDF range", page_number=1, end_page_number=3),
+            [
+                PageData(
+                    0,
+                    "first page",
+                    1,
+                    "native",
+                    False,
+                    False,
+                    raw_text="first page",
+                ),
+                PageData(
+                    1,
+                    "third page",
+                    3,
+                    "native",
+                    False,
+                    False,
+                    raw_text="third page",
+                ),
+            ],
+        ),
+    ],
+    ids=[
+        "pdf-without-range",
+        "pdf-without-pages",
+        "text-with-range",
+        "text-with-numbered-page",
+        "pdf-with-discontinuous-pages",
+    ],
+)
+def test_completion_rejects_ranges_inconsistent_with_document_type(
+    session_factory,
+    tmp_path,
+    file_type,
+    chunk,
+    pages,
+):
+    queued = _queue_document(
+        session_factory,
+        tmp_path,
+        content=b"document content",
+        file_type=file_type,
+    )
+    with session_factory() as session:
+        claim = claim_next_job(
+            session,
+            "provenance-worker",
+            queued.storage.provider,
+            60,
+            now=queued.available_at + timedelta(seconds=1),
+        )
+    assert claim is not None
+
+    with session_factory() as session:
+        with pytest.raises(ValueError, match="page"):
+            complete_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                [chunk],
+                pages,
+                now=queued.available_at + timedelta(seconds=2),
+            )
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, claim.id)
+        assert job is not None
+        assert job.status == JOB_STATUS_RUNNING
 
 
 @pytest.mark.database_contract
@@ -874,6 +1045,14 @@ def test_completion_rejects_a_chunk_that_sanitizes_to_empty(session_factory) -> 
 @pytest.mark.parametrize(
     ("page", "message"),
     [
+        (
+            PageData(False, "text", None, "decoded", False, False),
+            "content index must be a non-negative integer",
+        ),
+        (
+            PageData(0, "text", 1.5, "decoded", False, False),
+            "page numbers must be positive integers",
+        ),
         (
             PageData(0, "text", None, "decoded", False, False, raw_text=1),
             "raw text must be a string",
@@ -1093,6 +1272,8 @@ def test_completion_rejects_a_chunk_that_sanitizes_to_empty(session_factory) -> 
         ),
     ],
     ids=[
+        "content-index",
+        "page-number",
         "raw-text-type",
         "raw-ocr-method",
         "ocr-status",
@@ -1425,7 +1606,12 @@ def test_generic_course_update_cannot_bypass_job_fencing(session_factory, tmp_pa
 def test_completion_failure_rolls_back_chunks_and_state(
     session_factory, tmp_path, monkeypatch
 ):
-    queued = _queue_document(session_factory, tmp_path)
+    queued = _queue_document(
+        session_factory,
+        tmp_path,
+        content=b"synthetic PDF content",
+        file_type="pdf",
+    )
     claim_time = queued.available_at + timedelta(seconds=1)
     with session_factory() as session:
         claim = claim_next_job(
@@ -1451,7 +1637,7 @@ def test_completion_failure_rolls_back_chunks_and_state(
                 session,
                 claim.id,
                 claim.claim_token,
-                [ChunkData("Atomic result")],
+                [ChunkData("Atomic result", page_number=1, end_page_number=1)],
                 [
                     PageData(
                         content_index=0,
@@ -1642,7 +1828,9 @@ def test_extraction_preserves_pdf_pages_and_enforces_integrity(tmp_path):
     )
     assert [page.page_number for page in result.pages] == [1, 2]
     assert [page.extraction_method for page in result.pages] == ["native", "native"]
-    assert [chunk.page_number for chunk in result.chunks] == [1, 2]
+    assert [(chunk.page_number, chunk.end_page_number) for chunk in result.chunks] == [
+        (1, 2)
+    ]
 
     with pytest.raises(DocumentProcessingError) as error:
         extract_document(

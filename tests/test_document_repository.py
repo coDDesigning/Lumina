@@ -228,6 +228,37 @@ def test_document_chunk_course_must_match_its_document(
 
 
 @pytest.mark.parametrize(
+    ("page_number", "end_page_number"),
+    [(1, None), (None, 1), (2, 1), (0, 1)],
+    ids=["missing-end", "missing-start", "reversed", "nonpositive"],
+)
+def test_document_chunk_page_range_must_be_complete_and_ordered(
+    db_session: Session,
+    model_graph,
+    page_number: int | None,
+    end_page_number: int | None,
+) -> None:
+    document = DocumentRepository.create(db_session, **document_values(model_graph))
+    db_session.commit()
+
+    db_session.add(
+        DocumentChunk(
+            document_id=document.id,
+            course_id=model_graph.course.id,
+            chunk_index=0,
+            page_number=page_number,
+            end_page_number=end_page_number,
+            text="invalid page range",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+    assert db_session.scalar(select(func.count()).select_from(DocumentChunk)) == 0
+
+
+@pytest.mark.parametrize(
     "overrides",
     [
         {"page_number": None, "has_images": False, "needs_ocr": True},

@@ -193,6 +193,14 @@ clean primary text followed by labeled successful visual descriptions. A
 later-stage failure leaves the raw checkpoint available for diagnosis and
 retry.
 
+Chunking operates on the ordered cleaned document stream. The configured size
+is a character target rather than a hard maximum: paragraph, line, and word
+boundaries can shorten a base range, while overlap can extend a stored chunk up
+to the target plus the configured overlap. Newly processed PDF chunks store
+inclusive starting and ending page numbers; TXT and Markdown chunks keep both
+page fields null. Legacy chunks without source-page metadata retain null ranges
+until they are reprocessed.
+
 PDF pages are OCR candidates when they have less searchable text than
 `OCR_MIN_TEXT_CHARACTERS` and contain a meaningful embedded image, detected
 table, or vector-drawing region. Blank pages and repeated small decorative

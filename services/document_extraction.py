@@ -173,7 +173,11 @@ def extract_document(
     return ProcessedDocumentData(
         pages=[_page_data(page) for page in result.pages],
         chunks=[
-            ChunkData(text=chunk.text, page_number=chunk.page_number)
+            ChunkData(
+                text=chunk.text,
+                page_number=chunk.page_number,
+                end_page_number=chunk.end_page_number,
+            )
             for chunk in result.chunks
         ],
     )

@@ -1,0 +1,111 @@
+"""update course fields
+
+Revision ID: a4fd52f56b91
+Revises: a8c4e2f7b913
+Create Date: 2026-08-16 20:30:03.608306
+"""
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+
+from alembic import op
+
+
+revision: str = "a4fd52f56b91"
+down_revision: str | Sequence[str] | None = "a8c4e2f7b913"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        op.add_column(
+            "courses", sa.Column("semester", sa.String(length=100), nullable=True)
+        )
+        op.add_column(
+            "courses", sa.Column("exam_date", sa.String(length=20), nullable=True)
+        )
+        op.add_column("courses", sa.Column("topics", sa.Text(), nullable=True))
+        op.drop_column("courses", "instructor")
+        op.drop_column("courses", "price")
+    else:
+        meta = sa.MetaData()
+        courses_table = sa.Table(
+            "courses",
+            meta,
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("title", sa.String(length=200), nullable=False),
+            sa.Column("description", sa.Text(), nullable=True),
+            sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default="0"),
+            sa.Column(
+                "owner_id",
+                sa.Integer(),
+                sa.ForeignKey("users.id", ondelete="CASCADE"),
+                nullable=False,
+            ),
+            sa.Column(
+                "created_at",
+                sa.DateTime(),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
+            sa.Column("price", sa.Float(), nullable=False, server_default="0"),
+            sa.Column("instructor", sa.String(length=200), nullable=False),
+            sa.Index("ix_courses_owner_id", "owner_id"),
+        )
+        with op.batch_alter_table(
+            "courses", schema=None, copy_from=courses_table
+        ) as batch_op:
+            batch_op.add_column(
+                sa.Column("semester", sa.String(length=100), nullable=True)
+            )
+            batch_op.add_column(
+                sa.Column("exam_date", sa.String(length=20), nullable=True)
+            )
+            batch_op.add_column(sa.Column("topics", sa.Text(), nullable=True))
+            batch_op.drop_column("instructor")
+            batch_op.drop_column("price")
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        op.add_column(
+            "courses",
+            sa.Column("price", sa.Float(), server_default="0", nullable=False),
+        )
+        op.add_column(
+            "courses",
+            sa.Column(
+                "instructor",
+                sa.String(length=200),
+                server_default="Instructor",
+                nullable=False,
+            ),
+        )
+        op.create_check_constraint("price_nonnegative", "courses", "price >= 0")
+        op.drop_column("courses", "topics")
+        op.drop_column("courses", "exam_date")
+        op.drop_column("courses", "semester")
+    else:
+        with op.batch_alter_table("courses", schema=None) as batch_op:
+            batch_op.add_column(
+                sa.Column(
+                    "price", sa.FLOAT(), server_default=sa.text("'0'"), nullable=False
+                )
+            )
+            batch_op.add_column(
+                sa.Column(
+                    "instructor",
+                    sa.VARCHAR(length=200),
+                    server_default=sa.text("'Instructor'"),
+                    nullable=False,
+                )
+            )
+            batch_op.drop_column("topics")
+            batch_op.drop_column("exam_date")
+            batch_op.drop_column("semester")

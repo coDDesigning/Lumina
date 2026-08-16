@@ -5,7 +5,7 @@ import type { Workspace } from '../data/workspaces'
 
 type EditPageProps = {
   workspace: Workspace
-  onSave: (workspace: Workspace) => void
+  onSave: (workspace: Workspace) => Promise<void> | void
 }
 
 function getCourseForm(workspace: Workspace) {
@@ -27,21 +27,25 @@ function EditPage({ workspace, onSave }: EditPageProps) {
     setSaved(false)
   }
 
-  const saveCourse = (event: FormEvent<HTMLFormElement>) => {
+  const saveCourse = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    onSave({
-      ...workspace,
-      name: course.name.trim(),
-      semester: course.semester.trim(),
-      examDate: course.examDate,
-      topics: course.topics
-        .split(',')
-        .map((topic) => topic.trim())
-        .filter(Boolean),
-      syllabus: course.syllabus.trim(),
-      updatedAt: 'Updated just now',
-    })
-    setSaved(true)
+    try {
+      await onSave({
+        ...workspace,
+        name: course.name.trim(),
+        semester: course.semester.trim(),
+        examDate: course.examDate,
+        topics: course.topics
+          .split(',')
+          .map((topic) => topic.trim())
+          .filter(Boolean),
+        syllabus: course.syllabus.trim(),
+        updatedAt: 'Updated just now',
+      })
+      setSaved(true)
+    } catch (err) {
+      console.error(err)
+    }
   }
 
   const resetCourse = () => {
@@ -164,9 +168,7 @@ function EditPage({ workspace, onSave }: EditPageProps) {
 
         <div className="form-footer">
           <p className="form-feedback" role="status">
-            {saved
-              ? 'Course changes saved for this demo session.'
-              : 'Changes stay in the frontend and are not sent to a server.'}
+            {saved ? 'Course changes saved successfully.' : ''}
           </p>
           <div className="form-actions">
             <button className="secondary-button" type="button" onClick={resetCourse}>

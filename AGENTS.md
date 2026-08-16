@@ -22,7 +22,7 @@ Operating instructions for coding agents in this repository.
 - User, course, document, and processing services persist through SQLAlchemy sessions; do not reintroduce process-local stores.
 - `main:app` includes auth, course, admin, user, and document routers.
 - Document upload validates bytes and writes generated, content-derived paths. Never derive storage paths from client filenames.
-- Alembic is the only runtime schema-management mechanism. The canonical chain is `97d9fd86a3ba -> b6d8f2a4c901 -> d2a7f0c91e35 -> c4e6a8f1b203 -> f7a3c9d2e541 -> a1c5e7f9b203`; add schema changes as descendants and keep one base/head unless an explicit migration design requires otherwise.
+- Alembic is the only runtime schema-management mechanism. The canonical chain is `97d9fd86a3ba -> b6d8f2a4c901 -> d2a7f0c91e35 -> c4e6a8f1b203 -> f7a3c9d2e541 -> a8c4e2f7b913 -> a1c5e7f9b203`; add schema changes as descendants and keep one base/head unless an explicit migration design requires otherwise.
 - `frontend/` is a React 19 + TypeScript + Vite application with its own npm lockfile and commands.
 - Vector retrieval is not implemented. Do not document or call planned vector components as available until dependencies, durable indexing, deletion, and retrieval contracts land with tests.
 - The root `Dockerfile` and `docker-compose.yml` are the supported single-host self-hosted container path. They run one-shot migrations before separate API and worker services as UID/GID 10001 on a shared named volume. `docker-compose.hosted.yml` remains experimental and unsupported for production.

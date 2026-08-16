@@ -325,6 +325,7 @@ class DocumentChunk:
     chunk_index: int
     text: str
     page_number: int | None
+    end_page_number: int | None
     character_count: int
 
 
@@ -2247,37 +2248,85 @@ def _chunk_pages(
     pages: tuple[PageText, ...],
     options: PipelineOptions,
 ) -> tuple[DocumentChunk, ...]:
+    document_text, page_spans = _join_page_text(pages)
     chunks: list[DocumentChunk] = []
+    for start, end in _base_chunk_ranges(
+        document_text,
+        options.chunk_target_characters,
+    ):
+        chunk_start = _aligned_overlap_start(
+            document_text,
+            start,
+            options.chunk_overlap_characters,
+        )
+        raw_chunk_text = document_text[chunk_start:end]
+        chunk_text = raw_chunk_text.strip("\n")
+        if not chunk_text.strip():
+            continue
+        leading_newlines = len(raw_chunk_text) - len(raw_chunk_text.lstrip("\n"))
+        trailing_newlines = len(raw_chunk_text) - len(raw_chunk_text.rstrip("\n"))
+        content_start = chunk_start + leading_newlines
+        content_end = end - trailing_newlines
+        page_number, end_page_number = _chunk_page_range(
+            document_text,
+            page_spans,
+            content_start,
+            content_end,
+        )
+        chunks.append(
+            DocumentChunk(
+                chunk_index=len(chunks),
+                text=chunk_text,
+                page_number=page_number,
+                end_page_number=end_page_number,
+                character_count=len(chunk_text),
+            )
+        )
+        if len(chunks) > options.max_document_chunks:
+            raise _failure(
+                ProcessingErrorCode.DOCUMENT_CHUNK_LIMIT_EXCEEDED,
+                PipelineStage.CHUNKING,
+                retryable=False,
+            )
+    return tuple(chunks)
+
+
+def _join_page_text(
+    pages: tuple[PageText, ...],
+) -> tuple[str, tuple[tuple[int, int, int | None], ...]]:
+    parts: list[str] = []
+    page_spans: list[tuple[int, int, int | None]] = []
+    position = 0
     for page in pages:
         if not page.text.strip():
             continue
-        for start, end in _base_chunk_ranges(
-            page.text,
-            options.chunk_target_characters,
-        ):
-            chunk_start = _aligned_overlap_start(
-                page.text,
-                start,
-                options.chunk_overlap_characters,
-            )
-            chunk_text = page.text[chunk_start:end].strip("\n")
-            if not chunk_text.strip():
-                continue
-            chunks.append(
-                DocumentChunk(
-                    chunk_index=len(chunks),
-                    text=chunk_text,
-                    page_number=page.page_number,
-                    character_count=len(chunk_text),
-                )
-            )
-            if len(chunks) > options.max_document_chunks:
-                raise _failure(
-                    ProcessingErrorCode.DOCUMENT_CHUNK_LIMIT_EXCEEDED,
-                    PipelineStage.CHUNKING,
-                    retryable=False,
-                )
-    return tuple(chunks)
+        if parts:
+            parts.append("\n\n")
+            position += 2
+        start = position
+        parts.append(page.text)
+        position += len(page.text)
+        page_spans.append((start, position, page.page_number))
+    return "".join(parts), tuple(page_spans)
+
+
+def _chunk_page_range(
+    text: str,
+    page_spans: tuple[tuple[int, int, int | None], ...],
+    start: int,
+    end: int,
+) -> tuple[int | None, int | None]:
+    page_numbers = [
+        page_number
+        for page_start, page_end, page_number in page_spans
+        if page_number is not None
+        and page_start < end
+        and page_end > start
+        and text[max(start, page_start) : min(end, page_end)].strip()
+    ]
+    if not page_numbers:
+        return None, None
+    return page_numbers[0], page_numbers[-1]
 
 
 def _base_chunk_ranges(text: str, target: int) -> Iterator[tuple[int, int]]:

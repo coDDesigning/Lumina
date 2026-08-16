@@ -49,6 +49,7 @@ EXPECTED_POSTGRESQL_VERSION_NUMBER = 170006
 BASE_REVISION = "97d9fd86a3ba"
 PAGES_REVISION = "c4e6a8f1b203"
 VISUAL_REVISION = "f7a3c9d2e541"
+CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HEAD_REVISION = "a1c5e7f9b203"
 
 pytestmark = pytest.mark.skipif(
@@ -99,9 +100,10 @@ def _assert_hardening_preflight_is_atomic() -> None:
         )
 
         with engine.connect() as connection:
-            assert connection.scalar(
-                text("SELECT version_num FROM alembic_version")
-            ) == (VISUAL_REVISION)
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == CHUNK_RANGES_REVISION
+            )
             assert (
                 connection.scalar(
                     text(
@@ -382,6 +384,7 @@ def postgresql_engine() -> Iterator[Engine]:
     _assert_processing_backfill(deleted_error_code="COURSE_DELETED")
     _seed_page_revision()
     _run_alembic("upgrade", VISUAL_REVISION)
+    _run_alembic("upgrade", CHUNK_RANGES_REVISION)
     _assert_hardening_preflight_is_atomic()
     _run_alembic("upgrade", HEAD_REVISION)
     _assert_visual_enrichment_backfill()
@@ -469,6 +472,7 @@ def _queue_documents(
     *,
     count: int,
     now: datetime | None = None,
+    file_type: str = "txt",
 ) -> tuple[int, list[UUID], list[int]]:
     role = session.scalar(select(Role).where(Role.name == "user"))
     assert role is not None
@@ -495,15 +499,15 @@ def _queue_documents(
         document_id = uuid4()
         document = UploadedDocument(
             id=document_id,
-            original_file_name=f"notes-{index}.txt",
-            file_type="txt",
-            mime_type="text/plain",
+            original_file_name=f"notes-{index}.{file_type}",
+            file_type=file_type,
+            mime_type="application/pdf" if file_type == "pdf" else "text/plain",
             file_size=7,
             file_hash=f"{index:064x}",
             uploader=user,
             course=course,
             storage_provider="local:postgresql-ci",
-            storage_key=f"postgresql/{document_id}.txt",
+            storage_key=f"postgresql/{document_id}.{file_type}",
             status="uploaded",
         )
         session.add(document)
@@ -537,7 +541,10 @@ def test_postgresql_schema_readiness_and_role_seeds(
     assert {
         constraint["name"]
         for constraint in inspector.get_check_constraints("document_chunks")
-    } >= {"ck_document_chunks_chunk_index_nonnegative"}
+    } >= {
+        "ck_document_chunks_page_range_valid",
+        "ck_document_chunks_chunk_index_nonnegative",
+    }
     assert {
         constraint["name"]
         for constraint in inspector.get_check_constraints("processing_jobs")
@@ -566,6 +573,10 @@ def test_postgresql_schema_readiness_and_role_seeds(
         "visual_analysis_status",
     } <= set(page_columns)
     assert not page_columns["raw_text"]["nullable"]
+    chunk_columns = {
+        column["name"]: column for column in inspector.get_columns("document_chunks")
+    }
+    assert "end_page_number" in chunk_columns
     assert {
         constraint["name"]
         for constraint in inspector.get_check_constraints("document_pages")
@@ -785,7 +796,11 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
     postgresql_sessions: sessionmaker[Session],
 ) -> None:
     with postgresql_sessions() as session:
-        user_id, document_ids, _job_ids = _queue_documents(session, count=1)
+        user_id, document_ids, _job_ids = _queue_documents(
+            session,
+            count=1,
+            file_type="pdf",
+        )
     with postgresql_sessions() as session:
         claim = claim_next_job(
             session,
@@ -843,7 +858,7 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
             session,
             claim.id,
             claim.claim_token,
-            [ChunkData(text="Too early")],
+            [ChunkData(text="Too early", page_number=1, end_page_number=1)],
         )
     with postgresql_sessions() as session:
         job = session.get(ProcessingJob, claim.id)
@@ -914,7 +929,13 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
             session,
             claim.id,
             claim.claim_token,
-            [ChunkData(text="Enriched\x00 PostgreSQL extraction", page_number=1)],
+            [
+                ChunkData(
+                    text="Enriched\x00 PostgreSQL extraction",
+                    page_number=1,
+                    end_page_number=1,
+                )
+            ],
             [enriched_page],
         )
     with postgresql_sessions() as session:
@@ -931,14 +952,12 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
         assert enriched.visual_analysis_status == "partial"
         assert enriched.visuals[0].description == "PostgreSQL chart"
         assert enriched.visuals[1].error_code == ("POSTGRESQL_" + "X" * 100)[:100]
-        assert (
-            session.scalar(
-                select(DocumentChunk.text).where(
-                    DocumentChunk.document_id == document_ids[0]
-                )
-            )
-            == "Enriched PostgreSQL extraction"
+        chunk = session.scalar(
+            select(DocumentChunk).where(DocumentChunk.document_id == document_ids[0])
         )
+        assert chunk is not None
+        assert chunk.text == "Enriched PostgreSQL extraction"
+        assert (chunk.page_number, chunk.end_page_number) == (1, 1)
 
     with postgresql_sessions() as session:
         assert not replace_document_pages(

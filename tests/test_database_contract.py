@@ -103,7 +103,6 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
             document=document,
             course=course,
             chunk_index=0,
-            page_number=1,
             text="Contract text",
         )
         generated_output = GeneratedOutput(

@@ -241,6 +241,7 @@ class UploadedDocument(Base):
         back_populates="document",
         cascade="all, delete-orphan",
         passive_deletes=True,
+        order_by="DocumentChunk.chunk_index",
         overlaps="course,chunks",
     )
     pages: Mapped[list["DocumentPage"]] = relationship(
@@ -263,6 +264,12 @@ class DocumentChunk(Base):
         UniqueConstraint("document_id", "chunk_index", name="uq_chunk_doc_index"),
         CheckConstraint(
             "page_number IS NULL OR page_number >= 1", name="page_number_positive"
+        ),
+        CheckConstraint(
+            "(page_number IS NULL AND end_page_number IS NULL) OR "
+            "(page_number IS NOT NULL AND end_page_number IS NOT NULL AND "
+            "end_page_number >= page_number)",
+            name="page_range_valid",
         ),
         CheckConstraint(
             "chunk_index = CAST(chunk_index AS INTEGER) AND chunk_index >= 0",
@@ -289,6 +296,7 @@ class DocumentChunk(Base):
 
     chunk_index: Mapped[int] = mapped_column(Integer)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     text: Mapped[str] = mapped_column(Text)
 

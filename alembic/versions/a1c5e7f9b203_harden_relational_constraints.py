@@ -1,7 +1,7 @@
 """harden relational constraints
 
 Revision ID: a1c5e7f9b203
-Revises: f7a3c9d2e541
+Revises: a8c4e2f7b913
 Create Date: 2026-08-14 00:00:00.000000
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import context, op
 
 revision: str = "a1c5e7f9b203"
-down_revision: str | None = "f7a3c9d2e541"
+down_revision: str | None = "a8c4e2f7b913"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

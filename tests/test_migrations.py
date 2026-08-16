@@ -16,6 +16,7 @@ PROCESSING_REVISION = "b6d8f2a4c901"
 STAGES_REVISION = "d2a7f0c91e35"
 PAGES_REVISION = "c4e6a8f1b203"
 VISUAL_REVISION = "f7a3c9d2e541"
+CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HEAD_REVISION = "a1c5e7f9b203"
 
 
@@ -30,7 +31,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: VISUAL_REVISION,
+        HEAD_REVISION: CHUNK_RANGES_REVISION,
+        CHUNK_RANGES_REVISION: VISUAL_REVISION,
         VISUAL_REVISION: PAGES_REVISION,
         PAGES_REVISION: STAGES_REVISION,
         STAGES_REVISION: PROCESSING_REVISION,
@@ -137,7 +139,7 @@ def assert_hardening_not_applied(database_path: Path) -> None:
     with sqlite3.connect(database_path) as connection:
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
-        ).fetchone() == (VISUAL_REVISION,)
+        ).fetchone() == (CHUNK_RANGES_REVISION,)
         document_indexes = {
             row[1]
             for row in connection.execute("PRAGMA index_list(uploaded_documents)")
@@ -223,16 +225,18 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert users_sql is not None
         assert "uq_users_is_initial_admin" in users_sql[0].lower()
 
-        chunk_columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(document_chunks)")
-        }
-        assert "page_number" in chunk_columns
         chunk_sql = connection.execute(
             "SELECT sql FROM sqlite_master "
             "WHERE type = 'table' AND name = 'document_chunks'"
         ).fetchone()
         assert chunk_sql is not None
-        assert "ck_document_chunks_chunk_index_nonnegative" in chunk_sql[0].lower()
+        normalized_chunk_sql = " ".join(chunk_sql[0].lower().split())
+        assert "ck_document_chunks_page_range_valid" in normalized_chunk_sql
+        chunk_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(document_chunks)")
+        }
+        assert {"page_number", "end_page_number"} <= chunk_columns
+        assert "ck_document_chunks_chunk_index_nonnegative" in normalized_chunk_sql
         job_sql = connection.execute(
             "SELECT sql FROM sqlite_master "
             "WHERE type = 'table' AND name = 'processing_jobs'"
@@ -364,7 +368,7 @@ def test_hardening_preflight_rejects_duplicate_storage_and_remains_retryable(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "duplicate-storage.sqlite3"
-    run_alembic(database_path, tmp_path, "upgrade", VISUAL_REVISION)
+    run_alembic(database_path, tmp_path, "upgrade", CHUNK_RANGES_REVISION)
 
     with sqlite3.connect(database_path) as connection:
         insert_predecessor_document(connection, storage_key="shared/document.txt")
@@ -394,13 +398,13 @@ def test_hardening_preflight_rejects_foreign_key_violations(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "foreign-key-violation.sqlite3"
-    run_alembic(database_path, tmp_path, "upgrade", VISUAL_REVISION)
+    run_alembic(database_path, tmp_path, "upgrade", CHUNK_RANGES_REVISION)
 
     with sqlite3.connect(database_path) as connection:
         orphan_id = connection.execute(
             "INSERT INTO document_chunks "
-            "(document_id, course_id, chunk_index, page_number, text) "
-            "VALUES (?, ?, 0, 1, ?)",
+            "(document_id, course_id, chunk_index, page_number, "
+            "end_page_number, text) VALUES (?, ?, 0, 1, 1, ?)",
             (uuid4().hex, 999_999, "Orphaned chunk"),
         ).lastrowid
         connection.commit()
@@ -420,7 +424,7 @@ def test_hardening_preflight_rejects_foreign_key_violations(
 
 def test_hardening_batch_failure_is_atomic_and_retryable(tmp_path: Path) -> None:
     database_path = tmp_path / "hardening-atomicity.sqlite3"
-    run_alembic(database_path, tmp_path, "upgrade", VISUAL_REVISION)
+    run_alembic(database_path, tmp_path, "upgrade", CHUNK_RANGES_REVISION)
 
     with sqlite3.connect(database_path) as connection:
         connection.execute("PRAGMA foreign_keys=ON")
@@ -431,8 +435,8 @@ def test_hardening_batch_failure_is_atomic_and_retryable(tmp_path: Path) -> None
         connection.execute("PRAGMA ignore_check_constraints=ON")
         chunk_id = connection.execute(
             "INSERT INTO document_chunks "
-            "(document_id, course_id, chunk_index, page_number, text) "
-            "VALUES (?, ?, 0, 0, ?)",
+            "(document_id, course_id, chunk_index, page_number, "
+            "end_page_number, text) VALUES (?, ?, 0, 0, 0, ?)",
             (document_id, course_id, "Invalid legacy page"),
         ).lastrowid
         connection.execute("PRAGMA ignore_check_constraints=OFF")
@@ -455,10 +459,13 @@ def test_hardening_batch_failure_is_atomic_and_retryable(tmp_path: Path) -> None
 
     with sqlite3.connect(database_path) as connection:
         assert connection.execute(
-            "SELECT page_number FROM document_chunks WHERE id = ?", (chunk_id,)
-        ).fetchone() == (0,)
+            "SELECT page_number, end_page_number FROM document_chunks WHERE id = ?",
+            (chunk_id,),
+        ).fetchone() == (0, 0)
         connection.execute(
-            "UPDATE document_chunks SET page_number = 1 WHERE id = ?", (chunk_id,)
+            "UPDATE document_chunks SET page_number = 1, end_page_number = 1 "
+            "WHERE id = ?",
+            (chunk_id,),
         )
         connection.commit()
 
@@ -645,6 +652,83 @@ def test_visual_enrichment_migration_backfills_and_round_trips(
         assert connection.execute(
             "SELECT COUNT(*) FROM document_visuals"
         ).fetchone() == (0,)
+
+
+def test_chunk_page_range_migration_backfills_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "chunk-page-range.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", VISUAL_REVISION)
+
+    document_id = uuid4().hex
+    with sqlite3.connect(database_path) as connection:
+        role_id = connection.execute(
+            "SELECT id FROM roles WHERE name = 'user'"
+        ).fetchone()[0]
+        user_id = connection.execute(
+            "INSERT INTO users "
+            "(name, email, password_hash, role_id, is_banned, preferred_model) "
+            "VALUES (?, ?, ?, ?, 0, ?)",
+            ("Chunk user", "chunk-migration@example.com", "hash", role_id, "model"),
+        ).lastrowid
+        course_id = connection.execute(
+            "INSERT INTO courses "
+            "(title, description, instructor, price, is_deleted, owner_id) "
+            "VALUES (?, NULL, ?, 0, 0, ?)",
+            ("Chunk course", "Instructor", user_id),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO uploaded_documents "
+            "(id, original_file_name, file_type, mime_type, file_size, file_hash, "
+            "user_id, course_id, storage_provider, storage_key, status) "
+            "VALUES (?, ?, 'pdf', 'application/pdf', 7, ?, ?, ?, 'local:test', ?, "
+            "'ready')",
+            (
+                document_id,
+                "chunk-migration.pdf",
+                "e" * 64,
+                user_id,
+                course_id,
+                "chunk-migration.pdf",
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO document_chunks "
+            "(document_id, course_id, chunk_index, page_number, text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                (document_id, course_id, 0, 2, "Paged chunk"),
+                (document_id, course_id, 1, None, "Unpaged chunk"),
+            ),
+        )
+        connection.commit()
+
+    run_alembic(database_path, tmp_path, "upgrade", CHUNK_RANGES_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT page_number, end_page_number FROM document_chunks "
+            "ORDER BY chunk_index"
+        ).fetchall() == [(2, 2), (None, None)]
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+    assert_upgraded_schema(database_path)
+
+    run_alembic(database_path, tmp_path, "downgrade", VISUAL_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        chunk_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(document_chunks)")
+        }
+        assert "end_page_number" not in chunk_columns
+        assert connection.execute(
+            "SELECT page_number FROM document_chunks ORDER BY chunk_index"
+        ).fetchall() == [(2,), (None,)]
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT page_number, end_page_number FROM document_chunks "
+            "ORDER BY chunk_index"
+        ).fetchall() == [(2, 2), (None, None)]
 
 
 def test_processing_migration_backfills_existing_documents(tmp_path: Path) -> None:

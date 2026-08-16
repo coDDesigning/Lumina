@@ -43,6 +43,7 @@ CONFIGURATION_KEYS = (
     "APP_ENV",
     "APP_DEBUG",
     "DEPLOYMENT_MODE",
+    "AI_PROVIDER",
     "DATABASE_URL",
     "STORAGE_BACKEND",
     "STORAGE_NAMESPACE",
@@ -51,6 +52,7 @@ CONFIGURATION_KEYS = (
     "JWT_SECRET_KEY",
     "BOOTSTRAP_ADMIN_EMAIL",
     "BOOTSTRAP_ADMIN_TOKEN",
+    "GEMINI_API_KEY",
     "MAX_UPLOAD_SIZE_BYTES",
     "MAX_REQUEST_SIZE_BYTES",
     "MAX_CONCURRENT_DOCUMENT_VALIDATIONS",
@@ -573,4 +575,23 @@ def test_bootstrap_token_must_be_header_safe_ascii(
     monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", token)
 
     with pytest.raises(ValueError, match="visible ASCII"):
+        load_settings()
+
+
+def test_gemini_api_key_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+
+    assert load_settings().gemini_api_key == "test-gemini-key"
+
+
+def test_ai_provider_defaults_to_ollama() -> None:
+    assert load_settings().ai_provider == "ollama"
+
+
+def test_ai_provider_rejects_unsupported_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER", "unsupported")
+
+    with pytest.raises(ValueError, match="AI_PROVIDER"):
         load_settings()

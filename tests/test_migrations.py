@@ -15,7 +15,8 @@ PROCESSING_REVISION = "b6d8f2a4c901"
 STAGES_REVISION = "d2a7f0c91e35"
 PAGES_REVISION = "c4e6a8f1b203"
 VISUAL_REVISION = "f7a3c9d2e541"
-HEAD_REVISION = "a8c4e2f7b913"
+CHUNK_REVISION = "a8c4e2f7b913"
+HEAD_REVISION = "a4fd52f56b91"
 
 
 def test_migration_graph_has_one_canonical_base_and_head() -> None:
@@ -29,7 +30,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: VISUAL_REVISION,
+        HEAD_REVISION: CHUNK_REVISION,
+        CHUNK_REVISION: VISUAL_REVISION,
         VISUAL_REVISION: PAGES_REVISION,
         PAGES_REVISION: STAGES_REVISION,
         STAGES_REVISION: PROCESSING_REVISION,

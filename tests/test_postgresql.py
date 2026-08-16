@@ -48,7 +48,7 @@ EXPECTED_POSTGRESQL_MAJOR = 17
 EXPECTED_POSTGRESQL_VERSION_NUMBER = 170006
 BASE_REVISION = "97d9fd86a3ba"
 PAGES_REVISION = "c4e6a8f1b203"
-HEAD_REVISION = "a8c4e2f7b913"
+HEAD_REVISION = "a4fd52f56b91"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -418,8 +418,8 @@ def _queue_documents(
         owner=user,
         title="PostgreSQL course",
         description=None,
-        instructor="PostgreSQL worker",
-        price=0,
+        semester="Fall",
+        exam_date="2026",
     )
     session.add(course)
     session.flush()

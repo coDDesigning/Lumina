@@ -48,7 +48,7 @@ EXPECTED_POSTGRESQL_MAJOR = 17
 EXPECTED_POSTGRESQL_VERSION_NUMBER = 170006
 BASE_REVISION = "97d9fd86a3ba"
 PAGES_REVISION = "c4e6a8f1b203"
-HEAD_REVISION = "a8c4e2f7b913"
+HEAD_REVISION = "a4fd52f56b91"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -90,7 +90,7 @@ def _seed_base_revision() -> None:
             )
             active_course_id = connection.scalar(
                 text(
-                    "INSERT INTO courses (title, semester, owner_id) "
+                    "INSERT INTO courses (title, instructor, owner_id) "
                     "VALUES ('Active migration course', 'Instructor', :owner_id) "
                     "RETURNING id"
                 ),
@@ -99,7 +99,7 @@ def _seed_base_revision() -> None:
             deleted_course_id = connection.scalar(
                 text(
                     "INSERT INTO courses "
-                    "(title, semester, owner_id, is_deleted) "
+                    "(title, instructor, owner_id, is_deleted) "
                     "VALUES ('Deleted migration course', 'Instructor', :owner_id, "
                     "true) RETURNING id"
                 ),

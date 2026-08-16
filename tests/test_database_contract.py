@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import delete, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.models import (
@@ -12,6 +12,7 @@ from backend.app.models import (
     DocumentPage,
     DocumentVisual,
     GeneratedOutput,
+    JOB_STATUS_FAILED,
     ProcessingJob,
     ProfileKnowledge,
     Progress,
@@ -22,7 +23,11 @@ from backend.app.models import (
     UploadedDocument,
     User,
 )
-from services.processing_jobs import enqueue_document_job
+from services.processing_jobs import (
+    claim_next_job,
+    enqueue_document_job,
+    fail_job,
+)
 
 pytestmark = pytest.mark.database_contract
 
@@ -158,6 +163,23 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         assert isinstance(persisted_document.id, UUID)
         assert persisted_job.available_at == expected_time
         assert persisted_job.available_at.utcoffset() == timedelta(0)
+        timestamped_rows = (
+            session.get(User, user_id),
+            session.get(Course, course_id),
+            persisted_document,
+            session.get(DocumentPage, page_id),
+            session.get(DocumentVisual, visual_id),
+            session.get(DocumentChunk, chunk_id),
+            session.get(GeneratedOutput, generated_output_id),
+            session.get(Quiz, quiz_id),
+            session.get(QuizAttempt, attempt_id),
+            session.get(Progress, progress_id),
+            session.get(ProfileKnowledge, knowledge_id),
+        )
+        for row in timestamped_rows:
+            assert row is not None
+            timestamp = row.updated_at if isinstance(row, Progress) else row.created_at
+            assert timestamp.utcoffset() == timedelta(0)
 
     with session_factory() as session:
         session.execute(delete(User).where(User.id == user_id))
@@ -289,3 +311,165 @@ def test_referenced_role_delete_is_restricted(
 
         assert session.get(Role, role_id) is not None
         assert session.get(User, user_id) is not None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"question_index": -1}, {"correct_option_index": -1}],
+    ids=["question-index", "correct-option-index"],
+)
+def test_quiz_question_indexes_are_nonnegative(
+    session_factory: sessionmaker[Session],
+    overrides: dict[str, int],
+) -> None:
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Quiz constraint user",
+            email="quiz-constraint@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        course = Course(
+            owner=user,
+            title="Quiz constraint course",
+            instructor="Quiz constraint user",
+            price=0,
+        )
+        quiz = Quiz(course=course, title="Constraint quiz")
+        values = {
+            "quiz": quiz,
+            "question_index": 0,
+            "question_text": "Question?",
+            "options": ["Yes", "No"],
+            "correct_option_index": 0,
+        }
+        values.update(overrides)
+        session.add(QuizQuestion(**values))
+
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+
+def test_processing_job_identifiers_and_ownership_are_enforced(
+    session_factory: sessionmaker[Session],
+) -> None:
+    queued_at = datetime.now(timezone.utc)
+    document_id = uuid4()
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Job constraint user",
+            email="job-constraint@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        course = Course(
+            owner=user,
+            title="Job constraint course",
+            instructor="Job constraint user",
+            price=0,
+        )
+        other_course = Course(
+            owner=user,
+            title="Other job course",
+            instructor="Job constraint user",
+            price=0,
+        )
+        document = UploadedDocument(
+            id=document_id,
+            original_file_name="job-contract.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=8,
+            file_hash="d" * 64,
+            uploader=user,
+            course=course,
+            storage_provider="local:contract",
+            storage_key=f"contract/{document_id}.txt",
+        )
+        session.add_all((document, other_course))
+        session.flush()
+        job = enqueue_document_job(session, document, now=queued_at)
+        session.commit()
+        job_id = job.id
+        other_course_id = other_course.id
+
+    for field, value in (("job_type", "unknown"), ("course_id", other_course_id)):
+        with session_factory() as session:
+            job = session.get(ProcessingJob, job_id)
+            assert job is not None
+            setattr(job, field, value)
+            with pytest.raises(IntegrityError):
+                session.commit()
+            session.rollback()
+
+    with session_factory() as session:
+        claim = claim_next_job(
+            session,
+            "contract-worker",
+            "local:contract",
+            60,
+            now=queued_at + timedelta(seconds=1),
+        )
+    assert claim is not None
+
+    for field, value in (
+        ("lease_owner", "   "),
+        ("lease_owner", "\t\n"),
+        ("claim_token", "short"),
+    ):
+        with session_factory() as session:
+            job = session.get(ProcessingJob, job_id)
+            assert job is not None
+            setattr(job, field, value)
+            with pytest.raises(IntegrityError):
+                session.commit()
+            session.rollback()
+
+    with session_factory() as session:
+        assert (
+            fail_job(
+                session,
+                job_id,
+                claim.claim_token,
+                error_code="CONTRACT_FAILURE",
+                error_message="Contract failure",
+                retryable=False,
+                now=queued_at + timedelta(seconds=2),
+            )
+            == JOB_STATUS_FAILED
+        )
+    with session_factory() as session:
+        job = session.get(ProcessingJob, job_id)
+        assert job is not None
+        for value in ("   ", "\t\n"):
+            job.last_error_code = value
+            with pytest.raises(IntegrityError):
+                session.commit()
+            session.rollback()
+            job = session.get(ProcessingJob, job_id)
+            assert job is not None
+
+
+def test_utc_datetime_rejects_naive_values(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        session.add(
+            User(
+                name="Naive timestamp user",
+                email="naive-timestamp@example.com",
+                password_hash="not-a-real-hash",
+                role=role,
+                created_at=datetime(2026, 8, 14, 12, 0),
+            )
+        )
+        with pytest.raises(StatementError):
+            session.commit()
+        session.rollback()

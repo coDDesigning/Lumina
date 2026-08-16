@@ -108,6 +108,34 @@ def test_same_hash_is_allowed_in_different_courses(
     assert db_session.scalar(select(func.count()).select_from(UploadedDocument)) == 2
 
 
+def test_storage_location_is_unique(
+    db_session: Session,
+    model_graph,
+) -> None:
+    storage_key = "contract/shared/source.txt"
+    DocumentRepository.create(
+        db_session,
+        **document_values(
+            model_graph,
+            storage_provider="local:contract",
+            storage_key=storage_key,
+        ),
+    )
+    db_session.commit()
+
+    with pytest.raises(IntegrityError):
+        DocumentRepository.create(
+            db_session,
+            **document_values(
+                model_graph,
+                file_hash="9" * 64,
+                storage_provider="local:contract",
+                storage_key=storage_key,
+            ),
+        )
+    db_session.rollback()
+
+
 def test_get_by_course_and_hash_is_course_scoped(
     db_session: Session,
     model_graph,
@@ -229,12 +257,46 @@ def test_document_chunk_course_must_match_its_document(
 
 @pytest.mark.parametrize(
     "overrides",
+    [{"chunk_index": -1}, {"page_number": 0}],
+    ids=["chunk-index", "page-number"],
+)
+def test_document_chunk_constraints_are_enforced(
+    db_session: Session,
+    model_graph,
+    overrides: dict[str, object],
+) -> None:
+    document = DocumentRepository.create(db_session, **document_values(model_graph))
+    values: dict[str, object] = {
+        "document": document,
+        "course": model_graph.course,
+        "chunk_index": 0,
+        "page_number": 1,
+        "text": "chunk",
+    }
+    values.update(overrides)
+    db_session.add(DocumentChunk(**values))
+
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
+@pytest.mark.parametrize(
+    "overrides",
     [
         {"page_number": None, "has_images": False, "needs_ocr": True},
         {"raw_extraction_method": "ocr"},
         {"extraction_method": "unknown"},
         {"ocr_status": "unknown"},
         {"visual_analysis_status": "unknown"},
+        {"content_index": -1},
+        {"page_number": 0},
+        {
+            "raw_needs_ocr": True,
+            "page_number": None,
+            "has_images": False,
+            "has_visual_content": False,
+        },
     ],
     ids=[
         "ocr-candidate",
@@ -242,6 +304,9 @@ def test_document_chunk_course_must_match_its_document(
         "extraction-method",
         "ocr-status",
         "visual-status",
+        "content-index",
+        "page-number",
+        "raw-ocr-candidate",
     ],
 )
 def test_document_page_constraints_are_enforced(
@@ -276,6 +341,31 @@ def test_document_page_constraints_are_enforced(
     assert db_session.scalar(select(func.count()).select_from(DocumentPage)) == 0
 
 
+def test_document_page_course_must_match_its_document(
+    db_session: Session,
+    model_graph,
+) -> None:
+    document = DocumentRepository.create(db_session, **document_values(model_graph))
+    db_session.add(
+        DocumentPage(
+            document_id=document.id,
+            course_id=model_graph.other_course.id,
+            content_index=0,
+            page_number=1,
+            raw_text="Raw page",
+            text="Page",
+            raw_extraction_method="native",
+            extraction_method="native",
+            has_images=False,
+            needs_ocr=False,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -286,6 +376,8 @@ def test_document_page_constraints_are_enforced(
         {"analysis_status": "unknown"},
         {"description": "Not analyzed"},
         {"analysis_status": "failed"},
+        {"analysis_status": "failed", "error_code": "   "},
+        {"analysis_status": "failed", "error_code": "\t\n"},
     ],
     ids=[
         "visual-index",
@@ -295,6 +387,8 @@ def test_document_page_constraints_are_enforced(
         "analysis-status",
         "description-status",
         "failed-error-code",
+        "blank-failed-error-code",
+        "whitespace-failed-error-code",
     ],
 )
 def test_document_visual_constraints_are_enforced(

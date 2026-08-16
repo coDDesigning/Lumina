@@ -90,7 +90,7 @@ def _seed_base_revision() -> None:
             )
             active_course_id = connection.scalar(
                 text(
-                    "INSERT INTO courses (title, instructor, owner_id) "
+                    "INSERT INTO courses (title, semester, owner_id) "
                     "VALUES ('Active migration course', 'Instructor', :owner_id) "
                     "RETURNING id"
                 ),
@@ -99,7 +99,7 @@ def _seed_base_revision() -> None:
             deleted_course_id = connection.scalar(
                 text(
                     "INSERT INTO courses "
-                    "(title, instructor, owner_id, is_deleted) "
+                    "(title, semester, owner_id, is_deleted) "
                     "VALUES ('Deleted migration course', 'Instructor', :owner_id, "
                     "true) RETURNING id"
                 ),
@@ -418,8 +418,8 @@ def _queue_documents(
         owner=user,
         title="PostgreSQL course",
         description=None,
-        instructor="PostgreSQL worker",
-        price=0,
+        semester="Fall",
+        exam_date="2026",
     )
     session.add(course)
     session.flush()

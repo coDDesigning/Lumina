@@ -171,6 +171,46 @@ def upload_document(
 
 
 @router.get(
+    "/{course_id}/documents",
+    response_model=BaseResponse[list[DocumentResponse]],
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Account is not allowed to access documents"},
+        404: {"description": "Course not found"},
+    },
+)
+def get_documents(
+    course_id: int,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[list[DocumentResponse]]:
+    from backend.app.models import UploadedDocument, Course
+    from sqlalchemy import select
+
+    # Check if course exists
+    course = db.scalar(
+        select(Course).where(Course.id == course_id, Course.is_deleted.is_(False))
+    )
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    documents = db.scalars(
+        select(UploadedDocument)
+        .where(
+            UploadedDocument.course_id == course_id,
+            UploadedDocument.status != "deleting",
+        )
+        .order_by(UploadedDocument.created_at.desc())
+    ).all()
+
+    return BaseResponse(
+        success=True,
+        message="Documents retrieved successfully",
+        data=[DocumentResponse.model_validate(doc) for doc in documents],
+    )
+
+
+@router.get(
     "/{course_id}/documents/{document_id}",
     response_model=DocumentStatusResponse,
     responses={

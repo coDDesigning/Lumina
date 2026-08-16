@@ -53,8 +53,8 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         course = Course(
             owner=user,
             title="Contract course",
-            instructor="Contract user",
-            price=0,
+            semester="Fall",
+            exam_date="2026",
         )
         document = UploadedDocument(
             id=document_id,
@@ -195,8 +195,8 @@ def test_unloaded_course_delete_cascades_every_course_branch(
         course = Course(
             owner=user,
             title="Course cascade contract",
-            instructor="Course contract user",
-            price=0,
+            semester="Fall",
+            exam_date="2026",
         )
         document = UploadedDocument(
             id=document_id,

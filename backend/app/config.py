@@ -76,6 +76,10 @@ class Settings:
     bootstrap_admin_email: str | None
     bootstrap_admin_token: str | None
 
+    # AI provider configuration
+    ai_provider: str
+    gemini_api_key: str | None
+
     # Maximum accepted document size before content validation
     max_upload_size_bytes: int
     max_request_size_bytes: int
@@ -200,6 +204,12 @@ def load_settings() -> Settings:
             "Hosted mode and production require BOOTSTRAP_ADMIN_TOKEN to be set."
         )
 
+    ai_provider = os.getenv("AI_PROVIDER", "ollama").strip().lower() or "ollama"
+
+    if ai_provider not in {"ollama", "openai", "gemini", "claude"}:
+        raise ValueError("AI_PROVIDER must be one of: ollama, openai, gemini, claude.")
+    gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip() or None
+
     if app_env == APP_ENV_PRODUCTION:
         for name, value in (
             ("UPLOAD_DIRECTORY", upload_directory),
@@ -323,6 +333,8 @@ def load_settings() -> Settings:
         jwt_secret_key=jwt_secret_key,
         bootstrap_admin_email=bootstrap_admin_email or None,
         bootstrap_admin_token=bootstrap_admin_token or None,
+        ai_provider=ai_provider,
+        gemini_api_key=gemini_api_key,
         max_upload_size_bytes=max_upload_size_bytes,
         max_request_size_bytes=max_request_size_bytes,
         max_concurrent_document_validations=max_concurrent_document_validations,

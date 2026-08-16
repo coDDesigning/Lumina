@@ -22,7 +22,6 @@ def upgrade() -> None:
     """Upgrade schema."""
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.drop_constraint("ck_courses_price_nonnegative", "courses", type_="check")
         op.add_column(
             "courses", sa.Column("semester", sa.String(length=100), nullable=True)
         )
@@ -88,9 +87,7 @@ def downgrade() -> None:
                 nullable=False,
             ),
         )
-        op.create_check_constraint(
-            "ck_courses_price_nonnegative", "courses", "price >= 0"
-        )
+        op.create_check_constraint("price_nonnegative", "courses", "price >= 0")
         op.drop_column("courses", "topics")
         op.drop_column("courses", "exam_date")
         op.drop_column("courses", "semester")

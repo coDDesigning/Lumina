@@ -16,7 +16,7 @@ import type { Workspace, WorkspaceDraft } from '../data/workspaces'
 type WorkspacesPageProps = {
   workspaces: Workspace[]
   activeWorkspaceId: string
-  onCreate: (draft: WorkspaceDraft) => Workspace
+  onCreate: (draft: WorkspaceDraft) => Promise<Workspace>
   onSelect: (workspaceId: string) => void
 }
 
@@ -78,12 +78,16 @@ function WorkspacesPage({
     setDraft((current) => ({ ...current, [field]: value }))
   }
 
-  const createWorkspace = (event: FormEvent<HTMLFormElement>) => {
+  const createWorkspace = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const workspace = onCreate({ ...draft, name: draft.name.trim() })
-    setDraft(emptyDraft)
-    setIsCreating(false)
-    navigate(`/workspaces/${workspace.id}`)
+    try {
+      const workspace = await onCreate({ ...draft, name: draft.name.trim() })
+      setDraft(emptyDraft)
+      setIsCreating(false)
+      navigate(`/workspaces/${workspace.id}`)
+    } catch (error) {
+      console.error("Error creating workspace", error)
+    }
   }
 
   return (

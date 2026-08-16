@@ -170,16 +170,16 @@ def model_graph(db_session: Session) -> ModelGraph:
     course = Course(
         title="Primary Course",
         description="Repository test course",
-        instructor="Instructor One",
-        price=0.0,
+        semester="Fall",
+        exam_date="2026",
         owner=user,
         is_deleted=False,
     )
     other_course = Course(
         title="Other Course",
         description=None,
-        instructor="Instructor Two",
-        price=12.5,
+        semester="Fall",
+        exam_date="2026",
         owner=user,
         is_deleted=False,
     )
@@ -252,24 +252,24 @@ def upload_api(api_context: ApiContext) -> UploadApiContext:
         course = Course(
             title="Active Course",
             description="Document upload tests",
-            instructor="Ada",
-            price=0.0,
+            semester="Fall",
+            exam_date="2026",
             owner=user,
             is_deleted=False,
         )
         other_course = Course(
             title="Second Active Course",
             description=None,
-            instructor="Grace",
-            price=5.0,
+            semester="Fall",
+            exam_date="2026",
             owner=user,
             is_deleted=False,
         )
         deleted_course = Course(
             title="Deleted Course",
             description=None,
-            instructor="Linus",
-            price=0.0,
+            semester="Fall",
+            exam_date="2026",
             owner=user,
             is_deleted=True,
         )

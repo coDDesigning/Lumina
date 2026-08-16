@@ -130,13 +130,13 @@ class User(Base):
 
 class Course(Base):
     __tablename__ = "courses"
-    __table_args__ = (CheckConstraint("price >= 0", name="price_nonnegative"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    instructor: Mapped[str] = mapped_column(String(200))
-    price: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    semester: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    exam_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    topics: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )

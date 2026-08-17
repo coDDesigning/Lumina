@@ -8,6 +8,8 @@ from backend.app.config import settings
 
 
 class TextGenerationProvider(Protocol):
+    def generate_text(self, prompt: str) -> str: ...
+
     def generate_json(self, prompt: str) -> dict[str, object]: ...
 
 
@@ -23,6 +25,20 @@ class GeminiTextGenerationProvider:
             raise TextGenerationError("GEMINI_API_KEY is not configured.")
 
         self._client = genai.Client(api_key=settings.gemini_api_key)
+
+    def generate_text(self, prompt: str) -> str:
+        try:
+            response = self._client.models.generate_content(
+                model=self.MODEL,
+                contents=prompt,
+            )
+        except Exception as exc:
+            raise TextGenerationError("Gemini text generation failed.") from exc
+
+        if not response.text:
+            raise TextGenerationError("Gemini returned an empty response.")
+
+        return response.text
 
     def generate_json(self, prompt: str) -> dict[str, object]:
         try:

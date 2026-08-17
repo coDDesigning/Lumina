@@ -94,3 +94,52 @@ def test_get_text_generation_provider_rejects_unimplemented_provider(
         assert "not implemented" in str(exc)
     else:
         raise AssertionError("Expected TextGenerationError")
+
+
+def test_gemini_provider_returns_text_response(monkeypatch) -> None:
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(text="Generated tutor response")
+
+    class FakeClient:
+        def __init__(self, api_key: str) -> None:
+            self.models = FakeModels()
+
+    monkeypatch.setattr(
+        text_generation,
+        "settings",
+        SimpleNamespace(gemini_api_key="test-key"),
+    )
+    monkeypatch.setattr(text_generation.genai, "Client", FakeClient)
+
+    provider = text_generation.GeminiTextGenerationProvider()
+
+    result = provider.generate_text("Test prompt")
+
+    assert result == "Generated tutor response"
+
+
+def test_gemini_provider_rejects_empty_text_response(monkeypatch) -> None:
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(text="")
+
+    class FakeClient:
+        def __init__(self, api_key: str) -> None:
+            self.models = FakeModels()
+
+    monkeypatch.setattr(
+        text_generation,
+        "settings",
+        SimpleNamespace(gemini_api_key="test-key"),
+    )
+    monkeypatch.setattr(text_generation.genai, "Client", FakeClient)
+
+    provider = text_generation.GeminiTextGenerationProvider()
+
+    try:
+        provider.generate_text("Test prompt")
+    except text_generation.TextGenerationError as exc:
+        assert "empty response" in str(exc)
+    else:
+        raise AssertionError("Expected TextGenerationError")

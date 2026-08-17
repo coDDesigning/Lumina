@@ -6,10 +6,9 @@ from sqlalchemy.orm import Session
 from backend.app.database import get_db
 from schemas.response import BaseResponse
 from schemas.study_guide import StudyGuideResponse
-from schemas.user import UserResponse
 from services.study_guide import StudyGuideGenerationError, StudyGuideService
 from services.text_generation import TextGenerationError, get_text_generation_provider
-from utils.deps import get_current_user
+from utils.authorization import OwnedCourse
 
 
 router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
@@ -18,22 +17,25 @@ router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
 @router.post(
     "/{course_id}/study-guide",
     response_model=BaseResponse[StudyGuideResponse],
+    responses={
+        401: {"description": "Authentication required"},
+        404: {"description": "Course not found"},
+    },
 )
 def generate_study_guide(
-    course_id: int,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    course: OwnedCourse,
     db: Annotated[Session, Depends(get_db)],
 ):
     try:
         provider = get_text_generation_provider()
         study_guide = StudyGuideService.generate(
             db,
-            course_id,
+            course.id,
             provider,
         )
         StudyGuideService.save_generated_output(
             db,
-            course_id,
+            course.id,
             study_guide,
         )
     except (TextGenerationError, StudyGuideGenerationError) as exc:

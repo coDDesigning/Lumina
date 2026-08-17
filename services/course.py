@@ -5,34 +5,33 @@ from sqlalchemy.orm import Session
 from backend.app.database import begin_serialized_write
 from backend.app.models import Course, UploadedDocument
 from schemas.course import CourseCreate, CourseResponse, CourseUpdate
+from schemas.user import UserResponse
 from services.processing_jobs import fence_course_jobs
+from utils.authorization import readable_course_criteria
 from utils.exceptions import NotFoundException
 
 
 class CourseService:
     @staticmethod
-    def get_all_courses(
-        db: Session, include_deleted: bool = False
+    def get_courses_for_user(
+        db: Session, current_user: UserResponse
     ) -> list[CourseResponse]:
-        statement = select(Course).order_by(Course.id)
-        if not include_deleted:
-            statement = statement.where(Course.is_deleted.is_(False))
+        """List the courses ``current_user`` may read.
+
+        Ownership is a predicate in the query rather than a filter applied to
+        the results, so another owner's rows never leave the database. Single
+        course reads go through ``utils.authorization`` instead; there is no
+        unscoped course lookup for a caller to reach for by mistake.
+        """
+        statement = (
+            select(Course)
+            .where(*readable_course_criteria(current_user))
+            .order_by(Course.id)
+        )
         return [
             CourseResponse.model_validate(course)
             for course in db.scalars(statement).all()
         ]
-
-    @staticmethod
-    def get_course_by_id(db: Session, course_id: int) -> CourseResponse:
-        course = db.scalar(
-            select(Course).where(
-                Course.id == course_id,
-                Course.is_deleted.is_(False),
-            )
-        )
-        if course is None:
-            raise NotFoundException(detail="Course not found")
-        return CourseResponse.model_validate(course)
 
     @staticmethod
     def create_course(

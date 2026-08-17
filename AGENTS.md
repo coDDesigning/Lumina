@@ -20,7 +20,8 @@ Operating instructions for coding agents in this repository.
 - Keep DB `ondelete="CASCADE"` and ORM `cascade="all, delete-orphan", passive_deletes=True` together. `User -> Role` deliberately does not cascade.
 - Root `routes/`, `schemas/`, `services/`, and `utils/` belong to the FastAPI layer. Do not move them under `backend/app/` without an explicit team decision.
 - User, course, document, and processing services persist through SQLAlchemy sessions; do not reintroduce process-local stores.
-- `main:app` includes auth, course, admin, user, and document routers.
+- `main:app` includes auth, course, admin, user, document, study guide, quiz, flashcard, and prompt generator routers.
+- Course resources are owner-scoped. `utils/authorization.py` is the only course authorization boundary; every course-scoped endpoint must depend on `require_course_access`, `require_course_owner`, or `require_course_deletion` instead of trusting a client `course_id`. Unauthorized or missing courses return `404`, never `403`. Administrators may read any course but write only their own. See `docs/database.md`.
 - Document upload validates bytes and writes generated, content-derived paths. Never derive storage paths from client filenames.
 - Alembic is the only runtime schema-management mechanism. The canonical chain is `97d9fd86a3ba -> b6d8f2a4c901 -> d2a7f0c91e35 -> c4e6a8f1b203 -> f7a3c9d2e541 -> a8c4e2f7b913`; add schema changes as descendants and keep one base/head unless an explicit migration design requires otherwise.
 - `frontend/` is a React 19 + TypeScript + Vite application with its own npm lockfile and commands.

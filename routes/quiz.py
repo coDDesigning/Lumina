@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from backend.app.database import get_db
 from schemas.quiz import QuizGenerationResponse
 from schemas.response import BaseResponse
-from schemas.user import UserResponse
 from services.quiz import (
     NoReadyCourseMaterialError,
     QuizGenerationError,
@@ -16,7 +15,7 @@ from services.text_generation import (
     TextGenerationError,
     get_text_generation_provider,
 )
-from utils.deps import get_current_user
+from utils.authorization import OwnedCourse
 
 
 router = APIRouter(
@@ -28,13 +27,13 @@ router = APIRouter(
 @router.post(
     "/{course_id}/quiz",
     response_model=BaseResponse[QuizGenerationResponse],
+    responses={
+        401: {"description": "Authentication required"},
+        404: {"description": "Course not found"},
+    },
 )
 def generate_quiz(
-    course_id: int,
-    current_user: Annotated[
-        UserResponse,
-        Depends(get_current_user),
-    ],
+    course: OwnedCourse,
     db: Annotated[Session, Depends(get_db)],
 ):
     try:
@@ -42,13 +41,13 @@ def generate_quiz(
 
         quiz_data = QuizService.generate(
             db,
-            course_id,
+            course.id,
             provider,
         )
 
         QuizService.save_generated_quiz(
             db,
-            course_id,
+            course.id,
             quiz_data,
         )
 

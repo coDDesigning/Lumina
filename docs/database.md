@@ -135,9 +135,43 @@ Workers recover expired leases periodically, not only at startup. Chunk
 replacement, document completion, and job completion commit atomically. Course
 deletion fences queued and running claims before storage cleanup.
 
+## Course ownership and authorization
+
+Every course resource is owner-scoped. `Course.owner_id` is not merely data: it
+is the authorization rule, and `utils/authorization.py` is the single boundary
+that enforces it. Any new course-scoped endpoint must depend on it rather than
+trust the `course_id` a client sends.
+
+The module exposes three modes. `require_course_access` authorizes reads,
+`require_course_owner` authorizes writes, and `require_course_deletion`
+authorizes deletion of a course that may already be tombstoned, which keeps hard
+deletion retryable after a storage failure. Each loads a course with the policy
+applied inside the query and returns the authorized course, so an endpoint never
+repeats the lookup or reuses the untrusted identifier.
+
+Ownership comes from the verified token. `POST /api/courses/` ignores any owner
+supplied in the request body.
+
+| Caller | List | Read course and documents | Write course, documents, generation |
+| --- | --- | --- | --- |
+| Unauthenticated | `401` | `401` | `401` |
+| Owner | own courses | own courses | own courses |
+| Other user | not listed | `404` | `404` |
+| Administrator | all courses | any course | own courses only, else `404` |
+
+The administrator override is deliberately read-only. Administrators may inspect
+any course for support and administration, but may not modify, delete, upload
+to, retry, or generate material against a course they do not own.
+
+Unauthorized access never discloses existence. A nonexistent course, a
+soft-deleted course, and another owner's course all return `404` with the same
+`Course not found` body, so course identifiers cannot be enumerated. Documents
+are additionally scoped to their authorized course, so a document identifier
+from one course cannot be reached through another.
+
 ## Processing API
 
-Authenticated clients can inspect, retry, and delete course-scoped documents:
+Authenticated owners can inspect, retry, and delete course-scoped documents:
 
 ```text
 GET  /api/courses/{course_id}/documents/{document_id}
@@ -146,8 +180,10 @@ DELETE /api/courses/{course_id}/documents/{document_id}
 ```
 
 Retry returns `202` only for a failed job and resets its attempt history. Other
-states return `409`. Course/document mismatches and deleted courses return
-`404`. Responses expose job progress and safe error codes, but never claim
+states return `409`. Course/document mismatches, deleted courses, and courses
+the caller does not own return `404`. Authorization runs before the endpoint
+body, so a denied request creates no document row, storage object, or processing
+job, and removes nothing. Responses expose job progress and safe error codes, but never claim
 tokens, worker identities, storage keys, or lease internals.
 
 Deletion returns `409` while the durable job is queued or running. Terminal

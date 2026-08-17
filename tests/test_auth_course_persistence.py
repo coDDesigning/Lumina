@@ -388,6 +388,7 @@ def test_response_schemas_can_read_legacy_nul_text() -> None:
 
     course = CourseResponse(
         id=1,
+        owner_id=1,
         title="Legacy\x00 course",
         description=None,
         semester="Fall",

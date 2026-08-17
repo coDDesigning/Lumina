@@ -50,5 +50,6 @@ class CourseResponse(CourseBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    owner_id: int
     created_at: datetime
     is_deleted: bool = False

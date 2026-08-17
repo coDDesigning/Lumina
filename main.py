@@ -14,6 +14,7 @@ from backend.app.request_size import (
 )
 from routes import (
     admin,
+    ai_tutor,
     auth,
     course,
     document,
@@ -49,6 +50,7 @@ app.include_router(study_guide.router)
 app.include_router(quiz.router)
 app.include_router(flashcard.router)
 app.include_router(prompt_generator.router)
+app.include_router(ai_tutor.router)
 app.add_exception_handler(
     RequestValidationError,
     document.upload_request_validation_error,

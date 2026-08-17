@@ -1,15 +1,8 @@
-import { FormEvent, useState } from 'react'
-import { BookOpen, Clock3, GraduationCap, Smile, Trophy } from 'lucide-react'
+import { FormEvent, useState, useEffect } from 'react'
+import { BookOpen, Clock3, GraduationCap, LogOut, Smile, Trophy } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import PageLayout from '../components/PageLayout'
-
-const initialProfile = {
-  firstName: 'Alex',
-  lastName: 'Morgan',
-  email: 'alex.morgan@example.com',
-  institution: 'Lumina University',
-  department: 'Behavioral Sciences',
-  role: 'Student',
-}
+import { useAuth } from '../context/AuthContext'
 
 const profileStats = [
   { label: 'Active courses', value: '4', icon: BookOpen },
@@ -22,8 +15,35 @@ type ProfilePageProps = {
 }
 
 function ProfilePage({ workspaceId }: ProfilePageProps) {
-  const [profile, setProfile] = useState(initialProfile)
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
+
+  const nameParts = user?.name ? user.name.split(' ') : ['Lumina', 'Learner']
+  const firstName = nameParts[0] || 'Lumina'
+  const lastName = nameParts.slice(1).join(' ') || 'Learner'
+
+  const [profile, setProfile] = useState({
+    firstName,
+    lastName,
+    email: user?.email || 'learner@lumina.ai',
+    institution: 'Bilkent University',
+    department: 'Computer Science',
+    role: user?.role || 'Student',
+  })
   const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    if (user) {
+      const parts = user.name ? user.name.split(' ') : ['Lumina', 'Learner']
+      setProfile((prev) => ({
+        ...prev,
+        firstName: parts[0] || 'Lumina',
+        lastName: parts.slice(1).join(' ') || 'Learner',
+        email: user.email,
+        role: user.role || 'Student',
+      }))
+    }
+  }, [user])
 
   const updateProfile = (field: keyof typeof profile, value: string) => {
     setProfile((current) => ({ ...current, [field]: value }))
@@ -36,15 +56,30 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
   }
 
   const resetProfile = () => {
-    setProfile(initialProfile)
+    if (user) {
+      const parts = user.name ? user.name.split(' ') : ['Lumina', 'Learner']
+      setProfile({
+        firstName: parts[0] || 'Lumina',
+        lastName: parts.slice(1).join(' ') || 'Learner',
+        email: user.email,
+        institution: 'Bilkent University',
+        department: 'Computer Science',
+        role: user.role || 'Student',
+      })
+    }
     setSaved(false)
+  }
+
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
   }
 
   return (
     <PageLayout
       title="Profile"
-      description="Manage the learner identity and academic context presented in the Lumina demo."
-      eyebrow="Personal workspace"
+      description="Manage your account profile and learning settings."
+      eyebrow="Account & Preferences"
       icon={Smile}
       workspaceId={workspaceId}
     >
@@ -82,7 +117,7 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
             <GraduationCap aria-hidden="true" />
             <div>
               <h2>Personal information</h2>
-              <p>Details used to personalize the frontend demo.</p>
+              <p>Account details associated with your Lumina session.</p>
             </div>
           </header>
 
@@ -142,7 +177,6 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
             <label className="form-field field-span-two">
               <span>Role</span>
               <input value={profile.role} readOnly aria-readonly="true" />
-              <small>Roles are managed by the future authentication service.</small>
             </label>
           </div>
         </section>
@@ -150,8 +184,8 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
         <div className="form-footer">
           <p className="form-feedback" role="status">
             {saved
-              ? 'Profile saved for this demo session.'
-              : 'Profile changes remain local to the frontend.'}
+              ? 'Profile saved successfully.'
+              : `Logged in as ${profile.email}`}
           </p>
           <div className="form-actions">
             <button
@@ -160,6 +194,25 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
               onClick={resetProfile}
             >
               Reset
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '9px 16px',
+                borderRadius: '8px',
+                border: '1px solid #fda4af',
+                background: '#fff1f2',
+                color: '#e11d48',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              <LogOut style={{ width: '16px', height: '16px' }} />
+              Log Out
             </button>
             <button className="primary-button" type="submit">
               Save profile

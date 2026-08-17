@@ -240,6 +240,20 @@
   box-shadow: 0 0 0 2px rgba(44, 157, 208, 0.2);
 }
 
+.top-action.logout-action {
+  color: #e11d48;
+}
+
+.top-action.logout-action svg {
+  color: #e11d48;
+}
+
+.top-action.logout-action:hover {
+  border-color: #fda4af;
+  background: #fff1f2;
+  box-shadow: 0 3px 6px rgba(225, 29, 72, 0.15);
+}
+
 .top-actions svg {
   width: 27px;
   height: 27px;

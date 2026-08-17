@@ -12,7 +12,7 @@ from backend.app.request_size import (
     MULTIPART_OVERHEAD_BYTES,
     RequestSizeLimitMiddleware,
 )
-from routes import admin, auth, course, document, quiz, study_guide, user
+from routes import admin, auth, course, document, flashcard, quiz, study_guide, user
 from storage.base import Storage
 from storage.dependencies import get_storage
 
@@ -37,6 +37,7 @@ app.include_router(user.router)
 app.include_router(document.router)
 app.include_router(study_guide.router)
 app.include_router(quiz.router)
+app.include_router(flashcard.router)
 app.add_exception_handler(
     RequestValidationError,
     document.upload_request_validation_error,

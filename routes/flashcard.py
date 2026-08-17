@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from backend.app.database import get_db
 from schemas.flashcard import FlashcardGenerationResponse
 from schemas.response import BaseResponse
-from schemas.user import UserResponse
 from services.flashcard import (
     FlashcardGenerationError,
     FlashcardService,
@@ -16,7 +15,7 @@ from services.text_generation import (
     TextGenerationError,
     get_text_generation_provider,
 )
-from utils.deps import get_current_user
+from utils.authorization import OwnedCourse
 
 
 router = APIRouter(
@@ -28,13 +27,13 @@ router = APIRouter(
 @router.post(
     "/{course_id}/flashcards",
     response_model=BaseResponse[FlashcardGenerationResponse],
+    responses={
+        401: {"description": "Authentication required"},
+        404: {"description": "Course not found"},
+    },
 )
 def generate_flashcards(
-    course_id: int,
-    current_user: Annotated[
-        UserResponse,
-        Depends(get_current_user),
-    ],
+    course: OwnedCourse,
     db: Annotated[Session, Depends(get_db)],
 ):
     try:
@@ -42,13 +41,13 @@ def generate_flashcards(
 
         flashcards = FlashcardService.generate(
             db,
-            course_id,
+            course.id,
             provider,
         )
 
         FlashcardService.save_generated_flashcards(
             db,
-            course_id,
+            course.id,
             flashcards,
         )
 

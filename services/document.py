@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -233,6 +234,26 @@ class DocumentService:
                 exc,
             )
         return DocumentUploadResult(document=document, duplicate=False)
+
+    @staticmethod
+    def list_course_documents(
+        db: Session,
+        course_id: int,
+    ) -> Sequence[UploadedDocument]:
+        """List the documents of an already authorized course, newest first.
+
+        Callers reach this only through the course authorization boundary, so
+        the course scope here is the authorized identifier rather than the one
+        supplied by the client.
+        """
+        return db.scalars(
+            select(UploadedDocument)
+            .where(
+                UploadedDocument.course_id == course_id,
+                UploadedDocument.status != "deleting",
+            )
+            .order_by(UploadedDocument.created_at.desc())
+        ).all()
 
     @staticmethod
     def get_document_job(

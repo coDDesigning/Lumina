@@ -15,6 +15,8 @@ from services.ai_tutor import AiTutorService
 from services.flashcard import FlashcardService
 from services.prompt_generator import PromptGeneratorService
 from services.quiz import QuizService
+from schemas.quiz import QuizDifficulty, QuizQuestionType, QuizRequest
+from schemas.study_guide import SummaryFormat
 from services.study_guide import StudyGuideService
 from services.text_generation import GenerationMetadata
 
@@ -174,10 +176,28 @@ def test_privacy_regression_asserts_raw_prompts_and_chunks_are_never_persisted(
 
     with session_factory() as session:
         # 1. Study Guide generation
-        StudyGuideService.generate(session, course_id, provider, user_id=user_id)
+        StudyGuideService.generate(
+            session,
+            course_id,
+            SummaryFormat.COMPREHENSIVE,
+            "All Topics",
+            provider,
+            user_id=user_id,
+        )
 
         # 2. Quiz generation
-        QuizService.generate(session, course_id, provider, user_id=user_id)
+        QuizService.generate(
+            session,
+            course_id,
+            QuizRequest(
+                question_count=10,
+                question_type=QuizQuestionType.MULTIPLE_CHOICE,
+                difficulty=QuizDifficulty.MEDIUM,
+                topic_focus="All Topics",
+            ),
+            provider,
+            user_id=user_id,
+        )
 
         # 3. Flashcard generation
         FlashcardService.generate(session, course_id, provider, user_id=user_id)

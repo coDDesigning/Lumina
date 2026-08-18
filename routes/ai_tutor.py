@@ -18,7 +18,6 @@ from services.text_generation import (
 )
 from utils.deps import get_current_user
 
-
 router = APIRouter(
     prefix="/api",
     tags=["AI Tutor"],
@@ -45,6 +44,7 @@ def ask_ai_tutor(
             request.course_id,
             request.question,
             provider,
+            user_id=current_user.id,
         )
 
     except NoReadyCourseMaterialError as exc:

@@ -16,7 +16,8 @@ STAGES_REVISION = "d2a7f0c91e35"
 PAGES_REVISION = "c4e6a8f1b203"
 VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_REVISION = "a8c4e2f7b913"
-HEAD_REVISION = "a4fd52f56b91"
+COURSE_FIELDS_REVISION = "a4fd52f56b91"
+HEAD_REVISION = "b7e2a9d1c3f4"
 
 
 def test_migration_graph_has_one_canonical_base_and_head() -> None:
@@ -30,7 +31,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: CHUNK_REVISION,
+        HEAD_REVISION: COURSE_FIELDS_REVISION,
+        COURSE_FIELDS_REVISION: CHUNK_REVISION,
         CHUNK_REVISION: VISUAL_REVISION,
         VISUAL_REVISION: PAGES_REVISION,
         PAGES_REVISION: STAGES_REVISION,
@@ -102,6 +104,7 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert "document_pages" in tables
         assert "document_visuals" in tables
         assert "processing_jobs" in tables
+        assert "ai_usage_logs" in tables
 
         roles = connection.execute("SELECT name FROM roles ORDER BY name").fetchall()
         assert roles == [("admin",), ("user",)]

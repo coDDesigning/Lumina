@@ -142,6 +142,7 @@ class Course(Base):
     semester: Mapped[str | None] = mapped_column(String(100), nullable=True)
     exam_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
     topics: Mapped[str | None] = mapped_column(Text, nullable=True)
+    syllabus: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )
@@ -151,6 +152,9 @@ class Course(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     owner: Mapped["User"] = relationship(back_populates="courses")

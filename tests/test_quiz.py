@@ -4,11 +4,17 @@ from sqlalchemy import select
 from backend.app.models import (
     Course,
     DocumentChunk,
+    Quiz,
     QuizQuestion,
     UploadedDocument,
     User,
 )
+from schemas.quiz import QuizDifficulty, QuizQuestionType, QuizRequest
+import pytest
+
 from services.quiz import (
+    DIFFICULTY_DIRECTIVES,
+    QUESTION_TYPE_DIRECTIVES,
     NoReadyCourseMaterialError,
     QuizGenerationError,
     QuizService,
@@ -19,6 +25,23 @@ from services.text_generation import (
     TextGenerationTimeoutError,
 )
 from utils.ai_errors import PUBLIC_MESSAGES, AiErrorCode
+
+
+QUIZ_REQUEST = {
+    "question_count": 10,
+    "question_type": "multiple_choice",
+    "difficulty": "medium",
+    "topic_focus": "All Topics",
+}
+
+
+def _quiz_request(**overrides) -> QuizRequest:
+    return QuizRequest(
+        question_count=overrides.get("question_count", 10),
+        question_type=overrides.get("question_type", QuizQuestionType.MULTIPLE_CHOICE),
+        difficulty=overrides.get("difficulty", QuizDifficulty.MEDIUM),
+        topic_focus=overrides.get("topic_focus", "All Topics"),
+    )
 
 
 def _valid_quiz_payload() -> dict[str, object]:
@@ -143,7 +166,7 @@ def test_get_course_material_uses_ready_document_chunks(
 
 
 def test_build_prompt_inserts_course_material() -> None:
-    prompt = QuizService.build_prompt("Example lecture material")
+    prompt = QuizService.build_prompt("Example lecture material", _quiz_request())
 
     assert "{{TEXT}}" not in prompt
     assert "Example lecture material" in prompt
@@ -168,6 +191,7 @@ def test_generate_returns_validated_quiz(
     generation = QuizService.generate(
         db_session,
         model_graph.course.id,
+        _quiz_request(),
         FakeProvider(),
     )
 
@@ -194,6 +218,7 @@ def test_generate_rejects_missing_ready_course_material(
         QuizService.generate(
             db_session,
             model_graph.course.id,
+            _quiz_request(),
             FakeProvider(),
         )
     except NoReadyCourseMaterialError as exc:
@@ -221,6 +246,7 @@ def test_generate_wraps_text_generation_error(
         QuizService.generate(
             db_session,
             model_graph.course.id,
+            _quiz_request(),
             FakeProvider(),
         )
     except QuizGenerationError as exc:
@@ -251,6 +277,7 @@ def test_generate_rejects_invalid_quiz_structure(
         QuizService.generate(
             db_session,
             model_graph.course.id,
+            _quiz_request(),
             FakeProvider(),
         )
     except QuizGenerationError as exc:
@@ -277,6 +304,7 @@ def test_save_generated_quiz_persists_questions(
     quiz_data = QuizService.generate(
         db_session,
         model_graph.course.id,
+        _quiz_request(),
         FakeProvider(),
     )
 
@@ -357,6 +385,7 @@ def test_generate_quiz_endpoint_returns_generated_quiz(
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/quiz",
+        json=QUIZ_REQUEST,
         headers=upload_api.authorization,
     )
 
@@ -384,6 +413,7 @@ def test_quiz_endpoint_reports_unreachable_provider_as_unavailable(
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/quiz",
+        json=QUIZ_REQUEST,
         headers=upload_api.authorization,
     )
 
@@ -405,6 +435,7 @@ def test_quiz_endpoint_reports_provider_timeout_as_gateway_timeout(
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/quiz",
+        json=QUIZ_REQUEST,
         headers=upload_api.authorization,
     )
 
@@ -422,7 +453,272 @@ def test_quiz_endpoint_still_reports_malformed_output_as_server_error(
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/quiz",
+        json=QUIZ_REQUEST,
         headers=upload_api.authorization,
     )
 
     assert response.status_code == 500
+
+
+def _true_false_payload(count: int = 2) -> dict[str, object]:
+    return {
+        "title": "True False Quiz",
+        "questions": [
+            {
+                "question_number": index,
+                "topic": f"Topic {index}",
+                "question": f"Statement {index} is correct?",
+                "options": ["True", "False"],
+                "correct_option_index": 0,
+                "explanation": "The statement matches the lecture material.",
+            }
+            for index in range(1, count + 1)
+        ],
+    }
+
+
+def test_build_prompt_applies_the_requested_parameters() -> None:
+    prompt = QuizService.build_prompt(
+        "Example lecture material",
+        _quiz_request(
+            question_count=6,
+            question_type=QuizQuestionType.TRUE_FALSE,
+            difficulty=QuizDifficulty.HARD,
+            topic_focus="Eigenvalues",
+        ),
+    )
+
+    assert "{{QUESTION_COUNT}}" not in prompt
+    assert "{{QUESTION_TYPE_DIRECTIVE}}" not in prompt
+    assert "{{DIFFICULTY_DIRECTIVE}}" not in prompt
+    assert "{{TOPIC_FOCUS}}" not in prompt
+    assert "Generate exactly 6 questions" in prompt
+    assert QUESTION_TYPE_DIRECTIVES[QuizQuestionType.TRUE_FALSE] in prompt
+    assert DIFFICULTY_DIRECTIVES[QuizDifficulty.HARD] in prompt
+    assert "Eigenvalues" in prompt
+
+
+def test_generate_accepts_the_requested_true_false_questions(
+    db_session,
+    model_graph,
+) -> None:
+    _add_ready_document(
+        db_session,
+        model_graph,
+        file_hash="1" * 64,
+        text="Example lecture material",
+    )
+
+    class FakeProvider:
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            return _true_false_payload(2)
+
+    generation = QuizService.generate(
+        db_session,
+        model_graph.course.id,
+        _quiz_request(question_count=2, question_type=QuizQuestionType.TRUE_FALSE),
+        FakeProvider(),
+    )
+
+    assert len(generation.quiz.questions) == 2
+    assert generation.quiz.questions[0].options == ["True", "False"]
+
+
+def test_generate_rejects_a_question_count_mismatch(
+    db_session,
+    model_graph,
+) -> None:
+    _add_ready_document(
+        db_session,
+        model_graph,
+        file_hash="2" * 64,
+        text="Example lecture material",
+    )
+
+    class FakeProvider:
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            return _valid_quiz_payload()
+
+    try:
+        QuizService.generate(
+            db_session,
+            model_graph.course.id,
+            _quiz_request(question_count=5),
+            FakeProvider(),
+        )
+    except QuizGenerationError as exc:
+        assert "invalid structure" in str(exc)
+    else:
+        raise AssertionError("Expected QuizGenerationError")
+
+
+def test_generate_rejects_a_question_type_mismatch(
+    db_session,
+    model_graph,
+) -> None:
+    _add_ready_document(
+        db_session,
+        model_graph,
+        file_hash="3" * 64,
+        text="Example lecture material",
+    )
+
+    class FakeProvider:
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            return _valid_quiz_payload()
+
+    try:
+        QuizService.generate(
+            db_session,
+            model_graph.course.id,
+            _quiz_request(question_type=QuizQuestionType.TRUE_FALSE),
+            FakeProvider(),
+        )
+    except QuizGenerationError as exc:
+        assert "invalid structure" in str(exc)
+    else:
+        raise AssertionError("Expected QuizGenerationError")
+
+
+def test_save_generated_quiz_persists_topic_and_explanation(
+    db_session,
+    model_graph,
+) -> None:
+    _add_ready_document(
+        db_session,
+        model_graph,
+        file_hash="4" * 64,
+        text="Persisted lecture material",
+    )
+
+    class FakeProvider:
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            return _valid_quiz_payload()
+
+    generation = QuizService.generate(
+        db_session,
+        model_graph.course.id,
+        _quiz_request(),
+        FakeProvider(),
+    )
+    quiz = QuizService.save_generated_quiz(
+        db_session,
+        model_graph.course.id,
+        generation.quiz,
+    )
+
+    questions = db_session.scalars(
+        select(QuizQuestion)
+        .where(QuizQuestion.quiz_id == quiz.id)
+        .order_by(QuizQuestion.question_index)
+    ).all()
+
+    assert questions[0].topic == "Topic 1"
+    assert questions[0].explanation == "Option A is correct."
+
+    view = QuizService.build_quiz_view(quiz)
+    assert view.quiz_id == quiz.id
+    assert view.questions[0].question_id == questions[0].id
+    assert view.questions[0].question_number == 1
+    assert view.questions[0].topic == "Topic 1"
+    assert view.questions[0].explanation == "Option A is correct."
+
+
+def test_generate_quiz_endpoint_exposes_persisted_identifiers(
+    upload_api,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        document = UploadedDocument(
+            original_file_name="ids-quiz.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=10,
+            file_hash="5" * 64,
+            uploader=user,
+            course=course,
+            storage_provider="local:test",
+            storage_key="ids-quiz.txt",
+            status="ready",
+        )
+        session.add(document)
+        session.flush()
+        session.add(
+            DocumentChunk(
+                document=document,
+                course=course,
+                chunk_index=0,
+                page_number=None,
+                text="Identifier quiz lecture material",
+            )
+        )
+        session.commit()
+
+    class FakeProvider:
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            return _valid_quiz_payload()
+
+    monkeypatch.setattr(
+        quiz_route,
+        "get_text_generation_provider",
+        lambda: FakeProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        json=QUIZ_REQUEST,
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    quiz_payload = response.json()["data"]["quiz"]
+
+    with upload_api.session_factory() as session:
+        stored = session.scalars(
+            select(Quiz).where(Quiz.course_id == upload_api.course_id)
+        ).all()
+
+    assert len(stored) == 1
+    assert quiz_payload["quiz_id"] == stored[0].id
+    assert [q["question_number"] for q in quiz_payload["questions"]] == list(
+        range(1, 11)
+    )
+    assert all(q["question_id"] > 0 for q in quiz_payload["questions"])
+    assert quiz_payload["questions"][0]["topic"] == "Topic 1"
+    assert quiz_payload["questions"][0]["explanation"] == "Option A is correct."
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(None, id="missing_body"),
+        pytest.param({**QUIZ_REQUEST, "question_count": 0}, id="count_too_small"),
+        pytest.param({**QUIZ_REQUEST, "question_count": 21}, id="count_too_large"),
+        pytest.param({**QUIZ_REQUEST, "question_type": "essay"}, id="unknown_type"),
+        pytest.param({**QUIZ_REQUEST, "difficulty": "brutal"}, id="unknown_difficulty"),
+        pytest.param({**QUIZ_REQUEST, "topic_focus": ""}, id="empty_topic_focus"),
+        pytest.param(
+            {**QUIZ_REQUEST, "topic_focus": "x" * 201},
+            id="overlong_topic_focus",
+        ),
+    ],
+)
+def test_generate_quiz_endpoint_rejects_an_invalid_request(
+    upload_api,
+    monkeypatch,
+    body,
+) -> None:
+    def unreachable() -> None:
+        raise AssertionError("Provider should not be constructed")
+
+    monkeypatch.setattr(quiz_route, "get_text_generation_provider", unreachable)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        json=body,
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 422, response.text

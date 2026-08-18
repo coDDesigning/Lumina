@@ -18,10 +18,12 @@ All templates are stored under `app/prompts/<task_name>.json` and must adhere to
 ```json
 {
   "name": "study_guide",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Comprehensive university study guide generation based on lecture notes.",
   "required_variables": [
-    "TEXT"
+    "TEXT",
+    "SUMMARY_FORMAT",
+    "TOPIC_FOCUS"
   ],
   "optional_variables": [],
   "output_schema_ref": "StudyGuideResponse",
@@ -38,7 +40,7 @@ All templates are stored under `app/prompts/<task_name>.json` and must adhere to
     "temperature": 0.2,
     "response_mime_type": "application/json"
   },
-  "template": "You are an expert university teaching assistant...\n\n{{TEXT}}"
+  "template": "You are an expert university teaching assistant...\n\n{{SUMMARY_FORMAT}}\n\nRequested topic focus: {{TOPIC_FOCUS}}\n\n{{TEXT}}"
 }
 ```
 
@@ -72,6 +74,10 @@ To add a new AI generation task:
 
    prompt = PromptLoader.render("new_task", {"REQUIRED_VAR": value})
    ```
+
+> Declare every variable a service passes in `required_variables` (or `optional_variables`).
+> `render` substitutes only the keys it is given, so an `optional_variables` entry the
+> service omits leaves a literal `{{PLACEHOLDER}}` in the prompt sent to the model.
 
 3. **Test the Template**:
    Add test assertions in `tests/test_prompt_loader.py` validating that the template parses, renders variables, and enforces constraints.

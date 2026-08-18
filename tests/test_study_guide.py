@@ -10,6 +10,7 @@ import services.study_guide as study_guide_service
 import services.text_generation as text_generation
 from backend.app.models import Course, DocumentChunk, GeneratedOutput, UploadedDocument
 from schemas.ai_usage import ErrorCategory
+from schemas.study_guide import SummaryFormat
 from services.study_guide import StudyGuideGenerationError, StudyGuideService
 from services.text_generation import (
     GenerationMetadata,
@@ -19,6 +20,11 @@ from services.text_generation import (
     TextGenerationTimeoutError,
 )
 from utils.ai_errors import PUBLIC_MESSAGES, AiErrorCode
+
+STUDY_GUIDE_REQUEST = {
+    "summary_format": "comprehensive",
+    "topic_focus": "All Topics",
+}
 
 VALID_STUDY_GUIDE = {
     "title": "Example Guide",
@@ -168,7 +174,11 @@ def test_get_course_material_uses_ready_document_chunks(
 
 
 def test_build_prompt_inserts_course_material() -> None:
-    prompt = StudyGuideService.build_prompt("Example course material")
+    prompt = StudyGuideService.build_prompt(
+        "Example course material",
+        SummaryFormat.COMPREHENSIVE,
+        "All Topics",
+    )
 
     assert "{{TEXT}}" not in prompt
     assert "Example course material" in prompt
@@ -209,6 +219,8 @@ def test_generate_returns_validated_study_guide(
     generation = StudyGuideService.generate(
         db_session,
         model_graph.course.id,
+        SummaryFormat.COMPREHENSIVE,
+        "All Topics",
         FakeProvider(),
     )
 
@@ -231,6 +243,8 @@ def test_generate_rejects_missing_ready_course_material(
         StudyGuideService.generate(
             db_session,
             model_graph.course.id,
+            SummaryFormat.COMPREHENSIVE,
+            "All Topics",
             FakeProvider(),
         )
 
@@ -274,6 +288,8 @@ def test_generate_wraps_text_generation_error(
         StudyGuideService.generate(
             db_session,
             model_graph.course.id,
+            SummaryFormat.COMPREHENSIVE,
+            "All Topics",
             FakeProvider(),
         )
 
@@ -315,6 +331,8 @@ def test_generate_rejects_invalid_study_guide_structure(
         StudyGuideService.generate(
             db_session,
             model_graph.course.id,
+            SummaryFormat.COMPREHENSIVE,
+            "All Topics",
             FakeProvider(),
         )
 
@@ -355,6 +373,8 @@ def test_save_generated_output_persists_study_guide(
     generation = StudyGuideService.generate(
         db_session,
         model_graph.course.id,
+        SummaryFormat.COMPREHENSIVE,
+        "All Topics",
         FakeProvider(),
     )
 
@@ -418,6 +438,8 @@ def test_generate_bounds_the_prompt_to_the_configured_budget(
     generation = StudyGuideService.generate(
         db_session,
         model_graph.course.id,
+        SummaryFormat.COMPREHENSIVE,
+        "All Topics",
         FakeProvider(),
     )
 
@@ -445,6 +467,7 @@ def test_study_guide_endpoint_persists_attribution_and_reports_context(
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/study-guide",
+        json=STUDY_GUIDE_REQUEST,
         headers=upload_api.authorization,
     )
 
@@ -462,6 +485,111 @@ def test_study_guide_endpoint_persists_attribution_and_reports_context(
     assert len(persisted) == 1
     assert persisted[0].user_id == upload_api.user_id
     assert persisted[0].model_used == "ollama:qwen3:8b"
+
+
+def test_study_guide_endpoint_passes_the_requested_format_and_topic_focus(
+    upload_api,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["Parameterized lecture material"],
+            file_hash="7" * 64,
+        )
+
+    provider = _install_provider(monkeypatch, CountingProvider())
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/study-guide",
+        json={"summary_format": "exam_tips", "topic_focus": "Working Memory"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert provider.calls == 1
+    assert "{{SUMMARY_FORMAT}}" not in provider.prompt
+    assert "{{TOPIC_FOCUS}}" not in provider.prompt
+    assert "Requested summary format: exam_tips." in provider.prompt
+    assert "Working Memory" in provider.prompt
+    assert (
+        study_guide_service.SUMMARY_FORMAT_DIRECTIVES[SummaryFormat.EXAM_TIPS]
+        in provider.prompt
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(None, id="missing_body"),
+        pytest.param({"topic_focus": "All Topics"}, id="missing_summary_format"),
+        pytest.param(
+            {"summary_format": "comprehensive"},
+            id="missing_topic_focus",
+        ),
+        pytest.param(
+            {"summary_format": "not_a_format", "topic_focus": "All Topics"},
+            id="unknown_summary_format",
+        ),
+        pytest.param(
+            {"summary_format": "comprehensive", "topic_focus": ""},
+            id="empty_topic_focus",
+        ),
+        pytest.param(
+            {"summary_format": "comprehensive", "topic_focus": "x" * 201},
+            id="overlong_topic_focus",
+        ),
+    ],
+)
+def test_study_guide_endpoint_rejects_an_invalid_request(
+    upload_api,
+    monkeypatch,
+    body,
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["Validation lecture material"],
+            file_hash="8" * 64,
+        )
+
+    provider = _install_provider(monkeypatch, CountingProvider())
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/study-guide",
+        json=body,
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 422, response.text
+    assert provider.calls == 0
+    assert _persisted_outputs(upload_api.session_factory, upload_api.course_id) == []
+
+
+def test_study_guide_endpoint_accepts_the_longest_allowed_topic_focus(
+    upload_api,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["Boundary lecture material"],
+            file_hash="9" * 64,
+        )
+
+    provider = _install_provider(monkeypatch, CountingProvider())
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/study-guide",
+        json={"summary_format": "overview", "topic_focus": "z" * 200},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert provider.calls == 1
 
 
 def test_study_guide_endpoint_reports_truncated_context(
@@ -485,6 +613,7 @@ def test_study_guide_endpoint_reports_truncated_context(
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/study-guide",
+        json=STUDY_GUIDE_REQUEST,
         headers=upload_api.authorization,
     )
 
@@ -503,7 +632,10 @@ def test_study_guide_endpoint_requires_authentication(
 ) -> None:
     provider = _install_provider(monkeypatch, CountingProvider())
 
-    response = api_context.client.post("/api/courses/1/study-guide")
+    response = api_context.client.post(
+        "/api/courses/1/study-guide",
+        json=STUDY_GUIDE_REQUEST,
+    )
 
     assert response.status_code == 401
     assert provider.calls == 0
@@ -517,6 +649,7 @@ def test_study_guide_endpoint_hides_a_missing_course(
 
     response = upload_api.client.post(
         "/api/courses/999999/study-guide",
+        json=STUDY_GUIDE_REQUEST,
         headers=upload_api.authorization,
     )
 
@@ -532,6 +665,7 @@ def test_study_guide_endpoint_hides_a_soft_deleted_course(
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.deleted_course_id}/study-guide",
+        json=STUDY_GUIDE_REQUEST,
         headers=upload_api.authorization,
     )
 
@@ -555,6 +689,7 @@ def test_study_guide_endpoint_hides_another_owners_course(
 
     response = authz_api.client.post(
         f"/api/courses/{authz_api.a_course_id}/study-guide",
+        json=STUDY_GUIDE_REQUEST,
         headers=authz_api.authorization_b,
     )
 
@@ -571,6 +706,7 @@ def test_study_guide_endpoint_rejects_a_course_without_ready_material(
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/study-guide",
+        json=STUDY_GUIDE_REQUEST,
         headers=upload_api.authorization,
     )
 
@@ -629,6 +765,7 @@ def test_study_guide_endpoint_curates_provider_failures(
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/study-guide",
+        json=STUDY_GUIDE_REQUEST,
         headers=upload_api.authorization,
     )
 
@@ -661,6 +798,7 @@ def test_study_guide_endpoint_curates_invalid_generated_structure(
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/study-guide",
+        json=STUDY_GUIDE_REQUEST,
         headers=upload_api.authorization,
     )
 
@@ -744,6 +882,8 @@ def test_ollama_output_that_is_not_a_valid_study_guide_is_never_persisted(
         StudyGuideService.generate(
             db_session,
             model_graph.course.id,
+            SummaryFormat.COMPREHENSIVE,
+            "All Topics",
             provider,
         )
 
@@ -772,6 +912,8 @@ def test_ollama_output_that_is_a_valid_study_guide_persists(
     generation = StudyGuideService.generate(
         db_session,
         model_graph.course.id,
+        SummaryFormat.COMPREHENSIVE,
+        "All Topics",
         provider,
     )
     generated_output = StudyGuideService.save_generated_output(

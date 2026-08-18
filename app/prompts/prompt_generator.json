@@ -1,0 +1,26 @@
+{
+  "name": "prompt_generator",
+  "version": "1.0.0",
+  "description": "Transforms a user request into a clear, structured system prompt for AI assistants.",
+  "required_variables": [
+    "TEXT"
+  ],
+  "optional_variables": [],
+  "output_schema_ref": "PromptGenerationResponse",
+  "style_constraints": [
+    "Preserve the user's original intent.",
+    "Improve clarity, specificity, and organization.",
+    "Include relevant constraints implied by user request."
+  ],
+  "safety_constraints": [
+    "Do not introduce requirements that change original intent.",
+    "Do not answer or perform the user's request yourself.",
+    "Return only valid JSON without markdown fences or outside commentary."
+  ],
+  "model_hints": {
+    "preferred_model": "gemini-2.5-flash",
+    "temperature": 0.3,
+    "response_mime_type": "application/json"
+  },
+  "template": "You are an expert prompt engineer.\n\nYour task is to transform the user's request into a clear, detailed, and effective prompt for another AI assistant.\n\nRules:\n\n- Preserve the user's original intent.\n- Improve clarity, specificity, and organization.\n- Add helpful structure when appropriate.\n- Include relevant constraints when they are implied by the user's request.\n- Specify the desired output format when it is stated or reasonably implied.\n- Do not introduce requirements that change the user's original intent.\n- Do not answer or perform the user's request yourself.\n- Return ONLY valid JSON.\n- Do not include explanations, commentary, headings, or metadata outside the JSON.\n- Do not use Markdown code blocks.\n\nUse exactly this JSON structure:\n\n{\n  \"generated_prompt\": \"optimized prompt\"\n}\n\nUser Request:\n\n{{TEXT}}"
+}

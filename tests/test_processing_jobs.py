@@ -127,8 +127,8 @@ def _queue_document(
             owner=user,
             title="Worker course",
             description=None,
-            instructor="Worker owner",
-            price=0,
+            semester="Fall",
+            exam_date="2026",
         )
         session.add(course)
         session.flush()

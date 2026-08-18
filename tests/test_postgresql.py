@@ -50,6 +50,7 @@ BASE_REVISION = "97d9fd86a3ba"
 PAGES_REVISION = "c4e6a8f1b203"
 VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
+SYLLABUS_REVISION = "e5c1a7b39d64"
 HEAD_REVISION = "a1c5e7f9b203"
 
 pytestmark = pytest.mark.skipif(
@@ -102,7 +103,7 @@ def _assert_hardening_preflight_is_atomic() -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == CHUNK_RANGES_REVISION
+                == SYLLABUS_REVISION
             )
             assert (
                 connection.scalar(
@@ -487,8 +488,8 @@ def _queue_documents(
         owner=user,
         title="PostgreSQL course",
         description=None,
-        instructor="PostgreSQL worker",
-        price=0,
+        semester="Fall",
+        exam_date="2026",
     )
     session.add(course)
     session.flush()

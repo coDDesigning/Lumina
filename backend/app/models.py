@@ -128,16 +128,22 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
 
+    # Privacy-safe structured AI usage logs recorded for this user.
+    ai_usage_logs: Mapped[list["AiUsageLog"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
+
 
 class Course(Base):
     __tablename__ = "courses"
-    __table_args__ = (CheckConstraint("price >= 0", name="price_nonnegative"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    instructor: Mapped[str] = mapped_column(String(200))
-    price: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    semester: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    exam_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    topics: Mapped[str | None] = mapped_column(Text, nullable=True)
+    syllabus: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )
@@ -147,6 +153,9 @@ class Course(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     owner: Mapped["User"] = relationship(back_populates="courses")
@@ -179,6 +188,11 @@ class Course(Base):
 
     # Per-user progress rows for this course.
     progress_rows: Mapped[list["Progress"]] = relationship(
+        back_populates="course", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    # Privacy-safe AI generation telemetry scoped to this course.
+    ai_usage_logs: Mapped[list["AiUsageLog"]] = relationship(
         back_populates="course", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -806,3 +820,41 @@ class ProfileKnowledge(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="knowledge_items")
+
+
+class AiUsageLog(Base):
+    """Structured, privacy-safe record of AI model generation activity.
+
+    Stores operational telemetry (token counts, latency, status, error category)
+    without persisting any raw prompt, chunk text, response content, or secrets.
+    """
+
+    __tablename__ = "ai_usage_logs"
+    __table_args__ = (
+        Index("ix_ai_usage_logs_user_created", "user_id", "created_at"),
+        Index("ix_ai_usage_logs_course_created", "course_id", "created_at"),
+        Index("ix_ai_usage_logs_type_created", "generation_type", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    course_id: Mapped[int | None] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    generation_type: Mapped[str] = mapped_column(String(50), index=True)
+    provider: Mapped[str] = mapped_column(String(50))
+    model: Mapped[str] = mapped_column(String(100))
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean)
+    error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="ai_usage_logs")
+    course: Mapped["Course | None"] = relationship(back_populates="ai_usage_logs")

@@ -46,6 +46,7 @@ from services.document_hash import FileHashError
 from services.document_validation import UPLOAD_ERRORS, DocumentValidationError
 from storage.base import Storage
 from storage.dependencies import get_storage
+from utils.authorization import AuthorizedCourse, OwnedCourse
 from utils.deps import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -132,9 +133,9 @@ async def upload_http_error(
     },
 )
 def upload_document(
-    course_id: int,
     response: Response,
     document: Annotated[UploadFile, File()],
+    course: OwnedCourse,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[Storage, Depends(get_storage)],
@@ -145,7 +146,7 @@ def upload_document(
             db=db,
             storage=storage,
             upload=document,
-            course_id=course_id,
+            course_id=course.id,
             user_id=current_user.id,
         )
     except DocumentValidationError as exc:
@@ -171,21 +172,43 @@ def upload_document(
 
 
 @router.get(
+    "/{course_id}/documents",
+    response_model=BaseResponse[list[DocumentResponse]],
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Account is not allowed to access documents"},
+        404: {"description": "Course not found"},
+    },
+)
+def get_documents(
+    course: AuthorizedCourse,
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[list[DocumentResponse]]:
+    """List the documents of a course the caller is allowed to read."""
+    documents = DocumentService.list_course_documents(db, course.id)
+
+    return BaseResponse(
+        success=True,
+        message="Documents retrieved successfully",
+        data=[DocumentResponse.model_validate(doc) for doc in documents],
+    )
+
+
+@router.get(
     "/{course_id}/documents/{document_id}",
     response_model=DocumentStatusResponse,
     responses={
         401: {"description": "Authentication required"},
         403: {"description": "Account is not allowed to access documents"},
-        404: {"description": "Document not found"},
+        404: {"description": "Course or document not found"},
     },
 )
 def get_document_status(
-    course_id: int,
     document_id: UUID,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    course: AuthorizedCourse,
     db: Annotated[Session, Depends(get_db)],
 ) -> DocumentStatusResponse:
-    document, job = DocumentService.get_document_job(db, document_id, course_id)
+    document, job = DocumentService.get_document_job(db, document_id, course.id)
     return _status_response(document, job)
 
 
@@ -196,17 +219,16 @@ def get_document_status(
     responses={
         401: {"description": "Authentication required"},
         403: {"description": "Account is not allowed to retry documents"},
-        404: {"description": "Document not found"},
+        404: {"description": "Course or document not found"},
         409: {"description": "Only failed document jobs can be retried"},
     },
 )
 def retry_document(
-    course_id: int,
     document_id: UUID,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    course: OwnedCourse,
     db: Annotated[Session, Depends(get_db)],
 ) -> DocumentStatusResponse:
-    document, job = DocumentService.retry_document(db, document_id, course_id)
+    document, job = DocumentService.retry_document(db, document_id, course.id)
     return _status_response(document, job)
 
 
@@ -217,20 +239,19 @@ def retry_document(
     responses={
         401: {"description": "Authentication required"},
         403: {"description": "Account is not allowed to delete documents"},
-        404: {"description": "Document not found"},
+        404: {"description": "Course or document not found"},
         409: {"description": "Active documents cannot be deleted"},
         500: {"description": "Document deletion failed"},
     },
 )
 def delete_document(
-    course_id: int,
     document_id: UUID,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    course: OwnedCourse,
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[Storage, Depends(get_storage)],
 ) -> Response:
     try:
-        DocumentService.delete_document(db, storage, document_id, course_id)
+        DocumentService.delete_document(db, storage, document_id, course.id)
     except DocumentActiveError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

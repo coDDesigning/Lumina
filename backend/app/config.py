@@ -48,6 +48,11 @@ DEFAULT_OCR_DPI = 300
 DEFAULT_OCR_MIN_TEXT_CHARACTERS = 20
 DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS = 1_200
 DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS = 200
+DEFAULT_AI_GENERATION_TIMEOUT_SECONDS = 60
+DEFAULT_AI_GENERATION_MAX_ATTEMPTS = 3
+DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS = 1.0
+DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS = 10.0
+DEFAULT_AI_GENERATION_MAX_CONCURRENCY = 10
 
 
 @dataclass(frozen=True)
@@ -75,6 +80,16 @@ class Settings:
     jwt_secret_key: str
     bootstrap_admin_email: str | None
     bootstrap_admin_token: str | None
+
+    # AI provider configuration
+    ai_provider: str
+    gemini_api_key: str | None
+    ai_fallback_providers: str
+    ai_generation_timeout_seconds: int
+    ai_generation_max_attempts: int
+    ai_generation_backoff_base_seconds: float
+    ai_generation_backoff_max_seconds: float
+    ai_generation_max_concurrency: int
 
     # Maximum accepted document size before content validation
     max_upload_size_bytes: int
@@ -200,6 +215,25 @@ def load_settings() -> Settings:
             "Hosted mode and production require BOOTSTRAP_ADMIN_TOKEN to be set."
         )
 
+    ai_provider = os.getenv("AI_PROVIDER", "ollama").strip().lower() or "ollama"
+
+    if ai_provider not in {"ollama", "openai", "gemini", "claude"}:
+        raise ValueError("AI_PROVIDER must be one of: ollama, openai, gemini, claude.")
+    gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip() or None
+
+    ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
+    if ai_fallback_providers_raw:
+        for fallback_token in (
+            item.strip().lower()
+            for item in ai_fallback_providers_raw.split(",")
+            if item.strip()
+        ):
+            if fallback_token not in {"ollama", "openai", "gemini", "claude"}:
+                raise ValueError(
+                    "AI_FALLBACK_PROVIDERS tokens must be one of: ollama, openai, gemini, claude."
+                )
+    ai_fallback_providers = ai_fallback_providers_raw
+
     if app_env == APP_ENV_PRODUCTION:
         for name, value in (
             ("UPLOAD_DIRECTORY", upload_directory),
@@ -311,6 +345,38 @@ def load_settings() -> Settings:
             "DOCUMENT_CHUNK_SIZE_CHARACTERS."
         )
 
+    ai_generation_timeout_seconds = _bounded_positive_integer_setting(
+        "AI_GENERATION_TIMEOUT_SECONDS",
+        DEFAULT_AI_GENERATION_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=300,
+    )
+    ai_generation_max_attempts = _bounded_positive_integer_setting(
+        "AI_GENERATION_MAX_ATTEMPTS",
+        DEFAULT_AI_GENERATION_MAX_ATTEMPTS,
+        minimum=1,
+        maximum=10,
+    )
+    ai_generation_backoff_base_seconds = _positive_float_setting(
+        "AI_GENERATION_BACKOFF_BASE_SECONDS",
+        DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS,
+    )
+    ai_generation_backoff_max_seconds = _positive_float_setting(
+        "AI_GENERATION_BACKOFF_MAX_SECONDS",
+        DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS,
+    )
+    if ai_generation_backoff_max_seconds < ai_generation_backoff_base_seconds:
+        raise ValueError(
+            "AI_GENERATION_BACKOFF_MAX_SECONDS must be greater than or equal to "
+            "AI_GENERATION_BACKOFF_BASE_SECONDS."
+        )
+    ai_generation_max_concurrency = _bounded_positive_integer_setting(
+        "AI_GENERATION_MAX_CONCURRENCY",
+        DEFAULT_AI_GENERATION_MAX_CONCURRENCY,
+        minimum=1,
+        maximum=100,
+    )
+
     return Settings(
         app_env=app_env,
         app_debug=app_debug,
@@ -323,6 +389,14 @@ def load_settings() -> Settings:
         jwt_secret_key=jwt_secret_key,
         bootstrap_admin_email=bootstrap_admin_email or None,
         bootstrap_admin_token=bootstrap_admin_token or None,
+        ai_provider=ai_provider,
+        gemini_api_key=gemini_api_key,
+        ai_fallback_providers=ai_fallback_providers,
+        ai_generation_timeout_seconds=ai_generation_timeout_seconds,
+        ai_generation_max_attempts=ai_generation_max_attempts,
+        ai_generation_backoff_base_seconds=ai_generation_backoff_base_seconds,
+        ai_generation_backoff_max_seconds=ai_generation_backoff_max_seconds,
+        ai_generation_max_concurrency=ai_generation_max_concurrency,
         max_upload_size_bytes=max_upload_size_bytes,
         max_request_size_bytes=max_request_size_bytes,
         max_concurrent_document_validations=max_concurrent_document_validations,

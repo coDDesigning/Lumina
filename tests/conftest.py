@@ -4,21 +4,30 @@ import os
 import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select, text
+from sqlalchemy import Engine, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.base import Base
 from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.database_engine import create_database_engine
-from backend.app.models import Course, Role, User
+from backend.app.models import (
+    Course,
+    ProcessingJob,
+    Role,
+    UploadedDocument,
+    User,
+)
 from main import app
+from services.processing_jobs import claim_next_job, fail_job
 from storage.dependencies import get_storage
 from storage.local import LocalStorage
 from utils.security import create_access_token
@@ -41,6 +50,21 @@ class UploadApiContext(ApiContext):
     other_course_id: int
     deleted_course_id: int
     authorization: dict[str, str]
+
+
+@dataclass(frozen=True)
+class AuthorizationApiContext(ApiContext):
+    user_a_id: int
+    user_b_id: int
+    admin_id: int
+    a_course_id: int
+    a_deleted_course_id: int
+    b_course_id: int
+    a_document_id: UUID
+    a_storage_key: str
+    authorization_a: dict[str, str]
+    authorization_b: dict[str, str]
+    authorization_admin: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -144,6 +168,33 @@ def session_factory(database_engine: Engine) -> sessionmaker[Session]:
     )
 
 
+def _schema_drift(engine: Engine) -> dict[str, dict[str, list[str]]]:
+    """Report every column Alembic and the ORM models disagree about."""
+    inspector = inspect(engine)
+    reflected_tables = set(inspector.get_table_names())
+    drift: dict[str, dict[str, list[str]]] = {}
+    for table in Base.metadata.sorted_tables:
+        modelled = {column.name for column in table.columns}
+        if table.name not in reflected_tables:
+            drift[table.name] = {
+                "missing_from_database": sorted(modelled),
+                "missing_from_models": [],
+            }
+            continue
+        reflected = {column["name"] for column in inspector.get_columns(table.name)}
+        if reflected != modelled:
+            drift[table.name] = {
+                "missing_from_database": sorted(modelled - reflected),
+                "missing_from_models": sorted(reflected - modelled),
+            }
+    return drift
+
+
+@pytest.fixture
+def schema_drift(database_engine: Engine) -> dict[str, dict[str, list[str]]]:
+    return _schema_drift(database_engine)
+
+
 @pytest.fixture
 def db_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
     session = session_factory()
@@ -170,16 +221,16 @@ def model_graph(db_session: Session) -> ModelGraph:
     course = Course(
         title="Primary Course",
         description="Repository test course",
-        instructor="Instructor One",
-        price=0.0,
+        semester="Fall",
+        exam_date="2026",
         owner=user,
         is_deleted=False,
     )
     other_course = Course(
         title="Other Course",
         description=None,
-        instructor="Instructor Two",
-        price=12.5,
+        semester="Fall",
+        exam_date="2026",
         owner=user,
         is_deleted=False,
     )
@@ -238,10 +289,10 @@ def api_context(
 @pytest.fixture
 def upload_api(api_context: ApiContext) -> UploadApiContext:
     with api_context.session_factory() as session:
-        role = session.scalar(select(Role).where(Role.name == "admin"))
+        role = session.scalar(select(Role).where(Role.name == "user"))
         assert role is not None
         user = User(
-            name="Upload Admin",
+            name="Upload Owner",
             email="uploader@example.com",
             password_hash="not-used-by-these-tests",
             role=role,
@@ -252,24 +303,24 @@ def upload_api(api_context: ApiContext) -> UploadApiContext:
         course = Course(
             title="Active Course",
             description="Document upload tests",
-            instructor="Ada",
-            price=0.0,
+            semester="Fall",
+            exam_date="2026",
             owner=user,
             is_deleted=False,
         )
         other_course = Course(
             title="Second Active Course",
             description=None,
-            instructor="Grace",
-            price=5.0,
+            semester="Fall",
+            exam_date="2026",
             owner=user,
             is_deleted=False,
         )
         deleted_course = Course(
             title="Deleted Course",
             description=None,
-            instructor="Linus",
-            price=0.0,
+            semester="Fall",
+            exam_date="2026",
             owner=user,
             is_deleted=True,
         )
@@ -291,4 +342,147 @@ def upload_api(api_context: ApiContext) -> UploadApiContext:
         other_course_id=other_course_id,
         deleted_course_id=deleted_course_id,
         authorization={"Authorization": f"Bearer {token}"},
+    )
+
+
+def _authorization_header(email: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {create_access_token({'sub': email})}"}
+
+
+@pytest.fixture
+def authz_api(api_context: ApiContext) -> AuthorizationApiContext:
+    """Two separate owners plus an administrator, with real state under user A.
+
+    Cross-user tests must prove that a denied request changes nothing, so user
+    A owns a genuinely uploaded document: a stored file, a database row, and a
+    processing job driven to ``failed`` so retry is reachable.
+    """
+    with api_context.session_factory() as session:
+        user_role = session.scalar(select(Role).where(Role.name == "user"))
+        admin_role = session.scalar(select(Role).where(Role.name == "admin"))
+        assert user_role is not None
+        assert admin_role is not None
+
+        user_a = User(
+            name="Owner A",
+            email="owner-a@example.com",
+            password_hash="not-used-by-these-tests",
+            role=user_role,
+            credits=100.0,
+            is_banned=False,
+            preferred_model="gpt-4o-mini",
+        )
+        user_b = User(
+            name="Owner B",
+            email="owner-b@example.com",
+            password_hash="not-used-by-these-tests",
+            role=user_role,
+            credits=100.0,
+            is_banned=False,
+            preferred_model="gpt-4o-mini",
+        )
+        administrator = User(
+            name="Course Administrator",
+            email="authz-admin@example.com",
+            password_hash="not-used-by-these-tests",
+            role=admin_role,
+            credits=None,
+            is_banned=False,
+            preferred_model="gpt-4o-mini",
+        )
+
+        a_course = Course(
+            title="Owner A Active Course",
+            description="Private study material",
+            semester="Fall",
+            exam_date="2026",
+            owner=user_a,
+            is_deleted=False,
+        )
+        a_deleted_course = Course(
+            title="Owner A Deleted Course",
+            description=None,
+            semester="Fall",
+            exam_date="2026",
+            owner=user_a,
+            is_deleted=True,
+        )
+        b_course = Course(
+            title="Owner B Active Course",
+            description=None,
+            semester="Fall",
+            exam_date="2026",
+            owner=user_b,
+            is_deleted=False,
+        )
+        session.add_all([administrator, a_course, a_deleted_course, b_course])
+        session.commit()
+
+        user_a_id = user_a.id
+        user_b_id = user_b.id
+        admin_id = administrator.id
+        a_course_id = a_course.id
+        a_deleted_course_id = a_deleted_course.id
+        b_course_id = b_course.id
+
+    authorization_a = _authorization_header("owner-a@example.com")
+    uploaded = api_context.client.post(
+        f"/api/courses/{a_course_id}/documents",
+        headers=authorization_a,
+        files={"document": ("owner-a-notes.txt", b"Owner A notes", "text/plain")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    a_document_id = UUID(uploaded.json()["document"]["id"])
+
+    with api_context.session_factory() as session:
+        queued_job = session.scalar(
+            select(ProcessingJob).where(ProcessingJob.document_id == a_document_id)
+        )
+        assert queued_job is not None
+        claim_at = queued_job.available_at + timedelta(seconds=1)
+    with api_context.session_factory() as session:
+        claim = claim_next_job(
+            session,
+            "authz-fixture-worker",
+            api_context.storage.provider,
+            60,
+            now=claim_at,
+        )
+    assert claim is not None
+    with api_context.session_factory() as session:
+        assert (
+            fail_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                error_code="OCR_REQUIRED",
+                error_message="The document requires OCR.",
+                retryable=False,
+                now=claim_at + timedelta(seconds=1),
+            )
+            == "failed"
+        )
+
+    with api_context.session_factory() as session:
+        document = session.get(UploadedDocument, a_document_id)
+        assert document is not None
+        assert document.status == "failed"
+        a_storage_key = document.storage_key
+
+    return AuthorizationApiContext(
+        client=api_context.client,
+        session_factory=api_context.session_factory,
+        storage=api_context.storage,
+        storage_root=api_context.storage_root,
+        user_a_id=user_a_id,
+        user_b_id=user_b_id,
+        admin_id=admin_id,
+        a_course_id=a_course_id,
+        a_deleted_course_id=a_deleted_course_id,
+        b_course_id=b_course_id,
+        a_document_id=a_document_id,
+        a_storage_key=a_storage_key,
+        authorization_a=authorization_a,
+        authorization_b=_authorization_header("owner-b@example.com"),
+        authorization_admin=_authorization_header("authz-admin@example.com"),
     )

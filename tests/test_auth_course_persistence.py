@@ -89,8 +89,8 @@ def test_registration_login_and_admin_course_creation_persist(api_context) -> No
     course_payload = {
         "title": "Persisted Course",
         "description": "Created through the authenticated API",
-        "instructor": "First User",
-        "price": 19.5,
+        "semester": "Fall",
+        "exam_date": "2026",
     }
     created = api_context.client.post(
         "/api/courses/",
@@ -109,8 +109,8 @@ def test_registration_login_and_admin_course_creation_persist(api_context) -> No
         assert persisted.owner_id == admin_id
         assert persisted.title == course_payload["title"]
         assert persisted.description == course_payload["description"]
-        assert persisted.instructor == course_payload["instructor"]
-        assert persisted.price == course_payload["price"]
+        assert persisted.semester == course_payload["semester"]
+        assert persisted.exam_date == course_payload["exam_date"]
         assert persisted.is_deleted is False
         assert session.scalar(select(func.count()).select_from(Course)) == 1
 
@@ -207,8 +207,8 @@ def test_course_creation_recovers_lost_commit_acknowledgement(
             session,
             CourseCreate(
                 title="Idempotent Course",
-                instructor="Owner",
-                price=0,
+                semester="Fall",
+                exam_date="2026",
             ),
             owner.id,
         )
@@ -241,23 +241,23 @@ def test_database_length_and_nullability_rules_are_validated_by_api(
         headers=authorization,
         json={
             "title": "x" * 201,
-            "instructor": "Admin",
-            "price": 0,
+            "semester": "Fall",
+            "exam_date": "2026",
         },
     )
     assert too_long.status_code == 422
 
-    non_finite_price = api_context.client.post(
+    non_finite_exam_date = api_context.client.post(
         "/api/courses/",
         headers={**authorization, "Content-Type": "application/json"},
-        content=('{"title":"Infinite","instructor":"Admin","price":1e400}'),
+        content=('{"title":"Infinite","semester":"Admin","exam_date":1e400}'),
     )
-    assert non_finite_price.status_code == 422
+    assert non_finite_exam_date.status_code == 422
 
     created = api_context.client.post(
         "/api/courses/",
         headers=authorization,
-        json={"title": "Course", "instructor": "Admin", "price": 0},
+        json={"title": "Course", "semester": "Fall", "exam_date": "2026"},
     )
     assert created.status_code == 201
 
@@ -308,7 +308,7 @@ def test_nul_password_round_trips_through_bcrypt(api_context) -> None:
     assert login.status_code == 200
 
 
-@pytest.mark.parametrize("field", ["title", "description", "instructor"])
+@pytest.mark.parametrize("field", ["title", "description", "semester"])
 def test_course_writes_reject_nul_text(api_context, field: str) -> None:
     registered = api_context.client.post(
         "/api/auth/register",
@@ -327,8 +327,8 @@ def test_course_writes_reject_nul_text(api_context, field: str) -> None:
     payload = {
         "title": "Course",
         "description": "Description",
-        "instructor": "Admin",
-        "price": 0,
+        "semester": "Fall",
+        "exam_date": "2026",
     }
     payload[field] = "Unsafe\x00value"
 
@@ -388,11 +388,14 @@ def test_response_schemas_can_read_legacy_nul_text() -> None:
 
     course = CourseResponse(
         id=1,
+        owner_id=1,
         title="Legacy\x00 course",
         description=None,
-        instructor="Instructor",
-        price=0,
+        semester="Fall",
+        exam_date="2026",
+        syllabus="Legacy\x00 syllabus",
         created_at="2026-01-01T00:00:00Z",
+        updated_at="2026-01-01T00:00:00Z",
     )
     user = UserResponse(
         id=1,
@@ -405,6 +408,7 @@ def test_response_schemas_can_read_legacy_nul_text() -> None:
     )
 
     assert course.title == "Legacy\x00 course"
+    assert course.syllabus == "Legacy\x00 syllabus"
     assert user.name == "Legacy\x00 user"
     assert user.preferred_model == "legacy\x00model"
 

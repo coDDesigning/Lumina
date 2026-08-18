@@ -1,0 +1,121 @@
+import routes.prompt_generator as prompt_generator_route
+
+from services.prompt_generator import (
+    PromptGenerationError,
+    PromptGeneratorService,
+)
+from services.text_generation import TextGenerationError
+
+
+def _valid_prompt_payload() -> dict[str, object]:
+    return {
+        "generated_prompt": (
+            "Create a structured study activity based on the user's request."
+        )
+    }
+
+
+def test_build_prompt_inserts_user_request() -> None:
+    prompt = PromptGeneratorService.build_prompt("Generate difficult exam questions.")
+
+    assert "{{TEXT}}" not in prompt
+    assert "Generate difficult exam questions." in prompt
+
+
+def test_generate_returns_validated_prompt() -> None:
+    class FakeProvider:
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            assert "Generate difficult exam questions." in prompt
+            return _valid_prompt_payload()
+
+    result = PromptGeneratorService.generate(
+        "Generate difficult exam questions.",
+        FakeProvider(),
+    )
+
+    assert result.generated_prompt == (
+        "Create a structured study activity based on the user's request."
+    )
+
+
+def test_generate_wraps_text_generation_error() -> None:
+    class FakeProvider:
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            raise TextGenerationError("Provider failed")
+
+    try:
+        PromptGeneratorService.generate(
+            "Generate a quiz prompt.",
+            FakeProvider(),
+        )
+    except PromptGenerationError as exc:
+        assert "Text generation provider failed." in str(exc)
+    else:
+        raise AssertionError("Expected PromptGenerationError")
+
+
+def test_generate_rejects_invalid_prompt_structure() -> None:
+    class FakeProvider:
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            return {}
+
+    try:
+        PromptGeneratorService.generate(
+            "Generate a summary prompt.",
+            FakeProvider(),
+        )
+    except PromptGenerationError as exc:
+        assert "invalid structure" in str(exc)
+    else:
+        raise AssertionError("Expected PromptGenerationError")
+
+
+def test_prompt_generator_endpoint_returns_generated_prompt(
+    upload_api,
+    monkeypatch,
+) -> None:
+    class FakeProvider:
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            assert "Generate a concise study guide." in prompt
+            return {
+                "generated_prompt": (
+                    "Create a concise study guide with key concepts and examples."
+                )
+            }
+
+    monkeypatch.setattr(
+        prompt_generator_route,
+        "get_text_generation_provider",
+        lambda: FakeProvider(),
+    )
+
+    response = upload_api.client.post(
+        "/api/prompt-generator",
+        json={
+            "description": "Generate a concise study guide.",
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+
+    assert payload["success"] is True
+    assert payload["message"] == "Prompt generated successfully"
+    assert payload["data"]["generated_prompt"] == (
+        "Create a concise study guide with key concepts and examples."
+    )
+
+
+def test_prompt_generator_endpoint_requires_authentication(
+    api_context,
+) -> None:
+    response = api_context.client.post(
+        "/api/prompt-generator",
+        json={
+            "description": "Generate a quiz prompt.",
+        },
+    )
+
+    assert response.status_code == 401

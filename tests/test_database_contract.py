@@ -2,11 +2,12 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import DateTime, Engine, Text, delete, inspect, select
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.models import (
+    AiUsageLog,
     Course,
     DocumentChunk,
     DocumentPage,
@@ -58,8 +59,8 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         course = Course(
             owner=user,
             title="Contract course",
-            instructor="Contract user",
-            price=0,
+            semester="Fall",
+            exam_date="2026",
         )
         document = UploadedDocument(
             id=document_id,
@@ -103,6 +104,8 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
             document=document,
             course=course,
             chunk_index=0,
+            page_number=1,
+            end_page_number=1,
             text="Contract text",
         )
         generated_output = GeneratedOutput(
@@ -125,6 +128,18 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
             topic="contracts",
             detail="Understands relational contracts.",
         )
+        usage_log = AiUsageLog(
+            user=user,
+            course=course,
+            generation_type="study_guide",
+            provider="gemini",
+            model="gemini-2.5-flash",
+            prompt_tokens=10,
+            completion_tokens=20,
+            total_tokens=30,
+            latency_ms=150,
+            success=True,
+        )
         session.add_all(
             (
                 document,
@@ -136,6 +151,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
                 attempt,
                 progress,
                 knowledge,
+                usage_log,
             )
         )
         session.flush()
@@ -153,6 +169,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         attempt_id = attempt.id
         progress_id = progress.id
         knowledge_id = knowledge.id
+        usage_log_id = usage_log.id
 
     with session_factory() as session:
         persisted_document = session.get(UploadedDocument, document_id)
@@ -198,6 +215,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         assert session.get(QuizAttempt, attempt_id) is None
         assert session.get(Progress, progress_id) is None
         assert session.get(ProfileKnowledge, knowledge_id) is None
+        assert session.get(AiUsageLog, usage_log_id) is None
         assert session.scalar(select(Role.id).where(Role.name == "user")) is not None
 
 
@@ -217,8 +235,8 @@ def test_unloaded_course_delete_cascades_every_course_branch(
         course = Course(
             owner=user,
             title="Course cascade contract",
-            instructor="Course contract user",
-            price=0,
+            semester="Fall",
+            exam_date="2026",
         )
         document = UploadedDocument(
             id=document_id,
@@ -252,8 +270,24 @@ def test_unloaded_course_delete_cascades_every_course_branch(
             topic="course cascades",
             detail="Must survive course deletion.",
         )
+        usage_log = AiUsageLog(
+            user=user,
+            course=course,
+            generation_type="quiz",
+            provider="gemini",
+            model="gemini-2.5-flash",
+            success=True,
+        )
         session.add_all(
-            (document, generated_output, question, attempt, progress, knowledge)
+            (
+                document,
+                generated_output,
+                question,
+                attempt,
+                progress,
+                knowledge,
+                usage_log,
+            )
         )
         session.flush()
         job = enqueue_document_job(session, document)
@@ -267,6 +301,7 @@ def test_unloaded_course_delete_cascades_every_course_branch(
         progress_id = progress.id
         knowledge_id = knowledge.id
         job_id = job.id
+        usage_log_id = usage_log.id
 
     with session_factory() as session:
         session.execute(delete(Course).where(Course.id == course_id))
@@ -281,6 +316,7 @@ def test_unloaded_course_delete_cascades_every_course_branch(
         assert session.get(QuizQuestion, question_id) is None
         assert session.get(QuizAttempt, attempt_id) is None
         assert session.get(Progress, progress_id) is None
+        assert session.get(AiUsageLog, usage_log_id) is None
         assert session.get(User, user_id) is not None
         assert session.get(ProfileKnowledge, knowledge_id) is not None
 
@@ -333,8 +369,6 @@ def test_quiz_question_indexes_are_nonnegative(
         course = Course(
             owner=user,
             title="Quiz constraint course",
-            instructor="Quiz constraint user",
-            price=0,
         )
         quiz = Quiz(course=course, title="Constraint quiz")
         values = {
@@ -369,14 +403,10 @@ def test_processing_job_identifiers_and_ownership_are_enforced(
         course = Course(
             owner=user,
             title="Job constraint course",
-            instructor="Job constraint user",
-            price=0,
         )
         other_course = Course(
             owner=user,
             title="Other job course",
-            instructor="Job constraint user",
-            price=0,
         )
         document = UploadedDocument(
             id=document_id,
@@ -472,3 +502,28 @@ def test_utc_datetime_rejects_naive_values(
         with pytest.raises(StatementError):
             session.commit()
         session.rollback()
+
+
+def test_migrated_schema_has_no_column_drift_from_the_models(
+    schema_drift: dict[str, dict[str, list[str]]],
+) -> None:
+    """Alembic and the ORM models must describe the same columns.
+
+    A model column with no migration deploys as a missing column, and a
+    migration column with no model is dead schema. Either direction fails here.
+    """
+    assert schema_drift == {}
+
+
+def test_course_workspace_columns_are_migrated_as_designed(
+    database_engine: Engine,
+) -> None:
+    """The new columns must carry the nullability the model declares."""
+    columns = {
+        column["name"]: column
+        for column in inspect(database_engine).get_columns("courses")
+    }
+    assert columns["syllabus"]["nullable"] is True
+    assert columns["updated_at"]["nullable"] is False
+    assert isinstance(columns["syllabus"]["type"], Text)
+    assert isinstance(columns["updated_at"]["type"], DateTime)

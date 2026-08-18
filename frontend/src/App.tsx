@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { FormEvent, useEffect, useRef, useState, useCallback } from 'react'
 import {
   CircleHelp,
   File,
@@ -13,27 +13,38 @@ import type {
   WorkspaceDraft,
   WorkspaceSource,
 } from './data/workspaces'
-import { initialWorkspaces } from './data/workspaces'
 import EditPage from './pages/EditPage'
 import ProfilePage from './pages/ProfilePage'
 import SettingsPage from './pages/SettingsPage'
 import WorkspacesPage from './pages/WorkspacesPage'
+import LandingPage from './pages/LandingPage'
+import LoginPage from './pages/LoginPage'
+import RegisterPage from './pages/RegisterPage'
+import { ProtectedRoute } from './components/ProtectedRoute'
+import { useAuth } from './context/AuthContext'
+import { coursesAPI } from './api/courses'
+import { Course } from './api/types'
 import './App.css'
 import './pages/pages.css'
 import './pages/workspaces.css'
 
-type WorkspaceTab = 'Exam' | 'Tutoring' | 'Practice'
+import { SummaryModal } from './components/study/SummaryModal'
+import { QuizModal } from './components/study/QuizModal'
+import { ProgressDashboard } from './components/study/ProgressDashboard'
+import type { QuizResult } from './data/mockStudyData'
+
+type WorkspaceTab = 'Exam' | 'Tutoring' | 'Practice' | 'Analytics'
 
 const tabContent: Record<
-  WorkspaceTab,
+  Exclude<WorkspaceTab, 'Analytics'>,
   { body: string; suggestions: string[] }
 > = {
   Exam: {
     body: `Individuals, when faced with dire situations, often possess the tendency to seek comfort in any form that is accessible to them, even resorting to mental fabrication at times to conjure up the very comfort they had initially sought. This innate pursuit of comfort can manifest as self manipulation, as individuals try to alter their perception of the current conditions in their favor, creating a more optimal situation. This is accomplished by originating a mental barrier in between the cause of an individual's discomfort and the individual themselves with the aim of limiting further exposure and thus, further discomfort. This method is often utilized when individuals alter their perception to avoid the emotional toll that taking proper accountability entails. By reshaping their perception, individuals aim to avoid this emotional toll of undertaking liability, actively favoring comfort over truth. Instead of facing the ethical consequences of their actions, individuals generally opt for the easier route, where they delicately reconstruct their perception of their current situation to minimize their culpability in both their own and everyone's perspective. For instance, people who actively partake in such activities, might be inclined to blame external influences, rather than undertaking necessary liability. An individual who acts negligent towards a responsibility of theirs to such a degree that they pass a certain point, where nothing of significance can be done about aforementioned responsibility, might find placing the blame onto outside circumstances more palatable and comforting. This inclination to shift the blame is fueled by individuals' escapist tendencies which aspire to alleviate the concomitant discomfort that accompanies the process of taking accountability. As a result, self-manipulation expectedly becomes an effective vessel utilized for escapism, as it helps individuals form metaphorical barriers in between themselves and the moral implications of their actions, albeit not offering a remedy of any sorts for the affected party.`,
     suggestions: [
-      'Generate multi-choice problems',
-      'Generate open ended problems',
       'Generate summary',
+      'Start a quick practice set',
+      'Generate multi-choice problems',
       'Make comparisons with specific sources',
     ],
   },
@@ -42,7 +53,7 @@ const tabContent: Record<
     suggestions: [
       'Explain the central argument',
       'Teach this topic step by step',
-      'Give me an everyday example',
+      'Generate summary',
       'Ask me a guiding question',
     ],
   },
@@ -52,40 +63,82 @@ const tabContent: Record<
       'Start a quick practice set',
       'Create true or false questions',
       'Practice my weakest topic',
-      'Review my answers',
+      'Generate summary',
     ],
   },
 }
 
 type WorkspacePageProps = {
   workspace: Workspace
+  onUpdateProgress?: (workspaceId: string, progress: number) => void
 }
 
-function WorkspacePage({ workspace }: WorkspacePageProps) {
+function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('Exam')
   const [sources, setSources] = useState<WorkspaceSource[]>(workspace.sources)
   const [generatorPrompt, setGeneratorPrompt] = useState('')
   const [mainPrompt, setMainPrompt] = useState('')
   const [lastPrompt, setLastPrompt] = useState('')
+  const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false)
+  const [isQuizModalOpen, setIsQuizModalOpen] = useState(false)
+  const [quizHistory, setQuizHistory] = useState<QuizResult[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const addSources = (files: FileList | null) => {
+  useEffect(() => {
+    let isMounted = true;
+    const loadDocuments = async () => {
+      try {
+        const docs = await coursesAPI.listDocuments(Number(workspace.id));
+        if (isMounted) {
+          setSources(docs.map(doc => ({
+            id: doc.id,
+            name: doc.original_file_name,
+            description: `Status: ${doc.status}`
+          })));
+        }
+      } catch (err) {
+        console.error("Failed to load documents", err);
+      }
+    };
+    loadDocuments();
+    return () => { isMounted = false; };
+  }, [workspace.id]);
+
+  const addSources = async (files: FileList | null) => {
     if (!files?.length) return
 
-    const nextId = Math.max(0, ...sources.map(({ id }) => id)) + 1
-    const addedSources = Array.from(files).map((file, index) => ({
-      id: nextId + index,
-      name: file.name,
-      description: 'Ready for local preview.',
-    }))
-
-    setSources((current) => [...current, ...addedSources])
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        const response = await coursesAPI.uploadDocument(Number(workspace.id), file);
+        const newSource: WorkspaceSource = {
+          id: response.document.id,
+          name: response.document.original_file_name,
+          description: `Status: ${response.document.status}`,
+        };
+        setSources((current) => [...current, newSource]);
+      } catch (err) {
+        console.error("Failed to upload document", err);
+      }
+    }
   }
 
   const generatePrompt = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const request = generatorPrompt.trim()
     if (!request) return
+
+    if (request.toLowerCase().includes('summary') || request.toLowerCase().includes('özet')) {
+      setIsSummaryModalOpen(true)
+      setGeneratorPrompt('')
+      return
+    }
+
+    if (request.toLowerCase().includes('quiz') || request.toLowerCase().includes('soru') || request.toLowerCase().includes('test')) {
+      setIsQuizModalOpen(true)
+      setGeneratorPrompt('')
+      return
+    }
 
     setMainPrompt(`Create a clear study activity about: ${request}`)
     setGeneratorPrompt('')
@@ -96,13 +149,43 @@ function WorkspacePage({ workspace }: WorkspacePageProps) {
     const prompt = mainPrompt.trim()
     if (!prompt) return
 
+    if (prompt.toLowerCase().includes('summary') || prompt.toLowerCase().includes('özet')) {
+      setIsSummaryModalOpen(true)
+      setMainPrompt('')
+      return
+    }
+
+    if (prompt.toLowerCase().includes('quiz') || prompt.toLowerCase().includes('test') || prompt.toLowerCase().includes('practice')) {
+      setIsQuizModalOpen(true)
+      setMainPrompt('')
+      return
+    }
+
     setLastPrompt(prompt)
     setMainPrompt('')
   }
 
   const chooseSuggestion = (suggestion: string) => {
+    if (suggestion === 'Generate summary') {
+      setIsSummaryModalOpen(true)
+      return
+    }
+    if (suggestion === 'Start a quick practice set' || suggestion === 'Create true or false questions' || suggestion === 'Generate multi-choice problems') {
+      setIsQuizModalOpen(true)
+      return
+    }
     setMainPrompt(suggestion)
   }
+
+  const handleQuizCompleted = (result: QuizResult) => {
+    setQuizHistory(prev => [result, ...prev])
+    if (onUpdateProgress) {
+      const newProgress = Math.min(100, Math.max(workspace.progress, result.scorePercentage))
+      onUpdateProgress(workspace.id, newProgress)
+    }
+  }
+
+  const tabList: WorkspaceTab[] = ['Exam', 'Tutoring', 'Practice', 'Analytics']
 
   return (
     <main className="workspace-shell">
@@ -155,8 +238,7 @@ function WorkspacePage({ workspace }: WorkspacePageProps) {
           <div className="generator-description">
             <CircleHelp aria-hidden="true" strokeWidth={2.2} />
             <p>
-              Enter a description of your desired prompt to generate a prompt
-              best suited for the AI to maximize efficiency.
+              Enter a description of your desired prompt to generate study activities, summaries, or quizzes.
             </p>
           </div>
 
@@ -169,7 +251,7 @@ function WorkspacePage({ workspace }: WorkspacePageProps) {
               id="generator-prompt"
               value={generatorPrompt}
               onChange={(event) => setGeneratorPrompt(event.target.value)}
-              placeholder="Enter prompt description."
+              placeholder="e.g. Generate summary or Quiz"
             />
             <button type="submit" aria-label="Generate prompt">
               <Search aria-hidden="true" />
@@ -183,7 +265,7 @@ function WorkspacePage({ workspace }: WorkspacePageProps) {
 
         <div className="workspace-stage">
           <div className="workspace-tabs" role="tablist" aria-label="Study mode">
-            {(Object.keys(tabContent) as WorkspaceTab[]).map((tab) => (
+            {tabList.map((tab) => (
               <button
                 className={activeTab === tab ? 'active' : ''}
                 type="button"
@@ -197,57 +279,100 @@ function WorkspacePage({ workspace }: WorkspacePageProps) {
             ))}
           </div>
 
-          <section className="panel chat-panel" role="tabpanel">
-            <header className="panel-header chat-header">
-              <h2>Chat</h2>
-            </header>
-
-            <div className="chat-scroll">
-              <p className="response-copy">{tabContent[activeTab].body}</p>
-
-              <div className="suggestions" aria-label="Suggested prompts">
-                {tabContent[activeTab].suggestions.map((suggestion) => (
+          {activeTab === 'Analytics' ? (
+            <ProgressDashboard
+              courseName={workspace.name}
+              topics={workspace.topics}
+              documentCount={sources.length}
+              quizHistory={quizHistory}
+              onOpenQuizModal={() => setIsQuizModalOpen(true)}
+              onOpenSummaryModal={() => setIsSummaryModalOpen(true)}
+            />
+          ) : (
+            <section className="panel chat-panel" role="tabpanel">
+              <header className="panel-header chat-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <h2>Chat & Study Tools</h2>
+                <div style={{ display: 'flex', gap: '8px' }}>
                   <button
                     type="button"
-                    key={suggestion}
-                    onClick={() => chooseSuggestion(suggestion)}
+                    className="secondary-button"
+                    style={{ padding: '6px 12px', fontSize: '13px' }}
+                    onClick={() => setIsSummaryModalOpen(true)}
                   >
-                    <CircleHelp aria-hidden="true" strokeWidth={2.2} />
-                    <span>{suggestion}</span>
+                    ✨ Summary
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    className="primary-button"
+                    style={{ padding: '6px 12px', fontSize: '13px' }}
+                    onClick={() => setIsQuizModalOpen(true)}
+                  >
+                    🎯 Practice Quiz
+                  </button>
+                </div>
+              </header>
+
+              <div className="chat-scroll">
+                <p className="response-copy">{tabContent[activeTab].body}</p>
+
+                <div className="suggestions" aria-label="Suggested prompts">
+                  {tabContent[activeTab].suggestions.map((suggestion) => (
+                    <button
+                      type="button"
+                      key={suggestion}
+                      onClick={() => chooseSuggestion(suggestion)}
+                    >
+                      <CircleHelp aria-hidden="true" strokeWidth={2.2} />
+                      <span>{suggestion}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {lastPrompt && (
+                  <p className="local-status" role="status">
+                    Prompt saved locally: "{lastPrompt}"
+                  </p>
+                )}
               </div>
 
-              {lastPrompt && (
-                <p className="local-status" role="status">
-                  Prompt saved locally: "{lastPrompt}"
-                </p>
-              )}
-            </div>
-
-            <form className="prompt-field main-prompt" onSubmit={submitPrompt}>
-              <Menu aria-hidden="true" />
-              <label className="visually-hidden" htmlFor="main-prompt">
-                Enter prompt
-              </label>
-              <input
-                id="main-prompt"
-                value={mainPrompt}
-                onChange={(event) => setMainPrompt(event.target.value)}
-                placeholder="Enter prompt."
-              />
-              <button type="submit" aria-label="Submit prompt">
-                <Search aria-hidden="true" />
-              </button>
-            </form>
-          </section>
+              <form className="prompt-field main-prompt" onSubmit={submitPrompt}>
+                <Menu aria-hidden="true" />
+                <label className="visually-hidden" htmlFor="main-prompt">
+                  Enter prompt
+                </label>
+                <input
+                  id="main-prompt"
+                  value={mainPrompt}
+                  onChange={(event) => setMainPrompt(event.target.value)}
+                  placeholder="Enter prompt (type 'summary' or 'quiz' for quick tools)..."
+                />
+                <button type="submit" aria-label="Submit prompt">
+                  <Search aria-hidden="true" />
+                </button>
+              </form>
+            </section>
+          )}
         </div>
       </section>
+
+      <SummaryModal
+        isOpen={isSummaryModalOpen}
+        onClose={() => setIsSummaryModalOpen(false)}
+        courseName={workspace.name}
+        topics={workspace.topics}
+      />
+
+      <QuizModal
+        isOpen={isQuizModalOpen}
+        onClose={() => setIsQuizModalOpen(false)}
+        courseName={workspace.name}
+        topics={workspace.topics}
+        onQuizCompleted={handleQuizCompleted}
+      />
     </main>
   )
 }
 
-const WORKSPACES_STORAGE_KEY = 'lumina.workspaces'
 const ACTIVE_WORKSPACE_STORAGE_KEY = 'lumina.activeWorkspaceId'
 const workspaceAccents: Workspace['accent'][] = [
   'blue',
@@ -256,26 +381,13 @@ const workspaceAccents: Workspace['accent'][] = [
   'amber',
 ]
 
-function loadWorkspaces() {
-  const storedWorkspaces = localStorage.getItem(WORKSPACES_STORAGE_KEY)
-  if (!storedWorkspaces) return initialWorkspaces
-
-  try {
-    const parsedWorkspaces = JSON.parse(storedWorkspaces) as Workspace[]
-    return Array.isArray(parsedWorkspaces) && parsedWorkspaces.length > 0
-      ? parsedWorkspaces
-      : initialWorkspaces
-  } catch {
-    return initialWorkspaces
-  }
-}
-
 type WorkspaceRouteProps = {
   workspaces: Workspace[]
   onSelect: (workspaceId: string) => void
+  onUpdateProgress?: (workspaceId: string, progress: number) => void
 }
 
-function WorkspaceRoute({ workspaces, onSelect }: WorkspaceRouteProps) {
+function WorkspaceRoute({ workspaces, onSelect, onUpdateProgress }: WorkspaceRouteProps) {
   const { workspaceId } = useParams()
   const workspace = workspaces.find(({ id }) => id === workspaceId)
 
@@ -284,11 +396,17 @@ function WorkspaceRoute({ workspaces, onSelect }: WorkspaceRouteProps) {
   }, [onSelect, workspace])
 
   if (!workspace) return <Navigate to="/" replace />
-  return <WorkspacePage key={workspace.id} workspace={workspace} />
+  return (
+    <WorkspacePage
+      key={workspace.id}
+      workspace={workspace}
+      onUpdateProgress={onUpdateProgress}
+    />
+  )
 }
 
 type EditWorkspaceRouteProps = WorkspaceRouteProps & {
-  onSave: (workspace: Workspace) => void
+  onSave: (workspace: Workspace) => Promise<void> | void
 }
 
 function EditWorkspaceRoute({
@@ -307,108 +425,156 @@ function EditWorkspaceRoute({
   return <EditPage key={workspace.id} workspace={workspace} onSave={onSave} />
 }
 
+function mapCourseToWorkspace(course: Course, index: number): Workspace {
+  return {
+    id: course.id.toString(),
+    name: course.title,
+    semester: course.semester || '',
+    examDate: course.exam_date || '',
+    topics: course.topics ? course.topics.split(',').map(t => t.trim()) : [],
+    syllabus: course.syllabus || '',
+    progress: 0,
+    status: 'In progress',
+    updatedAt: new Date(course.updated_at).toLocaleDateString(),
+    accent: workspaceAccents[index % workspaceAccents.length],
+    sources: [],
+  };
+}
+
 function App() {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>(loadWorkspaces)
+  const { isAuthenticated } = useAuth()
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(
-    () =>
-      localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) ??
-      initialWorkspaces[0].id,
+    () => localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) ?? ''
   )
 
-  useEffect(() => {
-    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspaces))
-  }, [workspaces])
+  const fetchWorkspaces = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const courses = await coursesAPI.list();
+      const mappedWorkspaces = courses.map((course, index) => mapCourseToWorkspace(course, index));
+      setWorkspaces(mappedWorkspaces);
+      
+      setActiveWorkspaceId((current) => {
+        if (mappedWorkspaces.length > 0 && !current) {
+          return mappedWorkspaces[0].id;
+        }
+        return current;
+      });
+    } catch (error) {
+      console.error("Failed to load workspaces", error);
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
-    localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, activeWorkspaceId)
+    fetchWorkspaces();
+  }, [fetchWorkspaces]);
+
+  useEffect(() => {
+    if (activeWorkspaceId) {
+      localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, activeWorkspaceId)
+    }
   }, [activeWorkspaceId])
 
   const selectWorkspace = (workspaceId: string) => {
     setActiveWorkspaceId(workspaceId)
   }
 
-  const createWorkspace = (draft: WorkspaceDraft) => {
-    const slugBase =
-      draft.name
-        .toLowerCase()
-        .trim()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '') || 'workspace'
-    let id = slugBase
-    let suffix = 2
-
-    while (workspaces.some((workspace) => workspace.id === id)) {
-      id = `${slugBase}-${suffix}`
-      suffix += 1
+  const createWorkspace = async (draft: WorkspaceDraft) => {
+    try {
+      const newCourse = await coursesAPI.create({
+        title: draft.name.trim(),
+        syllabus: draft.syllabus.trim(),
+        semester: draft.semester.trim(),
+        exam_date: draft.examDate,
+        topics: draft.topics,
+      });
+      
+      const newWorkspace = mapCourseToWorkspace(newCourse, workspaces.length);
+      setWorkspaces(current => [newWorkspace, ...current]);
+      setActiveWorkspaceId(newWorkspace.id);
+      return newWorkspace;
+    } catch (error) {
+      console.error("Failed to create workspace", error);
+      throw error;
     }
-
-    const workspace: Workspace = {
-      id,
-      name: draft.name.trim(),
-      semester: draft.semester.trim(),
-      examDate: draft.examDate,
-      topics: draft.topics
-        .split(',')
-        .map((topic) => topic.trim())
-        .filter(Boolean),
-      syllabus: draft.syllabus.trim(),
-      progress: 0,
-      status: 'New',
-      updatedAt: 'Created just now',
-      accent: workspaceAccents[workspaces.length % workspaceAccents.length],
-      sources: [],
-    }
-
-    setWorkspaces((current) => [workspace, ...current])
-    setActiveWorkspaceId(workspace.id)
-    return workspace
   }
 
-  const updateWorkspace = (updatedWorkspace: Workspace) => {
+  const updateWorkspace = async (updatedWorkspace: Workspace) => {
+    try {
+      const updatedCourse = await coursesAPI.update(Number(updatedWorkspace.id), {
+        title: updatedWorkspace.name.trim(),
+        syllabus: updatedWorkspace.syllabus.trim(),
+        semester: updatedWorkspace.semester.trim(),
+        exam_date: updatedWorkspace.examDate,
+        topics: updatedWorkspace.topics.join(', '),
+      });
+      
+      const updatedMappedWorkspace = mapCourseToWorkspace(updatedCourse, workspaces.findIndex(w => w.id === updatedWorkspace.id));
+      setWorkspaces(current =>
+        current.map(workspace =>
+          workspace.id === updatedWorkspace.id ? updatedMappedWorkspace : workspace
+        )
+      );
+    } catch (error) {
+      console.error("Failed to update workspace", error);
+    }
+  }
+
+  const updateWorkspaceProgress = (workspaceId: string, progress: number) => {
     setWorkspaces((current) =>
-      current.map((workspace) =>
-        workspace.id === updatedWorkspace.id ? updatedWorkspace : workspace,
-      ),
-    )
-  }
+      current.map((w) => (w.id === workspaceId ? { ...w, progress } : w))
+    );
+  };
 
   return (
     <Routes>
-      <Route
-        path="/"
-        element={
-          <WorkspacesPage
-            workspaces={workspaces}
-            activeWorkspaceId={activeWorkspaceId}
-            onCreate={createWorkspace}
-            onSelect={selectWorkspace}
-          />
-        }
-      />
-      <Route
-        path="/workspaces/:workspaceId"
-        element={
-          <WorkspaceRoute workspaces={workspaces} onSelect={selectWorkspace} />
-        }
-      />
-      <Route
-        path="/workspaces/:workspaceId/edit"
-        element={
-          <EditWorkspaceRoute
-            workspaces={workspaces}
-            onSelect={selectWorkspace}
-            onSave={updateWorkspace}
-          />
-        }
-      />
-      <Route
-        path="/settings"
-        element={<SettingsPage workspaceId={activeWorkspaceId} />}
-      />
-      <Route
-        path="/profile"
-        element={<ProfilePage workspaceId={activeWorkspaceId} />}
-      />
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+      
+      <Route element={<ProtectedRoute />}>
+        <Route
+          path="/dashboard"
+          element={
+            <WorkspacesPage
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              onCreate={createWorkspace}
+              onSelect={selectWorkspace}
+            />
+          }
+        />
+        <Route
+          path="/workspaces/:workspaceId"
+          element={
+            <WorkspaceRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              onUpdateProgress={updateWorkspaceProgress}
+            />
+          }
+        />
+        <Route
+          path="/workspaces/:workspaceId/edit"
+          element={
+            <EditWorkspaceRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              onSave={updateWorkspace}
+            />
+          }
+        />
+        <Route
+          path="/settings"
+          element={<SettingsPage workspaceId={activeWorkspaceId} />}
+        />
+        <Route
+          path="/profile"
+          element={<ProfilePage workspaceId={activeWorkspaceId} />}
+        />
+      </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

@@ -51,12 +51,17 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        if is_sqlite_database(database_url):
+            cursor = connection.connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=OFF")
+            cursor.close()
+
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
             compare_server_default=True,
-            render_as_batch=connection.dialect.name == "sqlite",
+            render_as_batch=is_sqlite_database(database_url),
         )
 
         with context.begin_transaction():

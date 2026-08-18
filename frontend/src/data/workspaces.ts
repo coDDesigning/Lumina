@@ -1,5 +1,5 @@
 export type WorkspaceSource = {
-  id: number
+  id: string | number
   name: string
   description: string
 }

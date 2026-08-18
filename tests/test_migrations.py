@@ -16,7 +16,11 @@ PROCESSING_REVISION = "b6d8f2a4c901"
 STAGES_REVISION = "d2a7f0c91e35"
 PAGES_REVISION = "c4e6a8f1b203"
 VISUAL_REVISION = "f7a3c9d2e541"
+VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
+COURSE_FIELDS_REVISION = "a4fd52f56b91"
+AI_USAGE_REVISION = "b7e2a9d1c3f4"
+SYLLABUS_REVISION = "e5c1a7b39d64"
 HEAD_REVISION = "a1c5e7f9b203"
 
 
@@ -31,7 +35,10 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: CHUNK_RANGES_REVISION,
+        HEAD_REVISION: SYLLABUS_REVISION,
+        SYLLABUS_REVISION: AI_USAGE_REVISION,
+        AI_USAGE_REVISION: COURSE_FIELDS_REVISION,
+        COURSE_FIELDS_REVISION: CHUNK_RANGES_REVISION,
         CHUNK_RANGES_REVISION: VISUAL_REVISION,
         VISUAL_REVISION: PAGES_REVISION,
         PAGES_REVISION: STAGES_REVISION,
@@ -139,7 +146,7 @@ def assert_hardening_not_applied(database_path: Path) -> None:
     with sqlite3.connect(database_path) as connection:
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
-        ).fetchone() == (CHUNK_RANGES_REVISION,)
+        ).fetchone() == (SYLLABUS_REVISION,)
         document_indexes = {
             row[1]
             for row in connection.execute("PRAGMA index_list(uploaded_documents)")
@@ -171,6 +178,10 @@ def assert_hardening_not_applied(database_path: Path) -> None:
         assert "ck_quiz_questions_question_index_nonnegative" not in question_sql
 
 
+def course_columns(connection: sqlite3.Connection) -> set[str]:
+    return {row[1] for row in connection.execute("PRAGMA table_info(courses)")}
+
+
 def database_tables(connection: sqlite3.Connection) -> set[str]:
     return {
         row[0]
@@ -193,6 +204,7 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert "document_pages" in tables
         assert "document_visuals" in tables
         assert "processing_jobs" in tables
+        assert "ai_usage_logs" in tables
 
         roles = connection.execute("SELECT name FROM roles ORDER BY name").fetchall()
         assert roles == [("admin",), ("user",)]
@@ -848,3 +860,89 @@ def test_processing_migration_backfills_existing_documents(tmp_path: Path) -> No
             (document_ids[0],),
         ).fetchone()
         assert document_status == ("pending",)
+
+
+def test_course_workspace_migration_backfills_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    """Upgrade, downgrade and re-upgrade must all behave, and preserve syllabus text.
+
+    The frontend stored syllabus prose in ``description`` before this revision, so
+    the upgrade backfills it. Downgrade drops only the new columns, which leaves
+    ``description`` intact for the re-upgrade to derive from again.
+    """
+    database_path = tmp_path / "course-workspace.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", AI_USAGE_REVISION)
+
+    created_at = "2026-01-02 03:04:05"
+    with sqlite3.connect(database_path) as connection:
+        columns = course_columns(connection)
+        assert "syllabus" not in columns
+        assert "updated_at" not in columns
+
+        role_id = connection.execute(
+            "SELECT id FROM roles WHERE name = 'user'"
+        ).fetchone()[0]
+        user_id = connection.execute(
+            "INSERT INTO users "
+            "(name, email, password_hash, role_id, is_banned, preferred_model) "
+            "VALUES (?, ?, ?, ?, 0, ?)",
+            (
+                "Course workspace user",
+                "course-workspace@example.com",
+                "hash",
+                role_id,
+                "model",
+            ),
+        ).lastrowid
+        described_id = connection.execute(
+            "INSERT INTO courses "
+            "(title, description, is_deleted, owner_id, created_at) "
+            "VALUES (?, ?, 0, ?, ?)",
+            ("Described course", "Week 1: Fundamentals", user_id, created_at),
+        ).lastrowid
+        bare_id = connection.execute(
+            "INSERT INTO courses "
+            "(title, description, is_deleted, owner_id, created_at) "
+            "VALUES (?, NULL, 0, ?, ?)",
+            ("Bare course", user_id, created_at),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        columns = course_columns(connection)
+        assert "syllabus" in columns
+        assert "updated_at" in columns
+        assert connection.execute(
+            "SELECT syllabus, updated_at FROM courses WHERE id = ?",
+            (described_id,),
+        ).fetchone() == ("Week 1: Fundamentals", created_at)
+        assert connection.execute(
+            "SELECT syllabus, updated_at FROM courses WHERE id = ?",
+            (bare_id,),
+        ).fetchone() == (None, created_at)
+        assert connection.execute(
+            "SELECT title, owner_id FROM courses WHERE id = ?", (described_id,)
+        ).fetchone() == ("Described course", user_id)
+
+    run_alembic(database_path, tmp_path, "downgrade", AI_USAGE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = course_columns(connection)
+        assert "syllabus" not in columns
+        assert "updated_at" not in columns
+        assert connection.execute(
+            "SELECT description FROM courses WHERE id = ?", (described_id,)
+        ).fetchone() == ("Week 1: Fundamentals",)
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT syllabus FROM courses WHERE id = ?", (described_id,)
+        ).fetchone() == ("Week 1: Fundamentals",)
+        revision = connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone()
+        assert revision == (HEAD_REVISION,)

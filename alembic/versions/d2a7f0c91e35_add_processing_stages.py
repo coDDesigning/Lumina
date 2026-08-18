@@ -154,13 +154,13 @@ def _restore_sqlite_dependents() -> None:
     )
     op.execute(
         sa.text(
-            f"INSERT INTO processing_jobs ({job_columns}) "
+            f"INSERT OR IGNORE INTO processing_jobs ({job_columns}) "
             f"SELECT {job_columns} FROM _scrum35_jobs_backup"
         )
     )
     op.execute(
         sa.text(
-            f"INSERT INTO document_chunks ({chunk_columns}) "
+            f"INSERT OR IGNORE INTO document_chunks ({chunk_columns}) "
             f"SELECT {chunk_columns} FROM _scrum35_chunks_backup"
         )
     )

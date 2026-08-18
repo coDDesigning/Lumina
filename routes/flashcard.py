@@ -1,22 +1,17 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
-from schemas.flashcard import FlashcardGenerationResponse
+from schemas.flashcard import FlashcardGenerationResult
 from schemas.response import BaseResponse
-from services.flashcard import (
-    FlashcardGenerationError,
-    FlashcardService,
-    NoReadyCourseMaterialError,
-)
-from services.text_generation import (
-    TextGenerationConnectionError,
-    TextGenerationError,
-    get_text_generation_provider,
-)
+from schemas.user import UserResponse
+from services.flashcard import FlashcardGenerationError, FlashcardService
+from services.text_generation import TextGenerationError, get_text_generation_provider
+from utils.ai_errors import ai_generation_http_exception
 from utils.authorization import OwnedCourse
+from utils.deps import get_current_user
 
 router = APIRouter(
     prefix="/api/courses",
@@ -26,8 +21,9 @@ router = APIRouter(
 
 @router.post(
     "/{course_id}/flashcards",
-    response_model=BaseResponse[FlashcardGenerationResponse],
+    response_model=BaseResponse[FlashcardGenerationResult],
     responses={
+        400: {"description": "No processed course material is available"},
         401: {"description": "Authentication required"},
         404: {"description": "Course not found"},
         429: {"description": "AI provider rate limited"},
@@ -37,58 +33,37 @@ router = APIRouter(
 )
 def generate_flashcards(
     course: OwnedCourse,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
     try:
         provider = get_text_generation_provider()
 
-        flashcards = FlashcardService.generate(
+        generation = FlashcardService.generate(
             db,
             course.id,
             provider,
-            user_id=course.owner_id,
+            user_id=current_user.id,
         )
 
         FlashcardService.save_generated_flashcards(
             db,
             course.id,
-            flashcards,
+            generation.flashcards,
+            user_id=current_user.id,
+            model_used=generation.model_used,
         )
-
-    except NoReadyCourseMaterialError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-
-    except TextGenerationConnectionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
 
     except (TextGenerationError, FlashcardGenerationError) as exc:
-        cause = exc.__cause__ if exc.__cause__ is not None else exc
-        error_cat = getattr(
-            cause, "error_category", getattr(exc, "error_category", None)
-        )
-        if error_cat == "rate_limit":
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=str(cause or exc),
-            ) from exc
-        if error_cat == "timeout":
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail=str(cause or exc),
-            ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
+        raise ai_generation_http_exception(exc, feature="flashcard") from exc
 
     return BaseResponse(
         success=True,
         message="Flashcards generated successfully",
-        data=flashcards,
+        data=FlashcardGenerationResult(
+            flashcards=generation.flashcards,
+            context_truncated=generation.material.truncated,
+            chunks_used=generation.material.chunks_used,
+            chunks_available=generation.material.chunks_available,
+        ),
     )

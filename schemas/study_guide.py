@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from schemas.generation import BoundedContext
+
 
 class ImportantTerm(BaseModel):
     term: str
@@ -41,3 +43,7 @@ class StudyGuideResponse(BaseModel):
     learning_objectives: list[str]
     coverage: Coverage
     confidence_notes: str
+
+
+class StudyGuideGenerationResult(BoundedContext):
+    study_guide: StudyGuideResponse

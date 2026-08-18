@@ -127,7 +127,10 @@ def test_get_course_material_uses_ready_document_chunks(
         model_graph.course.id,
     )
 
-    assert material == "First chunk\n\nSecond chunk"
+    assert material.text == "First chunk\n\nSecond chunk"
+    assert material.chunks_used == 2
+    assert material.chunks_available == 2
+    assert material.truncated is False
 
 
 def test_build_prompt_inserts_course_material() -> None:
@@ -153,11 +156,13 @@ def test_generate_returns_validated_flashcards(
             assert "Example lecture material" in prompt
             return _valid_flashcard_payload()
 
-    result = FlashcardService.generate(
+    generation = FlashcardService.generate(
         db_session,
         model_graph.course.id,
         FakeProvider(),
     )
+
+    result = generation.flashcards
 
     assert result.deck_title == "Example Flashcards"
     assert result.card_count == 10
@@ -181,7 +186,7 @@ def test_generate_rejects_missing_ready_course_material(
             FakeProvider(),
         )
     except NoReadyCourseMaterialError as exc:
-        assert "No ready course material" in str(exc)
+        assert "No processed course material" in str(exc)
     else:
         raise AssertionError("Expected NoReadyCourseMaterialError")
 
@@ -268,7 +273,9 @@ def test_save_generated_flashcards_persists_output(
     generated_output = FlashcardService.save_generated_flashcards(
         db_session,
         model_graph.course.id,
-        flashcards,
+        flashcards.flashcards,
+        user_id=model_graph.user.id,
+        model_used=flashcards.model_used,
     )
 
     persisted = db_session.scalar(
@@ -341,6 +348,9 @@ def test_generate_flashcards_endpoint_returns_generated_flashcards(
 
     assert payload["success"] is True
     assert payload["message"] == "Flashcards generated successfully"
-    assert payload["data"]["deck_title"] == "Example Flashcards"
-    assert payload["data"]["card_count"] == 10
-    assert len(payload["data"]["flashcards"]) == 10
+    assert payload["data"]["flashcards"]["deck_title"] == "Example Flashcards"
+    assert payload["data"]["flashcards"]["card_count"] == 10
+    assert len(payload["data"]["flashcards"]["flashcards"]) == 10
+    assert payload["data"]["context_truncated"] is False
+    assert payload["data"]["chunks_used"] == 1
+    assert payload["data"]["chunks_available"] == 1

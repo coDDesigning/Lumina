@@ -1,92 +1,63 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
-from schemas.ai_tutor import AiTutorRequest, AiTutorResponse
+from schemas.ai_tutor import AiTutorGenerationResult, AiTutorRequest
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
-from services.ai_tutor import (
-    AiTutorError,
-    AiTutorService,
-    NoReadyCourseMaterialError,
-)
-from services.text_generation import (
-    TextGenerationConnectionError,
-    TextGenerationError,
-    get_text_generation_provider,
-)
+from services.ai_tutor import AiTutorError, AiTutorService
+from services.text_generation import TextGenerationError, get_text_generation_provider
+from utils.ai_errors import ai_generation_http_exception
+from utils.authorization import OwnedCourse
 from utils.deps import get_current_user
 
 router = APIRouter(
-    prefix="/api",
+    prefix="/api/courses",
     tags=["AI Tutor"],
 )
 
 
 @router.post(
-    "/ai-tutor",
-    response_model=BaseResponse[AiTutorResponse],
+    "/{course_id}/ai-tutor",
+    response_model=BaseResponse[AiTutorGenerationResult],
     responses={
+        400: {"description": "No processed course material is available"},
+        401: {"description": "Authentication required"},
+        404: {"description": "Course not found"},
         429: {"description": "AI provider rate limited"},
         503: {"description": "AI provider unreachable"},
         504: {"description": "AI provider timed out"},
     },
 )
 def ask_ai_tutor(
+    course: OwnedCourse,
     request: AiTutorRequest,
-    current_user: Annotated[
-        UserResponse,
-        Depends(get_current_user),
-    ],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
     try:
         provider = get_text_generation_provider()
 
-        response = AiTutorService.generate(
+        generation = AiTutorService.generate(
             db,
-            request.course_id,
+            course.id,
             request.question,
             provider,
             user_id=current_user.id,
         )
 
-    except NoReadyCourseMaterialError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-
-    except TextGenerationConnectionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-
     except (TextGenerationError, AiTutorError) as exc:
-        cause = exc.__cause__ if exc.__cause__ is not None else exc
-        error_cat = getattr(
-            cause, "error_category", getattr(exc, "error_category", None)
-        )
-        if error_cat == "rate_limit":
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=str(cause or exc),
-            ) from exc
-        if error_cat == "timeout":
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail=str(cause or exc),
-            ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
+        raise ai_generation_http_exception(exc, feature="ai_tutor") from exc
 
     return BaseResponse(
         success=True,
         message="AI tutor response generated successfully",
-        data=response,
+        data=AiTutorGenerationResult(
+            answer=generation.response.answer,
+            context_truncated=generation.material.truncated,
+            chunks_used=generation.material.chunks_used,
+            chunks_available=generation.material.chunks_available,
+        ),
     )

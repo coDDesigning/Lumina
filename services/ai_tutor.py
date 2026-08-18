@@ -1,22 +1,39 @@
+from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.models import Course, DocumentChunk, UploadedDocument
+from backend.app.config import settings
+from backend.app.models import Course
 from schemas.ai_tutor import AiTutorResponse
 from schemas.ai_usage import ErrorCategory, GenerationType
 from services.ai_usage_logger import AiUsageLogger
+from services.course_material import CourseMaterial, load_course_material
 from services.prompt_loader import PromptLoader
-from services.text_generation import TextGenerationError, TextGenerationProvider
+from services.text_generation import (
+    TextGenerationError,
+    TextGenerationProvider,
+    model_identifier,
+)
+from utils.ai_errors import (
+    NO_READY_MATERIAL_MESSAGE,
+    CourseMaterialUnavailableError,
+)
 
 
 class AiTutorError(RuntimeError):
     """AI tutor response generation failed."""
 
 
-class NoReadyCourseMaterialError(AiTutorError):
+class NoReadyCourseMaterialError(AiTutorError, CourseMaterialUnavailableError):
     """No processed course material is available for AI tutor chat."""
+
+
+@dataclass(frozen=True)
+class AiTutorGeneration:
+    response: AiTutorResponse
+    material: CourseMaterial
+    model_used: str
 
 
 class AiTutorService:
@@ -29,24 +46,12 @@ class AiTutorService:
     def get_course_material(
         db: Session,
         course_id: int,
-    ) -> str:
-        chunks = db.scalars(
-            select(DocumentChunk.text)
-            .join(
-                UploadedDocument,
-                DocumentChunk.document_id == UploadedDocument.id,
-            )
-            .where(
-                DocumentChunk.course_id == course_id,
-                UploadedDocument.status == "ready",
-            )
-            .order_by(
-                DocumentChunk.document_id,
-                DocumentChunk.chunk_index,
-            )
-        ).all()
-
-        return "\n\n".join(text.strip() for text in chunks if text.strip())
+    ) -> CourseMaterial:
+        return load_course_material(
+            db,
+            course_id,
+            max_characters=settings.ai_tutor_material_max_chars,
+        )
 
     @classmethod
     def build_prompt(
@@ -70,19 +75,19 @@ class AiTutorService:
         question: str,
         provider: TextGenerationProvider,
         user_id: int | None = None,
-    ) -> AiTutorResponse:
+    ) -> AiTutorGeneration:
         resolved_user_id = user_id
         if resolved_user_id is None:
             course = db.get(Course, course_id)
             if course is not None:
                 resolved_user_id = course.owner_id
 
-        course_material = cls.get_course_material(
+        material = cls.get_course_material(
             db,
             course_id,
         )
 
-        if not course_material:
+        if material.is_empty:
             if resolved_user_id:
                 AiUsageLogger.log_failure(
                     db,
@@ -91,10 +96,10 @@ class AiTutorService:
                     generation_type=GenerationType.AI_TUTOR,
                     error_category=ErrorCategory.NO_READY_MATERIAL,
                 )
-            raise NoReadyCourseMaterialError("No ready course material is available.")
+            raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
         prompt = cls.build_prompt(
-            course_material,
+            material.text,
             question,
         )
         metadata = None
@@ -126,4 +131,8 @@ class AiTutorService:
                 metadata=metadata,
             )
 
-        return AiTutorResponse(answer=answer)
+        return AiTutorGeneration(
+            response=AiTutorResponse(answer=answer),
+            material=material,
+            model_used=model_identifier(metadata),
+        )

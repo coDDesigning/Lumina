@@ -111,7 +111,9 @@ class AiTutorService:
                     user_id=resolved_user_id,
                     course_id=course_id,
                     generation_type=GenerationType.AI_TUTOR,
-                    error_category=ErrorCategory.PROVIDER_ERROR,
+                    error_category=getattr(
+                        exc, "error_category", ErrorCategory.PROVIDER_ERROR
+                    ),
                 )
             raise AiTutorError("Text generation provider failed.") from exc
 

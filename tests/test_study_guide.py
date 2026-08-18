@@ -329,10 +329,11 @@ def _ollama_provider_returning(monkeypatch, generated: str):
         "settings",
         SimpleNamespace(
             ai_provider="ollama",
+            ai_fallback_providers="",
             gemini_api_key=None,
             ollama_base_url="http://ollama.test:11434",
             ollama_model="qwen3:8b",
-            ollama_timeout_seconds=42,
+            ai_generation_timeout_seconds=42,
         ),
     )
 

@@ -14,7 +14,6 @@ from services.flashcard import (
 from services.text_generation import (
     TextGenerationConnectionError,
     TextGenerationError,
-    TextGenerationTimeoutError,
     get_text_generation_provider,
 )
 from utils.authorization import OwnedCourse
@@ -31,7 +30,9 @@ router = APIRouter(
     responses={
         401: {"description": "Authentication required"},
         404: {"description": "Course not found"},
-        503: {"description": "AI provider unavailable"},
+        429: {"description": "AI provider rate limited"},
+        503: {"description": "AI provider unreachable"},
+        504: {"description": "AI provider timed out"},
     },
 )
 def generate_flashcards(
@@ -60,13 +61,27 @@ def generate_flashcards(
             detail=str(exc),
         ) from exc
 
-    except (TextGenerationConnectionError, TextGenerationTimeoutError) as exc:
+    except TextGenerationConnectionError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
 
     except (TextGenerationError, FlashcardGenerationError) as exc:
+        cause = exc.__cause__ if exc.__cause__ is not None else exc
+        error_cat = getattr(
+            cause, "error_category", getattr(exc, "error_category", None)
+        )
+        if error_cat == "rate_limit":
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=str(cause or exc),
+            ) from exc
+        if error_cat == "timeout":
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=str(cause or exc),
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),

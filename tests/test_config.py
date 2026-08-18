@@ -28,7 +28,6 @@ from backend.app.config import (
     DEFAULT_OCR_MIN_TEXT_CHARACTERS,
     DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_OLLAMA_MODEL,
-    DEFAULT_OLLAMA_TIMEOUT_SECONDS,
     DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
     DEFAULT_PROCESSING_JOB_LEASE_SECONDS,
     DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS,
@@ -58,9 +57,14 @@ CONFIGURATION_KEYS = (
     "BOOTSTRAP_ADMIN_EMAIL",
     "BOOTSTRAP_ADMIN_TOKEN",
     "GEMINI_API_KEY",
+    "AI_FALLBACK_PROVIDERS",
+    "AI_GENERATION_TIMEOUT_SECONDS",
+    "AI_GENERATION_MAX_ATTEMPTS",
+    "AI_GENERATION_BACKOFF_BASE_SECONDS",
+    "AI_GENERATION_BACKOFF_MAX_SECONDS",
+    "AI_GENERATION_MAX_CONCURRENCY",
     "OLLAMA_BASE_URL",
     "OLLAMA_MODEL",
-    "OLLAMA_TIMEOUT_SECONDS",
     "MAX_UPLOAD_SIZE_BYTES",
     "MAX_REQUEST_SIZE_BYTES",
     "MAX_CONCURRENT_DOCUMENT_VALIDATIONS",
@@ -616,6 +620,34 @@ def test_recognized_but_unimplemented_provider_fails_at_startup(
         load_settings()
 
 
+@pytest.mark.parametrize("fallback", ["openai", "gemini,claude", " claude "])
+def test_unimplemented_fallback_provider_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    fallback: str,
+) -> None:
+    monkeypatch.setenv("AI_FALLBACK_PROVIDERS", fallback)
+
+    with pytest.raises(ValueError, match="not implemented"):
+        load_settings()
+
+
+def test_unrecognized_fallback_provider_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_FALLBACK_PROVIDERS", "gemeni")
+
+    with pytest.raises(ValueError, match="AI_FALLBACK_PROVIDERS"):
+        load_settings()
+
+
+def test_implemented_fallback_providers_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_FALLBACK_PROVIDERS", "gemini,ollama")
+
+    assert load_settings().ai_fallback_providers == "gemini,ollama"
+
+
 def test_implemented_providers_are_the_authoritative_list() -> None:
     assert IMPLEMENTED_AI_PROVIDERS == ("gemini", "ollama")
     assert set(IMPLEMENTED_AI_PROVIDERS) <= set(RECOGNIZED_AI_PROVIDERS)
@@ -627,19 +659,16 @@ def test_ollama_settings_default_to_a_working_local_endpoint() -> None:
     assert loaded.ai_provider == "ollama"
     assert loaded.ollama_base_url == DEFAULT_OLLAMA_BASE_URL
     assert loaded.ollama_model == DEFAULT_OLLAMA_MODEL
-    assert loaded.ollama_timeout_seconds == DEFAULT_OLLAMA_TIMEOUT_SECONDS
 
 
 def test_ollama_settings_are_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OLLAMA_BASE_URL", "https://ollama.internal:11434")
     monkeypatch.setenv("OLLAMA_MODEL", "qwen3:8b")
-    monkeypatch.setenv("OLLAMA_TIMEOUT_SECONDS", "120")
 
     loaded = load_settings()
 
     assert loaded.ollama_base_url == "https://ollama.internal:11434"
     assert loaded.ollama_model == "qwen3:8b"
-    assert loaded.ollama_timeout_seconds == 120
 
 
 def test_ollama_base_url_trailing_slash_is_normalized(
@@ -683,17 +712,6 @@ def test_ollama_model_accepts_real_registry_tags(
     monkeypatch.setenv("OLLAMA_MODEL", value)
 
     assert load_settings().ollama_model == value
-
-
-@pytest.mark.parametrize("value", ["0", "-1", "3601", "abc"])
-def test_ollama_timeout_must_be_bounded_positive_integer(
-    monkeypatch: pytest.MonkeyPatch,
-    value: str,
-) -> None:
-    monkeypatch.setenv("OLLAMA_TIMEOUT_SECONDS", value)
-
-    with pytest.raises(ValueError, match="OLLAMA_TIMEOUT_SECONDS"):
-        load_settings()
 
 
 def _ai_section_of_env_example() -> list[str]:
@@ -745,7 +763,6 @@ def test_env_example_advertises_every_active_ollama_setting() -> None:
         "AI_PROVIDER",
         "OLLAMA_BASE_URL",
         "OLLAMA_MODEL",
-        "OLLAMA_TIMEOUT_SECONDS",
     ):
         assert f"{name}=" in section, f"{name} is read by config.py but not documented."
 

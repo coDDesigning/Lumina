@@ -380,7 +380,7 @@ def test_quiz_endpoint_reports_unreachable_provider_as_unavailable(
     assert "could not be reached" in response.json()["detail"]
 
 
-def test_quiz_endpoint_reports_provider_timeout_as_unavailable(
+def test_quiz_endpoint_reports_provider_timeout_as_gateway_timeout(
     upload_api,
     monkeypatch,
 ) -> None:
@@ -394,7 +394,7 @@ def test_quiz_endpoint_reports_provider_timeout_as_unavailable(
         headers=upload_api.authorization,
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 504
 
 
 def test_quiz_endpoint_still_reports_malformed_output_as_server_error(

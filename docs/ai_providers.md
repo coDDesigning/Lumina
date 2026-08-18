@@ -9,7 +9,7 @@ never on a specific vendor.
 
 | `AI_PROVIDER` | Status | Required configuration |
 |---|---|---|
-| `ollama` | Implemented (default) | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT_SECONDS` — all defaulted |
+| `ollama` | Implemented (default) | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` — both defaulted |
 | `gemini` | Implemented | `GEMINI_API_KEY` |
 | `openai` | Recognized, not implemented | — |
 | `claude` | Recognized, not implemented | — |
@@ -17,6 +17,10 @@ never on a specific vendor.
 `IMPLEMENTED_AI_PROVIDERS` in `backend/app/config.py` is the authoritative list.
 The provider factory reads it rather than restating provider names, so the two
 cannot drift apart.
+
+The same rule covers `AI_FALLBACK_PROVIDERS`: a fallback naming an
+unimplemented provider is rejected at startup rather than failing the first time
+the primary provider errors and the fallback is actually reached.
 
 Selecting `openai` or `claude` fails at startup, not on the first generation
 request:
@@ -51,8 +55,11 @@ typo (`gemeni`) distinguishable from a genuine roadmap provider (`openai`).
    AI_PROVIDER=ollama
    OLLAMA_BASE_URL=http://localhost:11434
    OLLAMA_MODEL=llama3.1
-   OLLAMA_TIMEOUT_SECONDS=300
    ```
+
+   Local models are much slower than a hosted API. `AI_GENERATION_TIMEOUT_SECONDS`
+   defaults to 60 and applies to every provider; raise it if generation on your
+   hardware takes longer.
 
 4. Start the API, upload a document to a course, wait for its status to reach
    `ready`, then generate:
@@ -102,7 +109,7 @@ rather than at the first user click:
 | `AI_PROVIDER` | not a recognized name, or recognized but not implemented |
 | `OLLAMA_BASE_URL` | empty, whitespace, or not a valid `http://`/`https://` URL with a host (`banana` and `localhost:11434` both fail) |
 | `OLLAMA_MODEL` | empty, whitespace, longer than 128 characters, or containing characters outside letters, digits, `. : / - _` |
-| `OLLAMA_TIMEOUT_SECONDS` | not an integer between 1 and 3600 |
+| `AI_FALLBACK_PROVIDERS` | any token is unrecognized, or recognized but not implemented |
 
 Configuration validation deliberately does **not** contact Ollama. Booting the
 API must not depend on a model server being up, so reachability is a
@@ -110,23 +117,42 @@ generation-time concern.
 
 ## Error Semantics
 
-The provider translates transport and protocol failures into typed application
-errors, all subclasses of `TextGenerationError`:
+The provider translates transport and protocol failures into the shared error
+taxonomy in `services/text_generation.py`, all subclasses of
+`TextGenerationError` and all carrying a telemetry `error_category`:
 
-| Provider condition | Exception | HTTP status |
-|---|---|---|
-| Ollama unreachable at the configured base URL | `TextGenerationConnectionError` | `503` |
-| No response within `OLLAMA_TIMEOUT_SECONDS` | `TextGenerationTimeoutError` | `503` |
-| Non-2xx status from Ollama, e.g. model not found | `TextGenerationResponseError` | `500` |
-| Response envelope missing or malformed | `TextGenerationResponseError` | `500` |
-| Generated text empty or whitespace | `TextGenerationResponseError` | `500` |
-| Generated text not valid JSON | `TextGenerationResponseError` | `500` |
-| Valid JSON failing the feature's schema | `<Feature>GenerationError` | `500` |
+| Provider condition | Exception | Category | HTTP |
+|---|---|---|---|
+| Ollama unreachable at the configured base URL | `TextGenerationConnectionError` | `provider_error` | `503` |
+| No response within `AI_GENERATION_TIMEOUT_SECONDS` | `TextGenerationTimeoutError` | `timeout` | `504` |
+| Ollama answers HTTP 429 | `TextGenerationRateLimitError` | `rate_limit` | `429` |
+| All providers busy at `AI_GENERATION_MAX_CONCURRENCY` | `GenerationConcurrencyError` | `rate_limit` | `429` |
+| Other non-2xx from Ollama, e.g. model not found | `TextGenerationProviderError` | `provider_error` | `500` |
+| Response envelope missing or malformed | `TextGenerationProviderError` | `provider_error` | `500` |
+| Generated text empty or whitespace | `TextGenerationEmptyResponseError` | `empty_response` | `500` |
+| Generated text not valid JSON | `TextGenerationError` | `invalid_structure` | `500` |
+| Valid JSON failing the feature's schema | `<Feature>GenerationError` | `invalid_structure` | `500` |
 
-Infrastructure failures (`503`) are kept distinct from generation failures
-(`500`) so an operator can tell "Ollama is down" from "the model produced
-garbage" without reading a stack trace. An HTTP 500 body from Ollama is never
-treated as generated content.
+Unreachable (`503`) is kept distinct from timed out (`504`) and from generation
+failures (`500`), so an operator can tell "Ollama is not running" from "the model
+is too slow" from "the model produced garbage" without reading a stack trace. An
+error body from Ollama is never treated as generated content.
+
+## Retries and Fallback
+
+`ReliableTextGenerationProvider` wraps whatever providers are configured and adds
+retries with exponential backoff, a concurrency ceiling, and fallback to the
+providers named in `AI_FALLBACK_PROVIDERS`. Ollama participates on the same terms
+as Gemini:
+
+- Connection failures and timeouts are classified transient and retried up to
+  `AI_GENERATION_MAX_ATTEMPTS` before the next provider is tried.
+- Invalid JSON and schema failures are **not** retried. They are deterministic;
+  re-asking an identical prompt would only burn time. A weak model producing
+  unusable JSON is a configuration problem, not a transient one.
+- With `AI_PROVIDER=ollama` and `AI_FALLBACK_PROVIDERS=gemini`, a local model
+  that is down falls through to the cloud provider — useful for self-hosted
+  setups that keep an API key for emergencies.
 
 ## Layer Responsibilities
 

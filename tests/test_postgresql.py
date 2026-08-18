@@ -50,7 +50,8 @@ BASE_REVISION = "97d9fd86a3ba"
 PAGES_REVISION = "c4e6a8f1b203"
 VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
-HEAD_REVISION = "a1c5e7f9b203"
+HARDENING_REVISION = "a1c5e7f9b203"
+HEAD_REVISION = "c9b3d5e08f27"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -77,6 +78,42 @@ def _run_alembic(*arguments: str) -> None:
         f"stdout:\n{completed.stdout}\n"
         f"stderr:\n{completed.stderr}"
     )
+
+
+def _generated_output_attribution_columns() -> set[str]:
+    engine = create_database_engine(settings.database_url)
+    try:
+        return {
+            column["name"]
+            for column in inspect(engine).get_columns("generated_outputs")
+        } & {"user_id", "model_used"}
+    finally:
+        engine.dispose()
+
+
+def _assert_generated_output_attribution_present() -> None:
+    engine = create_database_engine(settings.database_url)
+    try:
+        inspector = inspect(engine)
+        columns = {
+            column["name"]: column
+            for column in inspector.get_columns("generated_outputs")
+        }
+        assert {"user_id", "model_used"} <= set(columns)
+        assert columns["user_id"]["nullable"]
+        assert columns["model_used"]["nullable"]
+        assert {
+            index["name"] for index in inspector.get_indexes("generated_outputs")
+        } >= {"ix_generated_outputs_user_id"}
+        foreign_keys = {
+            constraint["name"]: constraint
+            for constraint in inspector.get_foreign_keys("generated_outputs")
+        }
+        user_foreign_key = foreign_keys["fk_generated_outputs_user_id_users"]
+        assert user_foreign_key["referred_table"] == "users"
+        assert user_foreign_key["options"]["ondelete"] == "SET NULL"
+    finally:
+        engine.dispose()
 
 
 def _assert_hardening_preflight_is_atomic() -> None:
@@ -388,6 +425,11 @@ def postgresql_engine() -> Iterator[Engine]:
     _assert_hardening_preflight_is_atomic()
     _run_alembic("upgrade", HEAD_REVISION)
     _assert_visual_enrichment_backfill()
+    _assert_generated_output_attribution_present()
+    _run_alembic("downgrade", HARDENING_REVISION)
+    assert _generated_output_attribution_columns() == set()
+    _run_alembic("upgrade", HEAD_REVISION)
+    _assert_generated_output_attribution_present()
     _enrich_migrated_page()
     _run_alembic("downgrade", PAGES_REVISION)
     _assert_downgraded_page_is_raw()
@@ -577,6 +619,7 @@ def test_postgresql_schema_readiness_and_role_seeds(
         column["name"]: column for column in inspector.get_columns("document_chunks")
     }
     assert "end_page_number" in chunk_columns
+    _assert_generated_output_attribution_present()
     assert {
         constraint["name"]
         for constraint in inspector.get_check_constraints("document_pages")

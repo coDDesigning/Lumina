@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from schemas.generation import BoundedContext
+
 
 class GeneratedQuizQuestion(BaseModel):
     question_number: int = Field(ge=1, le=10)
@@ -16,3 +18,7 @@ class QuizGenerationResponse(BaseModel):
         min_length=10,
         max_length=10,
     )
+
+
+class QuizGenerationResult(BoundedContext):
+    quiz: QuizGenerationResponse

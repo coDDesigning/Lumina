@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
@@ -14,11 +14,8 @@ from services.prompt_generator import (
     PromptGenerationError,
     PromptGeneratorService,
 )
-from services.text_generation import (
-    TextGenerationConnectionError,
-    TextGenerationError,
-    get_text_generation_provider,
-)
+from services.text_generation import TextGenerationError, get_text_generation_provider
+from utils.ai_errors import ai_generation_http_exception
 from utils.deps import get_current_user
 
 router = APIRouter(
@@ -54,31 +51,8 @@ def generate_prompt(
             user_id=current_user.id,
         )
 
-    except TextGenerationConnectionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-
     except (TextGenerationError, PromptGenerationError) as exc:
-        cause = exc.__cause__ if exc.__cause__ is not None else exc
-        error_cat = getattr(
-            cause, "error_category", getattr(exc, "error_category", None)
-        )
-        if error_cat == "rate_limit":
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=str(cause or exc),
-            ) from exc
-        if error_cat == "timeout":
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail=str(cause or exc),
-            ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
+        raise ai_generation_http_exception(exc, feature="prompt_generator") from exc
 
     return BaseResponse(
         success=True,

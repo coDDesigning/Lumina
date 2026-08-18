@@ -1,23 +1,49 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import ValidationError
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.models import Course, DocumentChunk, GeneratedOutput, UploadedDocument
+from backend.app.config import settings
+from backend.app.models import Course, GeneratedOutput
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.flashcard import FlashcardGenerationResponse
 from services.ai_usage_logger import AiUsageLogger
+from services.course_material import CourseMaterial, load_course_material
 from services.prompt_loader import PromptLoader
-from services.text_generation import TextGenerationError, TextGenerationProvider
+from services.text_generation import (
+    TextGenerationError,
+    TextGenerationProvider,
+    model_identifier,
+)
+from utils.ai_errors import (
+    NO_READY_MATERIAL_MESSAGE,
+    CourseMaterialUnavailableError,
+    InvalidGeneratedStructureError,
+)
 
 
 class FlashcardGenerationError(RuntimeError):
     """Flashcard generation failed."""
 
 
-class NoReadyCourseMaterialError(FlashcardGenerationError):
+class NoReadyCourseMaterialError(
+    FlashcardGenerationError, CourseMaterialUnavailableError
+):
     """No processed course material is available for flashcard generation."""
+
+
+class InvalidFlashcardStructureError(
+    FlashcardGenerationError, InvalidGeneratedStructureError
+):
+    """The provider returned something that is not a valid flashcard set."""
+
+
+@dataclass(frozen=True)
+class FlashcardGeneration:
+    flashcards: FlashcardGenerationResponse
+    material: CourseMaterial
+    model_used: str
 
 
 class FlashcardService:
@@ -30,24 +56,12 @@ class FlashcardService:
     def get_course_material(
         db: Session,
         course_id: int,
-    ) -> str:
-        chunks = db.scalars(
-            select(DocumentChunk.text)
-            .join(
-                UploadedDocument,
-                DocumentChunk.document_id == UploadedDocument.id,
-            )
-            .where(
-                DocumentChunk.course_id == course_id,
-                UploadedDocument.status == "ready",
-            )
-            .order_by(
-                DocumentChunk.document_id,
-                DocumentChunk.chunk_index,
-            )
-        ).all()
-
-        return "\n\n".join(text.strip() for text in chunks if text.strip())
+    ) -> CourseMaterial:
+        return load_course_material(
+            db,
+            course_id,
+            max_characters=settings.flashcard_material_max_chars,
+        )
 
     @classmethod
     def build_prompt(
@@ -63,19 +77,19 @@ class FlashcardService:
         course_id: int,
         provider: TextGenerationProvider,
         user_id: int | None = None,
-    ) -> FlashcardGenerationResponse:
+    ) -> FlashcardGeneration:
         resolved_user_id = user_id
         if resolved_user_id is None:
             course = db.get(Course, course_id)
             if course is not None:
                 resolved_user_id = course.owner_id
 
-        course_material = cls.get_course_material(
+        material = cls.get_course_material(
             db,
             course_id,
         )
 
-        if not course_material:
+        if material.is_empty:
             if resolved_user_id:
                 AiUsageLogger.log_failure(
                     db,
@@ -84,9 +98,9 @@ class FlashcardService:
                     generation_type=GenerationType.FLASHCARD,
                     error_category=ErrorCategory.NO_READY_MATERIAL,
                 )
-            raise NoReadyCourseMaterialError("No ready course material is available.")
+            raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
-        prompt = cls.build_prompt(course_material)
+        prompt = cls.build_prompt(material.text)
         metadata = None
 
         try:
@@ -119,7 +133,7 @@ class FlashcardService:
                     error_category=ErrorCategory.INVALID_STRUCTURE,
                     latency_ms=metadata.latency_ms if metadata else None,
                 )
-            raise FlashcardGenerationError(
+            raise InvalidFlashcardStructureError(
                 "Generated flashcards have an invalid structure."
             ) from exc
 
@@ -132,16 +146,25 @@ class FlashcardService:
                 metadata=metadata,
             )
 
-        return validated
+        return FlashcardGeneration(
+            flashcards=validated,
+            material=material,
+            model_used=model_identifier(metadata),
+        )
 
     @staticmethod
     def save_generated_flashcards(
         db: Session,
         course_id: int,
         flashcards: FlashcardGenerationResponse,
+        *,
+        user_id: int,
+        model_used: str,
     ) -> GeneratedOutput:
         generated_output = GeneratedOutput(
             course_id=course_id,
+            user_id=user_id,
+            model_used=model_used,
             output_type="flashcards",
             content=flashcards.model_dump_json(),
         )

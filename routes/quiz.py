@@ -1,22 +1,17 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
-from schemas.quiz import QuizGenerationResponse
+from schemas.quiz import QuizGenerationResult
 from schemas.response import BaseResponse
-from services.quiz import (
-    NoReadyCourseMaterialError,
-    QuizGenerationError,
-    QuizService,
-)
-from services.text_generation import (
-    TextGenerationConnectionError,
-    TextGenerationError,
-    get_text_generation_provider,
-)
+from schemas.user import UserResponse
+from services.quiz import QuizGenerationError, QuizService
+from services.text_generation import TextGenerationError, get_text_generation_provider
+from utils.ai_errors import ai_generation_http_exception
 from utils.authorization import OwnedCourse
+from utils.deps import get_current_user
 
 router = APIRouter(
     prefix="/api/courses",
@@ -26,8 +21,9 @@ router = APIRouter(
 
 @router.post(
     "/{course_id}/quiz",
-    response_model=BaseResponse[QuizGenerationResponse],
+    response_model=BaseResponse[QuizGenerationResult],
     responses={
+        400: {"description": "No processed course material is available"},
         401: {"description": "Authentication required"},
         404: {"description": "Course not found"},
         429: {"description": "AI provider rate limited"},
@@ -37,58 +33,35 @@ router = APIRouter(
 )
 def generate_quiz(
     course: OwnedCourse,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
     try:
         provider = get_text_generation_provider()
 
-        quiz_data = QuizService.generate(
+        generation = QuizService.generate(
             db,
             course.id,
             provider,
-            user_id=course.owner_id,
+            user_id=current_user.id,
         )
 
         QuizService.save_generated_quiz(
             db,
             course.id,
-            quiz_data,
+            generation.quiz,
         )
-
-    except NoReadyCourseMaterialError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-
-    except TextGenerationConnectionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
 
     except (TextGenerationError, QuizGenerationError) as exc:
-        cause = exc.__cause__ if exc.__cause__ is not None else exc
-        error_cat = getattr(
-            cause, "error_category", getattr(exc, "error_category", None)
-        )
-        if error_cat == "rate_limit":
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=str(cause or exc),
-            ) from exc
-        if error_cat == "timeout":
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail=str(cause or exc),
-            ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
+        raise ai_generation_http_exception(exc, feature="quiz") from exc
 
     return BaseResponse(
         success=True,
         message="Quiz generated successfully",
-        data=quiz_data,
+        data=QuizGenerationResult(
+            quiz=generation.quiz,
+            context_truncated=generation.material.truncated,
+            chunks_used=generation.material.chunks_used,
+            chunks_available=generation.material.chunks_available,
+        ),
     )

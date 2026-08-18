@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.prompt_generator import PromptGenerationResponse
 from services.ai_usage_logger import AiUsageLogger
+from services.prompt_loader import PromptLoader
 from services.text_generation import TextGenerationError, TextGenerationProvider
 
 
@@ -14,11 +15,12 @@ class PromptGenerationError(RuntimeError):
 
 
 class PromptGeneratorService:
+    PROMPT_TEMPLATE_NAME = "prompt_generator"
     PROMPT_PATH = (
         Path(__file__).resolve().parents[1]
         / "app"
         / "prompts"
-        / "prompt_generator_prompt.txt"
+        / "prompt_generator.json"
     )
 
     @classmethod
@@ -26,14 +28,7 @@ class PromptGeneratorService:
         cls,
         description: str,
     ) -> str:
-        prompt_template = cls.PROMPT_PATH.read_text(
-            encoding="utf-8",
-        )
-
-        return prompt_template.replace(
-            "{{TEXT}}",
-            description,
-        )
+        return PromptLoader.render(cls.PROMPT_TEMPLATE_NAME, {"TEXT": description})
 
     @classmethod
     def generate(

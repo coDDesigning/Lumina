@@ -8,6 +8,7 @@ from backend.app.models import Course, DocumentChunk, GeneratedOutput, UploadedD
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.flashcard import FlashcardGenerationResponse
 from services.ai_usage_logger import AiUsageLogger
+from services.prompt_loader import PromptLoader
 from services.text_generation import TextGenerationError, TextGenerationProvider
 
 
@@ -20,8 +21,9 @@ class NoReadyCourseMaterialError(FlashcardGenerationError):
 
 
 class FlashcardService:
+    PROMPT_TEMPLATE_NAME = "flashcard"
     PROMPT_PATH = (
-        Path(__file__).resolve().parents[1] / "app" / "prompts" / "flashcard_prompt.txt"
+        Path(__file__).resolve().parents[1] / "app" / "prompts" / "flashcard.json"
     )
 
     @staticmethod
@@ -52,14 +54,7 @@ class FlashcardService:
         cls,
         course_material: str,
     ) -> str:
-        prompt_template = cls.PROMPT_PATH.read_text(
-            encoding="utf-8",
-        )
-
-        return prompt_template.replace(
-            "{{TEXT}}",
-            course_material,
-        )
+        return PromptLoader.render(cls.PROMPT_TEMPLATE_NAME, {"TEXT": course_material})
 
     @classmethod
     def generate(

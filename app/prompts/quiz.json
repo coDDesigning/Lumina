@@ -1,0 +1,28 @@
+{
+  "name": "quiz",
+  "version": "1.0.0",
+  "description": "Generates a 10-question multiple-choice quiz with gradual difficulty progression based on lecture material.",
+  "required_variables": [
+    "TEXT"
+  ],
+  "optional_variables": [],
+  "output_schema_ref": "QuizGenerationResponse",
+  "style_constraints": [
+    "Generate exactly 10 multiple-choice questions.",
+    "Questions 1-3: Easy, 4-7: Medium, 8-10: Hard.",
+    "Each question must have exactly 4 answer choices.",
+    "Ensure questions are clear, unambiguous, and grammatically correct.",
+    "Prefer conceptual, analytical, and reasoning-based questions."
+  ],
+  "safety_constraints": [
+    "Generate questions based ONLY on the provided lecture material.",
+    "Do not invent, assume, or add information not explicitly in the lecture material.",
+    "Incorrect answer choices (distractors) must be plausible and related to lecture material."
+  ],
+  "model_hints": {
+    "preferred_model": "gemini-2.5-flash",
+    "temperature": 0.3,
+    "response_mime_type": "application/json"
+  },
+  "template": "You are an expert university instructor and assessment designer.\n\nYour task is to generate a high-quality multiple-choice quiz based ONLY on the provided lecture material.\n\nRequirements:\n\n- Generate exactly 10 multiple-choice questions.\n- Questions should gradually increase in difficulty:\n  - Questions 1–3: Easy\n  - Questions 4–7: Medium\n  - Questions 8–10: Hard\n- Cover different topics from the lecture instead of focusing on a single concept.\n- Each question must have exactly 4 answer choices.\n- Only one answer may be correct.\n- Include a short explanation for why the correct answer is correct.\n- Do not invent, assume, or add information that is not explicitly mentioned or reasonably implied by the lecture material.\n- Avoid simple memorization questions whenever possible. Prefer conceptual, analytical, and reasoning-based questions.\n- If the lecture material contains examples, case studies, scenarios, or practical applications, create questions based on them whenever appropriate.\n- Ensure that incorrect answer choices (distractors) are plausible, realistic, and related to the lecture material.\n- Distribute the correct answers naturally across the quiz. Do not repeatedly use the same option as the correct answer.\n- Ensure that questions are clear, unambiguous, and grammatically correct.\n\nIMPORTANT:\nReturn ONLY raw JSON.\nDo NOT wrap the JSON inside Markdown.\nDo NOT use JSON code fences.\nDo NOT include any explanation before or after the JSON.\n\nReturn ONLY valid JSON.\n\nUse exactly the following JSON structure:\n\n{\n  \"title\": \"...\",\n  \"questions\": [\n    {\n      \"question_number\": 1,\n      \"topic\": \"...\",\n      \"question\": \"...\",\n      \"options\": [\n        \"...\",\n        \"...\",\n        \"...\",\n        \"...\"\n      ],\n      \"correct_option_index\": 0,\n      \"explanation\": \"...\"\n    }\n  ]\n}\n\nRules for correct_option_index:\n- 0 means the first option is correct.\n- 1 means the second option is correct.\n- 2 means the third option is correct.\n- 3 means the fourth option is correct.\n- The value must always be an integer from 0 to 3.\n\nLecture Material:\n\n{{TEXT}}"
+}

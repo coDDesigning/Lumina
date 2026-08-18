@@ -8,6 +8,7 @@ from backend.app.models import Course, DocumentChunk, GeneratedOutput, UploadedD
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.study_guide import StudyGuideResponse
 from services.ai_usage_logger import AiUsageLogger
+from services.prompt_loader import PromptLoader
 from services.text_generation import TextGenerationError, TextGenerationProvider
 
 
@@ -16,11 +17,9 @@ class StudyGuideGenerationError(RuntimeError):
 
 
 class StudyGuideService:
+    PROMPT_TEMPLATE_NAME = "study_guide"
     PROMPT_PATH = (
-        Path(__file__).resolve().parents[1]
-        / "app"
-        / "prompts"
-        / "study_guide_prompt.txt"
+        Path(__file__).resolve().parents[1] / "app" / "prompts" / "study_guide.json"
     )
 
     @staticmethod
@@ -39,8 +38,7 @@ class StudyGuideService:
 
     @classmethod
     def build_prompt(cls, course_material: str) -> str:
-        prompt_template = cls.PROMPT_PATH.read_text(encoding="utf-8")
-        return prompt_template.replace("{{TEXT}}", course_material)
+        return PromptLoader.render(cls.PROMPT_TEMPLATE_NAME, {"TEXT": course_material})
 
     @classmethod
     def generate(

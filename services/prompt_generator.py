@@ -53,7 +53,9 @@ class PromptGeneratorService:
                     user_id=user_id,
                     course_id=None,
                     generation_type=GenerationType.PROMPT_GENERATOR,
-                    error_category=ErrorCategory.PROVIDER_ERROR,
+                    error_category=getattr(
+                        exc, "error_category", ErrorCategory.PROVIDER_ERROR
+                    ),
                 )
             raise PromptGenerationError("Text generation provider failed.") from exc
 

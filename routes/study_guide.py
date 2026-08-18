@@ -10,7 +10,6 @@ from services.study_guide import StudyGuideGenerationError, StudyGuideService
 from services.text_generation import TextGenerationError, get_text_generation_provider
 from utils.authorization import OwnedCourse
 
-
 router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
 
 
@@ -32,6 +31,7 @@ def generate_study_guide(
             db,
             course.id,
             provider,
+            user_id=course.owner_id,
         )
         StudyGuideService.save_generated_output(
             db,

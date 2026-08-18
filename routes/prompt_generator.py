@@ -1,7 +1,9 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
+from backend.app.database import get_db
 from schemas.prompt_generator import (
     PromptGenerationRequest,
     PromptGenerationResponse,
@@ -17,7 +19,6 @@ from services.text_generation import (
     get_text_generation_provider,
 )
 from utils.deps import get_current_user
-
 
 router = APIRouter(
     prefix="/api",
@@ -35,6 +36,7 @@ def generate_prompt(
         UserResponse,
         Depends(get_current_user),
     ],
+    db: Annotated[Session, Depends(get_db)],
 ):
     try:
         provider = get_text_generation_provider()
@@ -42,6 +44,8 @@ def generate_prompt(
         generated_prompt = PromptGeneratorService.generate(
             request.description,
             provider,
+            db=db,
+            user_id=current_user.id,
         )
 
     except (TextGenerationError, PromptGenerationError) as exc:

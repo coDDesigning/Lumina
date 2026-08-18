@@ -163,6 +163,19 @@ The administrator override is deliberately read-only. Administrators may inspect
 any course for support and administration, but may not modify, delete, upload
 to, retry, or generate material against a course they do not own.
 
+### Course workspace fields
+
+A course workspace carries `title`, `description`, `semester`, `exam_date`,
+`topics`, `syllabus`, `created_at` and `updated_at`. `syllabus` is nullable free
+text for the course outline; it is distinct from `topics`, which holds the
+comma-separated topic labels the study features consume. `updated_at` is
+maintained by the ORM through `onupdate`, so any course modification advances it
+while `created_at` stays fixed.
+
+`owner_id` is immutable. It is absent from both the create and update payloads,
+so neither an owner nor an administrator can transfer a workspace through the
+API.
+
 Unauthorized access never discloses existence. A nonexistent course, a
 soft-deleted course, and another owner's course all return `404` with the same
 `Course not found` body, so course identifiers cannot be enumerated. Documents

@@ -536,6 +536,7 @@ httpx==0.28.1 \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
     # via
     #   -c requirements.txt
+    #   -r requirements.in
     #   google-genai
 httpx2==2.9.1 \
     --hash=sha256:1820fe14a9ab1107bfeff39259987429450b070ec0ff38cc87eb0d8c97fdc71a \

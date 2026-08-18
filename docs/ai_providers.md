@@ -81,10 +81,10 @@ reliably. The configured model must offer:
   structured request, which constrains Ollama's decoding, but a weak model still
   emits structurally valid JSON with the wrong fields. Schema validation catches
   this and rejects the generation.
-- **A context window large enough for the prompt.** The study-guide prompt
-  concatenates every ready chunk of a course, so the window must accommodate the
-  whole course's extracted text plus the template and the response. Small
-  context windows silently truncate the material and produce thin guides.
+- **A context window large enough for the prompt.** Course material is bounded
+  by the per-feature budgets described below, but the window must still hold that
+  budget plus the template and the response. A window smaller than the configured
+  budget makes the model, rather than the application, decide what to drop.
 - **Enough capability for the schema's breadth.** The study-guide schema alone
   requires roughly a dozen populated sections.
 
@@ -153,6 +153,80 @@ as Gemini:
 - With `AI_PROVIDER=ollama` and `AI_FALLBACK_PROVIDERS=gemini`, a local model
   that is down falls through to the cloud provider — useful for self-hosted
   setups that keep an API key for emergencies.
+
+## Course Material Context Budget
+
+Every AI feature reads course text through `services/course_material.py`, which
+bounds one request's material to a configured number of characters:
+
+| Setting | Default | Bounds |
+|---|---|---|
+| `STUDY_GUIDE_MATERIAL_MAX_CHARS` | `120000` | study guide generation |
+| `QUIZ_MATERIAL_MAX_CHARS` | `120000` | quiz generation |
+| `FLASHCARD_MATERIAL_MAX_CHARS` | `120000` | flashcard generation |
+| `AI_TUTOR_MATERIAL_MAX_CHARS` | `120000` | AI tutor answers |
+
+Each budget must be at least `DOCUMENT_CHUNK_SIZE_CHARACTERS`, or startup fails:
+a budget smaller than one stored chunk could never assemble any material at all.
+
+The budget covers the course material only, not the fixed prompt template or the
+model's own context window. Lower it for small local models on modest hardware;
+`120000` characters is roughly 30k tokens, which the default `llama3.1` context
+window accommodates but a slower machine may not want to spend.
+
+Selection is deliberately simple: chunks of `ready` documents are taken **whole**,
+ordered by document `created_at`, then document id, then `chunk_index`, then chunk
+id, until the next chunk would exceed the budget. The separators between chunks
+count against the budget, so the assembled string never exceeds it. The same
+course state always produces byte-identical material.
+
+When material is left out, the response reports it rather than implying full
+coverage:
+
+```json
+{
+  "success": true,
+  "data": {
+    "study_guide": { "...": "strictly validated model output" },
+    "context_truncated": true,
+    "chunks_used": 40,
+    "chunks_available": 3000
+  }
+}
+```
+
+`context_truncated` is derived by the application, never by the model. This whole
+module is a placeholder for semantic retrieval and is meant to be replaced by it;
+authorization, provider calls, schema validation, and persistence deliberately
+live outside it so that swap stays cheap.
+
+## Public Error Messages
+
+`utils/ai_errors.py` maps every generation failure to a status code and a
+**constant** public message. Exception text — which can name hosts, URLs, or
+upstream payloads — is logged with a stable `AiErrorCode` and never returned to a
+client. `AiErrorCode` classifies the API response and is distinct from the
+telemetry `error_category` in the table above, which classifies the provider
+condition for `ai_usage_logs`:
+
+| `AiErrorCode` | HTTP | Cause |
+|---|---|---|
+| `no_ready_material` | `400` | the course has no processed chunks to send |
+| `provider_rate_limited` | `429` | provider rate limit or concurrency ceiling |
+| `provider_unavailable` | `503` | the model server could not be reached |
+| `provider_timeout` | `504` | no response within the configured timeout |
+| `invalid_generated_structure` | `500` | output was not JSON or failed the schema |
+| `generation_failed` | `500` | anything else |
+
+## Generated Output Attribution
+
+Rows in `generated_outputs` record `user_id` (the authenticated requester, never
+a client-supplied value and never inferred from course ownership) and
+`model_used` in `provider:model` form, taken from the metadata of the provider
+that actually answered — so a fallback generation attributes the fallback, not
+the configured primary. Both columns are nullable only because rows written
+before this migration have no truthful value; they are never backfilled with a
+guess.
 
 ## Layer Responsibilities
 

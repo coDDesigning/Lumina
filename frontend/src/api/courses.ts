@@ -1,47 +1,99 @@
-import { apiClient } from './client';
-import { Course, CourseCreate, CourseUpdate, DocumentStatusResponse, DocumentUploadResponse, DocumentResponse } from './types';
+import { apiClient, unwrapData } from './client';
+import type {
+  BaseResponse,
+  Course,
+  CourseCreate,
+  CourseUpdate,
+  DocumentResponse,
+  DocumentStatusResponse,
+  DocumentUploadResponse,
+} from './types';
 
 export const coursesAPI = {
-  list: async (): Promise<Course[]> => {
-    const res = await apiClient.get<{data: Course[]}>('/courses/');
-    return res.data;
-  },
-  
-  get: async (courseId: number): Promise<Course> => {
-    const res = await apiClient.get<{data: Course}>(`/courses/${courseId}`);
-    return res.data;
-  },
-  
-  create: async (data: CourseCreate): Promise<Course> => {
-    const res = await apiClient.post<{data: Course}>('/courses/', data);
-    return res.data;
-  },
-  
-  update: async (courseId: number, data: CourseUpdate): Promise<Course> => {
-    const res = await apiClient.put<{data: Course}>(`/courses/${courseId}`, data);
-    return res.data;
-  },
-  
-  delete: async (courseId: number): Promise<void> => {
-    await apiClient.delete(`/courses/${courseId}`);
-  },
-  
-  uploadDocument: async (courseId: number, file: File): Promise<DocumentUploadResponse> => {
-    const formData = new FormData();
-    formData.append('document', file);
-    return apiClient.postForm<DocumentUploadResponse>(`/courses/${courseId}/documents`, formData);
-  },
-  
-  getDocumentStatus: async (courseId: number, documentId: string): Promise<DocumentStatusResponse> => {
-    return apiClient.get<DocumentStatusResponse>(`/courses/${courseId}/documents/${documentId}`);
+  list: async (options?: RequestInit): Promise<Course[]> => {
+    const res = await apiClient.get<BaseResponse<Course[]>>('/courses/', options);
+    return res.data ?? [];
   },
 
-  listDocuments: async (courseId: number): Promise<DocumentResponse[]> => {
-    // Note: The backend wrapper BaseResponse gives { success, data, message }.
-    // If apiClient auto-unwraps, wait, let's check apiClient.ts.
-    // apiClient does NOT auto-unwrap for GET unless we made it.
-    // Let's assume apiClient returns the raw JSON. We must extract .data
-    const res = await apiClient.get<{data: DocumentResponse[]}>(`/courses/${courseId}/documents`);
-    return res.data;
-  }
+  get: async (courseId: number, options?: RequestInit): Promise<Course> => {
+    const res = await apiClient.get<BaseResponse<Course>>(
+      `/courses/${courseId}`,
+      options,
+    );
+    return unwrapData(res, 'Course');
+  },
+
+  create: async (data: CourseCreate): Promise<Course> => {
+    const res = await apiClient.post<BaseResponse<Course>>('/courses/', data);
+    return unwrapData(res, 'Course creation');
+  },
+
+  update: async (courseId: number, data: CourseUpdate): Promise<Course> => {
+    const res = await apiClient.put<BaseResponse<Course>>(
+      `/courses/${courseId}`,
+      data,
+    );
+    return unwrapData(res, 'Course update');
+  },
+
+  delete: async (courseId: number): Promise<void> => {
+    await apiClient.delete<unknown>(`/courses/${courseId}`);
+  },
+
+  uploadDocument: async (
+    courseId: number,
+    file: File,
+    options?: RequestInit,
+  ): Promise<DocumentUploadResponse> => {
+    const formData = new FormData();
+    formData.append('document', file);
+    return apiClient.postForm<DocumentUploadResponse>(
+      `/courses/${courseId}/documents`,
+      formData,
+      options,
+    );
+  },
+
+  listDocuments: async (
+    courseId: number,
+    options?: RequestInit,
+  ): Promise<DocumentResponse[]> => {
+    const res = await apiClient.get<BaseResponse<DocumentResponse[]>>(
+      `/courses/${courseId}/documents`,
+      options,
+    );
+    return res.data ?? [];
+  },
+
+  getDocumentStatus: (
+    courseId: number,
+    documentId: string,
+    options?: RequestInit,
+  ): Promise<DocumentStatusResponse> =>
+    apiClient.get<DocumentStatusResponse>(
+      `/courses/${courseId}/documents/${documentId}`,
+      options,
+    ),
+
+  retryDocument: (
+    courseId: number,
+    documentId: string,
+    options?: RequestInit,
+  ): Promise<DocumentStatusResponse> =>
+    apiClient.post<DocumentStatusResponse>(
+      `/courses/${courseId}/documents/${documentId}/retry`,
+      undefined,
+      options,
+    ),
+
+  deleteDocument: async (
+    courseId: number,
+    documentId: string,
+    options?: RequestInit,
+  ): Promise<void> => {
+    await apiClient.delete<unknown>(
+      `/courses/${courseId}/documents/${documentId}`,
+      options,
+    );
+  },
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Award,
   CheckCircle2,
@@ -10,139 +10,186 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import {
-  QuizConfig,
-  QuizQuestion,
-  QuizResult,
-  generateMockQuestions,
-} from '../../data/mockStudyData';
+import { quizAPI } from '../../api/quiz';
+import { describeError, describeGenerationError, isAbortError } from '../../api/errors';
+import type {
+  QuizAttemptResponse,
+  QuizDifficulty,
+  QuizQuestionType,
+  QuizQuestionView,
+  QuizView,
+} from '../../api/types';
 import './study.css';
 
 interface QuizModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  courseName: string;
+  courseId: number;
   topics: string[];
-  onQuizCompleted?: (result: QuizResult) => void;
+  readyDocumentCount: number;
+  onClose: () => void;
+  onAttemptRecorded?: () => void;
 }
 
-type QuizStep = 'config' | 'solving' | 'results';
+interface QuizSetup {
+  questionType: QuizQuestionType;
+  questionCount: number;
+  difficulty: QuizDifficulty;
+  topic: string;
+  hasTimer: boolean;
+}
 
-export const QuizModal: React.FC<QuizModalProps> = ({
-  isOpen,
-  onClose,
-  courseName,
+type QuizStep =
+  | 'config'
+  | 'generating'
+  | 'solving'
+  | 'submitting'
+  | 'results'
+  | 'error';
+
+const ALL_TOPICS = 'All Topics';
+const SECONDS_PER_QUESTION = 60;
+const QUESTION_COUNTS = [5, 10, 15, 20];
+
+function formatTime(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+}
+
+export function QuizModal({
+  courseId,
   topics,
-  onQuizCompleted,
-}) => {
+  readyDocumentCount,
+  onClose,
+  onAttemptRecorded,
+}: QuizModalProps) {
   const [step, setStep] = useState<QuizStep>('config');
-  const [config, setConfig] = useState<QuizConfig>({
+  const [errorMessage, setErrorMessage] = useState('');
+  const [setup, setSetup] = useState<QuizSetup>({
     questionType: 'multiple_choice',
     questionCount: 5,
     difficulty: 'medium',
-    topic: 'All Topics',
+    topic: ALL_TOPICS,
     hasTimer: true,
-    timeLimitSeconds: 300,
   });
 
-  const [questions, setQuestions] = useState<QuizQuestion[]>([]);
+  const [quiz, setQuiz] = useState<QuizView | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [userAnswers, setUserAnswers] = useState<{ [questionId: number]: number }>({});
-  const [timeLeft, setTimeLeft] = useState(300);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
-  const [result, setResult] = useState<QuizResult | null>(null);
+  const [userAnswers, setUserAnswers] = useState<Record<number, number>>({});
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [attempt, setAttempt] = useState<QuizAttemptResponse | null>(null);
 
-  const handleSubmitQuiz = useCallback(() => {
-    setIsTimerRunning(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const startedAtRef = useRef<number>(0);
 
-    let correct = 0;
-    questions.forEach((q) => {
-      if (userAnswers[q.id] === q.correctAnswer) {
-        correct += 1;
-      }
-    });
+  useEffect(() => () => abortRef.current?.abort(), []);
 
-    const total = questions.length;
-    const scorePercentage = total > 0 ? Math.round((correct / total) * 100) : 0;
-    const timeSpentSeconds = config.questionCount * 60 - timeLeft;
+  const questions: QuizQuestionView[] = quiz?.questions ?? [];
 
-    const finalResult: QuizResult = {
-      totalQuestions: total,
-      correctCount: correct,
-      incorrectCount: total - correct,
-      scorePercentage,
-      timeSpentSeconds: Math.max(1, timeSpentSeconds),
-      userAnswers,
-      questions,
-      completedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
+  const submitAttempt = useCallback(async () => {
+    if (!quiz) return;
 
-    setResult(finalResult);
-    setStep('results');
-    if (onQuizCompleted) {
-      onQuizCompleted(finalResult);
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const elapsed = Math.max(
+      1,
+      Math.round((Date.now() - startedAtRef.current) / 1000),
+    );
+
+    setStep('submitting');
+
+    try {
+      const recorded = await quizAPI.submitAttempt(
+        courseId,
+        quiz.quiz_id,
+        {
+          answers: quiz.questions.map((question) => ({
+            question_id: question.question_id,
+            selected_option_index: userAnswers[question.question_id] ?? null,
+          })),
+          time_spent_seconds: elapsed,
+        },
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted) return;
+      setAttempt(recorded);
+      setStep('results');
+      onAttemptRecorded?.();
+    } catch (error) {
+      if (controller.signal.aborted || isAbortError(error)) return;
+      setErrorMessage(
+        describeError(error, 'The quiz results could not be saved.').message,
+      );
+      setStep('error');
     }
-  }, [config.questionCount, onQuizCompleted, questions, timeLeft, userAnswers]);
+  }, [courseId, onAttemptRecorded, quiz, userAnswers]);
 
-  // Timer effect
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | null = null;
-    if (step === 'solving' && isTimerRunning && config.hasTimer && timeLeft > 0) {
-      timer = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            if (timer) clearInterval(timer);
-            handleSubmitQuiz();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+    if (step !== 'solving' || !setup.hasTimer) return;
+    if (timeLeft <= 0) {
+      void submitAttempt();
+      return;
     }
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [step, isTimerRunning, config.hasTimer, timeLeft, handleSubmitQuiz]);
+    const timer = setTimeout(() => setTimeLeft((seconds) => seconds - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [step, setup.hasTimer, timeLeft, submitAttempt]);
 
-  if (!isOpen) return null;
+  const startQuiz = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-  const handleStartQuiz = () => {
-    const generated = generateMockQuestions(courseName, topics, config);
-    setQuestions(generated);
-    setCurrentQuestionIndex(0);
+    setStep('generating');
+
+    try {
+      const generated = await quizAPI.generate(
+        courseId,
+        {
+          question_count: setup.questionCount,
+          question_type: setup.questionType,
+          difficulty: setup.difficulty,
+          topic_focus: setup.topic,
+        },
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted) return;
+
+      setQuiz(generated.quiz);
+      setCurrentQuestionIndex(0);
+      setUserAnswers({});
+      setAttempt(null);
+      setTimeLeft(generated.quiz.questions.length * SECONDS_PER_QUESTION);
+      startedAtRef.current = Date.now();
+      setStep('solving');
+    } catch (error) {
+      if (controller.signal.aborted || isAbortError(error)) return;
+      setErrorMessage(
+        describeGenerationError(error, 'The quiz could not be generated.').message,
+      );
+      setStep('error');
+    }
+  }, [courseId, setup]);
+
+  const resetToConfig = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setQuiz(null);
+    setAttempt(null);
     setUserAnswers({});
-    setTimeLeft(config.questionCount * 60);
-    setIsTimerRunning(true);
-    setStep('solving');
-  };
-
-  const handleSelectOption = (questionId: number, optionIndex: number) => {
-    setUserAnswers((prev) => ({
-      ...prev,
-      [questionId]: optionIndex,
-    }));
-  };
-
-  const handleRetake = () => {
-    handleStartQuiz();
-  };
-
-  const handleResetToConfig = () => {
-    setResult(null);
+    setErrorMessage('');
     setStep('config');
   };
 
-  const currentQ = questions[currentQuestionIndex];
+  const currentQuestion = questions[currentQuestionIndex];
   const progressPercentage =
-    questions.length > 0 ? Math.round(((currentQuestionIndex + 1) / questions.length) * 100) : 0;
+    questions.length > 0
+      ? Math.round(((currentQuestionIndex + 1) / questions.length) * 100)
+      : 0;
 
-  const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
-  };
-
-  const topicOptions = ['All Topics', ...(topics.length > 0 ? topics : ['Core Concepts', 'Methodology', 'Applications'])];
+  const topicOptions = [ALL_TOPICS, ...topics];
+  const hasMaterial = readyDocumentCount > 0;
+  const scorePercentage = attempt ? Math.round(attempt.score * 100) : 0;
 
   return (
     <div className="study-modal-backdrop" role="dialog" aria-modal="true">
@@ -166,15 +213,42 @@ export const QuizModal: React.FC<QuizModalProps> = ({
         </header>
 
         <div className="study-modal-body">
-          {step === 'config' && (
+          {step === 'generating' || step === 'submitting' ? (
+            <div className="study-loading-state">
+              <div className="study-pulse-spinner" />
+              <h3>
+                {step === 'generating' ? 'Building Your Quiz' : 'Scoring Your Answers'}
+              </h3>
+              <p>
+                {step === 'generating'
+                  ? 'Writing questions from your course material. This usually takes 20-60 seconds.'
+                  : 'Recording your attempt.'}
+              </p>
+            </div>
+          ) : null}
+
+          {step === 'error' ? (
+            <div className="summary-container">
+              <div className="summary-section-card summary-notice is-danger" role="alert">
+                <h4>
+                  <XCircle aria-hidden="true" />
+                  Something went wrong
+                </h4>
+                <p>{errorMessage}</p>
+              </div>
+            </div>
+          ) : null}
+
+          {step === 'config' ? (
             <div className="summary-container">
               <div className="summary-section-card">
                 <h4>
                   <HelpCircle aria-hidden="true" />
                   Configure Your Quiz Session
                 </h4>
-                <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#666' }}>
-                  Lumina generates high-yield questions derived directly from your course syllabus and documents.
+                <p className="summary-hint">
+                  Lumina generates high-yield questions derived directly from your
+                  processed course material.
                 </p>
 
                 <div className="study-form-grid">
@@ -182,8 +256,10 @@ export const QuizModal: React.FC<QuizModalProps> = ({
                     <label htmlFor="quiz-topic">Target Topic</label>
                     <select
                       id="quiz-topic"
-                      value={config.topic}
-                      onChange={(e) => setConfig({ ...config, topic: e.target.value })}
+                      value={setup.topic}
+                      onChange={(event) =>
+                        setSetup({ ...setup, topic: event.target.value })
+                      }
                     >
                       {topicOptions.map((topic) => (
                         <option key={topic} value={topic}>
@@ -197,11 +273,11 @@ export const QuizModal: React.FC<QuizModalProps> = ({
                     <label htmlFor="question-type">Question Type</label>
                     <select
                       id="question-type"
-                      value={config.questionType}
-                      onChange={(e) =>
-                        setConfig({
-                          ...config,
-                          questionType: e.target.value as QuizConfig['questionType'],
+                      value={setup.questionType}
+                      onChange={(event) =>
+                        setSetup({
+                          ...setup,
+                          questionType: event.target.value as QuizQuestionType,
                         })
                       }
                     >
@@ -214,16 +290,19 @@ export const QuizModal: React.FC<QuizModalProps> = ({
                     <label htmlFor="question-count">Number of Questions</label>
                     <select
                       id="question-count"
-                      value={config.questionCount}
-                      onChange={(e) =>
-                        setConfig({
-                          ...config,
-                          questionCount: Number(e.target.value),
+                      value={setup.questionCount}
+                      onChange={(event) =>
+                        setSetup({
+                          ...setup,
+                          questionCount: Number(event.target.value),
                         })
                       }
                     >
-                      <option value={5}>5 Questions (Quick Check)</option>
-                      <option value={8}>8 Questions (Standard Practice)</option>
+                      {QUESTION_COUNTS.map((count) => (
+                        <option key={count} value={count}>
+                          {count} Questions
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -231,11 +310,11 @@ export const QuizModal: React.FC<QuizModalProps> = ({
                     <label htmlFor="difficulty">Difficulty Level</label>
                     <select
                       id="difficulty"
-                      value={config.difficulty}
-                      onChange={(e) =>
-                        setConfig({
-                          ...config,
-                          difficulty: e.target.value as QuizConfig['difficulty'],
+                      value={setup.difficulty}
+                      onChange={(event) =>
+                        setSetup({
+                          ...setup,
+                          difficulty: event.target.value as QuizDifficulty,
                         })
                       }
                     >
@@ -249,30 +328,45 @@ export const QuizModal: React.FC<QuizModalProps> = ({
                 <label className="study-toggle-label">
                   <input
                     type="checkbox"
-                    checked={config.hasTimer}
-                    onChange={(e) => setConfig({ ...config, hasTimer: e.target.checked })}
+                    checked={setup.hasTimer}
+                    onChange={(event) =>
+                      setSetup({ ...setup, hasTimer: event.target.checked })
+                    }
                   />
                   <span>Enable Exam Countdown Timer (1 min per question)</span>
                 </label>
+
+                {!hasMaterial ? (
+                  <p className="summary-empty-state">
+                    This course has no processed material yet. Add a source and wait until
+                    it shows Ready.
+                  </p>
+                ) : null}
               </div>
             </div>
-          )}
+          ) : null}
 
-          {step === 'solving' && currentQ && (
+          {step === 'solving' && currentQuestion ? (
             <div className="summary-container">
               <div className="quiz-solver-header">
                 <span className="quiz-progress-indicator">
                   Question {currentQuestionIndex + 1} of {questions.length}
                 </span>
-                {config.hasTimer && (
+                {setup.hasTimer ? (
                   <span className="quiz-timer">
-                    <Clock style={{ width: '14px', height: '14px' }} />
+                    <Clock aria-hidden="true" />
                     {formatTime(timeLeft)}
                   </span>
-                )}
+                ) : null}
               </div>
 
-              <div className="quiz-progress-bar" role="progressbar" aria-valuenow={progressPercentage} aria-valuemin={0} aria-valuemax={100}>
+              <div
+                className="quiz-progress-bar"
+                role="progressbar"
+                aria-valuenow={progressPercentage}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
                 <div
                   className="quiz-progress-bar-fill"
                   style={{ width: `${progressPercentage}%` }}
@@ -280,23 +374,30 @@ export const QuizModal: React.FC<QuizModalProps> = ({
               </div>
 
               <div className="quiz-question-box">
-                <span className="summary-meta-badge" style={{ marginBottom: '12px' }}>
-                  {currentQ.topic}
-                </span>
-                <h3>{currentQ.question}</h3>
+                {currentQuestion.topic ? (
+                  <span className="summary-meta-badge">{currentQuestion.topic}</span>
+                ) : null}
+                <h3>{currentQuestion.question}</h3>
 
                 <div className="quiz-options-list">
-                  {currentQ.options.map((option, idx) => {
-                    const isSelected = userAnswers[currentQ.id] === idx;
-                    const letter = String.fromCharCode(65 + idx);
+                  {currentQuestion.options.map((option, index) => {
+                    const isSelected =
+                      userAnswers[currentQuestion.question_id] === index;
                     return (
                       <button
-                        key={idx}
+                        key={index}
                         type="button"
                         className={`quiz-option-btn${isSelected ? ' selected' : ''}`}
-                        onClick={() => handleSelectOption(currentQ.id, idx)}
+                        onClick={() =>
+                          setUserAnswers((previous) => ({
+                            ...previous,
+                            [currentQuestion.question_id]: index,
+                          }))
+                        }
                       >
-                        <span className="option-letter">{letter}</span>
+                        <span className="option-letter">
+                          {String.fromCharCode(65 + index)}
+                        </span>
                         <span>{option}</span>
                       </button>
                     );
@@ -304,41 +405,48 @@ export const QuizModal: React.FC<QuizModalProps> = ({
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
 
-          {step === 'results' && result && (
+          {step === 'results' && attempt ? (
             <div className="quiz-results-container">
               <div className="score-hero-card">
                 <div className="score-hero-left">
                   <h3>
-                    {result.scorePercentage >= 80
+                    {scorePercentage >= 80
                       ? 'Outstanding Mastery!'
-                      : result.scorePercentage >= 60
-                      ? 'Solid Performance!'
-                      : 'Needs Further Review'}
+                      : scorePercentage >= 60
+                        ? 'Solid Performance!'
+                        : 'Needs Further Review'}
                   </h3>
                   <p>
-                    You answered {result.correctCount} out of {result.totalQuestions} questions correctly in{' '}
-                    {Math.floor(result.timeSpentSeconds / 60)}m {result.timeSpentSeconds % 60}s.
+                    You answered {attempt.correct_count} out of {attempt.total_questions}{' '}
+                    questions correctly
+                    {attempt.time_spent_seconds !== null
+                      ? ` in ${Math.floor(attempt.time_spent_seconds / 60)}m ${
+                          attempt.time_spent_seconds % 60
+                        }s`
+                      : ''}
+                    .
                   </p>
                 </div>
                 <div className="score-circle-badge">
-                  {result.scorePercentage}%
-                  <span>Score</span>
+                  {scorePercentage}%<span>Score</span>
                 </div>
               </div>
 
               <div className="quiz-stats-row">
                 <div className="quiz-stat-card">
-                  <strong style={{ color: '#10b981' }}>{result.correctCount}</strong>
+                  <strong className="stat-correct">{attempt.correct_count}</strong>
                   <span>Correct</span>
                 </div>
                 <div className="quiz-stat-card">
-                  <strong style={{ color: '#ef4444' }}>{result.incorrectCount}</strong>
+                  <strong className="stat-incorrect">
+                    {attempt.total_questions - attempt.correct_count}
+                  </strong>
                   <span>Incorrect</span>
                 </div>
                 <div className="quiz-stat-card">
-                  <strong style={{ color: '#8b5cf6' }}>{result.totalQuestions}</strong>
+                  <strong className="stat-total">{attempt.total_questions}</strong>
                   <span>Total Questions</span>
                 </div>
               </div>
@@ -349,73 +457,116 @@ export const QuizModal: React.FC<QuizModalProps> = ({
                   Detailed Question Analysis & Explanations
                 </h4>
                 <div className="result-review-list">
-                  {result.questions.map((q, idx) => {
-                    const selectedIdx = result.userAnswers[q.id];
-                    const isCorrect = selectedIdx === q.correctAnswer;
+                  {attempt.answers.map((answer, index) => {
+                    const question = questions.find(
+                      (row) => row.question_id === answer.question_id,
+                    );
+                    if (!question) return null;
                     return (
                       <div
-                        key={q.id}
-                        className={`review-item ${isCorrect ? 'correct' : 'incorrect'}`}
+                        key={answer.question_id}
+                        className={`review-item ${
+                          answer.is_correct ? 'correct' : 'incorrect'
+                        }`}
                       >
                         <div className="review-header">
                           <h4>
-                            {idx + 1}. {q.question}
+                            {index + 1}. {question.question}
                           </h4>
-                          {isCorrect ? (
-                            <CheckCircle2 style={{ width: '18px', height: '18px', color: '#10b981', flexShrink: 0 }} />
+                          {answer.is_correct ? (
+                            <CheckCircle2 aria-hidden="true" className="review-icon-ok" />
                           ) : (
-                            <XCircle style={{ width: '18px', height: '18px', color: '#ef4444', flexShrink: 0 }} />
+                            <XCircle aria-hidden="true" className="review-icon-bad" />
                           )}
                         </div>
 
-                        <div style={{ fontSize: '13px', margin: '4px 0 8px', color: '#444' }}>
+                        <div className="review-answers">
                           <div>
                             <strong>Your Answer: </strong>
-                            <span style={{ color: isCorrect ? '#065f46' : '#991b1b', fontWeight: 600 }}>
-                              {selectedIdx !== undefined ? q.options[selectedIdx] : 'Unanswered'}
+                            <span
+                              className={
+                                answer.is_correct ? 'answer-correct' : 'answer-incorrect'
+                              }
+                            >
+                              {answer.selected_option_index !== null
+                                ? question.options[answer.selected_option_index]
+                                : 'Unanswered'}
                             </span>
                           </div>
-                          {!isCorrect && (
-                            <div style={{ marginTop: '2px' }}>
+                          {!answer.is_correct ? (
+                            <div>
                               <strong>Correct Answer: </strong>
-                              <span style={{ color: '#065f46', fontWeight: 600 }}>{q.options[q.correctAnswer]}</span>
+                              <span className="answer-correct">
+                                {question.options[answer.correct_option_index]}
+                              </span>
                             </div>
-                          )}
+                          ) : null}
                         </div>
 
-                        <div className="review-explanation">
-                          <strong>Rationale: </strong>
-                          {q.explanation}
-                        </div>
+                        {question.explanation ? (
+                          <div className="review-explanation">
+                            <strong>Rationale: </strong>
+                            {question.explanation}
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })}
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
         </div>
 
         <footer className="study-modal-footer">
-          {step === 'config' && (
+          {step === 'config' ? (
             <>
               <button className="secondary-button" type="button" onClick={onClose}>
                 Cancel
               </button>
-              <button className="primary-button" type="button" onClick={handleStartQuiz}>
-                <Play aria-hidden="true" style={{ width: '16px', height: '16px' }} />
+              <button
+                className="primary-button"
+                type="button"
+                onClick={startQuiz}
+                disabled={!hasMaterial}
+              >
+                <Play aria-hidden="true" />
                 Start Quiz
               </button>
             </>
-          )}
+          ) : null}
 
-          {step === 'solving' && (
+          {step === 'generating' || step === 'submitting' ? (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                abortRef.current?.abort();
+                setStep(step === 'generating' ? 'config' : 'solving');
+              }}
+            >
+              Cancel
+            </button>
+          ) : null}
+
+          {step === 'error' ? (
+            <>
+              <button className="secondary-button" type="button" onClick={onClose}>
+                Close
+              </button>
+              <button className="primary-button" type="button" onClick={resetToConfig}>
+                Back to setup
+              </button>
+            </>
+          ) : null}
+
+          {step === 'solving' ? (
             <>
               <button
                 className="secondary-button"
                 type="button"
                 disabled={currentQuestionIndex === 0}
-                onClick={() => setCurrentQuestionIndex((prev) => prev - 1)}
+                onClick={() => setCurrentQuestionIndex((index) => index - 1)}
               >
                 Previous
               </button>
@@ -423,37 +574,36 @@ export const QuizModal: React.FC<QuizModalProps> = ({
                 <button
                   className="primary-button"
                   type="button"
-                  onClick={() => setCurrentQuestionIndex((prev) => prev + 1)}
+                  onClick={() => setCurrentQuestionIndex((index) => index + 1)}
                 >
                   Next Question
                 </button>
               ) : (
-                <button className="primary-button" type="button" onClick={handleSubmitQuiz}>
-                  <Sparkles aria-hidden="true" style={{ width: '16px', height: '16px' }} />
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => void submitAttempt()}
+                >
+                  <Sparkles aria-hidden="true" />
                   Submit Quiz
                 </button>
               )}
             </>
-          )}
+          ) : null}
 
-          {step === 'results' && (
+          {step === 'results' ? (
             <>
-              <button className="secondary-button" type="button" onClick={handleResetToConfig}>
-                <RotateCcw style={{ width: '16px', height: '16px' }} />
+              <button className="secondary-button" type="button" onClick={resetToConfig}>
+                <RotateCcw aria-hidden="true" />
                 New Quiz Setup
               </button>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="secondary-button" type="button" onClick={handleRetake}>
-                  Retake Same Quiz
-                </button>
-                <button className="primary-button" type="button" onClick={onClose}>
-                  Done
-                </button>
-              </div>
+              <button className="primary-button" type="button" onClick={onClose}>
+                Done
+              </button>
             </>
-          )}
+          ) : null}
         </footer>
       </div>
     </div>
   );
-};
+}

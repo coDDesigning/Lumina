@@ -10,3 +10,7 @@ Database migrations, document processing, and worker operation are documented in
 
 Supported deployment modes, production configuration, and health probes are
 documented in [`docs/deployment.md`](docs/deployment.md).
+
+AI provider selection, self-hosted Ollama setup, and the model capability
+expected for structured JSON generation are documented in
+[`docs/ai_providers.md`](docs/ai_providers.md).

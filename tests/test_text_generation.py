@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 from types import SimpleNamespace
@@ -6,6 +7,7 @@ from google.genai import errors as genai_errors
 import httpx
 import pytest
 
+from backend.app.config import IMPLEMENTED_AI_PROVIDERS
 from schemas.ai_usage import ErrorCategory
 import services.text_generation as text_generation
 from services.text_generation import (
@@ -14,6 +16,7 @@ from services.text_generation import (
     GenerationMetadata,
     ReliableTextGenerationProvider,
     TextGenerationAuthError,
+    TextGenerationConnectionError,
     TextGenerationEmptyResponseError,
     TextGenerationError,
     TextGenerationProviderError,
@@ -22,6 +25,34 @@ from services.text_generation import (
     get_text_generation_provider,
     is_transient_generation_error,
 )
+
+OLLAMA_SETTINGS = SimpleNamespace(
+    ai_provider="ollama",
+    ai_fallback_providers="",
+    gemini_api_key=None,
+    ollama_base_url="http://ollama.test:11434",
+    ollama_model="qwen3:8b",
+    ai_generation_timeout_seconds=42,
+    ai_generation_max_attempts=3,
+    ai_generation_backoff_base_seconds=0.01,
+    ai_generation_backoff_max_seconds=0.1,
+    ai_generation_max_concurrency=10,
+)
+
+
+def _ollama_provider(monkeypatch, handler):
+    monkeypatch.setattr(text_generation, "settings", OLLAMA_SETTINGS)
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    return text_generation.OllamaTextGenerationProvider(client=client)
+
+
+def _ollama_envelope(response_text: str, **extra: object) -> dict[str, object]:
+    return {
+        "model": "qwen3:8b",
+        "response": response_text,
+        "done": True,
+        **extra,
+    }
 
 
 class StubProvider:
@@ -175,7 +206,7 @@ def test_get_text_generation_provider_rejects_unimplemented_provider(
         text_generation,
         "settings",
         SimpleNamespace(
-            ai_provider="ollama",
+            ai_provider="openai",
             ai_fallback_providers="",
             gemini_api_key=None,
             ai_generation_timeout_seconds=60,
@@ -189,6 +220,18 @@ def test_get_text_generation_provider_rejects_unimplemented_provider(
     with pytest.raises(TextGenerationError) as exc_info:
         text_generation.get_text_generation_provider()
     assert "not implemented" in str(exc_info.value)
+
+
+def test_get_text_generation_provider_returns_ollama(monkeypatch) -> None:
+    monkeypatch.setattr(text_generation, "settings", OLLAMA_SETTINGS)
+
+    provider = text_generation.get_text_generation_provider()
+
+    assert isinstance(provider, text_generation.ReliableTextGenerationProvider)
+    assert len(provider.providers) == 1
+    assert isinstance(
+        provider.providers[0], text_generation.OllamaTextGenerationProvider
+    )
 
 
 def test_gemini_provider_returns_text_response(monkeypatch) -> None:
@@ -240,6 +283,206 @@ def test_gemini_provider_error_mappings(monkeypatch) -> None:
     provider = GeminiTextGenerationProvider()
     with pytest.raises(TextGenerationRateLimitError):
         provider.generate_text("test")
+
+
+def test_ollama_provider_sends_configured_request(monkeypatch) -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=_ollama_envelope("Generated tutor response"))
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    result = provider.generate_text("Explain binary trees")
+
+    assert result == "Generated tutor response"
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.method == "POST"
+    assert str(request.url) == "http://ollama.test:11434/api/generate"
+    payload = json.loads(request.content)
+    assert payload["model"] == "qwen3:8b"
+    assert payload["prompt"] == "Explain binary trees"
+    assert payload["stream"] is False
+    assert "format" not in payload
+
+
+def test_ollama_provider_requests_json_format(monkeypatch) -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=_ollama_envelope('{"title": "Test Guide"}'))
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    result = provider.generate_json("Build a study guide")
+
+    assert result == {"title": "Test Guide"}
+    assert json.loads(captured[0].content)["format"] == "json"
+
+
+def test_ollama_provider_parses_fenced_json(monkeypatch) -> None:
+    fenced = '```json\n{"title": "Fenced Guide"}\n```'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ollama_envelope(fenced))
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    assert provider.generate_json("Prompt") == {"title": "Fenced Guide"}
+
+
+def test_ollama_provider_reports_generation_metadata(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_ollama_envelope(
+                "Answer",
+                prompt_eval_count=26,
+                eval_count=298,
+            ),
+        )
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    _, metadata = provider.generate_text_with_metadata("Prompt")
+
+    assert metadata.provider == "ollama"
+    assert metadata.model == "qwen3:8b"
+    assert metadata.prompt_tokens == 26
+    assert metadata.completion_tokens == 298
+    assert metadata.total_tokens == 324
+    assert metadata.latency_ms is not None
+
+
+def test_ollama_provider_maps_connection_failure(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    with pytest.raises(text_generation.TextGenerationConnectionError):
+        provider.generate_text("Prompt")
+
+
+def test_ollama_provider_maps_timeout(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    with pytest.raises(text_generation.TextGenerationTimeoutError):
+        provider.generate_text("Prompt")
+
+
+def test_ollama_provider_rejects_http_error_without_returning_body(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="internal ollama failure")
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    with pytest.raises(TextGenerationProviderError) as exc_info:
+        provider.generate_text("Prompt")
+
+    assert "internal ollama failure" not in str(exc_info.value)
+
+
+def test_ollama_provider_rejects_malformed_envelope(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"foo": "bar"})
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    with pytest.raises(TextGenerationProviderError):
+        provider.generate_text("Prompt")
+
+
+def test_ollama_provider_rejects_non_json_envelope(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not an envelope")
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    with pytest.raises(TextGenerationProviderError):
+        provider.generate_text("Prompt")
+
+
+@pytest.mark.parametrize("response_text", ["", "      ", "\n\t "])
+def test_ollama_provider_rejects_empty_response(monkeypatch, response_text) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ollama_envelope(response_text))
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    with pytest.raises(TextGenerationEmptyResponseError, match="empty"):
+        provider.generate_text("Prompt")
+
+
+@pytest.mark.parametrize(
+    "generated",
+    ['{"title": "x",', "Sure! Here is your study guide:", "[1, 2, 3]"],
+)
+def test_ollama_provider_rejects_unusable_json_output(monkeypatch, generated) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ollama_envelope(generated))
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    with pytest.raises(TextGenerationError) as exc_info:
+        provider.generate_json("Prompt")
+
+    assert exc_info.value.error_category == ErrorCategory.INVALID_STRUCTURE.value
+
+
+def test_ollama_provider_applies_configured_timeout(monkeypatch) -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=_ollama_envelope("Answer"))
+
+    provider = _ollama_provider(monkeypatch, handler)
+    provider.generate_text("Prompt")
+
+    assert captured[0].extensions["timeout"]["read"] == 42
+
+
+def test_configured_provider_identity_follows_settings(monkeypatch) -> None:
+    monkeypatch.setattr(text_generation, "settings", OLLAMA_SETTINGS)
+
+    assert text_generation.configured_provider_identity() == ("ollama", "qwen3:8b")
+
+    monkeypatch.setattr(
+        text_generation,
+        "settings",
+        SimpleNamespace(ai_provider="gemini", gemini_api_key="key"),
+    )
+
+    assert text_generation.configured_provider_identity() == (
+        "gemini",
+        GeminiTextGenerationProvider.MODEL,
+    )
+
+
+def test_gemini_error_mapping_continues(monkeypatch) -> None:
+    class ErrorModels:
+        def __init__(self, exc: Exception) -> None:
+            self.exc = exc
+
+        def generate_content(self, **kwargs):
+            raise self.exc
+
+    class ErrorClient:
+        def __init__(self, exc: Exception) -> None:
+            self.models = ErrorModels(exc)
+
+    monkeypatch.setattr(
+        text_generation,
+        "settings",
+        SimpleNamespace(gemini_api_key="test-key", ai_generation_timeout_seconds=60),
+    )
 
     # 401 auth
     monkeypatch.setattr(
@@ -532,3 +775,87 @@ def test_reliable_provider_does_not_retry_invalid_json() -> None:
     assert exc_info.value.error_category == ErrorCategory.INVALID_STRUCTURE.value
     # Must NOT blindly retry deterministic invalid JSON within the same provider
     assert bad_provider.call_count == 1
+
+
+def test_providers_reuse_one_http_client_instead_of_leaking_pools(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(text_generation, "settings", OLLAMA_SETTINGS)
+    monkeypatch.setattr(text_generation, "_shared_http_client", None)
+
+    first = text_generation.OllamaTextGenerationProvider()
+    second = text_generation.OllamaTextGenerationProvider()
+
+    assert first._client is second._client
+    assert not first._client.is_closed
+
+
+def test_ollama_provider_rejects_redirect_instead_of_following_it(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "http://elsewhere.test/"})
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    with pytest.raises(TextGenerationProviderError, match="HTTP 302"):
+        provider.generate_text("Prompt")
+
+
+def test_every_implemented_provider_is_constructible(monkeypatch) -> None:
+    monkeypatch.setattr(
+        text_generation.genai,
+        "Client",
+        lambda **kwargs: SimpleNamespace(models=None),
+    )
+
+    for provider_name in IMPLEMENTED_AI_PROVIDERS:
+        monkeypatch.setattr(
+            text_generation,
+            "settings",
+            SimpleNamespace(
+                ai_provider=provider_name,
+                ai_fallback_providers="",
+                gemini_api_key="test-key",
+                ollama_base_url="http://ollama.test:11434",
+                ollama_model="qwen3:8b",
+                ai_generation_timeout_seconds=60,
+                ai_generation_max_attempts=3,
+                ai_generation_backoff_base_seconds=0.01,
+                ai_generation_backoff_max_seconds=0.1,
+                ai_generation_max_concurrency=10,
+            ),
+        )
+
+        provider = text_generation.get_text_generation_provider()
+
+        assert isinstance(provider, ReliableTextGenerationProvider)
+        assert provider.providers, f"{provider_name} produced no provider instance"
+
+
+def test_connection_error_keeps_provider_taxonomy_and_is_retryable() -> None:
+    error = TextGenerationConnectionError()
+
+    assert isinstance(error, TextGenerationProviderError)
+    assert isinstance(error, TextGenerationError)
+    assert error.error_category == ErrorCategory.PROVIDER_ERROR.value
+    assert is_transient_generation_error(error)
+
+
+def test_unreachable_ollama_is_retried_then_falls_back(monkeypatch) -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    unreachable = _ollama_provider(monkeypatch, refuse)
+    healthy = StubProvider(provider_name="gemini", model_name="gemini-3.6-flash")
+
+    reliable = ReliableTextGenerationProvider(
+        [unreachable, healthy],
+        max_attempts=2,
+        backoff_base_seconds=0.001,
+        backoff_max_seconds=0.01,
+        max_concurrency=4,
+    )
+
+    text, metadata = reliable.generate_text_with_metadata("Prompt")
+
+    assert metadata.provider == "gemini"
+    assert text == "Response for Prompt"

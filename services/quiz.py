@@ -105,7 +105,9 @@ class QuizService:
                     user_id=resolved_user_id,
                     course_id=course_id,
                     generation_type=GenerationType.QUIZ,
-                    error_category=ErrorCategory.PROVIDER_ERROR,
+                    error_category=getattr(
+                        exc, "error_category", ErrorCategory.PROVIDER_ERROR
+                    ),
                 )
             raise QuizGenerationError("Text generation provider failed.") from exc
 

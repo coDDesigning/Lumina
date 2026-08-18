@@ -35,7 +35,6 @@ IMPLEMENTED_AI_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
 DEFAULT_AI_PROVIDER = AI_PROVIDER_OLLAMA
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1"
-DEFAULT_OLLAMA_TIMEOUT_SECONDS = 300
 OLLAMA_MODEL_PATTERN = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
 
 DEFAULT_MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
@@ -60,6 +59,11 @@ DEFAULT_OCR_DPI = 300
 DEFAULT_OCR_MIN_TEXT_CHARACTERS = 20
 DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS = 1_200
 DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS = 200
+DEFAULT_AI_GENERATION_TIMEOUT_SECONDS = 60
+DEFAULT_AI_GENERATION_MAX_ATTEMPTS = 3
+DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS = 1.0
+DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS = 10.0
+DEFAULT_AI_GENERATION_MAX_CONCURRENCY = 10
 
 
 @dataclass(frozen=True)
@@ -93,7 +97,12 @@ class Settings:
     gemini_api_key: str | None
     ollama_base_url: str
     ollama_model: str
-    ollama_timeout_seconds: int
+    ai_fallback_providers: str
+    ai_generation_timeout_seconds: int
+    ai_generation_max_attempts: int
+    ai_generation_backoff_base_seconds: float
+    ai_generation_backoff_max_seconds: float
+    ai_generation_max_concurrency: int
 
     # Maximum accepted document size before content validation
     max_upload_size_bytes: int
@@ -241,12 +250,25 @@ def load_settings() -> Settings:
             "OLLAMA_MODEL must contain 1-128 characters limited to letters, digits, "
             "dots, colons, slashes, dashes, or underscores."
         )
-    ollama_timeout_seconds = _bounded_positive_integer_setting(
-        "OLLAMA_TIMEOUT_SECONDS",
-        DEFAULT_OLLAMA_TIMEOUT_SECONDS,
-        minimum=1,
-        maximum=3600,
-    )
+    ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
+    if ai_fallback_providers_raw:
+        for fallback_token in (
+            item.strip().lower()
+            for item in ai_fallback_providers_raw.split(",")
+            if item.strip()
+        ):
+            if fallback_token not in RECOGNIZED_AI_PROVIDERS:
+                raise ValueError(
+                    "AI_FALLBACK_PROVIDERS tokens must be one of: "
+                    f"{', '.join(RECOGNIZED_AI_PROVIDERS)}."
+                )
+            if fallback_token not in IMPLEMENTED_AI_PROVIDERS:
+                raise ValueError(
+                    f"AI_FALLBACK_PROVIDERS token '{fallback_token}' is recognized but "
+                    f"not implemented yet. Implemented providers: "
+                    f"{', '.join(IMPLEMENTED_AI_PROVIDERS)}."
+                )
+    ai_fallback_providers = ai_fallback_providers_raw
 
     if app_env == APP_ENV_PRODUCTION:
         for name, value in (
@@ -359,6 +381,38 @@ def load_settings() -> Settings:
             "DOCUMENT_CHUNK_SIZE_CHARACTERS."
         )
 
+    ai_generation_timeout_seconds = _bounded_positive_integer_setting(
+        "AI_GENERATION_TIMEOUT_SECONDS",
+        DEFAULT_AI_GENERATION_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=300,
+    )
+    ai_generation_max_attempts = _bounded_positive_integer_setting(
+        "AI_GENERATION_MAX_ATTEMPTS",
+        DEFAULT_AI_GENERATION_MAX_ATTEMPTS,
+        minimum=1,
+        maximum=10,
+    )
+    ai_generation_backoff_base_seconds = _positive_float_setting(
+        "AI_GENERATION_BACKOFF_BASE_SECONDS",
+        DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS,
+    )
+    ai_generation_backoff_max_seconds = _positive_float_setting(
+        "AI_GENERATION_BACKOFF_MAX_SECONDS",
+        DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS,
+    )
+    if ai_generation_backoff_max_seconds < ai_generation_backoff_base_seconds:
+        raise ValueError(
+            "AI_GENERATION_BACKOFF_MAX_SECONDS must be greater than or equal to "
+            "AI_GENERATION_BACKOFF_BASE_SECONDS."
+        )
+    ai_generation_max_concurrency = _bounded_positive_integer_setting(
+        "AI_GENERATION_MAX_CONCURRENCY",
+        DEFAULT_AI_GENERATION_MAX_CONCURRENCY,
+        minimum=1,
+        maximum=100,
+    )
+
     return Settings(
         app_env=app_env,
         app_debug=app_debug,
@@ -375,7 +429,12 @@ def load_settings() -> Settings:
         gemini_api_key=gemini_api_key,
         ollama_base_url=ollama_base_url,
         ollama_model=ollama_model,
-        ollama_timeout_seconds=ollama_timeout_seconds,
+        ai_fallback_providers=ai_fallback_providers,
+        ai_generation_timeout_seconds=ai_generation_timeout_seconds,
+        ai_generation_max_attempts=ai_generation_max_attempts,
+        ai_generation_backoff_base_seconds=ai_generation_backoff_base_seconds,
+        ai_generation_backoff_max_seconds=ai_generation_backoff_max_seconds,
+        ai_generation_max_concurrency=ai_generation_max_concurrency,
         max_upload_size_bytes=max_upload_size_bytes,
         max_request_size_bytes=max_request_size_bytes,
         max_concurrent_document_validations=max_concurrent_document_validations,

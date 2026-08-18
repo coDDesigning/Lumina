@@ -26,13 +26,18 @@ from backend.app.config import (
     DEFAULT_OCR_DPI,
     DEFAULT_OCR_LANGUAGE,
     DEFAULT_OCR_MIN_TEXT_CHARACTERS,
+    DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_OLLAMA_TIMEOUT_SECONDS,
     DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
     DEFAULT_PROCESSING_JOB_LEASE_SECONDS,
     DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS,
     DEFAULT_PROCESSING_JOB_POLL_SECONDS,
     DEFAULT_UPLOAD_REQUEST_TIMEOUT_SECONDS,
+    IMPLEMENTED_AI_PROVIDERS,
     MODE_HOSTED,
     MODE_SELF_HOSTED,
+    RECOGNIZED_AI_PROVIDERS,
     load_settings,
 )
 from backend.app.database_config import load_database_url
@@ -53,6 +58,9 @@ CONFIGURATION_KEYS = (
     "BOOTSTRAP_ADMIN_EMAIL",
     "BOOTSTRAP_ADMIN_TOKEN",
     "GEMINI_API_KEY",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "OLLAMA_TIMEOUT_SECONDS",
     "MAX_UPLOAD_SIZE_BYTES",
     "MAX_REQUEST_SIZE_BYTES",
     "MAX_CONCURRENT_DOCUMENT_VALIDATIONS",
@@ -595,3 +603,159 @@ def test_ai_provider_rejects_unsupported_value(
 
     with pytest.raises(ValueError, match="AI_PROVIDER"):
         load_settings()
+
+
+@pytest.mark.parametrize("provider", ["openai", "claude"])
+def test_recognized_but_unimplemented_provider_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER", provider)
+
+    with pytest.raises(ValueError, match="not implemented"):
+        load_settings()
+
+
+def test_implemented_providers_are_the_authoritative_list() -> None:
+    assert IMPLEMENTED_AI_PROVIDERS == ("gemini", "ollama")
+    assert set(IMPLEMENTED_AI_PROVIDERS) <= set(RECOGNIZED_AI_PROVIDERS)
+
+
+def test_ollama_settings_default_to_a_working_local_endpoint() -> None:
+    loaded = load_settings()
+
+    assert loaded.ai_provider == "ollama"
+    assert loaded.ollama_base_url == DEFAULT_OLLAMA_BASE_URL
+    assert loaded.ollama_model == DEFAULT_OLLAMA_MODEL
+    assert loaded.ollama_timeout_seconds == DEFAULT_OLLAMA_TIMEOUT_SECONDS
+
+
+def test_ollama_settings_are_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OLLAMA_BASE_URL", "https://ollama.internal:11434")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3:8b")
+    monkeypatch.setenv("OLLAMA_TIMEOUT_SECONDS", "120")
+
+    loaded = load_settings()
+
+    assert loaded.ollama_base_url == "https://ollama.internal:11434"
+    assert loaded.ollama_model == "qwen3:8b"
+    assert loaded.ollama_timeout_seconds == 120
+
+
+def test_ollama_base_url_trailing_slash_is_normalized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434/")
+
+    assert load_settings().ollama_base_url == "http://localhost:11434"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "   ", "banana", "localhost:11434", "ftp://host:11434", "http://"],
+)
+def test_ollama_base_url_must_be_a_valid_http_url(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("OLLAMA_BASE_URL", value)
+
+    with pytest.raises(ValueError, match="OLLAMA_BASE_URL"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["", "   ", "bad model!", "x" * 129])
+def test_ollama_model_must_be_present_and_safe(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("OLLAMA_MODEL", value)
+
+    with pytest.raises(ValueError, match="OLLAMA_MODEL"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["hf.co/user/repo:Q4_K_M", "llama3.1:8b-instruct"])
+def test_ollama_model_accepts_real_registry_tags(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("OLLAMA_MODEL", value)
+
+    assert load_settings().ollama_model == value
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "3601", "abc"])
+def test_ollama_timeout_must_be_bounded_positive_integer(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("OLLAMA_TIMEOUT_SECONDS", value)
+
+    with pytest.raises(ValueError, match="OLLAMA_TIMEOUT_SECONDS"):
+        load_settings()
+
+
+def _ai_section_of_env_example() -> list[str]:
+    lines = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
+    start = next(
+        index
+        for index, line in enumerate(lines)
+        if line.startswith("# ── AI providers")
+    )
+    return lines[start:]
+
+
+def test_env_example_ai_settings_are_all_consumed_by_config() -> None:
+    reserved_for_planned_providers = {"OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
+    config_source = (PROJECT_ROOT / "backend" / "app" / "config.py").read_text(
+        encoding="utf-8"
+    )
+
+    advertised = {
+        line.split("=", 1)[0].strip()
+        for line in _ai_section_of_env_example()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+
+    assert advertised, "The AI section of .env.example advertises no settings."
+
+    for name in advertised - reserved_for_planned_providers:
+        assert f'"{name}"' in config_source, (
+            f"{name} is advertised in .env.example but never read by config.py."
+        )
+
+
+def test_env_example_marks_settings_config_does_not_read() -> None:
+    section = "\n".join(_ai_section_of_env_example())
+    config_source = (PROJECT_ROOT / "backend" / "app" / "config.py").read_text(
+        encoding="utf-8"
+    )
+
+    for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        assert f'"{name}"' not in config_source
+        assert name in section
+        assert "Not read by backend/app/config.py yet" in section
+
+
+def test_env_example_advertises_every_active_ollama_setting() -> None:
+    section = "\n".join(_ai_section_of_env_example())
+
+    for name in (
+        "AI_PROVIDER",
+        "OLLAMA_BASE_URL",
+        "OLLAMA_MODEL",
+        "OLLAMA_TIMEOUT_SECONDS",
+    ):
+        assert f"{name}=" in section, f"{name} is read by config.py but not documented."
+
+
+def test_gemini_provider_does_not_require_ollama_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER", "gemini")
+
+    loaded = load_settings()
+
+    assert loaded.ai_provider == "gemini"
+    assert loaded.ollama_base_url == DEFAULT_OLLAMA_BASE_URL

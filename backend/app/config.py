@@ -59,6 +59,7 @@ DEFAULT_OCR_DPI = 300
 DEFAULT_OCR_MIN_TEXT_CHARACTERS = 20
 DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS = 1_200
 DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS = 200
+DEFAULT_MATERIAL_MAX_CHARACTERS = 120_000
 DEFAULT_AI_GENERATION_TIMEOUT_SECONDS = 60
 DEFAULT_AI_GENERATION_MAX_ATTEMPTS = 3
 DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS = 1.0
@@ -127,6 +128,10 @@ class Settings:
     ocr_min_text_characters: int
     document_chunk_size_characters: int
     document_chunk_overlap_characters: int
+    study_guide_material_max_chars: int
+    quiz_material_max_chars: int
+    flashcard_material_max_chars: int
+    ai_tutor_material_max_chars: int
 
     @property
     def is_hosted(self) -> bool:
@@ -381,6 +386,22 @@ def load_settings() -> Settings:
             "DOCUMENT_CHUNK_SIZE_CHARACTERS."
         )
 
+    material_budgets: dict[str, int] = {}
+    for name in (
+        "STUDY_GUIDE_MATERIAL_MAX_CHARS",
+        "QUIZ_MATERIAL_MAX_CHARS",
+        "FLASHCARD_MATERIAL_MAX_CHARS",
+        "AI_TUTOR_MATERIAL_MAX_CHARS",
+    ):
+        budget = _positive_integer_setting(name, DEFAULT_MATERIAL_MAX_CHARACTERS)
+        if budget < document_chunk_size_characters:
+            raise ValueError(
+                f"{name} must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS "
+                f"({document_chunk_size_characters}) so a single stored chunk "
+                "can always fit."
+            )
+        material_budgets[name] = budget
+
     ai_generation_timeout_seconds = _bounded_positive_integer_setting(
         "AI_GENERATION_TIMEOUT_SECONDS",
         DEFAULT_AI_GENERATION_TIMEOUT_SECONDS,
@@ -457,6 +478,12 @@ def load_settings() -> Settings:
         ocr_min_text_characters=ocr_min_text_characters,
         document_chunk_size_characters=document_chunk_size_characters,
         document_chunk_overlap_characters=document_chunk_overlap_characters,
+        study_guide_material_max_chars=material_budgets[
+            "STUDY_GUIDE_MATERIAL_MAX_CHARS"
+        ],
+        quiz_material_max_chars=material_budgets["QUIZ_MATERIAL_MAX_CHARS"],
+        flashcard_material_max_chars=material_budgets["FLASHCARD_MATERIAL_MAX_CHARS"],
+        ai_tutor_material_max_chars=material_budgets["AI_TUTOR_MATERIAL_MAX_CHARS"],
     )
 
 

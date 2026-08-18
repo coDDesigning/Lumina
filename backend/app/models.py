@@ -618,6 +618,12 @@ class GeneratedOutput(Base):
         ForeignKey("courses.id", ondelete="CASCADE"), index=True
     )
 
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    model_used: Mapped[str | None] = mapped_column(String(150), nullable=True)
+
     # What kind of output this is, stored as a short text label,
     # for example: "summary". Later kinds can be added without
     # changing the table structure.

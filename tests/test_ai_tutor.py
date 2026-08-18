@@ -107,7 +107,10 @@ def test_get_course_material_uses_ready_document_chunks(
         model_graph.course.id,
     )
 
-    assert material == "First chunk\n\nSecond chunk"
+    assert material.text == "First chunk\n\nSecond chunk"
+    assert material.chunks_used == 2
+    assert material.chunks_available == 2
+    assert material.truncated is False
 
 
 def test_build_prompt_inserts_course_material_and_question() -> None:
@@ -146,9 +149,11 @@ def test_generate_returns_tutor_response(
         FakeProvider(),
     )
 
-    assert result.answer == (
+    assert result.response.answer == (
         "An operating system manages hardware and software resources."
     )
+    assert result.material.truncated is False
+    assert result.model_used.startswith("ollama:")
 
 
 def test_generate_rejects_missing_ready_course_material(
@@ -167,7 +172,7 @@ def test_generate_rejects_missing_ready_course_material(
             FakeProvider(),
         )
     except NoReadyCourseMaterialError as exc:
-        assert "No ready course material" in str(exc)
+        assert "No processed course material" in str(exc)
     else:
         raise AssertionError("Expected NoReadyCourseMaterialError")
 
@@ -250,11 +255,8 @@ def test_ai_tutor_endpoint_returns_generated_response(
     )
 
     response = upload_api.client.post(
-        "/api/ai-tutor",
-        json={
-            "course_id": upload_api.course_id,
-            "question": "Explain the topic.",
-        },
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "Explain the topic."},
         headers=upload_api.authorization,
     )
 
@@ -265,17 +267,17 @@ def test_ai_tutor_endpoint_returns_generated_response(
     assert payload["success"] is True
     assert payload["message"] == "AI tutor response generated successfully"
     assert payload["data"]["answer"] == ("Here is a clear explanation of the topic.")
+    assert payload["data"]["context_truncated"] is False
+    assert payload["data"]["chunks_used"] == 1
+    assert payload["data"]["chunks_available"] == 1
 
 
 def test_ai_tutor_endpoint_requires_authentication(
     api_context,
 ) -> None:
     response = api_context.client.post(
-        "/api/ai-tutor",
-        json={
-            "course_id": 1,
-            "question": "Explain the topic.",
-        },
+        "/api/courses/1/ai-tutor",
+        json={"question": "Explain the topic."},
     )
 
     assert response.status_code == 401

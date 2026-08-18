@@ -21,7 +21,8 @@ CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 COURSE_FIELDS_REVISION = "a4fd52f56b91"
 AI_USAGE_REVISION = "b7e2a9d1c3f4"
 SYLLABUS_REVISION = "e5c1a7b39d64"
-HEAD_REVISION = "a1c5e7f9b203"
+HARDENING_REVISION = "a1c5e7f9b203"
+HEAD_REVISION = "c9b3d5e08f27"
 
 
 def test_migration_graph_has_one_canonical_base_and_head() -> None:
@@ -35,7 +36,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: SYLLABUS_REVISION,
+        HEAD_REVISION: HARDENING_REVISION,
+        HARDENING_REVISION: SYLLABUS_REVISION,
         SYLLABUS_REVISION: AI_USAGE_REVISION,
         AI_USAGE_REVISION: COURSE_FIELDS_REVISION,
         COURSE_FIELDS_REVISION: CHUNK_RANGES_REVISION,
@@ -946,3 +948,93 @@ def test_course_workspace_migration_backfills_and_round_trips(
             "SELECT version_num FROM alembic_version"
         ).fetchone()
         assert revision == (HEAD_REVISION,)
+
+
+def generated_output_columns(connection: sqlite3.Connection) -> set[str]:
+    return {
+        row[1] for row in connection.execute("PRAGMA table_info(generated_outputs)")
+    }
+
+
+def test_generated_output_attribution_migration_round_trips(tmp_path: Path) -> None:
+    """Legacy rows keep unknown attribution; nothing is invented by the upgrade."""
+    database_path = tmp_path / "generated-output-attribution.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", HARDENING_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = generated_output_columns(connection)
+        assert "user_id" not in columns
+        assert "model_used" not in columns
+
+        role_id = connection.execute(
+            "SELECT id FROM roles WHERE name = 'user'"
+        ).fetchone()[0]
+        user_id = connection.execute(
+            "INSERT INTO users "
+            "(name, email, password_hash, role_id, is_banned, preferred_model) "
+            "VALUES (?, ?, ?, ?, 0, ?)",
+            ("Attribution user", "attribution@example.com", "hash", role_id, "model"),
+        ).lastrowid
+        course_id = connection.execute(
+            "INSERT INTO courses "
+            "(title, description, is_deleted, owner_id, created_at) "
+            "VALUES (?, NULL, 0, ?, ?)",
+            ("Attribution course", user_id, "2026-01-02 03:04:05"),
+        ).lastrowid
+        legacy_id = connection.execute(
+            "INSERT INTO generated_outputs "
+            "(course_id, output_type, content, created_at) VALUES (?, ?, ?, ?)",
+            (course_id, "study_guide", '{"title": "Legacy"}', "2026-01-02 03:04:05"),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        columns = generated_output_columns(connection)
+        assert "user_id" in columns
+        assert "model_used" in columns
+
+        assert connection.execute(
+            "SELECT user_id, model_used, content FROM generated_outputs WHERE id = ?",
+            (legacy_id,),
+        ).fetchone() == (None, None, '{"title": "Legacy"}')
+
+        indexes = {
+            row[1] for row in connection.execute("PRAGMA index_list(generated_outputs)")
+        }
+        assert "ix_generated_outputs_user_id" in indexes
+
+        references = {
+            (row[2], row[3], row[6])
+            for row in connection.execute("PRAGMA foreign_key_list(generated_outputs)")
+        }
+        assert ("users", "user_id", "SET NULL") in references
+
+        connection.execute(
+            "UPDATE generated_outputs SET user_id = ?, model_used = ? WHERE id = ?",
+            (user_id, "ollama:qwen3:8b", legacy_id),
+        )
+
+    run_alembic(database_path, tmp_path, "downgrade", HARDENING_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = generated_output_columns(connection)
+        assert "user_id" not in columns
+        assert "model_used" not in columns
+        assert connection.execute(
+            "SELECT content FROM generated_outputs WHERE id = ?", (legacy_id,)
+        ).fetchone() == ('{"title": "Legacy"}',)
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        columns = generated_output_columns(connection)
+        assert "user_id" in columns
+        assert "model_used" in columns
+        assert connection.execute(
+            "SELECT user_id, model_used FROM generated_outputs WHERE id = ?",
+            (legacy_id,),
+        ).fetchone() == (None, None)
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)

@@ -475,6 +475,14 @@ def configured_provider_identity() -> tuple[str, str]:
     return AI_PROVIDER_GEMINI, GeminiTextGenerationProvider.MODEL
 
 
+def model_identifier(metadata: GenerationMetadata | None) -> str:
+    if metadata is not None:
+        return f"{metadata.provider}:{metadata.model}"
+
+    provider, model = configured_provider_identity()
+    return f"{provider}:{model}"
+
+
 _shared_generation_semaphore: threading.BoundedSemaphore | None = None
 _shared_generation_semaphore_lock = threading.Lock()
 

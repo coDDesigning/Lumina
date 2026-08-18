@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from schemas.generation import BoundedContext
+
 
 class GeneratedFlashcard(BaseModel):
     card_number: int = Field(ge=1, le=10)
@@ -17,3 +19,7 @@ class FlashcardGenerationResponse(BaseModel):
         min_length=1,
         max_length=10,
     )
+
+
+class FlashcardGenerationResult(BoundedContext):
+    flashcards: FlashcardGenerationResponse

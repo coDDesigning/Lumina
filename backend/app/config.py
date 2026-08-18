@@ -12,6 +12,7 @@ import re
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from email_validator import EmailNotValidError, validate_email
 from .database_config import (
@@ -26,6 +27,17 @@ from .database_config import (
 )
 
 STORAGE_BACKEND_LOCAL = "local"
+
+AI_PROVIDER_GEMINI = "gemini"
+AI_PROVIDER_OLLAMA = "ollama"
+RECOGNIZED_AI_PROVIDERS = ("ollama", "openai", "gemini", "claude")
+IMPLEMENTED_AI_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
+DEFAULT_AI_PROVIDER = AI_PROVIDER_OLLAMA
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_MODEL = "llama3.1"
+DEFAULT_OLLAMA_TIMEOUT_SECONDS = 300
+OLLAMA_MODEL_PATTERN = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
+
 DEFAULT_MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
 DEFAULT_MAX_REQUEST_SIZE_BYTES = 1024 * 1024
 DEFAULT_MAX_CONCURRENT_DOCUMENT_VALIDATIONS = 2
@@ -79,6 +91,9 @@ class Settings:
     # AI provider configuration
     ai_provider: str
     gemini_api_key: str | None
+    ollama_base_url: str
+    ollama_model: str
+    ollama_timeout_seconds: int
 
     # Maximum accepted document size before content validation
     max_upload_size_bytes: int
@@ -204,11 +219,34 @@ def load_settings() -> Settings:
             "Hosted mode and production require BOOTSTRAP_ADMIN_TOKEN to be set."
         )
 
-    ai_provider = os.getenv("AI_PROVIDER", "ollama").strip().lower() or "ollama"
+    ai_provider = (
+        os.getenv("AI_PROVIDER", DEFAULT_AI_PROVIDER).strip().lower()
+        or DEFAULT_AI_PROVIDER
+    )
 
-    if ai_provider not in {"ollama", "openai", "gemini", "claude"}:
-        raise ValueError("AI_PROVIDER must be one of: ollama, openai, gemini, claude.")
+    if ai_provider not in RECOGNIZED_AI_PROVIDERS:
+        raise ValueError(
+            f"AI_PROVIDER must be one of: {', '.join(RECOGNIZED_AI_PROVIDERS)}."
+        )
+    if ai_provider not in IMPLEMENTED_AI_PROVIDERS:
+        raise ValueError(
+            f"AI_PROVIDER '{ai_provider}' is recognized but not implemented yet. "
+            f"Implemented providers: {', '.join(IMPLEMENTED_AI_PROVIDERS)}."
+        )
     gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip() or None
+    ollama_base_url = _http_url_setting("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
+    ollama_model = os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip()
+    if not OLLAMA_MODEL_PATTERN.fullmatch(ollama_model):
+        raise ValueError(
+            "OLLAMA_MODEL must contain 1-128 characters limited to letters, digits, "
+            "dots, colons, slashes, dashes, or underscores."
+        )
+    ollama_timeout_seconds = _bounded_positive_integer_setting(
+        "OLLAMA_TIMEOUT_SECONDS",
+        DEFAULT_OLLAMA_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=3600,
+    )
 
     if app_env == APP_ENV_PRODUCTION:
         for name, value in (
@@ -335,6 +373,9 @@ def load_settings() -> Settings:
         bootstrap_admin_token=bootstrap_admin_token or None,
         ai_provider=ai_provider,
         gemini_api_key=gemini_api_key,
+        ollama_base_url=ollama_base_url,
+        ollama_model=ollama_model,
+        ollama_timeout_seconds=ollama_timeout_seconds,
         max_upload_size_bytes=max_upload_size_bytes,
         max_request_size_bytes=max_request_size_bytes,
         max_concurrent_document_validations=max_concurrent_document_validations,
@@ -380,6 +421,14 @@ def _nonnegative_integer_setting(name: str, default: int) -> int:
     if value < 0:
         raise ValueError(f"{name} must be a nonnegative integer.")
     return value
+
+
+def _http_url_setting(name: str, default: str) -> str:
+    raw_value = os.getenv(name, default).strip()
+    parts = urlsplit(raw_value)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        raise ValueError(f"{name} must be a valid http:// or https:// URL.")
+    return raw_value.rstrip("/")
 
 
 def _boolean_setting(name: str, *, default: bool) -> bool:

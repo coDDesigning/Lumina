@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.models import (
+    AiUsageLog,
     Course,
     DocumentChunk,
     DocumentPage,
@@ -98,6 +99,8 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
             document=document,
             course=course,
             chunk_index=0,
+            page_number=1,
+            end_page_number=1,
             text="Contract text",
         )
         generated_output = GeneratedOutput(
@@ -120,6 +123,18 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
             topic="contracts",
             detail="Understands relational contracts.",
         )
+        usage_log = AiUsageLog(
+            user=user,
+            course=course,
+            generation_type="study_guide",
+            provider="gemini",
+            model="gemini-2.5-flash",
+            prompt_tokens=10,
+            completion_tokens=20,
+            total_tokens=30,
+            latency_ms=150,
+            success=True,
+        )
         session.add_all(
             (
                 document,
@@ -131,6 +146,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
                 attempt,
                 progress,
                 knowledge,
+                usage_log,
             )
         )
         session.flush()
@@ -148,6 +164,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         attempt_id = attempt.id
         progress_id = progress.id
         knowledge_id = knowledge.id
+        usage_log_id = usage_log.id
 
     with session_factory() as session:
         persisted_document = session.get(UploadedDocument, document_id)
@@ -176,6 +193,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         assert session.get(QuizAttempt, attempt_id) is None
         assert session.get(Progress, progress_id) is None
         assert session.get(ProfileKnowledge, knowledge_id) is None
+        assert session.get(AiUsageLog, usage_log_id) is None
         assert session.scalar(select(Role.id).where(Role.name == "user")) is not None
 
 
@@ -230,8 +248,24 @@ def test_unloaded_course_delete_cascades_every_course_branch(
             topic="course cascades",
             detail="Must survive course deletion.",
         )
+        usage_log = AiUsageLog(
+            user=user,
+            course=course,
+            generation_type="quiz",
+            provider="gemini",
+            model="gemini-2.5-flash",
+            success=True,
+        )
         session.add_all(
-            (document, generated_output, question, attempt, progress, knowledge)
+            (
+                document,
+                generated_output,
+                question,
+                attempt,
+                progress,
+                knowledge,
+                usage_log,
+            )
         )
         session.flush()
         job = enqueue_document_job(session, document)
@@ -245,6 +279,7 @@ def test_unloaded_course_delete_cascades_every_course_branch(
         progress_id = progress.id
         knowledge_id = knowledge.id
         job_id = job.id
+        usage_log_id = usage_log.id
 
     with session_factory() as session:
         session.execute(delete(Course).where(Course.id == course_id))
@@ -259,6 +294,7 @@ def test_unloaded_course_delete_cascades_every_course_branch(
         assert session.get(QuizQuestion, question_id) is None
         assert session.get(QuizAttempt, attempt_id) is None
         assert session.get(Progress, progress_id) is None
+        assert session.get(AiUsageLog, usage_log_id) is None
         assert session.get(User, user_id) is not None
         assert session.get(ProfileKnowledge, knowledge_id) is not None
 

@@ -1,6 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+import services.ai_usage_logger as ai_usage_logger
 from backend.app.models import AiUsageLog, Course, Role, User
 from schemas.ai_usage import ErrorCategory, GenerationType
 from services.ai_usage_logger import AiUsageLogger
@@ -142,3 +143,57 @@ def test_logger_skips_when_user_id_missing(
             generation_type="prompt_generator",
         )
         assert result is None
+
+
+def test_failure_telemetry_records_the_configured_provider(
+    monkeypatch,
+    session_factory: sessionmaker[Session],
+) -> None:
+    monkeypatch.setattr(
+        ai_usage_logger,
+        "configured_provider_identity",
+        lambda: ("ollama", "qwen3:8b"),
+    )
+
+    with session_factory() as session:
+        user, course = _create_user_and_course(session)
+
+        log = AiUsageLogger.log_failure(
+            session,
+            user_id=user.id,
+            course_id=course.id,
+            generation_type=GenerationType.STUDY_GUIDE,
+            error_category=ErrorCategory.PROVIDER_ERROR,
+        )
+        session.commit()
+
+        assert log is not None
+        assert log.provider == "ollama"
+        assert log.model == "qwen3:8b"
+
+
+def test_explicit_provider_overrides_configured_identity(
+    monkeypatch,
+    session_factory: sessionmaker[Session],
+) -> None:
+    monkeypatch.setattr(
+        ai_usage_logger,
+        "configured_provider_identity",
+        lambda: ("ollama", "qwen3:8b"),
+    )
+
+    with session_factory() as session:
+        user, _ = _create_user_and_course(session)
+
+        log = AiUsageLogger.log_usage(
+            session,
+            user_id=user.id,
+            generation_type=GenerationType.QUIZ,
+            provider="gemini",
+            model="gemini-2.5-flash",
+        )
+        session.commit()
+
+        assert log is not None
+        assert log.provider == "gemini"
+        assert log.model == "gemini-2.5-flash"

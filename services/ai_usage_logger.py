@@ -3,7 +3,10 @@ from sqlalchemy.orm import Session
 
 from backend.app.models import AiUsageLog
 from schemas.ai_usage import ErrorCategory, GenerationType
-from services.text_generation import GenerationMetadata
+from services.text_generation import (
+    GenerationMetadata,
+    configured_provider_identity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +22,6 @@ class AiUsageLogger:
       so they never break or corrupt the primary user operation or leak internal errors.
     """
 
-    DEFAULT_PROVIDER = "gemini"
-    DEFAULT_MODEL = "gemini-2.5-flash"
-
     @classmethod
     def log_usage(
         cls,
@@ -29,8 +29,8 @@ class AiUsageLogger:
         *,
         user_id: int,
         generation_type: str | GenerationType,
-        provider: str = DEFAULT_PROVIDER,
-        model: str = DEFAULT_MODEL,
+        provider: str | None = None,
+        model: str | None = None,
         course_id: int | None = None,
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
@@ -45,6 +45,10 @@ class AiUsageLogger:
                 "Skipping AI usage log: user_id is required but was not provided."
             )
             return None
+
+        configured_provider, configured_model = configured_provider_identity()
+        provider = provider or configured_provider
+        model = model or configured_model
 
         gen_type_str = (
             generation_type.value
@@ -91,8 +95,8 @@ class AiUsageLogger:
         generation_type: str | GenerationType,
         metadata: GenerationMetadata | None = None,
         course_id: int | None = None,
-        provider: str = DEFAULT_PROVIDER,
-        model: str = DEFAULT_MODEL,
+        provider: str | None = None,
+        model: str | None = None,
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         total_tokens: int | None = None,
@@ -145,8 +149,8 @@ class AiUsageLogger:
         generation_type: str | GenerationType,
         error_category: str | ErrorCategory,
         course_id: int | None = None,
-        provider: str = DEFAULT_PROVIDER,
-        model: str = DEFAULT_MODEL,
+        provider: str | None = None,
+        model: str | None = None,
         latency_ms: int | None = None,
     ) -> AiUsageLog | None:
         """Helper to record a failed AI generation event with a stable error category."""

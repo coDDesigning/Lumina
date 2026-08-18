@@ -7,7 +7,12 @@ from backend.app.database import get_db
 from schemas.response import BaseResponse
 from schemas.study_guide import StudyGuideResponse
 from services.study_guide import StudyGuideGenerationError, StudyGuideService
-from services.text_generation import TextGenerationError, get_text_generation_provider
+from services.text_generation import (
+    TextGenerationConnectionError,
+    TextGenerationError,
+    TextGenerationTimeoutError,
+    get_text_generation_provider,
+)
 from utils.authorization import OwnedCourse
 
 router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
@@ -19,6 +24,7 @@ router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
     responses={
         401: {"description": "Authentication required"},
         404: {"description": "Course not found"},
+        503: {"description": "AI provider unavailable"},
     },
 )
 def generate_study_guide(
@@ -38,6 +44,12 @@ def generate_study_guide(
             course.id,
             study_guide,
         )
+    except (TextGenerationConnectionError, TextGenerationTimeoutError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
     except (TextGenerationError, StudyGuideGenerationError) as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

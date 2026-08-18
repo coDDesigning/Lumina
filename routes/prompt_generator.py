@@ -15,7 +15,9 @@ from services.prompt_generator import (
     PromptGeneratorService,
 )
 from services.text_generation import (
+    TextGenerationConnectionError,
     TextGenerationError,
+    TextGenerationTimeoutError,
     get_text_generation_provider,
 )
 from utils.deps import get_current_user
@@ -29,6 +31,9 @@ router = APIRouter(
 @router.post(
     "/prompt-generator",
     response_model=BaseResponse[PromptGenerationResponse],
+    responses={
+        503: {"description": "AI provider unavailable"},
+    },
 )
 def generate_prompt(
     request: PromptGenerationRequest,
@@ -47,6 +52,12 @@ def generate_prompt(
             db=db,
             user_id=current_user.id,
         )
+
+    except (TextGenerationConnectionError, TextGenerationTimeoutError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
 
     except (TextGenerationError, PromptGenerationError) as exc:
         raise HTTPException(

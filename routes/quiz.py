@@ -12,7 +12,9 @@ from services.quiz import (
     QuizService,
 )
 from services.text_generation import (
+    TextGenerationConnectionError,
     TextGenerationError,
+    TextGenerationTimeoutError,
     get_text_generation_provider,
 )
 from utils.authorization import OwnedCourse
@@ -29,6 +31,7 @@ router = APIRouter(
     responses={
         401: {"description": "Authentication required"},
         404: {"description": "Course not found"},
+        503: {"description": "AI provider unavailable"},
     },
 )
 def generate_quiz(
@@ -54,6 +57,12 @@ def generate_quiz(
     except NoReadyCourseMaterialError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    except (TextGenerationConnectionError, TextGenerationTimeoutError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
 

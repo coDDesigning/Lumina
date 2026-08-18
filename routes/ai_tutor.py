@@ -13,7 +13,9 @@ from services.ai_tutor import (
     NoReadyCourseMaterialError,
 )
 from services.text_generation import (
+    TextGenerationConnectionError,
     TextGenerationError,
+    TextGenerationTimeoutError,
     get_text_generation_provider,
 )
 from utils.deps import get_current_user
@@ -27,6 +29,9 @@ router = APIRouter(
 @router.post(
     "/ai-tutor",
     response_model=BaseResponse[AiTutorResponse],
+    responses={
+        503: {"description": "AI provider unavailable"},
+    },
 )
 def ask_ai_tutor(
     request: AiTutorRequest,
@@ -50,6 +55,12 @@ def ask_ai_tutor(
     except NoReadyCourseMaterialError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    except (TextGenerationConnectionError, TextGenerationTimeoutError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
 

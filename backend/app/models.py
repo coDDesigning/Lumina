@@ -42,10 +42,11 @@ DOCUMENT_PROCESSING_STAGES = (
 _DOCUMENT_PROCESSING_STAGES_SQL = ", ".join(
     f"'{stage}'" for stage in DOCUMENT_PROCESSING_STAGES
 )
+_ASCII_WHITESPACE = " \t\n\r\v\f"
 
 
 class UTCDateTime(TypeDecorator[datetime]):
-    """Persist UTC job timestamps consistently across supported databases."""
+    """Persist UTC timestamps consistently across supported databases."""
 
     impl = DateTime
     cache_ok = True
@@ -98,7 +99,7 @@ class User(Base):
         String(100), default="gpt-4o-mini", server_default="gpt-4o-mini"
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
 
     role: Mapped["Role"] = relationship(back_populates="users")
@@ -151,7 +152,7 @@ class Course(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -215,6 +216,12 @@ class UploadedDocument(Base):
             "status IN ('uploaded', 'processing', 'ready', 'failed', 'deleting')",
             name="status_valid",
         ),
+        Index(
+            "uq_uploaded_documents_storage_provider_storage_key",
+            "storage_provider",
+            "storage_key",
+            unique=True,
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -236,10 +243,10 @@ class UploadedDocument(Base):
     )
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
     )
 
     uploader: Mapped["User"] = relationship(back_populates="uploaded_documents")
@@ -278,6 +285,10 @@ class DocumentChunk(Base):
             "end_page_number >= page_number)",
             name="page_range_valid",
         ),
+        CheckConstraint(
+            "chunk_index = CAST(chunk_index AS INTEGER) AND chunk_index >= 0",
+            name="chunk_index_nonnegative",
+        ),
         ForeignKeyConstraint(
             ["document_id", "course_id"],
             ["uploaded_documents.id", "uploaded_documents.course_id"],
@@ -304,7 +315,7 @@ class DocumentChunk(Base):
     text: Mapped[str] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
 
     document: Mapped["UploadedDocument"] = relationship(
@@ -397,7 +408,7 @@ class DocumentPage(Base):
         String(20), default="not_applicable", server_default="not_applicable"
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
 
     document: Mapped["UploadedDocument"] = relationship(
@@ -442,7 +453,9 @@ class DocumentVisual(Base):
             name="description_status_valid",
         ),
         CheckConstraint(
-            "analysis_status <> 'failed' OR error_code IS NOT NULL",
+            "analysis_status <> 'failed' OR "
+            f"(error_code IS NOT NULL AND "
+            f"length(trim(error_code, '{_ASCII_WHITESPACE}')) > 0)",
             name="failed_error_code_required",
         ),
     )
@@ -464,7 +477,7 @@ class DocumentVisual(Base):
     )
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
 
     page: Mapped["DocumentPage"] = relationship(back_populates="visuals")
@@ -481,6 +494,9 @@ class ProcessingJob(Base):
         ),
         UniqueConstraint(
             "document_id", "job_type", name="uq_processing_jobs_document_type"
+        ),
+        CheckConstraint(
+            f"job_type = '{JOB_TYPE_EXTRACT_DOCUMENT}'", name="job_type_valid"
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed')",
@@ -529,6 +545,21 @@ class ProcessingJob(Base):
         CheckConstraint(
             "failed_stage IS NULL OR status = 'failed'",
             name="failed_stage_status",
+        ),
+        CheckConstraint(
+            "status <> 'failed' OR (last_error_code IS NOT NULL AND "
+            f"length(trim(last_error_code, '{_ASCII_WHITESPACE}')) > 0)",
+            name="failed_error_code_nonblank",
+        ),
+        CheckConstraint(
+            "status <> 'running' OR (lease_owner IS NOT NULL AND "
+            f"length(trim(lease_owner, '{_ASCII_WHITESPACE}')) > 0)",
+            name="running_lease_owner_nonblank",
+        ),
+        CheckConstraint(
+            "status <> 'running' OR (claim_token IS NOT NULL AND "
+            "length(claim_token) = 36)",
+            name="running_claim_token_length",
         ),
         Index("ix_processing_jobs_claimable", "status", "available_at", "id"),
         Index("ix_processing_jobs_recoverable", "status", "lease_expires_at", "id"),
@@ -595,7 +626,7 @@ class GeneratedOutput(Base):
     content: Mapped[str] = mapped_column(Text)  # Unlimited length
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
 
     # Navigation attribute (NOT a column): lets Python code write
@@ -620,7 +651,7 @@ class Quiz(Base):
     title: Mapped[str] = mapped_column(String(200))
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
 
     # Navigation up to the course
@@ -647,6 +678,15 @@ class QuizQuestion(Base):
 
     __table_args__ = (
         UniqueConstraint("quiz_id", "question_index", name="uq_question_quiz_index"),
+        CheckConstraint(
+            "question_index = CAST(question_index AS INTEGER) AND question_index >= 0",
+            name="question_index_nonnegative",
+        ),
+        CheckConstraint(
+            "correct_option_index = CAST(correct_option_index AS INTEGER) "
+            "AND correct_option_index >= 0",
+            name="correct_option_index_nonnegative",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -704,7 +744,7 @@ class QuizAttempt(Base):
     score: Mapped[float] = mapped_column(Float)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
 
     user: Mapped["User"] = relationship(back_populates="quiz_attempts")
@@ -746,7 +786,7 @@ class Progress(Base):
 
     # SQLAlchemy includes the onupdate expression in ORM-generated updates.
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
     )
 
     user: Mapped["User"] = relationship(back_populates="progress_rows")
@@ -776,7 +816,7 @@ class ProfileKnowledge(Base):
     detail: Mapped[str] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
 
     user: Mapped["User"] = relationship(back_populates="knowledge_items")

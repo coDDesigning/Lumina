@@ -265,6 +265,8 @@ def test_delete_recovers_lost_final_commit_acknowledgement(
         job.status = "failed"
         job.attempt_count = job.max_attempts
         job.finished_at = job.available_at
+        job.last_error_code = "TEST_FAILURE"
+        job.last_error_message = "Test failure"
         document = session.get(UploadedDocument, document_id)
         assert document is not None
         document.status = "failed"

@@ -48,7 +48,9 @@ EXPECTED_POSTGRESQL_MAJOR = 17
 EXPECTED_POSTGRESQL_VERSION_NUMBER = 170006
 BASE_REVISION = "97d9fd86a3ba"
 PAGES_REVISION = "c4e6a8f1b203"
-HEAD_REVISION = "e5c1a7b39d64"
+VISUAL_REVISION = "f7a3c9d2e541"
+CHUNK_RANGES_REVISION = "a8c4e2f7b913"
+HEAD_REVISION = "a1c5e7f9b203"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -56,8 +58,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _run_alembic(*arguments: str) -> None:
-    completed = subprocess.run(
+def _invoke_alembic(*arguments: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_CONFIG), *arguments],
         cwd=PROJECT_ROOT,
         env=os.environ.copy(),
@@ -66,11 +68,75 @@ def _run_alembic(*arguments: str) -> None:
         timeout=120,
         check=False,
     )
+
+
+def _run_alembic(*arguments: str) -> None:
+    completed = _invoke_alembic(*arguments)
     assert completed.returncode == 0, (
         f"Alembic {' '.join(arguments)} failed\n"
         f"stdout:\n{completed.stdout}\n"
         f"stderr:\n{completed.stderr}"
     )
+
+
+def _assert_hardening_preflight_is_atomic() -> None:
+    engine = create_database_engine(settings.database_url)
+    try:
+        with engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    "UPDATE processing_jobs AS j SET job_type = 'unknown' "
+                    "FROM uploaded_documents AS d "
+                    "WHERE j.document_id = d.id "
+                    "AND d.storage_key = 'postgresql-migration/pending'"
+                )
+            )
+            assert result.rowcount == 1
+
+        completed = _invoke_alembic("upgrade", HEAD_REVISION)
+        assert completed.returncode != 0
+        assert "Unknown processing job types require manual correction" in (
+            completed.stderr
+        )
+
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == CHUNK_RANGES_REVISION
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT to_regclass("
+                        "'uq_uploaded_documents_storage_provider_storage_key')"
+                    )
+                )
+                is None
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT COUNT(*) FROM pg_constraint WHERE conname IN ("
+                        "'ck_document_chunks_chunk_index_nonnegative', "
+                        "'ck_processing_jobs_job_type_valid', "
+                        "'ck_quiz_questions_question_index_nonnegative')"
+                    )
+                )
+                == 0
+            )
+
+        with engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    "UPDATE processing_jobs AS j SET job_type = 'extract_document' "
+                    "FROM uploaded_documents AS d "
+                    "WHERE j.document_id = d.id "
+                    "AND d.storage_key = 'postgresql-migration/pending'"
+                )
+            )
+            assert result.rowcount == 1
+    finally:
+        engine.dispose()
 
 
 def _seed_base_revision() -> None:
@@ -317,6 +383,9 @@ def postgresql_engine() -> Iterator[Engine]:
     _run_alembic("upgrade", PAGES_REVISION)
     _assert_processing_backfill(deleted_error_code="COURSE_DELETED")
     _seed_page_revision()
+    _run_alembic("upgrade", VISUAL_REVISION)
+    _run_alembic("upgrade", CHUNK_RANGES_REVISION)
+    _assert_hardening_preflight_is_atomic()
     _run_alembic("upgrade", HEAD_REVISION)
     _assert_visual_enrichment_backfill()
     _enrich_migrated_page()
@@ -466,6 +535,32 @@ def test_postgresql_schema_readiness_and_role_seeds(
 
     inspector = inspect(postgresql_engine)
     assert set(Base.metadata.tables) <= set(inspector.get_table_names())
+    assert {index["name"] for index in inspector.get_indexes("uploaded_documents")} >= {
+        "uq_uploaded_documents_storage_provider_storage_key"
+    }
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("document_chunks")
+    } >= {
+        "ck_document_chunks_page_range_valid",
+        "ck_document_chunks_chunk_index_nonnegative",
+    }
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("processing_jobs")
+    } >= {
+        "ck_processing_jobs_job_type_valid",
+        "ck_processing_jobs_failed_error_code_nonblank",
+        "ck_processing_jobs_running_lease_owner_nonblank",
+        "ck_processing_jobs_running_claim_token_length",
+    }
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("quiz_questions")
+    } >= {
+        "ck_quiz_questions_question_index_nonnegative",
+        "ck_quiz_questions_correct_option_index_nonnegative",
+    }
     page_columns = {
         column["name"]: column for column in inspector.get_columns("document_pages")
     }

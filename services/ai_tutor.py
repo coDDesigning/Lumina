@@ -7,6 +7,7 @@ from backend.app.models import Course, DocumentChunk, UploadedDocument
 from schemas.ai_tutor import AiTutorResponse
 from schemas.ai_usage import ErrorCategory, GenerationType
 from services.ai_usage_logger import AiUsageLogger
+from services.prompt_loader import PromptLoader
 from services.text_generation import TextGenerationError, TextGenerationProvider
 
 
@@ -19,8 +20,9 @@ class NoReadyCourseMaterialError(AiTutorError):
 
 
 class AiTutorService:
+    PROMPT_TEMPLATE_NAME = "ai_tutor"
     PROMPT_PATH = (
-        Path(__file__).resolve().parents[1] / "app" / "prompts" / "ai_tutor_prompt.txt"
+        Path(__file__).resolve().parents[1] / "app" / "prompts" / "ai_tutor.json"
     )
 
     @staticmethod
@@ -52,16 +54,12 @@ class AiTutorService:
         course_material: str,
         question: str,
     ) -> str:
-        prompt_template = cls.PROMPT_PATH.read_text(
-            encoding="utf-8",
-        )
-
-        return prompt_template.replace(
-            "{{COURSE_MATERIAL}}",
-            course_material,
-        ).replace(
-            "{{QUESTION}}",
-            question,
+        return PromptLoader.render(
+            cls.PROMPT_TEMPLATE_NAME,
+            {
+                "COURSE_MATERIAL": course_material,
+                "QUESTION": question,
+            },
         )
 
     @classmethod

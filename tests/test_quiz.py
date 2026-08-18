@@ -18,6 +18,7 @@ from services.text_generation import (
     TextGenerationError,
     TextGenerationTimeoutError,
 )
+from utils.ai_errors import PUBLIC_MESSAGES, AiErrorCode
 
 
 def _valid_quiz_payload() -> dict[str, object]:
@@ -135,7 +136,10 @@ def test_get_course_material_uses_ready_document_chunks(
         model_graph.course.id,
     )
 
-    assert material == "First chunk\n\nSecond chunk"
+    assert material.text == "First chunk\n\nSecond chunk"
+    assert material.chunks_used == 2
+    assert material.chunks_available == 2
+    assert material.truncated is False
 
 
 def test_build_prompt_inserts_course_material() -> None:
@@ -161,17 +165,21 @@ def test_generate_returns_validated_quiz(
             assert "Example lecture material" in prompt
             return _valid_quiz_payload()
 
-    result = QuizService.generate(
+    generation = QuizService.generate(
         db_session,
         model_graph.course.id,
         FakeProvider(),
     )
+
+    result = generation.quiz
 
     assert result.title == "Example Quiz"
     assert len(result.questions) == 10
     assert result.questions[0].question_number == 1
     assert result.questions[0].topic == "Topic 1"
     assert result.questions[0].correct_option_index == 0
+    assert generation.material.truncated is False
+    assert generation.model_used.startswith("ollama:")
 
 
 def test_generate_rejects_missing_ready_course_material(
@@ -189,7 +197,7 @@ def test_generate_rejects_missing_ready_course_material(
             FakeProvider(),
         )
     except NoReadyCourseMaterialError as exc:
-        assert "No ready course material" in str(exc)
+        assert "No processed course material" in str(exc)
     else:
         raise AssertionError("Expected NoReadyCourseMaterialError")
 
@@ -275,7 +283,7 @@ def test_save_generated_quiz_persists_questions(
     quiz = QuizService.save_generated_quiz(
         db_session,
         model_graph.course.id,
-        quiz_data,
+        quiz_data.quiz,
     )
 
     questions = db_session.scalars(
@@ -358,8 +366,11 @@ def test_generate_quiz_endpoint_returns_generated_quiz(
 
     assert payload["success"] is True
     assert payload["message"] == "Quiz generated successfully"
-    assert payload["data"]["title"] == "Example Quiz"
-    assert len(payload["data"]["questions"]) == 10
+    assert payload["data"]["quiz"]["title"] == "Example Quiz"
+    assert len(payload["data"]["quiz"]["questions"]) == 10
+    assert payload["data"]["context_truncated"] is False
+    assert payload["data"]["chunks_used"] == 1
+    assert payload["data"]["chunks_available"] == 1
 
 
 def test_quiz_endpoint_reports_unreachable_provider_as_unavailable(
@@ -377,7 +388,10 @@ def test_quiz_endpoint_reports_unreachable_provider_as_unavailable(
     )
 
     assert response.status_code == 503
-    assert "could not be reached" in response.json()["detail"]
+    assert (
+        response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.PROVIDER_UNAVAILABLE]
+    )
+    assert "Ollama" not in response.json()["detail"]
 
 
 def test_quiz_endpoint_reports_provider_timeout_as_gateway_timeout(

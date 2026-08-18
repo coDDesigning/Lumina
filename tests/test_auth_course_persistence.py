@@ -393,7 +393,9 @@ def test_response_schemas_can_read_legacy_nul_text() -> None:
         description=None,
         semester="Fall",
         exam_date="2026",
+        syllabus="Legacy\x00 syllabus",
         created_at="2026-01-01T00:00:00Z",
+        updated_at="2026-01-01T00:00:00Z",
     )
     user = UserResponse(
         id=1,
@@ -406,6 +408,7 @@ def test_response_schemas_can_read_legacy_nul_text() -> None:
     )
 
     assert course.title == "Legacy\x00 course"
+    assert course.syllabus == "Legacy\x00 syllabus"
     assert user.name == "Legacy\x00 user"
     assert user.preferred_model == "legacy\x00model"
 

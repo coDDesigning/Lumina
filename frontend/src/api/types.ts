@@ -19,8 +19,10 @@ export interface Course {
   description: string | null;
   owner_id: number;
   created_at: string;
+  updated_at: string;
   semester: string | null;
   exam_date: string | null;
+  syllabus: string | null;
   topics: string | null;
 }
 
@@ -29,6 +31,7 @@ export interface CourseCreate {
   description?: string;
   semester?: string;
   exam_date?: string;
+  syllabus?: string;
   topics?: string;
 }
 
@@ -37,6 +40,7 @@ export interface CourseUpdate {
   description?: string;
   semester?: string;
   exam_date?: string;
+  syllabus?: string;
   topics?: string;
 }
 

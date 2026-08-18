@@ -14,11 +14,14 @@ class CourseBase(BaseModel):
     description: str | None = None
     semester: str | None = Field(default=None, max_length=100)
     exam_date: str | None = Field(default=None, max_length=20)
+    syllabus: str | None = None
     topics: str | None = None
 
 
 class CourseCreate(CourseBase):
-    @field_validator("title", "description", "semester", "exam_date", "topics")
+    @field_validator(
+        "title", "description", "semester", "exam_date", "syllabus", "topics"
+    )
     @classmethod
     def reject_nul(cls, value: str | None) -> str | None:
         return _reject_nul(value)
@@ -29,10 +32,13 @@ class CourseUpdate(BaseModel):
     description: str | None = None
     semester: str | None = Field(default=None, max_length=100)
     exam_date: str | None = Field(default=None, max_length=20)
+    syllabus: str | None = None
     topics: str | None = None
     is_deleted: bool | None = None
 
-    @field_validator("title", "description", "semester", "exam_date", "topics")
+    @field_validator(
+        "title", "description", "semester", "exam_date", "syllabus", "topics"
+    )
     @classmethod
     def reject_nul(cls, value: str | None) -> str | None:
         return _reject_nul(value)
@@ -52,4 +58,5 @@ class CourseResponse(CourseBase):
     id: int
     owner_id: int
     created_at: datetime
+    updated_at: datetime
     is_deleted: bool = False

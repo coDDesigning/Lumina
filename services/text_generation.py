@@ -149,7 +149,7 @@ def is_transient_generation_error(exc: Exception) -> bool:
 
 
 class GeminiTextGenerationProvider:
-    MODEL = "gemini-2.5-flash"
+    MODEL = "gemini-3.6-flash"
     PROVIDER_NAME = "gemini"
 
     def __init__(

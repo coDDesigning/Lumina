@@ -82,7 +82,9 @@ class StudyGuideService:
                     user_id=resolved_user_id,
                     course_id=course_id,
                     generation_type=GenerationType.STUDY_GUIDE,
-                    error_category=ErrorCategory.PROVIDER_ERROR,
+                    error_category=getattr(
+                        exc, "error_category", ErrorCategory.PROVIDER_ERROR
+                    ),
                 )
             raise StudyGuideGenerationError("Text generation provider failed.") from exc
 

@@ -17,7 +17,6 @@ from services.text_generation import (
 )
 from utils.authorization import OwnedCourse
 
-
 router = APIRouter(
     prefix="/api/courses",
     tags=["Quiz"],
@@ -43,6 +42,7 @@ def generate_quiz(
             db,
             course.id,
             provider,
+            user_id=course.owner_id,
         )
 
         QuizService.save_generated_quiz(

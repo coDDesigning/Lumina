@@ -17,7 +17,6 @@ from services.text_generation import (
 )
 from utils.authorization import OwnedCourse
 
-
 router = APIRouter(
     prefix="/api/courses",
     tags=["Flashcard"],
@@ -43,6 +42,7 @@ def generate_flashcards(
             db,
             course.id,
             provider,
+            user_id=course.owner_id,
         )
 
         FlashcardService.save_generated_flashcards(

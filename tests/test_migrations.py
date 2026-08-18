@@ -22,7 +22,8 @@ COURSE_FIELDS_REVISION = "a4fd52f56b91"
 AI_USAGE_REVISION = "b7e2a9d1c3f4"
 SYLLABUS_REVISION = "e5c1a7b39d64"
 HARDENING_REVISION = "a1c5e7f9b203"
-HEAD_REVISION = "c9b3d5e08f27"
+ATTRIBUTION_REVISION = "c9b3d5e08f27"
+HEAD_REVISION = "d3f8b21a6c40"
 
 
 def test_migration_graph_has_one_canonical_base_and_head() -> None:
@@ -36,7 +37,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: HARDENING_REVISION,
+        HEAD_REVISION: ATTRIBUTION_REVISION,
+        ATTRIBUTION_REVISION: HARDENING_REVISION,
         HARDENING_REVISION: SYLLABUS_REVISION,
         SYLLABUS_REVISION: AI_USAGE_REVISION,
         AI_USAGE_REVISION: COURSE_FIELDS_REVISION,

@@ -19,6 +19,7 @@ from backend.app.models import (
     Progress,
     Quiz,
     QuizAttempt,
+    QuizAttemptAnswer,
     QuizQuestion,
     Role,
     UploadedDocument,
@@ -122,6 +123,12 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
             correct_option_index=0,
         )
         attempt = QuizAttempt(user=user, quiz=quiz, score=1)
+        attempt_answer = QuizAttemptAnswer(
+            attempt=attempt,
+            question=question,
+            selected_option_index=0,
+            is_correct=True,
+        )
         progress = Progress(user=user, course=course, completion=0.5)
         knowledge = ProfileKnowledge(
             user=user,
@@ -149,6 +156,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
                 generated_output,
                 question,
                 attempt,
+                attempt_answer,
                 progress,
                 knowledge,
                 usage_log,
@@ -167,6 +175,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         quiz_id = quiz.id
         question_id = question.id
         attempt_id = attempt.id
+        attempt_answer_id = attempt_answer.id
         progress_id = progress.id
         knowledge_id = knowledge.id
         usage_log_id = usage_log.id
@@ -213,6 +222,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         assert session.get(Quiz, quiz_id) is None
         assert session.get(QuizQuestion, question_id) is None
         assert session.get(QuizAttempt, attempt_id) is None
+        assert session.get(QuizAttemptAnswer, attempt_answer_id) is None
         assert session.get(Progress, progress_id) is None
         assert session.get(ProfileKnowledge, knowledge_id) is None
         assert session.get(AiUsageLog, usage_log_id) is None
@@ -264,6 +274,12 @@ def test_unloaded_course_delete_cascades_every_course_branch(
             correct_option_index=0,
         )
         attempt = QuizAttempt(user=user, quiz=quiz, score=0.5)
+        attempt_answer = QuizAttemptAnswer(
+            attempt=attempt,
+            question=question,
+            selected_option_index=1,
+            is_correct=False,
+        )
         progress = Progress(user=user, course=course, completion=0.5)
         knowledge = ProfileKnowledge(
             user=user,
@@ -284,6 +300,7 @@ def test_unloaded_course_delete_cascades_every_course_branch(
                 generated_output,
                 question,
                 attempt,
+                attempt_answer,
                 progress,
                 knowledge,
                 usage_log,
@@ -298,6 +315,7 @@ def test_unloaded_course_delete_cascades_every_course_branch(
         quiz_id = quiz.id
         question_id = question.id
         attempt_id = attempt.id
+        attempt_answer_id = attempt_answer.id
         progress_id = progress.id
         knowledge_id = knowledge.id
         job_id = job.id
@@ -315,6 +333,7 @@ def test_unloaded_course_delete_cascades_every_course_branch(
         assert session.get(Quiz, quiz_id) is None
         assert session.get(QuizQuestion, question_id) is None
         assert session.get(QuizAttempt, attempt_id) is None
+        assert session.get(QuizAttemptAnswer, attempt_answer_id) is None
         assert session.get(Progress, progress_id) is None
         assert session.get(AiUsageLog, usage_log_id) is None
         assert session.get(User, user_id) is not None

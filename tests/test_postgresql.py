@@ -48,7 +48,7 @@ EXPECTED_POSTGRESQL_MAJOR = 17
 EXPECTED_POSTGRESQL_VERSION_NUMBER = 170006
 BASE_REVISION = "97d9fd86a3ba"
 PAGES_REVISION = "c4e6a8f1b203"
-HEAD_REVISION = "b7e2a9d1c3f4"
+HEAD_REVISION = "e5c1a7b39d64"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,

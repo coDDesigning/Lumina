@@ -12,7 +12,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select, text
+from sqlalchemy import Engine, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.base import Base
@@ -166,6 +166,33 @@ def session_factory(database_engine: Engine) -> sessionmaker[Session]:
         expire_on_commit=False,
         autoflush=False,
     )
+
+
+def _schema_drift(engine: Engine) -> dict[str, dict[str, list[str]]]:
+    """Report every column Alembic and the ORM models disagree about."""
+    inspector = inspect(engine)
+    reflected_tables = set(inspector.get_table_names())
+    drift: dict[str, dict[str, list[str]]] = {}
+    for table in Base.metadata.sorted_tables:
+        modelled = {column.name for column in table.columns}
+        if table.name not in reflected_tables:
+            drift[table.name] = {
+                "missing_from_database": sorted(modelled),
+                "missing_from_models": [],
+            }
+            continue
+        reflected = {column["name"] for column in inspector.get_columns(table.name)}
+        if reflected != modelled:
+            drift[table.name] = {
+                "missing_from_database": sorted(modelled - reflected),
+                "missing_from_models": sorted(reflected - modelled),
+            }
+    return drift
+
+
+@pytest.fixture
+def schema_drift(database_engine: Engine) -> dict[str, dict[str, list[str]]]:
+    return _schema_drift(database_engine)
 
 
 @pytest.fixture

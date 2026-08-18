@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import DateTime, Engine, Text, delete, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -324,3 +324,28 @@ def test_referenced_role_delete_is_restricted(
 
         assert session.get(Role, role_id) is not None
         assert session.get(User, user_id) is not None
+
+
+def test_migrated_schema_has_no_column_drift_from_the_models(
+    schema_drift: dict[str, dict[str, list[str]]],
+) -> None:
+    """Alembic and the ORM models must describe the same columns.
+
+    A model column with no migration deploys as a missing column, and a
+    migration column with no model is dead schema. Either direction fails here.
+    """
+    assert schema_drift == {}
+
+
+def test_course_workspace_columns_are_migrated_as_designed(
+    database_engine: Engine,
+) -> None:
+    """The new columns must carry the nullability the model declares."""
+    columns = {
+        column["name"]: column
+        for column in inspect(database_engine).get_columns("courses")
+    }
+    assert columns["syllabus"]["nullable"] is True
+    assert columns["updated_at"]["nullable"] is False
+    assert isinstance(columns["syllabus"]["type"], Text)
+    assert isinstance(columns["updated_at"]["type"], DateTime)

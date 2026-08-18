@@ -432,10 +432,10 @@ function mapCourseToWorkspace(course: Course, index: number): Workspace {
     semester: course.semester || '',
     examDate: course.exam_date || '',
     topics: course.topics ? course.topics.split(',').map(t => t.trim()) : [],
-    syllabus: course.description || '',
+    syllabus: course.syllabus || '',
     progress: 0,
     status: 'In progress',
-    updatedAt: new Date(course.created_at).toLocaleDateString(),
+    updatedAt: new Date(course.updated_at).toLocaleDateString(),
     accent: workspaceAccents[index % workspaceAccents.length],
     sources: [],
   };
@@ -485,7 +485,7 @@ function App() {
     try {
       const newCourse = await coursesAPI.create({
         title: draft.name.trim(),
-        description: draft.syllabus.trim(),
+        syllabus: draft.syllabus.trim(),
         semester: draft.semester.trim(),
         exam_date: draft.examDate,
         topics: draft.topics,
@@ -505,7 +505,7 @@ function App() {
     try {
       const updatedCourse = await coursesAPI.update(Number(updatedWorkspace.id), {
         title: updatedWorkspace.name.trim(),
-        description: updatedWorkspace.syllabus.trim(),
+        syllabus: updatedWorkspace.syllabus.trim(),
         semester: updatedWorkspace.semester.trim(),
         exam_date: updatedWorkspace.examDate,
         topics: updatedWorkspace.topics.join(', '),

@@ -19,6 +19,7 @@ from backend.app.config import (
     DEFAULT_MAX_PDF_PAGE_PIXELS,
     DEFAULT_MAX_PDF_PAGES,
     DEFAULT_MAX_PDF_TOTAL_PIXELS,
+    DEFAULT_MATERIAL_MAX_CHARACTERS,
     DEFAULT_MAX_REQUEST_SIZE_BYTES,
     DEFAULT_MAX_UPLOAD_SIZE_BYTES,
     DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS,
@@ -157,6 +158,10 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
         loaded.document_chunk_overlap_characters
         == DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS
     )
+    assert loaded.study_guide_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
+    assert loaded.quiz_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
+    assert loaded.flashcard_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
+    assert loaded.ai_tutor_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
 
 
 def test_application_does_not_load_discovered_dotenv_file(tmp_path: Path) -> None:
@@ -776,3 +781,65 @@ def test_gemini_provider_does_not_require_ollama_configuration(
 
     assert loaded.ai_provider == "gemini"
     assert loaded.ollama_base_url == DEFAULT_OLLAMA_BASE_URL
+
+
+MATERIAL_BUDGET_SETTINGS = (
+    "STUDY_GUIDE_MATERIAL_MAX_CHARS",
+    "QUIZ_MATERIAL_MAX_CHARS",
+    "FLASHCARD_MATERIAL_MAX_CHARS",
+    "AI_TUTOR_MATERIAL_MAX_CHARS",
+)
+
+
+@pytest.mark.parametrize("name", MATERIAL_BUDGET_SETTINGS)
+def test_material_budgets_are_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    monkeypatch.setenv(name, "5000")
+
+    loaded = load_settings()
+    budgets = {
+        "STUDY_GUIDE_MATERIAL_MAX_CHARS": loaded.study_guide_material_max_chars,
+        "QUIZ_MATERIAL_MAX_CHARS": loaded.quiz_material_max_chars,
+        "FLASHCARD_MATERIAL_MAX_CHARS": loaded.flashcard_material_max_chars,
+        "AI_TUTOR_MATERIAL_MAX_CHARS": loaded.ai_tutor_material_max_chars,
+    }
+
+    assert budgets.pop(name) == 5000
+    assert set(budgets.values()) == {DEFAULT_MATERIAL_MAX_CHARACTERS}
+
+
+@pytest.mark.parametrize("name", MATERIAL_BUDGET_SETTINGS)
+@pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
+def test_material_budgets_must_be_positive_integers(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match=name):
+        load_settings()
+
+
+@pytest.mark.parametrize("name", MATERIAL_BUDGET_SETTINGS)
+def test_material_budgets_must_fit_at_least_one_stored_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    """A budget below the chunk size could never assemble any material at all."""
+    monkeypatch.setenv("DOCUMENT_CHUNK_SIZE_CHARACTERS", "1200")
+    monkeypatch.setenv(name, "1199")
+
+    with pytest.raises(ValueError, match=name):
+        load_settings()
+
+
+def test_env_example_advertises_every_material_budget() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
+
+    for name in MATERIAL_BUDGET_SETTINGS:
+        assert f"{name}=" in env_example, (
+            f"{name} is read by config.py but not documented."
+        )

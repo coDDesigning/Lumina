@@ -13,7 +13,11 @@ from services.quiz import (
     QuizGenerationError,
     QuizService,
 )
-from services.text_generation import TextGenerationError
+from services.text_generation import (
+    TextGenerationConnectionError,
+    TextGenerationError,
+    TextGenerationTimeoutError,
+)
 
 
 def _valid_quiz_payload() -> dict[str, object]:
@@ -356,3 +360,55 @@ def test_generate_quiz_endpoint_returns_generated_quiz(
     assert payload["message"] == "Quiz generated successfully"
     assert payload["data"]["title"] == "Example Quiz"
     assert len(payload["data"]["questions"]) == 10
+
+
+def test_quiz_endpoint_reports_unreachable_provider_as_unavailable(
+    upload_api,
+    monkeypatch,
+) -> None:
+    def unavailable() -> None:
+        raise TextGenerationConnectionError("Ollama could not be reached.")
+
+    monkeypatch.setattr(quiz_route, "get_text_generation_provider", unavailable)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 503
+    assert "could not be reached" in response.json()["detail"]
+
+
+def test_quiz_endpoint_reports_provider_timeout_as_unavailable(
+    upload_api,
+    monkeypatch,
+) -> None:
+    def timed_out() -> None:
+        raise TextGenerationTimeoutError("Ollama did not respond in time.")
+
+    monkeypatch.setattr(quiz_route, "get_text_generation_provider", timed_out)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 503
+
+
+def test_quiz_endpoint_still_reports_malformed_output_as_server_error(
+    upload_api,
+    monkeypatch,
+) -> None:
+    def unusable() -> None:
+        raise TextGenerationError("Ollama returned invalid JSON.")
+
+    monkeypatch.setattr(quiz_route, "get_text_generation_provider", unusable)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 500

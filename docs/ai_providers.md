@@ -66,7 +66,9 @@ typo (`gemeni`) distinguishable from a genuine roadmap provider (`openai`).
 
    ```bash
    curl -X POST http://localhost:8000/api/courses/1/study-guide \
-     -H "Authorization: Bearer $TOKEN"
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"summary_format": "comprehensive", "topic_focus": "All Topics"}'
    ```
 
 ## Required Model Capability

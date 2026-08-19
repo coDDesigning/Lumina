@@ -11,7 +11,15 @@ from backend.app.models import (
     QuizQuestion,
 )
 from schemas.ai_usage import ErrorCategory, GenerationType
-from schemas.quiz import QuizGenerationResponse
+from schemas.quiz import (
+    TRUE_FALSE_OPTION_COUNT,
+    QuizDifficulty,
+    QuizGenerationResponse,
+    QuizQuestionType,
+    QuizQuestionView,
+    QuizRequest,
+    QuizView,
+)
 from services.ai_usage_logger import AiUsageLogger
 from services.course_material import CourseMaterial, load_course_material
 from services.prompt_loader import PromptLoader
@@ -25,6 +33,39 @@ from utils.ai_errors import (
     CourseMaterialUnavailableError,
     InvalidGeneratedStructureError,
 )
+
+
+QUESTION_TYPE_DIRECTIVES: dict[QuizQuestionType, str] = {
+    QuizQuestionType.MULTIPLE_CHOICE: (
+        "Every question must be multiple choice with exactly 4 answer choices, and "
+        "correct_option_index must be an integer from 0 to 3."
+    ),
+    QuizQuestionType.TRUE_FALSE: (
+        "Every question must be a true/false question whose options are exactly "
+        '["True", "False"] in that order, and correct_option_index must be 0 for True '
+        "or 1 for False."
+    ),
+}
+
+DIFFICULTY_DIRECTIVES: dict[QuizDifficulty, str] = {
+    QuizDifficulty.EASY: (
+        "Every question must be easy: direct recall or straightforward comprehension "
+        "of the lecture material."
+    ),
+    QuizDifficulty.MEDIUM: (
+        "Every question must be of medium difficulty: applying or comparing ideas from "
+        "the lecture material."
+    ),
+    QuizDifficulty.HARD: (
+        "Every question must be hard: analysis, synthesis, or reasoning that combines "
+        "several parts of the lecture material."
+    ),
+}
+
+EXPECTED_OPTION_COUNTS: dict[QuizQuestionType, int] = {
+    QuizQuestionType.MULTIPLE_CHOICE: 4,
+    QuizQuestionType.TRUE_FALSE: TRUE_FALSE_OPTION_COUNT,
+}
 
 
 class QuizGenerationError(RuntimeError):
@@ -65,14 +106,27 @@ class QuizService:
     def build_prompt(
         cls,
         course_material: str,
+        request: QuizRequest,
     ) -> str:
-        return PromptLoader.render(cls.PROMPT_TEMPLATE_NAME, {"TEXT": course_material})
+        return PromptLoader.render(
+            cls.PROMPT_TEMPLATE_NAME,
+            {
+                "TEXT": course_material,
+                "QUESTION_COUNT": str(request.question_count),
+                "QUESTION_TYPE_DIRECTIVE": QUESTION_TYPE_DIRECTIVES[
+                    request.question_type
+                ],
+                "DIFFICULTY_DIRECTIVE": DIFFICULTY_DIRECTIVES[request.difficulty],
+                "TOPIC_FOCUS": request.topic_focus,
+            },
+        )
 
     @classmethod
     def generate(
         cls,
         db: Session,
         course_id: int,
+        request: QuizRequest,
         provider: TextGenerationProvider,
         user_id: int | None = None,
     ) -> QuizGeneration:
@@ -98,7 +152,7 @@ class QuizService:
                 )
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
-        prompt = cls.build_prompt(material.text)
+        prompt = cls.build_prompt(material.text, request)
         metadata = None
 
         try:
@@ -121,7 +175,8 @@ class QuizService:
 
         try:
             validated = QuizGenerationResponse.model_validate(result)
-        except ValidationError as exc:
+            cls._assert_matches_request(validated, request)
+        except (ValidationError, ValueError) as exc:
             if resolved_user_id:
                 AiUsageLogger.log_failure(
                     db,
@@ -151,6 +206,43 @@ class QuizService:
         )
 
     @staticmethod
+    def _assert_matches_request(
+        quiz: QuizGenerationResponse,
+        request: QuizRequest,
+    ) -> None:
+        if len(quiz.questions) != request.question_count:
+            raise ValueError(
+                "Generated quiz does not contain the requested number of questions."
+            )
+
+        expected_options = EXPECTED_OPTION_COUNTS[request.question_type]
+        for question in quiz.questions:
+            if len(question.options) != expected_options:
+                raise ValueError(
+                    "Generated quiz does not use the requested question type."
+                )
+
+    @classmethod
+    def build_quiz_view(cls, quiz: Quiz) -> QuizView:
+        questions = sorted(quiz.questions, key=lambda row: row.question_index)
+        return QuizView(
+            quiz_id=quiz.id,
+            title=quiz.title,
+            questions=[
+                QuizQuestionView(
+                    question_id=row.id,
+                    question_number=row.question_index + 1,
+                    topic=row.topic or "",
+                    question=row.question_text,
+                    options=list(row.options),
+                    correct_option_index=row.correct_option_index,
+                    explanation=row.explanation or "",
+                )
+                for row in questions
+            ],
+        )
+
+    @staticmethod
     def save_generated_quiz(
         db: Session,
         course_id: int,
@@ -172,6 +264,8 @@ class QuizService:
                     question_text=question.question,
                     options=question.options,
                     correct_option_index=question.correct_option_index,
+                    topic=question.topic,
+                    explanation=question.explanation,
                 )
             )
 

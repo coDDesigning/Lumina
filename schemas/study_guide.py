@@ -1,8 +1,21 @@
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from schemas.generation import BoundedContext
+
+
+class SummaryFormat(str, Enum):
+    OVERVIEW = "overview"
+    COMPREHENSIVE = "comprehensive"
+    KEY_CONCEPTS = "key_concepts"
+    EXAM_TIPS = "exam_tips"
+
+
+class StudyGuideRequest(BaseModel):
+    summary_format: SummaryFormat
+    topic_focus: str = Field(min_length=1, max_length=200)
 
 
 class ImportantTerm(BaseModel):

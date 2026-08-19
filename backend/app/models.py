@@ -716,7 +716,15 @@ class QuizQuestion(Base):
 
     correct_option_index: Mapped[int] = mapped_column(Integer)
 
+    topic: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     quiz: Mapped["Quiz"] = relationship(back_populates="questions")
+
+    answers: Mapped[list["QuizAttemptAnswer"]] = relationship(
+        back_populates="question", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class QuizAttempt(Base):
@@ -749,12 +757,50 @@ class QuizAttempt(Base):
     # column type for decimal numbers.
     score: Mapped[float] = mapped_column(Float)
 
+    time_spent_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )
 
     user: Mapped["User"] = relationship(back_populates="quiz_attempts")
     quiz: Mapped["Quiz"] = relationship(back_populates="attempts")
+
+    answers: Mapped[list["QuizAttemptAnswer"]] = relationship(
+        back_populates="attempt", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class QuizAttemptAnswer(Base):
+    """One answer a user gave to one question inside one attempt."""
+
+    __tablename__ = "quiz_attempt_answers"
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id", "quiz_question_id", name="uq_attempt_answer_question"
+        ),
+        CheckConstraint(
+            "selected_option_index IS NULL OR selected_option_index >= 0",
+            name="selected_option_index_nonnegative",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("quiz_attempts.id", ondelete="CASCADE"), index=True
+    )
+
+    quiz_question_id: Mapped[int] = mapped_column(
+        ForeignKey("quiz_questions.id", ondelete="CASCADE"), index=True
+    )
+
+    selected_option_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    is_correct: Mapped[bool] = mapped_column(Boolean)
+
+    attempt: Mapped["QuizAttempt"] = relationship(back_populates="answers")
+    question: Mapped["QuizQuestion"] = relationship(back_populates="answers")
 
 
 class Progress(Base):

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.models import Course, GeneratedOutput
 from schemas.ai_usage import ErrorCategory, GenerationType
-from schemas.study_guide import StudyGuideResponse
+from schemas.study_guide import StudyGuideResponse, SummaryFormat
 from services.ai_usage_logger import AiUsageLogger
 from services.course_material import CourseMaterial, load_course_material
 from services.prompt_loader import PromptLoader
@@ -21,6 +21,28 @@ from utils.ai_errors import (
     CourseMaterialUnavailableError,
     InvalidGeneratedStructureError,
 )
+
+
+SUMMARY_FORMAT_DIRECTIVES: dict[SummaryFormat, str] = {
+    SummaryFormat.OVERVIEW: (
+        "Write for a quick revision pass. Keep the summary at the shorter end of the "
+        "allowed range and favour breadth over depth in every section."
+    ),
+    SummaryFormat.COMPREHENSIVE: (
+        "Write a thorough study guide. Use the full allowed length of the summary and "
+        "provide the maximum useful number of important terms, common mistakes, and "
+        "learning objectives."
+    ),
+    SummaryFormat.KEY_CONCEPTS: (
+        "Focus on definitions and core principles. Put the most effort into the key "
+        "points and important terms sections, and keep the summary at the shorter end "
+        "of the allowed range."
+    ),
+    SummaryFormat.EXAM_TIPS: (
+        "Focus on exam preparation. Put the most effort into the exam tips and common "
+        "mistakes sections, and keep the summary at the shorter end of the allowed range."
+    ),
+}
 
 
 class StudyGuideGenerationError(RuntimeError):
@@ -61,14 +83,31 @@ class StudyGuideService:
         )
 
     @classmethod
-    def build_prompt(cls, course_material: str) -> str:
-        return PromptLoader.render(cls.PROMPT_TEMPLATE_NAME, {"TEXT": course_material})
+    def build_prompt(
+        cls,
+        course_material: str,
+        summary_format: SummaryFormat,
+        topic_focus: str,
+    ) -> str:
+        directive = SUMMARY_FORMAT_DIRECTIVES[summary_format]
+        return PromptLoader.render(
+            cls.PROMPT_TEMPLATE_NAME,
+            {
+                "TEXT": course_material,
+                "SUMMARY_FORMAT": (
+                    f"Requested summary format: {summary_format.value}. {directive}"
+                ),
+                "TOPIC_FOCUS": topic_focus,
+            },
+        )
 
     @classmethod
     def generate(
         cls,
         db: Session,
         course_id: int,
+        summary_format: SummaryFormat,
+        topic_focus: str,
         provider: TextGenerationProvider,
         user_id: int | None = None,
     ) -> StudyGuideGeneration:
@@ -91,7 +130,7 @@ class StudyGuideService:
                 )
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
-        prompt = cls.build_prompt(material.text)
+        prompt = cls.build_prompt(material.text, summary_format, topic_focus)
         metadata = None
 
         try:

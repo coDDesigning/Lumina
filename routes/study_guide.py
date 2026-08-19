@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
 from schemas.response import BaseResponse
-from schemas.study_guide import StudyGuideGenerationResult
+from schemas.study_guide import StudyGuideGenerationResult, StudyGuideRequest
 from schemas.user import UserResponse
 from services.study_guide import StudyGuideGenerationError, StudyGuideService
 from services.text_generation import TextGenerationError, get_text_generation_provider
@@ -23,6 +23,7 @@ router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
         400: {"description": "No processed course material is available"},
         401: {"description": "Authentication required"},
         404: {"description": "Course not found"},
+        422: {"description": "Invalid study guide request"},
         429: {"description": "AI provider rate limited"},
         503: {"description": "AI provider unreachable"},
         504: {"description": "AI provider timed out"},
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
 )
 def generate_study_guide(
     course: OwnedCourse,
+    request: StudyGuideRequest,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -38,6 +40,8 @@ def generate_study_guide(
         generation = StudyGuideService.generate(
             db,
             course.id,
+            request.summary_format,
+            request.topic_focus,
             provider,
             user_id=current_user.id,
         )

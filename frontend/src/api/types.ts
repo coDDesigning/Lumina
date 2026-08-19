@@ -1,3 +1,11 @@
+export type LooseUnion<T extends string> = T | (string & Record<never, never>);
+
+export interface BaseResponse<T> {
+  success: boolean;
+  message: string;
+  data: T | null;
+}
+
 export interface User {
   id: number;
   name: string;
@@ -44,6 +52,23 @@ export interface CourseUpdate {
   topics?: string;
 }
 
+export type DocumentStatus =
+  | 'uploaded'
+  | 'processing'
+  | 'ready'
+  | 'failed'
+  | 'deleting';
+
+export type ProcessingJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+
+export type ProcessingStage =
+  | 'validating'
+  | 'extracting_text'
+  | 'running_ocr'
+  | 'understanding_images'
+  | 'cleaning_text'
+  | 'chunking';
+
 export interface DocumentResponse {
   id: string;
   original_file_name: string;
@@ -51,7 +76,7 @@ export interface DocumentResponse {
   mime_type: string;
   file_size: number;
   course_id: number;
-  status: string;
+  status: LooseUnion<DocumentStatus>;
   created_at: string;
   updated_at: string;
 }
@@ -63,7 +88,7 @@ export interface DocumentUploadResponse {
 
 export interface ProcessingJobResponse {
   id: number;
-  status: string;
+  status: LooseUnion<ProcessingJobStatus>;
   attempt_count: number;
   max_attempts: number;
   available_at: string;
@@ -71,11 +96,155 @@ export interface ProcessingJobResponse {
   finished_at: string | null;
   last_error_code: string | null;
   last_error_message: string | null;
-  processing_stage: string | null;
-  failed_stage: string | null;
+  processing_stage: LooseUnion<ProcessingStage> | null;
+  failed_stage: LooseUnion<ProcessingStage> | null;
 }
 
 export interface DocumentStatusResponse {
   document: DocumentResponse;
   processing_job: ProcessingJobResponse;
+}
+
+export interface BoundedContext {
+  context_truncated: boolean;
+  chunks_used: number;
+  chunks_available: number;
+}
+
+export type SummaryFormat =
+  | 'overview'
+  | 'comprehensive'
+  | 'key_concepts'
+  | 'exam_tips';
+
+export interface StudyGuideRequest {
+  summary_format: SummaryFormat;
+  topic_focus: string;
+}
+
+export interface ImportantTerm {
+  term: string;
+  definition: string;
+}
+
+export interface CommonMistake {
+  mistake: string;
+  correction: string;
+}
+
+export interface ExamTips {
+  lecture_based: string[];
+  ai_suggestions: string[];
+}
+
+export type DifficultyLevel = 'Easy' | 'Medium' | 'Hard';
+
+export interface Difficulty {
+  level: LooseUnion<DifficultyLevel>;
+  reason: string;
+}
+
+export type CoverageStatus =
+  | 'Complete'
+  | 'Mostly Complete'
+  | 'Partial'
+  | 'Limited';
+
+export interface Coverage {
+  status: LooseUnion<CoverageStatus>;
+  estimated_completeness: number;
+}
+
+export interface StudyGuideResponse {
+  title: string;
+  summary: string;
+  key_points: string[];
+  important_terms: ImportantTerm[];
+  common_mistakes: CommonMistake[];
+  exam_tips: ExamTips;
+  difficulty: Difficulty;
+  estimated_study_time: string;
+  prerequisites: string[];
+  learning_objectives: string[];
+  coverage: Coverage;
+  confidence_notes: string;
+}
+
+export interface StudyGuideGenerationResult extends BoundedContext {
+  study_guide: StudyGuideResponse;
+}
+
+export type QuizQuestionType = 'multiple_choice' | 'true_false';
+
+export type QuizDifficulty = 'easy' | 'medium' | 'hard';
+
+export interface QuizRequest {
+  question_count: number;
+  question_type: QuizQuestionType;
+  difficulty: QuizDifficulty;
+  topic_focus: string;
+}
+
+export interface QuizQuestionView {
+  question_id: number;
+  question_number: number;
+  topic: string;
+  question: string;
+  options: string[];
+  correct_option_index: number;
+  explanation: string;
+}
+
+export interface QuizView {
+  quiz_id: number;
+  title: string;
+  questions: QuizQuestionView[];
+}
+
+export interface QuizGenerationResult extends BoundedContext {
+  quiz: QuizView;
+}
+
+export interface QuizAnswerSubmission {
+  question_id: number;
+  selected_option_index: number | null;
+}
+
+export interface QuizAttemptRequest {
+  answers: QuizAnswerSubmission[];
+  time_spent_seconds?: number | null;
+}
+
+export interface QuizAnswerResult {
+  question_id: number;
+  selected_option_index: number | null;
+  correct_option_index: number;
+  is_correct: boolean;
+}
+
+export interface QuizAttemptResponse {
+  attempt_id: number;
+  quiz_id: number;
+  score: number;
+  correct_count: number;
+  total_questions: number;
+  time_spent_seconds: number | null;
+  created_at: string;
+  answers: QuizAnswerResult[];
+}
+
+export type MasteryStatus = 'Mastered' | 'In Progress' | 'Needs Review';
+
+export interface TopicMastery {
+  topic: string;
+  questions_answered: number;
+  questions_correct: number;
+  mastery_percentage: number;
+  status: LooseUnion<MasteryStatus>;
+}
+
+export interface CourseProgressResponse {
+  attempts_count: number;
+  average_score: number | null;
+  topic_mastery: TopicMastery[];
 }

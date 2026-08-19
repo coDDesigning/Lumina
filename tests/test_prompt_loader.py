@@ -20,12 +20,14 @@ from services.prompt_loader import PromptLoader
 def test_load_valid_study_guide_template() -> None:
     template = PromptLoader.load_template("study_guide", reload=True)
     assert template.name == "study_guide"
-    assert template.version == "1.0.0"
-    assert template.required_variables == ["TEXT"]
+    assert template.version == "1.1.0"
+    assert template.required_variables == ["TEXT", "SUMMARY_FORMAT", "TOPIC_FOCUS"]
     assert template.output_schema_ref == "StudyGuideResponse"
     assert len(template.style_constraints) > 0
     assert len(template.safety_constraints) > 0
     assert "{{TEXT}}" in template.template
+    assert "{{SUMMARY_FORMAT}}" in template.template
+    assert "{{TOPIC_FOCUS}}" in template.template
 
 
 def test_load_all_built_in_templates() -> None:
@@ -86,17 +88,27 @@ def test_non_dict_json_raises_validation_error(tmp_path) -> None:
 def test_render_template_substitutes_variables() -> None:
     rendered = PromptLoader.render(
         "study_guide",
-        {"TEXT": "Sample Lecture Notes Content"},
+        {
+            "TEXT": "Sample Lecture Notes Content",
+            "SUMMARY_FORMAT": "Requested summary format: overview.",
+            "TOPIC_FOCUS": "Working Memory",
+        },
         reload=False,
     )
     assert "{{TEXT}}" not in rendered
+    assert "{{SUMMARY_FORMAT}}" not in rendered
+    assert "{{TOPIC_FOCUS}}" not in rendered
     assert "Sample Lecture Notes Content" in rendered
+    assert "Requested summary format: overview." in rendered
+    assert "Working Memory" in rendered
 
 
 def test_render_missing_required_variable_raises_error() -> None:
     with pytest.raises(MissingPromptVariableError) as exc_info:
         PromptLoader.render("study_guide", {})
-    assert "missing required variable(s): TEXT" in str(exc_info.value)
+    assert "missing required variable(s): SUMMARY_FORMAT, TEXT, TOPIC_FOCUS" in str(
+        exc_info.value
+    )
 
 
 def test_render_unexpected_extra_variable_raises_error() -> None:
@@ -105,6 +117,8 @@ def test_render_unexpected_extra_variable_raises_error() -> None:
             "study_guide",
             {
                 "TEXT": "Valid content",
+                "SUMMARY_FORMAT": "Requested summary format: overview.",
+                "TOPIC_FOCUS": "All Topics",
                 "EXTRA_VAR": "Unexpected content",
                 "ANOTHER_EXTRA": "Bad",
             },
@@ -146,15 +160,34 @@ def test_custom_template_with_optional_variables() -> None:
 def test_quiz_template_regression() -> None:
     rendered = PromptLoader.render(
         "quiz",
-        {"TEXT": "Linear Algebra Lecture"},
+        {
+            "TEXT": "Linear Algebra Lecture",
+            "QUESTION_COUNT": "8",
+            "QUESTION_TYPE_DIRECTIVE": "Every question must be multiple choice.",
+            "DIFFICULTY_DIRECTIVE": "Every question must be hard.",
+            "TOPIC_FOCUS": "Eigenvalues",
+        },
     )
     assert "Linear Algebra Lecture" in rendered
     assert "{{TEXT}}" not in rendered
-    assert "Generate exactly 10 multiple-choice questions" in rendered
+    assert "{{QUESTION_COUNT}}" not in rendered
+    assert "{{QUESTION_TYPE_DIRECTIVE}}" not in rendered
+    assert "{{DIFFICULTY_DIRECTIVE}}" not in rendered
+    assert "{{TOPIC_FOCUS}}" not in rendered
+    assert "Generate exactly 8 questions" in rendered
+    assert "Every question must be multiple choice." in rendered
+    assert "Every question must be hard." in rendered
+    assert "Eigenvalues" in rendered
 
     template = PromptLoader.load_template("quiz")
     assert template.output_schema_ref == "QuizGenerationResponse"
-    assert template.required_variables == ["TEXT"]
+    assert template.required_variables == [
+        "TEXT",
+        "QUESTION_COUNT",
+        "QUESTION_TYPE_DIRECTIVE",
+        "DIFFICULTY_DIRECTIVE",
+        "TOPIC_FOCUS",
+    ]
 
 
 def test_flashcard_template_regression() -> None:

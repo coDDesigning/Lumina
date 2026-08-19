@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -22,7 +23,22 @@ COURSE_FIELDS_REVISION = "a4fd52f56b91"
 AI_USAGE_REVISION = "b7e2a9d1c3f4"
 SYLLABUS_REVISION = "e5c1a7b39d64"
 HARDENING_REVISION = "a1c5e7f9b203"
-HEAD_REVISION = "c9b3d5e08f27"
+ATTRIBUTION_REVISION = "c9b3d5e08f27"
+HEAD_REVISION = "d3f8b21a6c40"
+
+
+def test_postgresql_contract_pins_the_same_head_revision() -> None:
+    """The PostgreSQL contract keeps its own head constant and is skipped locally.
+
+    Without this guard a new migration passes every locally runnable test and
+    only fails in the PostgreSQL CI job, where the stale constant leaves the
+    database one revision behind and `alembic current --check-heads` fails.
+    """
+    source = (PROJECT_ROOT / "tests" / "test_postgresql.py").read_text(encoding="utf-8")
+    match = re.search(r'^HEAD_REVISION = "([0-9a-f]+)"', source, re.MULTILINE)
+
+    assert match is not None, "tests/test_postgresql.py no longer pins HEAD_REVISION"
+    assert match.group(1) == HEAD_REVISION
 
 
 def test_migration_graph_has_one_canonical_base_and_head() -> None:
@@ -36,7 +52,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: HARDENING_REVISION,
+        HEAD_REVISION: ATTRIBUTION_REVISION,
+        ATTRIBUTION_REVISION: HARDENING_REVISION,
         HARDENING_REVISION: SYLLABUS_REVISION,
         SYLLABUS_REVISION: AI_USAGE_REVISION,
         AI_USAGE_REVISION: COURSE_FIELDS_REVISION,

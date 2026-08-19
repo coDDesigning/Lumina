@@ -1,18 +1,13 @@
 import { FormEvent, useEffect, useRef, useState, useCallback } from 'react'
 import {
   CircleHelp,
-  File,
   FilePlus2,
   Menu,
   Search,
 } from 'lucide-react'
 import { Navigate, Route, Routes, useParams } from 'react-router-dom'
 import WorkspaceNavigation from './components/WorkspaceNavigation'
-import type {
-  Workspace,
-  WorkspaceDraft,
-  WorkspaceSource,
-} from './data/workspaces'
+import type { Workspace, WorkspaceDraft } from './data/workspaces'
 import EditPage from './pages/EditPage'
 import ProfilePage from './pages/ProfilePage'
 import SettingsPage from './pages/SettingsPage'
@@ -23,7 +18,11 @@ import RegisterPage from './pages/RegisterPage'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { useAuth } from './context/AuthContext'
 import { coursesAPI } from './api/courses'
-import { Course } from './api/types'
+import { progressAPI } from './api/progress'
+import { describeError, describeUploadError, isAbortError } from './api/errors'
+import type { Course, CourseProgressResponse } from './api/types'
+import { useCourseDocuments } from './hooks/useCourseDocuments'
+import { DocumentRow } from './components/documents/DocumentRow'
 import './App.css'
 import './pages/pages.css'
 import './pages/workspaces.css'
@@ -31,7 +30,6 @@ import './pages/workspaces.css'
 import { SummaryModal } from './components/study/SummaryModal'
 import { QuizModal } from './components/study/QuizModal'
 import { ProgressDashboard } from './components/study/ProgressDashboard'
-import type { QuizResult } from './data/mockStudyData'
 
 type WorkspaceTab = 'Exam' | 'Tutoring' | 'Practice' | 'Analytics'
 
@@ -74,53 +72,96 @@ type WorkspacePageProps = {
 }
 
 function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
+  const courseId = Number(workspace.id)
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('Exam')
-  const [sources, setSources] = useState<WorkspaceSource[]>(workspace.sources)
   const [generatorPrompt, setGeneratorPrompt] = useState('')
   const [mainPrompt, setMainPrompt] = useState('')
   const [lastPrompt, setLastPrompt] = useState('')
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false)
   const [isQuizModalOpen, setIsQuizModalOpen] = useState(false)
-  const [quizHistory, setQuizHistory] = useState<QuizResult[]>([])
+  const [uploadErrors, setUploadErrors] = useState<{ fileName: string; message: string }[]>([])
+  const [uploadNotices, setUploadNotices] = useState<string[]>([])
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
+  const [progress, setProgress] = useState<CourseProgressResponse | null>(null)
+  const [isProgressLoading, setIsProgressLoading] = useState(false)
+  const [progressError, setProgressError] = useState<string | null>(null)
+  const [progressToken, setProgressToken] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const {
+    entries,
+    isLoading: areDocumentsLoading,
+    listError,
+    readyCount,
+    reload,
+    addUploaded,
+    retryDocument,
+    deleteDocument,
+  } = useCourseDocuments(courseId)
+
   useEffect(() => {
-    let isMounted = true;
-    const loadDocuments = async () => {
+    if (!Number.isInteger(courseId) || courseId <= 0) return
+
+    const controller = new AbortController()
+    let cancelled = false
+
+    setIsProgressLoading(true)
+    setProgressError(null)
+
+    progressAPI
+      .get(courseId, { signal: controller.signal })
+      .then((result) => {
+        if (cancelled) return
+        setProgress(result)
+        setIsProgressLoading(false)
+      })
+      .catch((error: unknown) => {
+        if (cancelled || isAbortError(error)) return
+        setIsProgressLoading(false)
+        setProgressError(describeError(error, 'Progress could not be loaded.').message)
+      })
+
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [courseId, progressToken])
+
+  useEffect(() => {
+    if (!onUpdateProgress || progress?.average_score == null) return
+    onUpdateProgress(workspace.id, Math.round(progress.average_score * 100))
+  }, [onUpdateProgress, progress, workspace.id])
+
+  const addSources = async (fileList: FileList | null) => {
+    const files = Array.from(fileList ?? [])
+    if (files.length === 0) return
+
+    setUploadErrors([])
+    setUploadNotices([])
+    setUploadProgress({ done: 0, total: files.length })
+
+    const errors: { fileName: string; message: string }[] = []
+    const notices: string[] = []
+
+    for (const file of files) {
       try {
-        const docs = await coursesAPI.listDocuments(Number(workspace.id));
-        if (isMounted) {
-          setSources(docs.map(doc => ({
-            id: doc.id,
-            name: doc.original_file_name,
-            description: `Status: ${doc.status}`
-          })));
+        const response = await coursesAPI.uploadDocument(courseId, file)
+        addUploaded(response.document)
+        if (response.duplicate) {
+          notices.push(`${file.name} is already in this course.`)
         }
-      } catch (err) {
-        console.error("Failed to load documents", err);
-      }
-    };
-    loadDocuments();
-    return () => { isMounted = false; };
-  }, [workspace.id]);
-
-  const addSources = async (files: FileList | null) => {
-    if (!files?.length) return
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      try {
-        const response = await coursesAPI.uploadDocument(Number(workspace.id), file);
-        const newSource: WorkspaceSource = {
-          id: response.document.id,
-          name: response.document.original_file_name,
-          description: `Status: ${response.document.status}`,
-        };
-        setSources((current) => [...current, newSource]);
-      } catch (err) {
-        console.error("Failed to upload document", err);
+      } catch (error) {
+        errors.push({ fileName: file.name, message: describeUploadError(error).message })
+      } finally {
+        setUploadProgress((current) =>
+          current ? { ...current, done: current.done + 1 } : current
+        )
       }
     }
+
+    setUploadErrors(errors)
+    setUploadNotices(notices)
+    setUploadProgress(null)
   }
 
   const generatePrompt = (event: FormEvent<HTMLFormElement>) => {
@@ -177,15 +218,10 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
     setMainPrompt(suggestion)
   }
 
-  const handleQuizCompleted = (result: QuizResult) => {
-    setQuizHistory(prev => [result, ...prev])
-    if (onUpdateProgress) {
-      const newProgress = Math.min(100, Math.max(workspace.progress, result.scorePercentage))
-      onUpdateProgress(workspace.id, newProgress)
-    }
-  }
-
   const tabList: WorkspaceTab[] = ['Exam', 'Tutoring', 'Practice', 'Analytics']
+  const processingCount = entries.filter(
+    (entry) => entry.document.status === 'uploaded' || entry.document.status === 'processing'
+  ).length
 
   return (
     <main className="workspace-shell">
@@ -195,15 +231,57 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
             <h1>Sources</h1>
           </header>
 
-          <div className="source-list" aria-live="polite">
-            {sources.map((source) => (
-              <article className="source-item" key={source.id}>
-                <File aria-hidden="true" strokeWidth={2.1} />
-                <div>
-                  <h2>{source.name}</h2>
-                  <p>{source.description}</p>
-                </div>
-              </article>
+          <p className="visually-hidden" role="status">
+            {processingCount > 0
+              ? `${processingCount} source${processingCount === 1 ? '' : 's'} still processing`
+              : 'All sources are up to date'}
+          </p>
+
+          {listError ? (
+            <p className="source-list-message" role="alert">
+              {listError}{' '}
+              <button className="text-action" type="button" onClick={reload}>
+                Reload
+              </button>
+            </p>
+          ) : null}
+
+          {uploadErrors.length > 0 ? (
+            <ul className="source-upload-errors" role="alert">
+              {uploadErrors.map((failure) => (
+                <li key={failure.fileName}>
+                  {failure.fileName}: {failure.message}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {uploadNotices.length > 0 ? (
+            <ul className="source-upload-errors source-upload-notices">
+              {uploadNotices.map((notice) => (
+                <li key={notice}>{notice}</li>
+              ))}
+            </ul>
+          ) : null}
+
+          <div className="source-list">
+            {areDocumentsLoading && entries.length === 0 ? (
+              <p className="source-list-message">Loading sources…</p>
+            ) : null}
+
+            {!areDocumentsLoading && entries.length === 0 && !listError ? (
+              <p className="source-list-message">
+                No sources yet. Add a PDF, TXT, or Markdown file to get started.
+              </p>
+            ) : null}
+
+            {entries.map((entry) => (
+              <DocumentRow
+                key={entry.document.id}
+                entry={entry}
+                onRetry={retryDocument}
+                onDelete={deleteDocument}
+              />
             ))}
           </div>
 
@@ -213,7 +291,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
               className="visually-hidden"
               type="file"
               multiple
-              accept=".pdf,.txt,.md"
+              accept=".pdf,.txt,.md,.markdown"
               onChange={(event) => {
                 addSources(event.target.files)
                 event.target.value = ''
@@ -223,9 +301,12 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
               className="text-action"
               type="button"
               onClick={() => fileInputRef.current?.click()}
+              disabled={uploadProgress !== null}
             >
               <FilePlus2 aria-hidden="true" strokeWidth={2.1} />
-              Add Sources
+              {uploadProgress
+                ? `Uploading ${uploadProgress.done} of ${uploadProgress.total}…`
+                : 'Add Sources'}
             </button>
           </div>
         </section>
@@ -282,9 +363,11 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
           {activeTab === 'Analytics' ? (
             <ProgressDashboard
               courseName={workspace.name}
-              topics={workspace.topics}
-              documentCount={sources.length}
-              quizHistory={quizHistory}
+              documentCount={entries.length}
+              readyDocumentCount={readyCount}
+              progress={progress}
+              isLoading={isProgressLoading}
+              error={progressError}
               onOpenQuizModal={() => setIsQuizModalOpen(true)}
               onOpenSummaryModal={() => setIsSummaryModalOpen(true)}
             />
@@ -355,20 +438,25 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
         </div>
       </section>
 
-      <SummaryModal
-        isOpen={isSummaryModalOpen}
-        onClose={() => setIsSummaryModalOpen(false)}
-        courseName={workspace.name}
-        topics={workspace.topics}
-      />
+      {isSummaryModalOpen ? (
+        <SummaryModal
+          courseId={courseId}
+          courseName={workspace.name}
+          topics={workspace.topics}
+          readyDocumentCount={readyCount}
+          onClose={() => setIsSummaryModalOpen(false)}
+        />
+      ) : null}
 
-      <QuizModal
-        isOpen={isQuizModalOpen}
-        onClose={() => setIsQuizModalOpen(false)}
-        courseName={workspace.name}
-        topics={workspace.topics}
-        onQuizCompleted={handleQuizCompleted}
-      />
+      {isQuizModalOpen ? (
+        <QuizModal
+          courseId={courseId}
+          topics={workspace.topics}
+          readyDocumentCount={readyCount}
+          onClose={() => setIsQuizModalOpen(false)}
+          onAttemptRecorded={() => setProgressToken((token) => token + 1)}
+        />
+      ) : null}
     </main>
   )
 }
@@ -522,11 +610,13 @@ function App() {
     }
   }
 
-  const updateWorkspaceProgress = (workspaceId: string, progress: number) => {
-    setWorkspaces((current) =>
-      current.map((w) => (w.id === workspaceId ? { ...w, progress } : w))
-    );
-  };
+  const updateWorkspaceProgress = useCallback((workspaceId: string, progress: number) => {
+    setWorkspaces((current) => {
+      const target = current.find((w) => w.id === workspaceId);
+      if (!target || target.progress === progress) return current;
+      return current.map((w) => (w.id === workspaceId ? { ...w, progress } : w));
+    });
+  }, []);
 
   return (
     <Routes>

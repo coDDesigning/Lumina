@@ -93,7 +93,7 @@ unsupported because no qualified durable shared storage topology exists.
 CI runs the relational database contract against PostgreSQL 17.6 from an
 immutable official image digest. The live job verifies the complete Alembic
 upgrade/downgrade/re-upgrade cycle, schema drift, role seeds, readiness, UUID and
-timezone round trips, unloaded database cascades across all 14 tables, and
+timezone round trips, unloaded database cascades across all 15 tables, and
 `SKIP LOCKED` worker claims. Tests marked `database_contract` run unchanged
 against copies of an Alembic-migrated SQLite database and the disposable
 PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other

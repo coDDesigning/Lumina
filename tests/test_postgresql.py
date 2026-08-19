@@ -1168,37 +1168,77 @@ def test_postgresql_chunk_embeddings_round_trip_and_rank_by_cosine(
                 ),
             )
         )
+        other_owner = User(
+            name="Other owner",
+            email="pgvector-other@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        other_course = Course(title="Other vector course", owner=other_owner)
+        other_document = UploadedDocument(
+            id=uuid4(),
+            original_file_name="other.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=32,
+            file_hash=uuid4().hex * 2,
+            uploader=other_owner,
+            course=other_course,
+            storage_provider="local",
+            storage_key=f"local/{uuid4()}.txt",
+            status="ready",
+        )
+        other_chunk = DocumentChunk(
+            document=other_document,
+            course=other_course,
+            chunk_index=0,
+            text="other near",
+        )
+        session.add_all((other_owner, other_course, other_document, other_chunk))
+        session.flush()
+        session.add(
+            ChunkEmbedding(
+                chunk_id=other_chunk.id,
+                document_id=other_document.id,
+                course_id=other_course.id,
+                chunk_index=0,
+                embedding=near_vector,
+                embedding_provider="ollama",
+                embedding_model="nomic-embed-text",
+                dimensions=EMBEDDING_DIMENSIONS,
+            )
+        )
         session.commit()
         user_id = user.id
         course_id = course.id
+        other_owner_id = other_owner.id
 
     with postgresql_sessions() as session:
         stored = session.scalar(
-            select(ChunkEmbedding).where(ChunkEmbedding.chunk_index == 0)
+            select(ChunkEmbedding).where(ChunkEmbedding.document_id == document_id)
         )
         assert stored is not None
         assert len(stored.embedding) == EMBEDDING_DIMENSIONS
         assert stored.embedding[0] == pytest.approx(1.0)
 
-        query = "[" + ",".join(["1.0"] + ["0.0"] * (EMBEDDING_DIMENSIONS - 1)) + "]"
-        ranked = (
-            session.execute(
-                text(
-                    "SELECT chunk_index FROM chunk_embeddings "
-                    "WHERE course_id = :course_id "
-                    "ORDER BY embedding <=> CAST(:query AS vector) LIMIT 2"
-                ),
-                {"course_id": course_id, "query": query},
-            )
-            .scalars()
-            .all()
+        store = PgVectorStore()
+        ranked = store.search(
+            session,
+            course_id=course_id,
+            query_embedding=[1.0] + [0.0] * (EMBEDDING_DIMENSIONS - 1),
+            limit=2,
         )
-        assert list(ranked) == [0, 1]
+        assert [result.chunk_index for result in ranked] == [0, 1]
+        assert ranked[0].similarity == pytest.approx(1.0)
+        assert all(result.course_id == course_id for result in ranked)
 
     with postgresql_sessions() as session:
         user = session.get(User, user_id)
         assert user is not None
         session.delete(user)
+        other_owner = session.get(User, other_owner_id)
+        assert other_owner is not None
+        session.delete(other_owner)
         session.commit()
         assert (
             session.scalar(

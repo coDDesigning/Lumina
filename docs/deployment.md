@@ -9,8 +9,9 @@ experimental development artifact and must not be used for production.
 The relational contract is tested against PostgreSQL 17.8 in CI, on a
 pgvector-enabled image, but hosted and PostgreSQL production remain blocked until
 durable shared storage and deployment topology are qualified. Chunk embeddings
-are stored and indexed (see `docs/vector_storage.md`); vector *retrieval* is not
-implemented or production-qualified.
+are stored, indexed, and searchable behind course isolation (see
+`docs/vector_storage.md`); production qualification of the retrieval path follows
+the same block as the rest of hosted mode.
 
 ## Container architecture
 

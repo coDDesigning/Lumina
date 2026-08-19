@@ -83,9 +83,9 @@ The vector id is the relational `document_chunks.id`. Every vector carries:
 | `chunk_index` | ordering and citation |
 | `embedding_provider`, `embedding_model` | attribution; vectors from different models are not comparable |
 
-`course_id` is what will keep retrieval inside the caller's own workspace. It is
-stored so that a future similarity search never has to ask for "the nearest vectors
-in the database" without a scope.
+`course_id` is what keeps retrieval inside the caller's own workspace. Both search
+implementations take it as a mandatory argument, so a similarity search never asks
+for "the nearest vectors in the database" without a scope.
 
 In PostgreSQL these are real columns on `chunk_embeddings`, with a composite foreign
 key `(chunk_id, document_id, course_id)` into `document_chunks` so the denormalized
@@ -95,7 +95,8 @@ values cannot drift. In Chroma they are collection metadata on each record.
 
 Cosine, on both backends, and it is the same decision in three places that must
 agree: the stored vectors, the index (`vector_cosine_ops` for HNSW; `hnsw:space =
-cosine` for the Chroma collection), and whatever query SCRUM-H writes.
+cosine` for the Chroma collection), and the similarity search in
+`services/vector_store.py`.
 
 HNSW was chosen over IVFFlat because it handles incremental inserts without the
 train-then-populate workflow IVFFlat needs, and documents arrive one at a time.
@@ -191,10 +192,35 @@ The HNSW index is PostgreSQL-only. It is declared on the model with
 `alembic/env.py` filters it out of autogenerate on other dialects so
 `alembic check` stays honest on both.
 
+## Retrieval
+
+Both stores expose `search(session, *, course_id, query_embedding, limit)`, which
+returns the `limit` nearest chunks of exactly that course, ranked best-first as a
+`SearchResult` with a `similarity` in `[0, 1]` (cosine distance converted via
+`1 - distance`):
+
+- **pgvector** runs `embedding <=> CAST(:query AS vector)` inside a `WHERE
+  course_id = :course_id`, so the HNSW index and the course filter stay in one
+  statement. The method refuses to run on a non-PostgreSQL connection.
+- **Chroma** issues a collection query with `where={"course_id": course_id}` and
+  the collection's cosine space; the caller's session is used only for validation.
+
+`services/semantic_retrieval.py` is the single retrieval entry point. It embeds
+the query with `EmbeddingProvider.embed_query`, validates the width, searches, and
+resolves the hits back to `document_chunks.text` in one query. A vector whose
+chunk row is gone — the known Chroma replication window — is skipped, and so is a
+chunk with no text. Retrieval therefore degrades gracefully instead of surfacing
+stale metadata.
+
+The scope is mandatory by construction: `course_id` is a required keyword argument
+at every layer, so no caller can ask for a cross-course search. Embedding and
+store failures propagate as `EmbeddingError` and `VectorStoreError` subclasses for
+the calling feature to classify.
+
 ## What this does not cover
 
-Retrieval. SCRUM-68 ends at "every chunk has a durable, indexed vector with enough
-metadata to find it safely". Querying those vectors, ranking, course-scoped
-filtering at query time, and prompt construction belong to SCRUM-H.
-`services/course_material.py` still selects course text by chunk order and remains
-the thing semantic retrieval will replace.
+Feature wiring. Retrieval is a landed contract with tests, but AI features still
+read course text through `services/course_material.py`, which selects by chunk
+order and bounds the assembled material to a per-feature character budget. That
+module remains the thing retrieval-backed generation will replace; switching the
+features over is a product decision, not a plumbing change.

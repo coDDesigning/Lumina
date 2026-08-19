@@ -27,6 +27,7 @@ from services.processing_jobs import (
     enqueue_document_job,
     retry_failed_job,
 )
+from services.vector_store import VectorStore, VectorStoreError, get_vector_store
 from storage.base import Storage, StorageError
 from utils.exceptions import ConflictException, NotFoundException
 
@@ -301,6 +302,7 @@ class DocumentService:
         storage: Storage,
         document_id: UUID,
         course_id: int,
+        vector_store: VectorStore | None = None,
     ) -> None:
         """Tombstone a terminal document, remove its source, then delete metadata."""
         try:
@@ -399,6 +401,13 @@ class DocumentService:
                 if DocumentService._document_is_absent(db, document_id):
                     return
                 raise DocumentDeletionError
+
+            store = vector_store if vector_store is not None else get_vector_store()
+            try:
+                store.delete_document_vectors(db, document_id)
+            except VectorStoreError as exc:
+                db.rollback()
+                raise DocumentDeletionError from exc
 
             db.delete(deleting_document)
             db.commit()

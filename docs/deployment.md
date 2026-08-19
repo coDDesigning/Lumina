@@ -105,6 +105,42 @@ the bucket's region, static credentials are optional (prefer an IAM role for the
 EC2 instance or ECS task), and the bucket is provisioned outside the stack
 (`minio`/`minio-init` services are not used).
 
+## AWS production topology (Terraform)
+
+The `terraform/` configuration provisions the hosted production topology on
+AWS and is the supported way to run Lumina in the cloud. It builds the same
+image (`Dockerfile`) and runs the same three roles:
+
+| Resource | Provisioned by Terraform |
+| --- | --- |
+| VPC | Public/private subnets, one NAT gateway, route tables |
+| ECR | `lumina` repository (immutable tags, scan on push, keep 20 images) |
+| S3 | Document bucket (versioned, encrypted, TLS-only policy) |
+| RDS | PostgreSQL 16 with pgvector preloaded; `DATABASE_URL` in Secrets Manager |
+| ECS | Fargate `api` + `worker` services, one-off `migrate` task definition |
+| ALB | HTTPS (ACM) listener, HTTP-to-HTTPS redirect, `/health/ready` target check |
+| Route53 | Optional A alias to the ALB |
+
+Apply order matters once, on the first rollout: the ECS tasks read
+`JWT_SECRET_KEY`, `BOOTSTRAP_ADMIN_TOKEN`, and `GEMINI_API_KEY` from SSM
+parameter paths under `/<project>-<environment>/` (see `terraform/README.md`),
+and the `DATABASE_URL` from Secrets Manager. The secrets module (SCRUM-94)
+creates those parameters, so run the full Terraform apply before the first
+deploy pipeline run. ECS services retry task starts until the parameters
+exist. On the first RDS apply, the `vector` preload in the parameter group
+requires a one-time instance reboot.
+
+On AWS the application uses IAM roles, not static credentials: the ECS task
+role gets `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject` on the document
+bucket, and `S3_ENDPOINT_URL`/`S3_FORCE_PATH_STYLE` are not set. The worker
+remains a single Fargate task (durable single consumer); the API autoscales
+between `api_min_instances` and `api_max_instances` on CPU.
+
+Deployments run through the SCRUM-93 workflow: it builds and pushes the image
+to ECR, registers new task definition revisions, runs the one-off `migrate`
+task, and rolls out both services. The state bucket is passed to Terraform
+with `-backend-config`; never commit `.tfstate` or `terraform.tfvars`.
+
 ## Transition from the experimental stack
 
 The previous experimental Compose file is not an in-place upgrade. It stored

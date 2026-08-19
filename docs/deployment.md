@@ -141,6 +141,32 @@ to ECR, registers new task definition revisions, runs the one-off `migrate`
 task, and rolls out both services. The state bucket is passed to Terraform
 with `-backend-config`; never commit `.tfstate` or `terraform.tfvars`.
 
+### AWS deploy pipeline
+
+`.github/workflows/deploy.yml` deploys the repository to the AWS topology on a
+push to `main` or through manual dispatch. The workflow authenticates with the
+GitHub OIDC role created by the secrets module (SCRUM-94), never with stored
+long-lived keys. It requires these repository environment variables and
+secrets on the `production` environment:
+
+| Setting | Source |
+| --- | --- |
+| `vars.AWS_REGION`, `vars.ECR_REPOSITORY`, `vars.ECS_CLUSTER` | Terraform outputs |
+| `vars.API_SERVICE`, `vars.WORKER_SERVICE` | Terraform outputs |
+| `vars.API_TASK_DEFINITION`, `vars.WORKER_TASK_DEFINITION`, `vars.MIGRATE_TASK_DEFINITION` | Terraform outputs |
+| `vars.ALB_DNS` | Terraform output |
+| `vars.PRIVATE_SUBNETS`, `vars.ECS_SECURITY_GROUP` | Terraform outputs (comma-separated subnet list) |
+| `secrets.AWS_DEPLOY_ROLE_ARN` | OIDC role from SCRUM-94 |
+
+The workflow builds the image with tag `github.sha`, registers new task
+definition revisions for `api`, `worker`, and `migrate`, runs the one-off
+migration task (skipped on rollback), rolls out both services, and smoke-tests
+`GET /health/ready` through the ALB. A rollback deploys an already-published
+image tag (`rollback_to` input) without building or migrating. The first
+deployment needs the Terraform task definitions to reference an existing
+image: either set `image_tag` to the first deployed SHA at apply time or push
+a `latest`-tagged image manually before the first rollout.
+
 ## Transition from the experimental stack
 
 The previous experimental Compose file is not an in-place upgrade. It stored

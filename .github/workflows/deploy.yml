@@ -1,0 +1,139 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy. Defaults to the commit SHA of the run."
+        required: false
+        type: string
+      rollback_to:
+        description: "Deploy an already-published image tag without building or migrating (rollback)."
+        required: false
+        type: string
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+  API_SERVICE: ${{ vars.API_SERVICE }}
+  WORKER_SERVICE: ${{ vars.WORKER_SERVICE }}
+  API_TASK_DEFINITION: ${{ vars.API_TASK_DEFINITION }}
+  WORKER_TASK_DEFINITION: ${{ vars.WORKER_TASK_DEFINITION }}
+  MIGRATE_TASK_DEFINITION: ${{ vars.MIGRATE_TASK_DEFINITION }}
+  ALB_DNS: ${{ vars.ALB_DNS }}
+  PRIVATE_SUBNETS: ${{ vars.PRIVATE_SUBNETS }}
+  ECS_SECURITY_GROUP: ${{ vars.ECS_SECURITY_GROUP }}
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ !inputs.rollback_to }}
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@bcd4089080cf41e4db9dad11fce2a9397e670bbd # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 1800
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@af990da1348c53e469c2b8b90ebe936bc2f574d0 # v2.1.6
+        if: ${{ !inputs.rollback_to }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        if: ${{ !inputs.rollback_to }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@2ca78c6bec76527009825f31aae0532b4d40d820 # v7.3.0
+        if: ${{ !inputs.rollback_to }}
+        with:
+          context: .
+          push: true
+          tags: ${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          provenance: false
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.rollback_to }}" ]; then
+            image_tag="${{ inputs.rollback_to }}"
+          elif [ -n "${{ inputs.image_tag }}" ]; then
+            image_tag="${{ inputs.image_tag }}"
+          else
+            image_tag="${{ github.sha }}"
+          fi
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "Deploying image tag: ${image_tag}"
+
+      - name: Register task definitions
+        run: |
+          for family in "$API_TASK_DEFINITION" "$WORKER_TASK_DEFINITION" "$MIGRATE_TASK_DEFINITION"; do
+            aws ecs describe-task-definition \
+              --task-definition "$family" \
+              --query 'taskDefinition' --output json |
+              jq --arg img "$ECR_REPOSITORY:${{ steps.tag.outputs.image_tag }}" --arg fam "$family" \
+                'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .draft, .lastStatus) | .containerDefinitions[0].image = $img | .family = $fam' \
+                > "/tmp/${family}.json"
+            aws ecs register-task-definition --cli-input-json "file:///tmp/${family}.json" \
+              --output text --query 'taskDefinition.taskDefinitionArn'
+          done
+
+      - name: Apply database migrations
+        if: ${{ !inputs.rollback_to }}
+        run: |
+          task_arn="$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$MIGRATE_TASK_DEFINITION" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${PRIVATE_SUBNETS}],securityGroups=[${ECS_SECURITY_GROUP}],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)"
+          echo "Migration task: ${task_arn}"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task_arn"
+          exit_code="$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$task_arn" \
+            --query 'tasks[0].containers[0].exitCode' --output text)"
+          if [ "$exit_code" != "0" ]; then
+            aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$task_arn" --query 'tasks[0]' --output json
+            echo "::error::Migration task exited with code ${exit_code}"
+            exit 1
+          fi
+          echo "Migration task completed successfully."
+
+      - name: Roll out services
+        run: |
+          api_revision="$(aws ecs describe-task-definition --task-definition "$API_TASK_DEFINITION" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)"
+          worker_revision="$(aws ecs describe-task-definition --task-definition "$WORKER_TASK_DEFINITION" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)"
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$API_SERVICE" \
+            --task-definition "$api_revision" --force-new-deployment --output text --query 'service.serviceArn'
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" \
+            --task-definition "$worker_revision" --force-new-deployment --output text --query 'service.serviceArn'
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$API_SERVICE" "$WORKER_SERVICE"
+          echo "Both services are stable."
+
+      - name: Smoke test readiness
+        run: |
+          body="$(curl --fail --silent --show-error --max-time 30 "https://${ALB_DNS}/health/ready")"
+          echo "${body}"
+          test "$(echo "${body}" | jq -r '.status')" = "ready"
+          echo "Readiness probe succeeded."

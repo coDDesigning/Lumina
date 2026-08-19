@@ -248,3 +248,27 @@ export interface CourseProgressResponse {
   average_score: number | null;
   topic_mastery: TopicMastery[];
 }
+
+export interface ProfileKnowledgeItem {
+  id: number;
+  user_id: number;
+  topic: string;
+  detail: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProfileKnowledgeCreate {
+  topic: string;
+  detail: string;
+}
+
+export interface ProfileKnowledgeUpdate {
+  topic?: string;
+  detail?: string;
+}
+
+export interface ProfileKnowledgeImport {
+  items: ProfileKnowledgeCreate[];
+}
+

@@ -24,7 +24,9 @@ AI_USAGE_REVISION = "b7e2a9d1c3f4"
 SYLLABUS_REVISION = "e5c1a7b39d64"
 HARDENING_REVISION = "a1c5e7f9b203"
 ATTRIBUTION_REVISION = "c9b3d5e08f27"
-HEAD_REVISION = "d3f8b21a6c40"
+QUIZ_ATTEMPT_ANSWERS_REVISION = "d3f8b21a6c40"
+PROFILE_KNOWLEDGE_REVISION = "e4a7b1c90d52"
+HEAD_REVISION = PROFILE_KNOWLEDGE_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -52,7 +54,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: ATTRIBUTION_REVISION,
+        HEAD_REVISION: QUIZ_ATTEMPT_ANSWERS_REVISION,
+        QUIZ_ATTEMPT_ANSWERS_REVISION: ATTRIBUTION_REVISION,
         ATTRIBUTION_REVISION: HARDENING_REVISION,
         HARDENING_REVISION: SYLLABUS_REVISION,
         SYLLABUS_REVISION: AI_USAGE_REVISION,
@@ -1052,6 +1055,72 @@ def test_generated_output_attribution_migration_round_trips(tmp_path: Path) -> N
             "SELECT user_id, model_used FROM generated_outputs WHERE id = ?",
             (legacy_id,),
         ).fetchone() == (None, None)
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)
+
+
+def profile_knowledge_columns(connection: sqlite3.Connection) -> set[str]:
+    return {
+        row[1] for row in connection.execute("PRAGMA table_info(profile_knowledge)")
+    }
+
+
+def test_profile_knowledge_migration_round_trips(tmp_path: Path) -> None:
+    """profile_knowledge table adds updated_at backfilled from created_at and round-trips."""
+    database_path = tmp_path / "profile-knowledge.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", QUIZ_ATTEMPT_ANSWERS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = profile_knowledge_columns(connection)
+        assert "updated_at" not in columns
+
+        role_id = connection.execute(
+            "SELECT id FROM roles WHERE name = 'user'"
+        ).fetchone()[0]
+        user_id = connection.execute(
+            "INSERT INTO users "
+            "(name, email, password_hash, role_id, is_banned, preferred_model) "
+            "VALUES (?, ?, ?, ?, 0, ?)",
+            ("PK user", "pk-migrate@example.com", "hash", role_id, "model"),
+        ).lastrowid
+        pk_id = connection.execute(
+            "INSERT INTO profile_knowledge "
+            "(user_id, topic, detail, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, "Calculus", "Knows basic derivatives.", "2026-02-01 10:00:00"),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        columns = profile_knowledge_columns(connection)
+        assert "updated_at" in columns
+        row = connection.execute(
+            "SELECT topic, detail, created_at, updated_at FROM profile_knowledge WHERE id = ?",
+            (pk_id,),
+        ).fetchone()
+        assert row[0] == "Calculus"
+        assert row[1] == "Knows basic derivatives."
+        assert row[2] == "2026-02-01 10:00:00"
+        assert row[3] == "2026-02-01 10:00:00"
+
+    run_alembic(database_path, tmp_path, "downgrade", QUIZ_ATTEMPT_ANSWERS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = profile_knowledge_columns(connection)
+        assert "updated_at" not in columns
+        row = connection.execute(
+            "SELECT topic, detail FROM profile_knowledge WHERE id = ?",
+            (pk_id,),
+        ).fetchone()
+        assert row == ("Calculus", "Knows basic derivatives.")
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        columns = profile_knowledge_columns(connection)
+        assert "updated_at" in columns
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone() == (HEAD_REVISION,)

@@ -102,9 +102,9 @@ PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other
 database name, truncates only model tables between cases, and preserves the
 Alembic revision.
 
-This qualification does not enable hosted production. Hosted staging still uses
-local document storage, and production remains blocked until API and worker
-processes have qualified durable shared storage and deployment topology.
+This qualification covers the hosted production database path. Hosted
+production additionally requires S3-compatible document storage
+(`STORAGE_BACKEND=s3`); see `docs/deployment.md` for the hosted topology.
 
 ## Durable state machine
 

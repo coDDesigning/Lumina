@@ -1,19 +1,21 @@
 """Local filesystem document storage."""
 
 import os
-import re
 import stat
 import tempfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import BinaryIO
 from uuid import UUID
 
-from storage.base import Storage, StorageError
+from storage.base import (
+    READINESS_PAYLOAD,
+    Storage,
+    StorageError,
+    generate_portable_key,
+    validate_portable_key,
+)
 
 DEFAULT_CHUNK_SIZE = 1024 * 1024
-_FILE_TYPE_PATTERN = re.compile(r"[a-z0-9]+")
-_KEY_PART_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-_READINESS_PAYLOAD = b"lumina-storage-readiness"
 
 
 class LocalStorage(Storage):
@@ -52,12 +54,12 @@ class LocalStorage(Storage):
                 prefix=".lumina-readiness-",
                 suffix=".tmp",
             ) as probe:
-                if probe.write(_READINESS_PAYLOAD) != len(_READINESS_PAYLOAD):
+                if probe.write(READINESS_PAYLOAD) != len(READINESS_PAYLOAD):
                     raise OSError("incomplete readiness probe write")
                 probe.flush()
                 os.fsync(probe.fileno())
                 probe.seek(0)
-                if probe.read() != _READINESS_PAYLOAD:
+                if probe.read() != READINESS_PAYLOAD:
                     raise OSError("readiness probe content mismatch")
         except Exception as exc:
             raise StorageError("Document storage is not ready.") from exc
@@ -69,26 +71,7 @@ class LocalStorage(Storage):
         validated_file_type: str,
     ) -> str:
         """Generate a canonical key without using the original filename."""
-        if type(course_id) is not int or course_id <= 0:
-            raise ValueError("course_id must be a positive integer")
-        if not isinstance(validated_file_type, str) or not _FILE_TYPE_PATTERN.fullmatch(
-            validated_file_type
-        ):
-            raise ValueError(
-                "validated_file_type must contain only lowercase letters and digits"
-            )
-
-        if not isinstance(document_uuid, (UUID, str)):
-            raise TypeError("document_uuid must be a UUID")
-        try:
-            normalized_document_uuid = UUID(str(document_uuid))
-        except (AttributeError, TypeError, ValueError) as exc:
-            raise ValueError("document_uuid must be a UUID") from exc
-
-        return (
-            f"courses/{course_id}/documents/{normalized_document_uuid}/"
-            f"source.{validated_file_type}"
-        )
+        return generate_portable_key(course_id, document_uuid, validated_file_type)
 
     def save(self, key: str, source: BinaryIO) -> None:
         """Atomically save a binary stream and return it to position zero."""
@@ -190,20 +173,10 @@ class LocalStorage(Storage):
         return stat.S_ISREG(file_status.st_mode)
 
     def _path_for_key(self, key: str) -> Path:
-        if not isinstance(key, str) or not key:
-            raise ValueError("storage key must be a non-empty portable path")
-        if "\\" in key or PurePosixPath(key).is_absolute():
-            raise ValueError("storage key must be a relative portable path")
-
-        parts = key.split("/")
-        if any(
-            part in {"", ".", ".."} or not _KEY_PART_PATTERN.fullmatch(part)
-            for part in parts
-        ):
-            raise ValueError("storage key contains an unsafe path component")
+        validate_portable_key(key)
 
         try:
-            path = self.root.joinpath(*parts).resolve()
+            path = self.root.joinpath(*key.split("/")).resolve()
         except (OSError, RuntimeError) as exc:
             raise StorageError("Unable to resolve document storage key.") from exc
 

@@ -135,6 +135,79 @@
   gap: 18px;
 }
 
+.workspace-card-shell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-card-shell > .workspace-card {
+  flex: 1;
+}
+
+.workspace-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workspace-danger-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid #c8c3ca;
+  border-radius: 13px;
+  background: #fff;
+  color: #514b54;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.workspace-danger-button:hover:not(:disabled) {
+  border-color: #9b949e;
+  background: #f6f4f7;
+}
+
+.workspace-danger-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workspace-danger-button.is-danger {
+  border-color: #e4b4b4;
+  color: #991b1b;
+}
+
+.workspace-danger-button.is-danger:hover:not(:disabled) {
+  border-color: #cd8f8f;
+  background: #fdf3f3;
+}
+
+.workspace-danger-button svg {
+  width: 13px;
+  height: 13px;
+  color: currentColor;
+}
+
+.workspace-delete-warning,
+.workspace-delete-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.workspace-delete-warning {
+  color: #6b6470;
+}
+
+.workspace-delete-error {
+  color: #991b1b;
+}
+
 .workspace-card {
   min-width: 0;
   border: 1px solid #ded9e0;

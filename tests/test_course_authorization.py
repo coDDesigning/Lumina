@@ -82,7 +82,6 @@ def _requests_against_owner_a(context) -> list[tuple[str, str, dict]]:
             {"json": {"title": "Renamed by an intruder"}},
         ),
         ("DELETE", f"/api/courses/{course_id}", {}),
-        ("DELETE", f"/api/courses/{course_id}", {"params": {"hard_delete": "true"}}),
         ("GET", f"/api/courses/{course_id}/documents", {}),
         (
             "POST",
@@ -136,20 +135,20 @@ def test_another_user_cannot_reach_a_course_or_its_documents(authz_api):
 
 
 def test_missing_and_other_owner_courses_are_indistinguishable(authz_api):
-    """Absent, soft-deleted, and other-owner courses must all answer alike."""
+    """Absent, tombstoned, and other-owner courses must all answer alike."""
     absent = authz_api.client.get(
         "/api/courses/999999", headers=authz_api.authorization_b
     )
     other_owner = authz_api.client.get(
         f"/api/courses/{authz_api.a_course_id}", headers=authz_api.authorization_b
     )
-    soft_deleted = authz_api.client.get(
+    tombstoned = authz_api.client.get(
         f"/api/courses/{authz_api.a_deleted_course_id}",
         headers=authz_api.authorization_a,
     )
 
-    assert absent.status_code == other_owner.status_code == soft_deleted.status_code
-    assert absent.json() == other_owner.json() == soft_deleted.json()
+    assert absent.status_code == other_owner.status_code == tombstoned.status_code
+    assert absent.json() == other_owner.json() == tombstoned.json()
     assert absent.json() == {"detail": "Course not found"}
 
 
@@ -159,7 +158,7 @@ def test_course_listing_is_scoped_to_the_caller(authz_api):
 
     assert owner_a.status_code == 200
     assert owner_b.status_code == 200
-    # The soft-deleted course is excluded even from its own owner's listing.
+    # The tombstoned course is excluded even from its own owner's listing.
     assert _course_ids(owner_a) == {authz_api.a_course_id}
     assert _course_ids(owner_b) == {authz_api.b_course_id}
     assert all(
@@ -208,7 +207,7 @@ def test_administrator_cannot_write_to_another_owners_course(authz_api):
     writes = [
         entry for entry in _requests_against_owner_a(authz_api) if entry[0] != "GET"
     ]
-    assert len(writes) == 10
+    assert len(writes) == 9
     for method, url, kwargs in writes:
         response = authz_api.client.request(
             method, url, headers=authz_api.authorization_admin, **kwargs
@@ -308,9 +307,11 @@ def test_owner_keeps_the_full_document_workflow(authz_api):
     assert renamed.status_code == 200
     assert renamed.json()["data"]["title"] == "Owner A renamed course"
 
-    trashed = authz_api.client.delete(course_url, headers=authz_api.authorization_a)
-    assert trashed.status_code == 200
-    assert trashed.json()["data"]["is_deleted"] is True
+    deleted = authz_api.client.delete(course_url, headers=authz_api.authorization_a)
+    assert deleted.status_code == 200
+    with authz_api.session_factory() as session:
+        assert session.get(Course, authz_api.a_course_id) is None
+    assert _stored_files(authz_api.storage_root) == []
 
 
 def test_owner_can_delete_their_own_document(authz_api):
@@ -325,11 +326,10 @@ def test_owner_can_delete_their_own_document(authz_api):
     assert _stored_files(authz_api.storage_root) == []
 
 
-def test_owner_can_still_purge_a_soft_deleted_course(authz_api):
+def test_owner_can_still_purge_a_tombstoned_course(authz_api):
     """Hard deletion stays reachable after a course has been tombstoned."""
     purged = authz_api.client.delete(
         f"/api/courses/{authz_api.a_deleted_course_id}",
-        params={"hard_delete": "true"},
         headers=authz_api.authorization_a,
     )
 
@@ -338,10 +338,9 @@ def test_owner_can_still_purge_a_soft_deleted_course(authz_api):
         assert session.get(Course, authz_api.a_deleted_course_id) is None
 
 
-def test_another_user_cannot_purge_a_soft_deleted_course(authz_api):
+def test_another_user_cannot_purge_a_tombstoned_course(authz_api):
     purged = authz_api.client.delete(
         f"/api/courses/{authz_api.a_deleted_course_id}",
-        params={"hard_delete": "true"},
         headers=authz_api.authorization_b,
     )
 

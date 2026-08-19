@@ -3,6 +3,7 @@
 # docs/dependencies.md. Do not edit the generated lock by hand.
 alembic==1.18.5
 bcrypt==5.0.0
+boto3==1.43.74
 charset-normalizer==3.4.4
 chromadb==1.5.9
 email-validator==2.3.0

@@ -29,6 +29,7 @@ const STAGE_LABELS: Record<ProcessingStage, string> = {
   understanding_images: 'Analyzing diagrams and images',
   cleaning_text: 'Preparing document text',
   chunking: 'Preparing document for study',
+  generating_embeddings: 'Indexing document for study',
 };
 
 const TERMINAL_DOCUMENT_STATUSES: ReadonlySet<string> = new Set(['ready', 'failed']);

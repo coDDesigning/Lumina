@@ -67,7 +67,8 @@ export type ProcessingStage =
   | 'running_ocr'
   | 'understanding_images'
   | 'cleaning_text'
-  | 'chunking';
+  | 'chunking'
+  | 'generating_embeddings';
 
 export interface DocumentResponse {
   id: string;

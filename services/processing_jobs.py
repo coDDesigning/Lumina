@@ -12,6 +12,7 @@ from backend.app.config import settings
 from backend.app.database import begin_serialized_write
 from backend.app.models import (
     DOCUMENT_PROCESSING_STAGES,
+    EMBEDDING_DIMENSIONS,
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
@@ -23,6 +24,13 @@ from backend.app.models import (
     DocumentVisual,
     ProcessingJob,
     UploadedDocument,
+)
+from services.embeddings import configured_embedding_identity
+from services.vector_store import (
+    VectorRecord,
+    VectorStore,
+    VectorStoreError,
+    get_vector_store,
 )
 
 
@@ -96,6 +104,7 @@ _EXPECTED_STAGES = {
         "cleaning_text",
     ),
     "chunking": ("cleaning_text", "chunking"),
+    "generating_embeddings": ("chunking", "generating_embeddings"),
 }
 
 
@@ -501,10 +510,19 @@ def complete_job(
     chunks: list[ChunkData],
     pages: list[PageData] | None = None,
     *,
+    embeddings: list[list[float]],
+    vector_store: VectorStore | None = None,
     now: datetime | None = None,
 ) -> bool:
     if not chunks:
         raise ValueError("A completed document must contain at least one chunk")
+    if len(embeddings) != len(chunks):
+        raise ValueError("A completed document must carry one embedding per chunk")
+    for vector in embeddings:
+        if len(vector) != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Document embeddings must contain {EMBEDDING_DIMENSIONS} values"
+            )
     if len(chunks) > settings.max_document_chunks:
         raise ValueError("Document chunk count exceeds the configured limit")
     for chunk in chunks:
@@ -579,7 +597,7 @@ def complete_job(
         or job.claim_token != claim_token
         or job.lease_expires_at is None
         or job.lease_expires_at <= finished_at
-        or job.processing_stage != "chunking"
+        or job.processing_stage != "generating_embeddings"
         or document.status != "processing"
     ):
         session.rollback()
@@ -636,6 +654,43 @@ def complete_job(
         )
         for index, chunk in enumerate(chunks)
     )
+    session.flush()
+
+    stored_chunks = list(
+        session.scalars(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == job.document_id)
+            .order_by(DocumentChunk.chunk_index)
+        ).all()
+    )
+    if len(stored_chunks) != len(chunks):
+        session.rollback()
+        raise RuntimeError("Persisted chunk count does not match the completed chunks")
+
+    embedding_provider, embedding_model = configured_embedding_identity()
+    store = vector_store if vector_store is not None else get_vector_store()
+    try:
+        store.replace_document_vectors(
+            session,
+            document_id=job.document_id,
+            course_id=job.course_id,
+            records=[
+                VectorRecord(
+                    chunk_id=stored.id,
+                    document_id=job.document_id,
+                    course_id=job.course_id,
+                    chunk_index=stored.chunk_index,
+                    embedding=embeddings[position],
+                )
+                for position, stored in enumerate(stored_chunks)
+            ],
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+        )
+    except VectorStoreError:
+        session.rollback()
+        raise
+
     document.status = "ready"
     document.processing_error = None
     document.updated_at = finished_at

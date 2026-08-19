@@ -1,0 +1,451 @@
+"""Durable vector storage behind one lifecycle-complete interface.
+
+Two backends exist because the two supported deployments have different
+databases. PostgreSQL keeps vectors in the same transactional boundary as the
+chunks they describe; SQLite deployments cannot, so they persist vectors in a
+local Chroma collection instead. Callers depend on this interface, never on
+which one is configured. See docs/vector_storage.md.
+"""
+
+import logging
+import threading
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from typing import Protocol
+from uuid import UUID
+
+from sqlalchemy import delete, func, select
+from sqlalchemy.orm import Session
+
+from backend.app.config import (
+    VECTOR_BACKEND_CHROMA,
+    VECTOR_BACKEND_PGVECTOR,
+    settings,
+)
+from backend.app.models import EMBEDDING_DIMENSIONS, ChunkEmbedding
+
+logger = logging.getLogger(__name__)
+
+CHROMA_COLLECTION_NAME = "lumina_chunks"
+SIMILARITY_METRIC = "cosine"
+
+
+class VectorStoreError(RuntimeError):
+    """The vector store could not complete a lifecycle operation."""
+
+    retryable = True
+
+
+class VectorStoreConfigurationError(VectorStoreError):
+    retryable = False
+
+
+@dataclass(frozen=True, slots=True)
+class VectorRecord:
+    """One chunk's vector plus the metadata every backend must retain."""
+
+    chunk_id: int
+    document_id: UUID
+    course_id: int
+    chunk_index: int
+    embedding: list[float]
+
+    def validate(self) -> None:
+        if len(self.embedding) != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Vector records must contain {EMBEDDING_DIMENSIONS} values, "
+                f"got {len(self.embedding)}"
+            )
+        if self.chunk_index < 0:
+            raise ValueError("Vector records must carry a nonnegative chunk index")
+
+
+class VectorStore(Protocol):
+    def replace_document_vectors(
+        self,
+        session: Session,
+        *,
+        document_id: UUID,
+        course_id: int,
+        records: Sequence[VectorRecord],
+        embedding_provider: str,
+        embedding_model: str,
+    ) -> None: ...
+
+    def upsert_document_vectors(
+        self,
+        session: Session,
+        *,
+        document_id: UUID,
+        course_id: int,
+        records: Sequence[VectorRecord],
+        embedding_provider: str,
+        embedding_model: str,
+    ) -> None: ...
+
+    def delete_document_vectors(self, session: Session, document_id: UUID) -> None: ...
+
+    def delete_chunk_vectors(
+        self, session: Session, document_id: UUID, chunk_ids: Iterable[int]
+    ) -> None: ...
+
+    def delete_course_vectors(self, session: Session, course_id: int) -> None: ...
+
+    def chunk_ids_with_vectors(
+        self, session: Session, document_id: UUID
+    ) -> set[int]: ...
+
+    def count_document_vectors(self, session: Session, document_id: UUID) -> int: ...
+
+    def count_course_vectors(self, session: Session, course_id: int) -> int: ...
+
+
+def _validated(
+    records: Sequence[VectorRecord],
+    *,
+    document_id: UUID,
+    course_id: int,
+) -> list[VectorRecord]:
+    validated: list[VectorRecord] = []
+    seen: set[int] = set()
+    for record in records:
+        record.validate()
+        if record.document_id != document_id or record.course_id != course_id:
+            raise ValueError(
+                "Vector records must belong to the document being replaced"
+            )
+        if record.chunk_id in seen:
+            raise ValueError("Vector records must not repeat a chunk")
+        seen.add(record.chunk_id)
+        validated.append(record)
+    return validated
+
+
+class PgVectorStore:
+    """Vectors as relational rows, written through the caller's transaction.
+
+    Deleting by document is redundant with the foreign key cascade, but it is
+    issued explicitly so both backends behave identically and are covered by
+    the same tests.
+    """
+
+    backend = VECTOR_BACKEND_PGVECTOR
+
+    def replace_document_vectors(
+        self,
+        session: Session,
+        *,
+        document_id: UUID,
+        course_id: int,
+        records: Sequence[VectorRecord],
+        embedding_provider: str,
+        embedding_model: str,
+    ) -> None:
+        validated = _validated(records, document_id=document_id, course_id=course_id)
+        session.execute(
+            delete(ChunkEmbedding).where(ChunkEmbedding.document_id == document_id)
+        )
+        session.flush()
+        session.add_all(
+            ChunkEmbedding(
+                chunk_id=record.chunk_id,
+                document_id=record.document_id,
+                course_id=record.course_id,
+                chunk_index=record.chunk_index,
+                embedding=record.embedding,
+                embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                dimensions=EMBEDDING_DIMENSIONS,
+            )
+            for record in validated
+        )
+        session.flush()
+
+    def upsert_document_vectors(
+        self,
+        session: Session,
+        *,
+        document_id: UUID,
+        course_id: int,
+        records: Sequence[VectorRecord],
+        embedding_provider: str,
+        embedding_model: str,
+    ) -> None:
+        validated = _validated(records, document_id=document_id, course_id=course_id)
+        if not validated:
+            return
+        chunk_ids = [record.chunk_id for record in validated]
+        session.execute(
+            delete(ChunkEmbedding).where(ChunkEmbedding.chunk_id.in_(chunk_ids))
+        )
+        session.flush()
+        session.add_all(
+            ChunkEmbedding(
+                chunk_id=record.chunk_id,
+                document_id=record.document_id,
+                course_id=record.course_id,
+                chunk_index=record.chunk_index,
+                embedding=record.embedding,
+                embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                dimensions=EMBEDDING_DIMENSIONS,
+            )
+            for record in validated
+        )
+        session.flush()
+
+    def delete_chunk_vectors(
+        self, session: Session, document_id: UUID, chunk_ids: Iterable[int]
+    ) -> None:
+        identifiers = list(chunk_ids)
+        if not identifiers:
+            return
+        session.execute(
+            delete(ChunkEmbedding).where(
+                ChunkEmbedding.document_id == document_id,
+                ChunkEmbedding.chunk_id.in_(identifiers),
+            )
+        )
+        session.flush()
+
+    def delete_document_vectors(self, session: Session, document_id: UUID) -> None:
+        session.execute(
+            delete(ChunkEmbedding).where(ChunkEmbedding.document_id == document_id)
+        )
+        session.flush()
+
+    def delete_course_vectors(self, session: Session, course_id: int) -> None:
+        session.execute(
+            delete(ChunkEmbedding).where(ChunkEmbedding.course_id == course_id)
+        )
+        session.flush()
+
+    def chunk_ids_with_vectors(self, session: Session, document_id: UUID) -> set[int]:
+        return set(
+            session.scalars(
+                select(ChunkEmbedding.chunk_id).where(
+                    ChunkEmbedding.document_id == document_id
+                )
+            ).all()
+        )
+
+    def count_document_vectors(self, session: Session, document_id: UUID) -> int:
+        return int(
+            session.scalar(
+                select(func.count())
+                .select_from(ChunkEmbedding)
+                .where(ChunkEmbedding.document_id == document_id)
+            )
+            or 0
+        )
+
+    def count_course_vectors(self, session: Session, course_id: int) -> int:
+        return int(
+            session.scalar(
+                select(func.count())
+                .select_from(ChunkEmbedding)
+                .where(ChunkEmbedding.course_id == course_id)
+            )
+            or 0
+        )
+
+
+class ChromaVectorStore:
+    """Vectors in a local persistent Chroma collection.
+
+    Chroma cannot join the relational transaction, so callers write here after
+    flushing chunk ids and before committing: a failure rolls the relational
+    work back, and a retry replaces this document's vectors wholesale rather
+    than adding to them.
+    """
+
+    backend = VECTOR_BACKEND_CHROMA
+
+    def __init__(self, persist_directory: str | None = None) -> None:
+        self._persist_directory = (
+            persist_directory
+            if persist_directory is not None
+            else settings.chroma_persist_directory
+        )
+        self._client = None
+        self._collection = None
+
+    def _get_collection(self):
+        if self._collection is not None:
+            return self._collection
+        try:
+            import chromadb
+
+            self._client = chromadb.PersistentClient(path=self._persist_directory)
+            self._collection = self._client.get_or_create_collection(
+                name=CHROMA_COLLECTION_NAME,
+                embedding_function=None,
+                configuration={"hnsw": {"space": SIMILARITY_METRIC}},
+            )
+        except Exception as exc:
+            raise VectorStoreError("The vector store could not be opened.") from exc
+        return self._collection
+
+    def close(self) -> None:
+        self._collection = None
+        self._client = None
+
+    @staticmethod
+    def _metadata(
+        record: VectorRecord,
+        embedding_provider: str,
+        embedding_model: str,
+    ) -> dict:
+        return {
+            "chunk_id": record.chunk_id,
+            "document_id": str(record.document_id),
+            "course_id": record.course_id,
+            "chunk_index": record.chunk_index,
+            "embedding_provider": embedding_provider,
+            "embedding_model": embedding_model,
+        }
+
+    def replace_document_vectors(
+        self,
+        session: Session,
+        *,
+        document_id: UUID,
+        course_id: int,
+        records: Sequence[VectorRecord],
+        embedding_provider: str,
+        embedding_model: str,
+    ) -> None:
+        validated = _validated(records, document_id=document_id, course_id=course_id)
+        collection = self._get_collection()
+        try:
+            collection.delete(where={"document_id": str(document_id)})
+            if validated:
+                collection.upsert(
+                    ids=[str(record.chunk_id) for record in validated],
+                    embeddings=[record.embedding for record in validated],
+                    metadatas=[
+                        self._metadata(record, embedding_provider, embedding_model)
+                        for record in validated
+                    ],
+                )
+        except VectorStoreError:
+            raise
+        except Exception as exc:
+            raise VectorStoreError(
+                "The vector store could not record the document embeddings."
+            ) from exc
+
+    def upsert_document_vectors(
+        self,
+        session: Session,
+        *,
+        document_id: UUID,
+        course_id: int,
+        records: Sequence[VectorRecord],
+        embedding_provider: str,
+        embedding_model: str,
+    ) -> None:
+        validated = _validated(records, document_id=document_id, course_id=course_id)
+        if not validated:
+            return
+        collection = self._get_collection()
+        try:
+            collection.upsert(
+                ids=[str(record.chunk_id) for record in validated],
+                embeddings=[record.embedding for record in validated],
+                metadatas=[
+                    self._metadata(record, embedding_provider, embedding_model)
+                    for record in validated
+                ],
+            )
+        except Exception as exc:
+            raise VectorStoreError(
+                "The vector store could not record the document embeddings."
+            ) from exc
+
+    def delete_chunk_vectors(
+        self, session: Session, document_id: UUID, chunk_ids: Iterable[int]
+    ) -> None:
+        identifiers = [str(chunk_id) for chunk_id in chunk_ids]
+        if not identifiers:
+            return
+        collection = self._get_collection()
+        try:
+            collection.delete(ids=identifiers)
+        except Exception as exc:
+            raise VectorStoreError(
+                "The vector store could not remove the requested embeddings."
+            ) from exc
+
+    def _delete_where(self, where: dict) -> None:
+        collection = self._get_collection()
+        try:
+            collection.delete(where=where)
+        except Exception as exc:
+            raise VectorStoreError(
+                "The vector store could not remove the requested embeddings."
+            ) from exc
+
+    def delete_document_vectors(self, session: Session, document_id: UUID) -> None:
+        self._delete_where({"document_id": str(document_id)})
+
+    def delete_course_vectors(self, session: Session, course_id: int) -> None:
+        self._delete_where({"course_id": course_id})
+
+    def _get_where(self, where: dict) -> dict:
+        collection = self._get_collection()
+        try:
+            return collection.get(where=where, include=["metadatas"])
+        except Exception as exc:
+            raise VectorStoreError("The vector store could not be read.") from exc
+
+    def chunk_ids_with_vectors(self, session: Session, document_id: UUID) -> set[int]:
+        found = self._get_where({"document_id": str(document_id)})
+        return {int(identifier) for identifier in found.get("ids", [])}
+
+    def count_document_vectors(self, session: Session, document_id: UUID) -> int:
+        return len(self._get_where({"document_id": str(document_id)}).get("ids", []))
+
+    def count_course_vectors(self, session: Session, course_id: int) -> int:
+        return len(self._get_where({"course_id": course_id}).get("ids", []))
+
+    def metadata_for_chunk(self, chunk_id: int) -> dict:
+        collection = self._get_collection()
+        try:
+            found = collection.get(ids=[str(chunk_id)], include=["metadatas"])
+        except Exception as exc:
+            raise VectorStoreError("The vector store could not be read.") from exc
+        metadatas = found.get("metadatas") or []
+        if not metadatas:
+            raise VectorStoreError("The requested embedding is not stored.")
+        return dict(metadatas[0])
+
+
+_store: VectorStore | None = None
+_store_lock = threading.Lock()
+
+
+def reset_vector_store() -> None:
+    """Drop the cached store so a reconfigured process builds a new one."""
+    global _store
+    with _store_lock:
+        _store = None
+
+
+def build_vector_store() -> VectorStore:
+    backend = settings.vector_backend
+    if backend == VECTOR_BACKEND_PGVECTOR:
+        return PgVectorStore()
+    if backend == VECTOR_BACKEND_CHROMA:
+        return ChromaVectorStore()
+    raise VectorStoreConfigurationError(
+        f"Vector backend '{backend}' is not implemented."
+    )
+
+
+def get_vector_store() -> VectorStore:
+    global _store
+    with _store_lock:
+        if _store is None:
+            _store = build_vector_store()
+        return _store

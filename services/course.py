@@ -7,6 +7,7 @@ from backend.app.models import Course, UploadedDocument
 from schemas.course import CourseCreate, CourseResponse, CourseUpdate
 from schemas.user import UserResponse
 from services.processing_jobs import fence_course_jobs
+from services.vector_store import VectorStore, get_vector_store
 from utils.authorization import readable_course_criteria
 from utils.exceptions import NotFoundException
 
@@ -135,7 +136,11 @@ class CourseService:
         return stored_documents
 
     @staticmethod
-    def finalize_hard_delete(db: Session, course_id: int) -> None:
+    def finalize_hard_delete(
+        db: Session,
+        course_id: int,
+        vector_store: VectorStore | None = None,
+    ) -> None:
         """Delete a tombstoned course after its stored documents are gone."""
         db.rollback()
         begin_serialized_write(db)
@@ -146,6 +151,9 @@ class CourseService:
             raise NotFoundException(detail="Course not found")
         if not course.is_deleted:
             raise RuntimeError("Course must be tombstoned before hard deletion.")
+
+        store = vector_store if vector_store is not None else get_vector_store()
+        store.delete_course_vectors(db, course_id)
 
         db.delete(course)
         try:

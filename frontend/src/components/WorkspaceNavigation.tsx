@@ -35,7 +35,7 @@ function WorkspaceNavigation({ workspaceId }: WorkspaceNavigationProps) {
           }
           to={path}
           end={path === '/dashboard'}
-          key={path}
+          key={label}
         >
           <Icon aria-hidden="true" />
           <span>{label}</span>

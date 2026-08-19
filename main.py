@@ -17,6 +17,7 @@ from routes import (
     ai_tutor,
     auth,
     course,
+    course_qa,
     document,
     flashcard,
     profile_knowledge,
@@ -53,6 +54,7 @@ app.include_router(quiz.router)
 app.include_router(flashcard.router)
 app.include_router(prompt_generator.router)
 app.include_router(ai_tutor.router)
+app.include_router(course_qa.router)
 app.add_exception_handler(
     RequestValidationError,
     document.upload_request_validation_error,

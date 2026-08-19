@@ -1,7 +1,4 @@
-from datetime import datetime
 from enum import Enum
-
-from pydantic import BaseModel, ConfigDict, Field
 
 
 class GenerationType(str, Enum):
@@ -22,41 +19,3 @@ class ErrorCategory(str, Enum):
     RATE_LIMIT = "rate_limit"
     AUTHENTICATION_ERROR = "authentication_error"
     UNKNOWN_ERROR = "unknown_error"
-
-
-class TokenUsage(BaseModel):
-    prompt_tokens: int | None = Field(default=None, description="Input tokens")
-    completion_tokens: int | None = Field(default=None, description="Output tokens")
-    total_tokens: int | None = Field(default=None, description="Total tokens")
-
-
-class AiUsageRecordCreate(BaseModel):
-    user_id: int
-    course_id: int | None = None
-    generation_type: str
-    provider: str
-    model: str
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-    latency_ms: int | None = None
-    success: bool
-    error_category: str | None = None
-
-
-class AiUsageLogResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    user_id: int
-    course_id: int | None = None
-    generation_type: str
-    provider: str
-    model: str
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-    latency_ms: int | None = None
-    success: bool
-    error_category: str | None = None
-    created_at: datetime

@@ -95,7 +95,7 @@ immutable `pgvector/pgvector` image digest; the pgvector extension is required
 because the schema declares a `vector` column and an HNSW index. The live job
 verifies the complete Alembic upgrade/downgrade/re-upgrade cycle, schema drift,
 role seeds, readiness, UUID and timezone round trips, unloaded database cascades
-across all 16 tables, pgvector provisioning and cosine ranking, and
+across all 17 tables, pgvector provisioning and cosine ranking, and
 `SKIP LOCKED` worker claims. Tests marked `database_contract` run unchanged
 against copies of an Alembic-migrated SQLite database and the disposable
 PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other
@@ -208,7 +208,7 @@ Retry returns `202` only for a failed job and resets its attempt history. Other
 states return `409`. Course/document mismatches, deleted courses, and courses
 the caller does not own return `404`. Authorization runs before the endpoint
 body, so a denied request creates no document row, storage object, or processing
-job, and removes nothing. Responses expose job progress and safe error codes, but never claim
+job, and removes nothing. Responses expose job progress and safe error codes, but never
 tokens, worker identities, storage keys, or lease internals.
 
 Deletion returns `409` while the durable job is queued or running. Terminal

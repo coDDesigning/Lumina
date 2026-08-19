@@ -275,3 +275,34 @@ disabled analysis is explicitly recorded as `not_configured`. The provider
 contract and deterministic test providers qualify non-fatal per-visual failures
 and retryable temporary service failures without selecting a production AI
 backend.
+
+## Profile knowledge and student context
+
+`profile_knowledge` stores structured student-owned knowledge topics and details
+(`topic`, `detail`, `created_at`, `updated_at`) tied directly to `user_id`.
+
+### Lifecycle and deletion semantics
+
+Profile knowledge is user-scoped rather than course-scoped:
+- **Course deletion**: Deleting or hard-deleting a course removes only course-bound
+  documents, chunks, and generated outputs. It leaves all `profile_knowledge` rows intact.
+- **User deletion**: Deleting a user cascades and permanently removes all associated
+  profile knowledge records (`ondelete="CASCADE"`).
+- **Cross-user privacy**: Profile knowledge entries are strictly isolated to the owning
+  user. Reading, updating, or deleting another user's knowledge item returns `404 Not Found`
+  to prevent identifier enumeration.
+
+### Retrieval priority rules
+
+When assembling context for course-scoped AI features:
+1. **Course material is primary and authoritative**: Extracted document chunks for the
+   target course are loaded first up to the configured per-feature character budget. If no
+   ready course material is available, generation fails with `NoReadyCourseMaterialError`.
+2. **Profile knowledge is supplementary**: Relevant profile knowledge entries for the
+   authenticated user are loaded up to their separate budget and appended as supplementary
+   student background context.
+3. **Precedence under conflict**: If course material and profile knowledge contain
+   conflicting statements, course material is authoritative.
+4. **Isolation**: A user's profile knowledge is never exposed to or included in another
+   user's generation context.
+

@@ -141,6 +141,24 @@ to ECR, registers new task definition revisions, runs the one-off `migrate`
 task, and rolls out both services. The state bucket is passed to Terraform
 with `-backend-config`; never commit `.tfstate` or `terraform.tfvars`.
 
+### AWS secrets management
+
+Runtime secrets are stored in AWS Systems Manager Parameter Store as
+`SecureString` parameters under `/<project>-<environment>/` and are injected
+into the ECS task definitions at task start (container `secrets` entries, read
+by the task execution role). The Terraform `secrets` module creates them from
+the `runtime_secrets` map in `terraform.tfvars`; no secret value is committed
+or stored in GitHub. The `DATABASE_URL` with the generated RDS password lives
+in Secrets Manager. The ECS task role authenticates to S3 with an IAM role; no
+static AWS keys exist on the platform side.
+
+The GitHub Actions deploy role uses OIDC federation
+(`github-oidc` Terraform module): the trust policy accepts the `main` branch
+of the repository only, and the role can deploy but cannot read the runtime
+secrets. Set its ARN as the `AWS_DEPLOY_ROLE_ARN` secret and the Terraform
+outputs as variables on the GitHub `production` environment, then the SCRUM-93
+workflow deploys without any stored long-lived credentials.
+
 ### AWS deploy pipeline
 
 `.github/workflows/deploy.yml` deploys the repository to the AWS topology on a

@@ -57,3 +57,13 @@ output "database_endpoint" {
   description = "RDS endpoint."
   value       = module.rds.endpoint
 }
+
+output "github_actions_role_arn" {
+  description = "IAM role the deploy workflow assumes via GitHub OIDC. Set as AWS_DEPLOY_ROLE_ARN on the production environment."
+  value       = module.github_oidc.role_arn
+}
+
+output "runtime_ssm_parameters" {
+  description = "SSM parameter names created from runtime_secrets."
+  value       = module.secrets.parameter_names
+}

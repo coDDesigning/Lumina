@@ -57,6 +57,33 @@ step (SCRUM-94) before the first deploy pipeline run.
 The `DATABASE_URL` is stored in Secrets Manager
 (`<prefix>/database-url`) and is created by the RDS module.
 
+The parameters are created by the secrets module from the `runtime_secrets`
+map. Provide the values in a private `terraform.tfvars` (never committed) and
+apply:
+
+```hcl
+runtime_secrets = {
+  "jwt-secret-key"        = "<generated, at least 32 chars>"
+  "bootstrap-admin-token" = "<generated, at least 32 visible ASCII>"
+  "gemini-api-key"        = "<Gemini API key>"
+}
+```
+
+Apply `terraform` once after both the infrastructure and secrets modules are
+in place; the ECS services retry task starts until the parameters exist.
+
+## Deploy role (GitHub OIDC)
+
+The `github-oidc` module creates the OpenID Connect provider for
+`token.actions.githubusercontent.com` and an IAM role
+(`<prefix>-github-actions`) that the deploy workflow assumes. The trust policy
+accepts only `sts.amazonaws.com` audiences and only the `main` branch of
+`github_repository`. The role can push to ECR, register and run ECS task
+definitions, update the two services, and pass the two ECS roles; it cannot
+read the runtime secrets. Set the role ARN as the `AWS_DEPLOY_ROLE_ARN`
+secret on the `production` environment, and the Terraform outputs as the
+deploy workflow environment variables (see `docs/deployment.md`).
+
 ## Outputs used by the deploy pipeline
 
 `ecr_repository_url`, `ecs_cluster_name`, `api_service_name`,

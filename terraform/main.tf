@@ -94,3 +94,28 @@ module "rds" {
   username              = var.rds_username
   tags                  = local.tags
 }
+
+module "secrets" {
+  source         = "./modules/secrets"
+  name_prefix    = local.name_prefix
+  ssm_parameters = var.runtime_secrets
+  tags           = local.tags
+}
+
+module "github_oidc" {
+  source              = "./modules/github-oidc"
+  name_prefix         = local.name_prefix
+  repository          = var.github_repository
+  ecr_repository_arn  = module.ecr.arn
+  ecs_cluster_name    = module.ecs.cluster_name
+  api_service_name    = module.ecs.api_service_name
+  worker_service_name = module.ecs.worker_service_name
+  task_definition_families = [
+    module.ecs.api_task_definition_family,
+    module.ecs.worker_task_definition_family,
+    module.ecs.migrate_task_definition_family,
+  ]
+  ecs_task_role_arn      = module.ecs.task_role_arn
+  ecs_execution_role_arn = module.ecs.execution_role_arn
+  tags                   = local.tags
+}

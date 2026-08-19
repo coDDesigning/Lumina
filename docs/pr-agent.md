@@ -70,10 +70,10 @@ gh secret list
 The expected list contains `PR_AGENT_GEMINI_API_KEY`. Do not paste the real key
 into an issue, pull-request body, terminal command argument, or chat message.
 
-PR #21 is the bootstrap pull request. Its workflow repeats the security-critical
-settings as environment variables because `.pr_agent.toml` is not yet available
-on the trusted `dev` branch. After PR #21 is merged, later reviews load the full
-policy from `dev`; the next eligible pull request is therefore the first complete
+PR #21 was the bootstrap pull request. It repeated the security-critical
+settings as environment variables because `.pr_agent.toml` was not yet available
+on the trusted `dev` branch. Since PR #21 and PR #22 merged, reviews load the
+full policy from `dev`; those bootstrap pull requests were the complete
 end-to-end validation of the repository configuration.
 
 ## Review Behavior
@@ -84,9 +84,9 @@ Bot events and forked repositories are ignored. GitHub may also postpone the
 event while a pull request has merge conflicts.
 
 GitHub may not run a newly introduced workflow on its own bootstrap pull request.
-Marking PR #21 ready validates the workflow-level bootstrap settings. The first
-guaranteed review using every setting in `.pr_agent.toml` is the next eligible
-pull request after SCRUM-50 is merged to `dev` and the Gemini secret exists.
+Marking PR #21 ready validated the workflow-level bootstrap settings. Since
+SCRUM-50 merged to `dev` and the Gemini secret exists, every eligible pull
+request is reviewed using the full policy in `.pr_agent.toml`.
 
 The workflow loads `.pr_agent.toml` from the fixed `dev` branch. This is necessary
 while GitHub's default `main` branch contains only the initial placeholder. Never

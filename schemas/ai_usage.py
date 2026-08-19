@@ -10,6 +10,7 @@ class GenerationType(str, Enum):
     FLASHCARD = "flashcard"
     AI_TUTOR = "ai_tutor"
     PROMPT_GENERATOR = "prompt_generator"
+    COURSE_QA = "course_qa"
 
 
 class ErrorCategory(str, Enum):

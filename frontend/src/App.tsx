@@ -19,6 +19,7 @@ import { ProtectedRoute } from './components/ProtectedRoute'
 import { useAuth } from './context/AuthContext'
 import { coursesAPI } from './api/courses'
 import { progressAPI } from './api/progress'
+import { courseQaAPI } from './api/courseQa'
 import { describeError, describeUploadError, isAbortError } from './api/errors'
 import type { Course, CourseProgressResponse } from './api/types'
 import { useCourseDocuments } from './hooks/useCourseDocuments'
@@ -86,6 +87,9 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const [isProgressLoading, setIsProgressLoading] = useState(false)
   const [progressError, setProgressError] = useState<string | null>(null)
   const [progressToken, setProgressToken] = useState(0)
+  const [qaResult, setQaResult] = useState<{ question: string; answer: string; truncated?: boolean } | null>(null)
+  const [isQaLoading, setIsQaLoading] = useState(false)
+  const [qaError, setQaError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const {
@@ -204,6 +208,24 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
 
     setLastPrompt(prompt)
     setMainPrompt('')
+    setIsQaLoading(true)
+    setQaError(null)
+
+    courseQaAPI
+      .ask(courseId, { question: prompt })
+      .then((res) => {
+        setQaResult({
+          question: prompt,
+          answer: res.answer,
+          truncated: res.context_truncated,
+        })
+      })
+      .catch((err: unknown) => {
+        setQaError(describeError(err, 'Failed to generate answer from course materials.').message)
+      })
+      .finally(() => {
+        setIsQaLoading(false)
+      })
   }
 
   const chooseSuggestion = (suggestion: string) => {
@@ -411,9 +433,31 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
                   ))}
                 </div>
 
-                {lastPrompt && (
+                {isQaLoading && (
+                  <div className="qa-loading-indicator" role="status" style={{ padding: '12px', background: 'var(--color-surface, #f5f5f5)', borderRadius: '8px', margin: '12px 0' }}>
+                    <p style={{ margin: 0, fontStyle: 'italic' }}>🔍 Searching course materials and generating answer…</p>
+                  </div>
+                )}
+
+                {qaError && (
+                  <div className="qa-error-alert" role="alert" style={{ padding: '12px', background: 'rgba(239, 68, 68, 0.1)', color: '#dc2626', borderRadius: '8px', margin: '12px 0' }}>
+                    <p style={{ margin: 0 }}>{qaError}</p>
+                  </div>
+                )}
+
+                {qaResult && (
+                  <div className="qa-result-card" style={{ padding: '16px', background: 'var(--color-surface, #f8fafc)', border: '1px solid var(--color-border, #e2e8f0)', borderRadius: '8px', margin: '16px 0' }}>
+                    <p style={{ fontWeight: 600, margin: '0 0 8px 0', color: 'var(--color-text-primary, #0f172a)' }}>Q: {qaResult.question}</p>
+                    <p style={{ whiteSpace: 'pre-wrap', margin: '0 0 8px 0', lineHeight: 1.6 }}>{qaResult.answer}</p>
+                    {qaResult.truncated && (
+                      <small style={{ color: '#d97706', display: 'block' }}>⚠️ Note: Only a portion of course materials was used due to length.</small>
+                    )}
+                  </div>
+                )}
+
+                {lastPrompt && !qaResult && !isQaLoading && !qaError && (
                   <p className="local-status" role="status">
-                    Prompt saved locally: "{lastPrompt}"
+                    Prompt sent: "{lastPrompt}"
                   </p>
                 )}
               </div>

@@ -152,6 +152,7 @@ class Settings:
     quiz_material_max_chars: int
     flashcard_material_max_chars: int
     ai_tutor_material_max_chars: int
+    course_qa_material_max_chars: int
 
     @property
     def is_hosted(self) -> bool:
@@ -412,6 +413,7 @@ def load_settings() -> Settings:
         "QUIZ_MATERIAL_MAX_CHARS",
         "FLASHCARD_MATERIAL_MAX_CHARS",
         "AI_TUTOR_MATERIAL_MAX_CHARS",
+        "COURSE_QA_MATERIAL_MAX_CHARS",
     ):
         budget = _positive_integer_setting(name, DEFAULT_MATERIAL_MAX_CHARACTERS)
         if budget < document_chunk_size_characters:
@@ -574,6 +576,7 @@ def load_settings() -> Settings:
         quiz_material_max_chars=material_budgets["QUIZ_MATERIAL_MAX_CHARS"],
         flashcard_material_max_chars=material_budgets["FLASHCARD_MATERIAL_MAX_CHARS"],
         ai_tutor_material_max_chars=material_budgets["AI_TUTOR_MATERIAL_MAX_CHARS"],
+        course_qa_material_max_chars=material_budgets["COURSE_QA_MATERIAL_MAX_CHARS"],
     )
 
 

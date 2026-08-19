@@ -16,6 +16,7 @@ import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import { ProtectedRoute } from './components/ProtectedRoute'
+import { LoadingSpinner } from './components/LoadingSpinner'
 import { useAuth } from './context/AuthContext'
 import { coursesAPI } from './api/courses'
 import { progressAPI } from './api/progress'
@@ -515,17 +516,26 @@ const workspaceAccents: Workspace['accent'][] = [
 
 type WorkspaceRouteProps = {
   workspaces: Workspace[]
+  isLoading?: boolean
   onSelect: (workspaceId: string) => void
   onUpdateProgress?: (workspaceId: string, progress: number) => void
 }
 
-function WorkspaceRoute({ workspaces, onSelect, onUpdateProgress }: WorkspaceRouteProps) {
+function WorkspaceRoute({ workspaces, isLoading, onSelect, onUpdateProgress }: WorkspaceRouteProps) {
   const { workspaceId } = useParams()
   const workspace = workspaces.find(({ id }) => id === workspaceId)
 
   useEffect(() => {
     if (workspace) onSelect(workspace.id)
   }, [onSelect, workspace])
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-gray-50 dark:bg-[#0a0a0a]">
+        <LoadingSpinner size="lg" />
+      </div>
+    )
+  }
 
   if (!workspace) return <Navigate to="/" replace />
   return (
@@ -543,6 +553,7 @@ type EditWorkspaceRouteProps = WorkspaceRouteProps & {
 
 function EditWorkspaceRoute({
   workspaces,
+  isLoading,
   onSelect,
   onSave,
 }: EditWorkspaceRouteProps) {
@@ -552,6 +563,14 @@ function EditWorkspaceRoute({
   useEffect(() => {
     if (workspace) onSelect(workspace.id)
   }, [onSelect, workspace])
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-gray-50 dark:bg-[#0a0a0a]">
+        <LoadingSpinner size="lg" />
+      </div>
+    )
+  }
 
   if (!workspace) return <Navigate to="/" replace />
   return <EditPage key={workspace.id} workspace={workspace} onSave={onSave} />
@@ -576,13 +595,18 @@ function mapCourseToWorkspace(course: Course, index: number): Workspace {
 function App() {
   const { isAuthenticated } = useAuth()
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(true)
   
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(
     () => localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) ?? ''
   )
 
   const fetchWorkspaces = useCallback(async () => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated) {
+      setIsLoadingWorkspaces(false);
+      return;
+    }
+    setIsLoadingWorkspaces(true);
     try {
       const courses = await coursesAPI.list();
       const mappedWorkspaces = courses.map((course, index) => mapCourseToWorkspace(course, index));
@@ -596,6 +620,8 @@ function App() {
       });
     } catch (error) {
       console.error("Failed to load workspaces", error);
+    } finally {
+      setIsLoadingWorkspaces(false);
     }
   }, [isAuthenticated]);
 
@@ -685,6 +711,7 @@ function App() {
           element={
             <WorkspaceRoute
               workspaces={workspaces}
+              isLoading={isLoadingWorkspaces}
               onSelect={selectWorkspace}
               onUpdateProgress={updateWorkspaceProgress}
             />
@@ -695,6 +722,7 @@ function App() {
           element={
             <EditWorkspaceRoute
               workspaces={workspaces}
+              isLoading={isLoadingWorkspaces}
               onSelect={selectWorkspace}
               onSave={updateWorkspace}
             />

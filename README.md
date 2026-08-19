@@ -22,3 +22,7 @@ AI usage and error telemetry are documented in
 
 The vector backend decision, embedding lifecycle, and the backfill command are
 documented in [`docs/vector_storage.md`](docs/vector_storage.md).
+
+Frontend testing architecture, mock conventions, and test execution are documented in
+[`docs/frontend_testing.md`](docs/frontend_testing.md).
+

@@ -61,6 +61,7 @@ python -m pytest -q -p no:cacheprovider tests
 cd frontend
 npm ci --no-audit --no-fund
 npm run lint
+npm test
 npm run build
 ```
 

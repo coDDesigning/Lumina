@@ -17,6 +17,11 @@ from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.readiness import ReadinessError, check_readiness
+from services.document_embedding import (
+    EMBEDDING_STAGE,
+    classify_embedding_error,
+    embed_document_chunks,
+)
 from services.document_extraction import (
     DocumentProcessingError,
     extract_document,
@@ -33,6 +38,8 @@ from services.processing_jobs import (
     replace_document_pages,
     update_job_stage,
 )
+from services.embeddings import EmbeddingProvider
+from services.vector_store import VectorStore, VectorStoreError
 from storage.base import Storage
 from storage.dependencies import get_storage
 
@@ -353,6 +360,8 @@ def process_next_job(
     worker_id: str | None = None,
     lease_seconds: int | None = None,
     shutdown_requested: Callable[[], bool] | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+    vector_store: VectorStore | None = None,
 ) -> bool:
     if shutdown_requested is not None and shutdown_requested():
         return False
@@ -438,6 +447,11 @@ def process_next_job(
             stage_callback=persist_stage,
             extraction_callback=persist_extraction,
         )
+        persist_stage(EMBEDDING_STAGE)
+        embeddings = embed_document_chunks(
+            [chunk.text for chunk in chunks],
+            provider=embedding_provider,
+        )
     except WorkerProcessFatalError:
         _stop_heartbeat(stop, heartbeat, claim_lost)
         logger.critical("Extraction subprocess could not be reaped; exiting worker")
@@ -478,7 +492,18 @@ def process_next_job(
                 job.claim_token,
                 chunks,
                 pages,
+                embeddings=embeddings,
+                vector_store=vector_store,
             )
+    except VectorStoreError as exc:
+        # The vector store is classified, so the job requeues instead of waiting
+        # for the lease to expire.
+        logger.warning("Vector persistence failed for job %s", job.id)
+        try:
+            _record_failure(session_factory, job, classify_embedding_error(exc))
+        except Exception:
+            logger.exception("Failed to record vector error for job %s", job.id)
+        return True
     except Exception:
         # Leave the fenced running state intact; periodic recovery safely retries it.
         logger.exception("Failed to finalize processing job %s", job.id)

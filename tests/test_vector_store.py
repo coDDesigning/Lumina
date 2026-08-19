@@ -1,0 +1,425 @@
+from types import SimpleNamespace
+from uuid import UUID, uuid4
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from backend.app.models import (
+    ChunkEmbedding,
+    Course,
+    DocumentChunk,
+    EMBEDDING_DIMENSIONS,
+    Role,
+    UploadedDocument,
+    User,
+)
+import services.vector_store as vector_store
+from services.vector_store import (
+    ChromaVectorStore,
+    PgVectorStore,
+    VectorRecord,
+    VectorStoreError,
+    get_vector_store,
+    reset_vector_store,
+)
+
+PROVIDER = "ollama"
+MODEL = "nomic-embed-text"
+
+
+def _vector(seed: float) -> list[float]:
+    return [seed] * EMBEDDING_DIMENSIONS
+
+
+@pytest.fixture
+def chroma_store(tmp_path):
+    store = ChromaVectorStore(persist_directory=str(tmp_path / "chroma"))
+    yield store
+
+
+@pytest.fixture
+def pgvector_store():
+    return PgVectorStore()
+
+
+@pytest.fixture(params=["pgvector", "chroma"])
+def store(request, tmp_path):
+    if request.param == "pgvector":
+        return PgVectorStore()
+    return ChromaVectorStore(persist_directory=str(tmp_path / "chroma"))
+
+
+def _seed_document(
+    session: Session,
+    *,
+    email: str,
+    chunk_count: int,
+    course: Course | None = None,
+) -> tuple[Course, UploadedDocument, list[DocumentChunk]]:
+    if course is None:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Vector user",
+            email=email,
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        course = Course(title="Vector course", owner=user)
+        session.add_all((user, course))
+    document_id = uuid4()
+    document = UploadedDocument(
+        id=document_id,
+        original_file_name="vectors.pdf",
+        file_type="pdf",
+        mime_type="application/pdf",
+        file_size=128,
+        file_hash=document_id.hex * 2,
+        uploader=course.owner,
+        course=course,
+        storage_provider="local",
+        storage_key=f"local/{document_id}.pdf",
+        status="ready",
+    )
+    chunks = [
+        DocumentChunk(
+            document=document,
+            course=course,
+            chunk_index=index,
+            page_number=index + 1,
+            end_page_number=index + 1,
+            text=f"Chunk {index}",
+        )
+        for index in range(chunk_count)
+    ]
+    session.add_all([document, *chunks])
+    session.flush()
+    return course, document, chunks
+
+
+def _records(chunks, document: UploadedDocument, seed: float) -> list[VectorRecord]:
+    return [
+        VectorRecord(
+            chunk_id=chunk.id,
+            document_id=document.id,
+            course_id=document.course_id,
+            chunk_index=chunk.chunk_index,
+            embedding=_vector(seed + index),
+        )
+        for index, chunk in enumerate(chunks)
+    ]
+
+
+def _replace(store, session, document, chunks, seed=0.1) -> None:
+    store.replace_document_vectors(
+        session,
+        document_id=document.id,
+        course_id=document.course_id,
+        records=_records(chunks, document, seed),
+        embedding_provider=PROVIDER,
+        embedding_model=MODEL,
+    )
+
+
+def test_replace_stores_one_vector_per_chunk(
+    store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-create@example.com", chunk_count=3
+        )
+        _replace(store, session, document, chunks)
+        session.commit()
+
+        assert store.count_document_vectors(session, document.id) == 3
+        assert store.chunk_ids_with_vectors(session, document.id) == {
+            chunk.id for chunk in chunks
+        }
+
+
+def test_replace_is_idempotent_for_the_same_chunks(
+    store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-idempotent@example.com", chunk_count=3
+        )
+        _replace(store, session, document, chunks)
+        session.commit()
+        _replace(store, session, document, chunks, seed=0.9)
+        session.commit()
+
+        assert store.count_document_vectors(session, document.id) == 3
+
+
+def test_replace_with_fewer_chunks_drops_the_stale_vectors(
+    store, session_factory: sessionmaker[Session]
+) -> None:
+    """Reprocessing that yields fewer chunks must not leave orphans behind."""
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-shrink@example.com", chunk_count=5
+        )
+        _replace(store, session, document, chunks)
+        session.commit()
+        assert store.count_document_vectors(session, document.id) == 5
+
+        surviving = chunks[:2]
+        for stale in chunks[2:]:
+            session.delete(stale)
+        session.flush()
+        _replace(store, session, document, surviving)
+        session.commit()
+
+        assert store.count_document_vectors(session, document.id) == 2
+        assert store.chunk_ids_with_vectors(session, document.id) == {
+            chunk.id for chunk in surviving
+        }
+
+
+def test_replace_with_more_chunks_covers_every_new_chunk(
+    store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-grow@example.com", chunk_count=2
+        )
+        _replace(store, session, document, chunks)
+        session.commit()
+
+        extra = [
+            DocumentChunk(
+                document=document,
+                course=document.course,
+                chunk_index=index,
+                page_number=index + 1,
+                end_page_number=index + 1,
+                text=f"Chunk {index}",
+            )
+            for index in (2, 3)
+        ]
+        session.add_all(extra)
+        session.flush()
+        _replace(store, session, document, chunks + extra)
+        session.commit()
+
+        assert store.count_document_vectors(session, document.id) == 4
+
+
+def test_delete_document_vectors_removes_only_that_document(
+    store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        course, first, first_chunks = _seed_document(
+            session, email="vs-doc-delete@example.com", chunk_count=2
+        )
+        _, second, second_chunks = _seed_document(
+            session, email="unused@example.com", chunk_count=3, course=course
+        )
+        _replace(store, session, first, first_chunks)
+        _replace(store, session, second, second_chunks)
+        session.commit()
+
+        store.delete_document_vectors(session, first.id)
+        session.commit()
+
+        assert store.count_document_vectors(session, first.id) == 0
+        assert store.count_document_vectors(session, second.id) == 3
+
+
+def test_delete_course_vectors_removes_every_document_in_the_course(
+    store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        course, first, first_chunks = _seed_document(
+            session, email="vs-course-delete@example.com", chunk_count=2
+        )
+        _, second, second_chunks = _seed_document(
+            session, email="unused@example.com", chunk_count=3, course=course
+        )
+        _replace(store, session, first, first_chunks)
+        _replace(store, session, second, second_chunks)
+        session.commit()
+
+        store.delete_course_vectors(session, course.id)
+        session.commit()
+
+        assert store.count_course_vectors(session, course.id) == 0
+
+
+def test_delete_is_safe_when_nothing_is_stored(
+    store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        store.delete_document_vectors(session, uuid4())
+        store.delete_course_vectors(session, 987654)
+        session.commit()
+
+        assert store.count_document_vectors(session, uuid4()) == 0
+
+
+def test_replace_rejects_a_record_from_another_document(
+    store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-foreign@example.com", chunk_count=1
+        )
+        foreign = [
+            VectorRecord(
+                chunk_id=chunks[0].id,
+                document_id=uuid4(),
+                course_id=document.course_id,
+                chunk_index=0,
+                embedding=_vector(0.1),
+            )
+        ]
+
+        with pytest.raises(ValueError):
+            store.replace_document_vectors(
+                session,
+                document_id=document.id,
+                course_id=document.course_id,
+                records=foreign,
+                embedding_provider=PROVIDER,
+                embedding_model=MODEL,
+            )
+
+
+def test_pgvector_store_records_provider_attribution(
+    pgvector_store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-attribution@example.com", chunk_count=1
+        )
+        _replace(pgvector_store, session, document, chunks)
+        session.commit()
+
+        stored = session.scalar(
+            select(ChunkEmbedding).where(ChunkEmbedding.document_id == document.id)
+        )
+        assert stored is not None
+        assert stored.embedding_provider == PROVIDER
+        assert stored.embedding_model == MODEL
+        assert stored.dimensions == EMBEDDING_DIMENSIONS
+        assert stored.chunk_index == 0
+
+
+def test_chroma_records_the_required_metadata(
+    chroma_store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-chroma-meta@example.com", chunk_count=1
+        )
+        _replace(chroma_store, session, document, chunks)
+        session.commit()
+
+        metadata = chroma_store.metadata_for_chunk(chunks[0].id)
+        assert metadata["chunk_id"] == chunks[0].id
+        assert metadata["document_id"] == str(document.id)
+        assert metadata["course_id"] == document.course_id
+        assert metadata["chunk_index"] == 0
+        assert metadata["embedding_provider"] == PROVIDER
+        assert metadata["embedding_model"] == MODEL
+
+
+def test_chroma_vectors_survive_a_client_restart(
+    tmp_path, session_factory: sessionmaker[Session]
+) -> None:
+    """Durability is the whole point of a persistent vector store."""
+    persist_directory = str(tmp_path / "chroma")
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-restart@example.com", chunk_count=4
+        )
+        first = ChromaVectorStore(persist_directory=persist_directory)
+        _replace(first, session, document, chunks)
+        session.commit()
+        assert first.count_document_vectors(session, document.id) == 4
+        first.close()
+
+        restarted = ChromaVectorStore(persist_directory=persist_directory)
+        assert restarted.count_document_vectors(session, document.id) == 4
+        assert restarted.chunk_ids_with_vectors(session, document.id) == {
+            chunk.id for chunk in chunks
+        }
+
+
+def test_chroma_wraps_client_failures_as_vector_store_errors(
+    chroma_store, session_factory: sessionmaker[Session]
+) -> None:
+    class BrokenCollection:
+        def delete(self, **kwargs):
+            raise RuntimeError("chroma exploded")
+
+        def upsert(self, **kwargs):
+            raise RuntimeError("chroma exploded")
+
+        def get(self, **kwargs):
+            raise RuntimeError("chroma exploded")
+
+        def count(self, **kwargs):
+            raise RuntimeError("chroma exploded")
+
+    chroma_store._collection = BrokenCollection()
+
+    with session_factory() as session:
+        with pytest.raises(VectorStoreError):
+            chroma_store.delete_document_vectors(session, uuid4())
+        with pytest.raises(VectorStoreError):
+            chroma_store.count_document_vectors(session, uuid4())
+
+
+def test_factory_honours_the_configured_backend(monkeypatch, tmp_path) -> None:
+    reset_vector_store()
+    monkeypatch.setattr(
+        vector_store,
+        "settings",
+        SimpleNamespace(
+            vector_backend="pgvector",
+            chroma_persist_directory=str(tmp_path / "chroma"),
+        ),
+    )
+    assert isinstance(get_vector_store(), PgVectorStore)
+
+    reset_vector_store()
+    monkeypatch.setattr(
+        vector_store,
+        "settings",
+        SimpleNamespace(
+            vector_backend="chroma",
+            chroma_persist_directory=str(tmp_path / "chroma"),
+        ),
+    )
+    assert isinstance(get_vector_store(), ChromaVectorStore)
+    reset_vector_store()
+
+
+def test_factory_rejects_an_unknown_backend(monkeypatch, tmp_path) -> None:
+    reset_vector_store()
+    monkeypatch.setattr(
+        vector_store,
+        "settings",
+        SimpleNamespace(
+            vector_backend="faiss",
+            chroma_persist_directory=str(tmp_path / "chroma"),
+        ),
+    )
+
+    with pytest.raises(VectorStoreError):
+        get_vector_store()
+    reset_vector_store()
+
+
+def test_vector_record_rejects_a_wrong_width_embedding() -> None:
+    with pytest.raises(ValueError):
+        VectorRecord(
+            chunk_id=1,
+            document_id=UUID(int=1),
+            course_id=1,
+            chunk_index=0,
+            embedding=[0.1] * 10,
+        ).validate()

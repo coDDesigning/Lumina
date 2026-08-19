@@ -6,10 +6,11 @@ Lumina's API and durable document processor support production only in
 path for that mode. The separate `docker-compose.hosted.yml` remains an
 experimental development artifact and must not be used for production.
 
-The relational contract is tested against PostgreSQL 17.6 in CI, but hosted and
-PostgreSQL production remain blocked until durable shared storage and deployment
-topology are qualified. Vector retrieval is not implemented or
-production-qualified.
+The relational contract is tested against PostgreSQL 17.8 in CI, on a
+pgvector-enabled image, but hosted and PostgreSQL production remain blocked until
+durable shared storage and deployment topology are qualified. Chunk embeddings
+are stored and indexed (see `docs/vector_storage.md`); vector *retrieval* is not
+implemented or production-qualified.
 
 ## Container architecture
 
@@ -110,6 +111,20 @@ state:
 /data/chroma/
 ```
 
+`/data/chroma/` holds the self-hosted vector collection and is load-bearing:
+`VECTOR_BACKEND` defaults to `chroma` on SQLite, and document processing writes
+one embedding per chunk there. Losing the directory does not lose data, but every
+affected document must be re-embedded with
+`python -m workers.embedding_backfill` before semantic features work again. Back
+it up with the database, not separately: a restore that pairs an old
+`/data/chroma/` with a newer `/data/lumina.db` leaves vectors for chunks that no
+longer exist, which `python -m workers.embedding_backfill --prune-orphans`
+resolves.
+
+A hosted PostgreSQL deployment sets `VECTOR_BACKEND=pgvector` instead and stores
+vectors in the database, which requires the `vector` extension to be available to
+the migration role. See `docs/vector_storage.md`.
+
 The volume is shared by the migrator, API, and worker and survives
 `docker compose down`. Compose derives its engine-level name from the project.
 `COMPOSE_PROJECT_NAME` is required. Give each intentional stack a unique value
@@ -134,6 +149,7 @@ Compose fixes the following safety-critical values:
 | `DATABASE_URL` | `sqlite:////data/lumina.db` |
 | `UPLOAD_DIRECTORY` | `/data/uploads` |
 | `CHROMA_PERSIST_DIRECTORY` | `/data/chroma` |
+| `VECTOR_BACKEND` | `chroma` (override via `.env`) |
 | `STORAGE_BACKEND` | `local` |
 
 API authentication values, storage namespace, upload limits, validation limits,

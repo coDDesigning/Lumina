@@ -90,10 +90,12 @@ unsupported because no qualified durable shared storage topology exists.
 
 ## PostgreSQL qualification
 
-CI runs the relational database contract against PostgreSQL 17.6 from an
-immutable official image digest. The live job verifies the complete Alembic
-upgrade/downgrade/re-upgrade cycle, schema drift, role seeds, readiness, UUID and
-timezone round trips, unloaded database cascades across all 15 tables, and
+CI runs the relational database contract against PostgreSQL 17.8 from an
+immutable `pgvector/pgvector` image digest; the pgvector extension is required
+because the schema declares a `vector` column and an HNSW index. The live job
+verifies the complete Alembic upgrade/downgrade/re-upgrade cycle, schema drift,
+role seeds, readiness, UUID and timezone round trips, unloaded database cascades
+across all 16 tables, pgvector provisioning and cosine ranking, and
 `SKIP LOCKED` worker claims. Tests marked `database_contract` run unchanged
 against copies of an Alembic-migrated SQLite database and the disposable
 PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other
@@ -132,8 +134,18 @@ completion, and failure transitions require the current token. A stale worker
 therefore cannot overwrite a reclaimed attempt.
 
 Workers recover expired leases periodically, not only at startup. Chunk
-replacement, document completion, and job completion commit atomically. Course
-deletion fences queued and running claims before storage cleanup.
+replacement, embedding storage, document completion, and job completion commit
+atomically. Course deletion fences queued and running claims before storage
+cleanup.
+
+Processing stages advance `validating -> extracting_text -> running_ocr ->
+understanding_images -> cleaning_text -> chunking -> generating_embeddings`. The
+last stage runs in the worker parent process and stores one `chunk_embeddings`
+row (or one Chroma record) per chunk in the same transaction that publishes the
+chunks, so a document reaches `ready` only when its vectors exist. An embedding
+failure leaves the previous chunks in place and either requeues the job or fails
+it permanently, according to the classified error code. See
+`docs/vector_storage.md`.
 
 ## Course ownership and authorization
 
@@ -200,8 +212,10 @@ job, and removes nothing. Responses expose job progress and safe error codes, bu
 tokens, worker identities, storage keys, or lease internals.
 
 Deletion returns `409` while the durable job is queued or running. Terminal
-failed or ready documents are first tombstoned, then their source, chunks, and
-processing job are removed. Storage or database failures retain the tombstone
+failed or ready documents are first tombstoned, then their source, chunks,
+embeddings, and processing job are removed. Vectors are removed while the
+document is still tombstoned, so a failure there is retryable and never leaves
+deleted content searchable. Storage or database failures retain the tombstone
 so the same deletion request can safely resume cleanup. Matching uploads return
 `409` while deletion is in progress.
 
@@ -285,7 +299,7 @@ backend.
 
 Profile knowledge is user-scoped rather than course-scoped:
 - **Course deletion**: Deleting or hard-deleting a course removes only course-bound
-  documents, chunks, and generated outputs. It leaves all `profile_knowledge` rows intact.
+  documents, chunks, embeddings, and generated outputs. It leaves all `profile_knowledge` rows intact.
 - **User deletion**: Deleting a user cascades and permanently removes all associated
   profile knowledge records (`ondelete="CASCADE"`).
 - **Cross-user privacy**: Profile knowledge entries are strictly isolated to the owning

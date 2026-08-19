@@ -7,10 +7,12 @@ import {
   FolderOpen,
   Plus,
   Search,
+  Trash2,
   X,
 } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import WorkspaceNavigation from '../components/WorkspaceNavigation'
+import { describeError } from '../api/errors'
 import type { Workspace, WorkspaceDraft } from '../data/workspaces'
 
 type WorkspacesPageProps = {
@@ -18,7 +20,11 @@ type WorkspacesPageProps = {
   activeWorkspaceId: string
   onCreate: (draft: WorkspaceDraft) => Promise<Workspace>
   onSelect: (workspaceId: string) => void
+  onDelete: (workspaceId: string) => Promise<void>
 }
+
+const deleteWarning =
+  'This permanently erases the course, its uploaded files, and everything generated from them. It cannot be undone.'
 
 const emptyDraft: WorkspaceDraft = {
   name: '',
@@ -44,11 +50,18 @@ function WorkspacesPage({
   activeWorkspaceId,
   onCreate,
   onSelect,
+  onDelete,
 }: WorkspacesPageProps) {
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const [draft, setDraft] = useState(emptyDraft)
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<{
+    id: string
+    message: string
+  } | null>(null)
 
   useEffect(() => {
     if (!isCreating) return
@@ -76,6 +89,23 @@ function WorkspacesPage({
 
   const updateDraft = (field: keyof WorkspaceDraft, value: string) => {
     setDraft((current) => ({ ...current, [field]: value }))
+  }
+
+  const deleteWorkspace = async (workspaceId: string) => {
+    setConfirmingId(null)
+    setDeleteError(null)
+    setDeletingId(workspaceId)
+    try {
+      await onDelete(workspaceId)
+    } catch (error) {
+      const described = describeError(
+        error,
+        'The course could not be deleted. Try again.'
+      )
+      setDeleteError({ id: workspaceId, message: described.message })
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   const createWorkspace = async (event: FormEvent<HTMLFormElement>) => {
@@ -134,58 +164,104 @@ function WorkspacesPage({
         {filteredWorkspaces.length > 0 ? (
           <div className="workspace-card-grid">
             {filteredWorkspaces.map((workspace) => (
-              <Link
-                className="workspace-card"
-                to={`/workspaces/${workspace.id}`}
-                onClick={() => onSelect(workspace.id)}
-                key={workspace.id}
-              >
-                <article>
-                  <header>
-                    <span
-                      className={`workspace-card-icon ${workspace.accent}`}
-                      aria-hidden="true"
+              <div className="workspace-card-shell" key={workspace.id}>
+                <Link
+                  className="workspace-card"
+                  to={`/workspaces/${workspace.id}`}
+                  onClick={() => onSelect(workspace.id)}
+                >
+                  <article>
+                    <header>
+                      <span
+                        className={`workspace-card-icon ${workspace.accent}`}
+                        aria-hidden="true"
+                      >
+                        <BookOpen />
+                      </span>
+                      <span className="workspace-status">{workspace.status}</span>
+                    </header>
+
+                    <div className="workspace-card-title">
+                      <p>{workspace.semester || 'Semester not specified'}</p>
+                      <h2>{workspace.name}</h2>
+                    </div>
+
+                    <div className="workspace-card-meta">
+                      <span>
+                        <CalendarDays aria-hidden="true" />
+                        {formatExamDate(workspace.examDate)}
+                      </span>
+                      <span>
+                        <FileText aria-hidden="true" />
+                        {workspace.sources.length}{' '}
+                        {workspace.sources.length === 1 ? 'source' : 'sources'}
+                      </span>
+                    </div>
+
+                    <div className="workspace-progress">
+                      <span>
+                        <strong>{workspace.progress}%</strong> course progress
+                      </span>
+                      <span className="progress-track" aria-hidden="true">
+                        <span style={{ width: `${workspace.progress}%` }} />
+                      </span>
+                    </div>
+
+                    <footer>
+                      <span>{workspace.updatedAt}</span>
+                      <strong>
+                        Open workspace
+                        <ArrowRight aria-hidden="true" />
+                      </strong>
+                    </footer>
+                  </article>
+                </Link>
+
+                <div className="workspace-card-actions">
+                  {confirmingId === workspace.id ? (
+                    <>
+                      <button
+                        className="workspace-danger-button"
+                        type="button"
+                        onClick={() => setConfirmingId(null)}
+                        disabled={deletingId !== null}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="workspace-danger-button is-danger"
+                        type="button"
+                        onClick={() => deleteWorkspace(workspace.id)}
+                        disabled={deletingId !== null}
+                      >
+                        {deletingId === workspace.id
+                          ? 'Deleting…'
+                          : 'Delete permanently'}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="workspace-danger-button"
+                      type="button"
+                      onClick={() => setConfirmingId(workspace.id)}
+                      disabled={deletingId !== null}
+                      aria-label={`Delete ${workspace.name}`}
                     >
-                      <BookOpen />
-                    </span>
-                    <span className="workspace-status">{workspace.status}</span>
-                  </header>
+                      <Trash2 aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
 
-                  <div className="workspace-card-title">
-                    <p>{workspace.semester || 'Semester not specified'}</p>
-                    <h2>{workspace.name}</h2>
-                  </div>
+                {confirmingId === workspace.id ? (
+                  <p className="workspace-delete-warning">{deleteWarning}</p>
+                ) : null}
 
-                  <div className="workspace-card-meta">
-                    <span>
-                      <CalendarDays aria-hidden="true" />
-                      {formatExamDate(workspace.examDate)}
-                    </span>
-                    <span>
-                      <FileText aria-hidden="true" />
-                      {workspace.sources.length}{' '}
-                      {workspace.sources.length === 1 ? 'source' : 'sources'}
-                    </span>
-                  </div>
-
-                  <div className="workspace-progress">
-                    <span>
-                      <strong>{workspace.progress}%</strong> course progress
-                    </span>
-                    <span className="progress-track" aria-hidden="true">
-                      <span style={{ width: `${workspace.progress}%` }} />
-                    </span>
-                  </div>
-
-                  <footer>
-                    <span>{workspace.updatedAt}</span>
-                    <strong>
-                      Open workspace
-                      <ArrowRight aria-hidden="true" />
-                    </strong>
-                  </footer>
-                </article>
-              </Link>
+                {deleteError?.id === workspace.id ? (
+                  <p className="workspace-delete-error" role="alert">
+                    {deleteError.message}
+                  </p>
+                ) : null}
+              </div>
             ))}
           </div>
         ) : (

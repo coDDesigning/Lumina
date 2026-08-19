@@ -64,7 +64,10 @@ The `DATABASE_URL` is stored in Secrets Manager
 `worker_task_definition_family`, `migrate_task_definition_family`, and
 `alb_dns_name` feed the SCRUM-93 deploy workflow. The workflow registers new
 task definition revisions with the image tag of the commit it builds; it does
-not re-run Terraform.
+not re-run Terraform. For the first rollout the task definitions must point at
+an image that exists in ECR: either set `image_tag` to the first deployed
+SHA at apply time, or push a `latest`-tagged image manually before the first
+deploy.
 
 ## Notes
 

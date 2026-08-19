@@ -1,35 +1,169 @@
-version: '3.8'
+name: ${COMPOSE_PROJECT_NAME:?set a stable COMPOSE_PROJECT_NAME in .env}
+
+x-lumina-environment: &lumina-environment
+  APP_ENV: production
+  APP_DEBUG: "false"
+  DEPLOYMENT_MODE: hosted
+  DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/lumina
+  STORAGE_BACKEND: s3
+  STORAGE_NAMESPACE: ${STORAGE_NAMESPACE:?set STORAGE_NAMESPACE in .env}
+  S3_BUCKET: ${S3_BUCKET:-lumina}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+  S3_FORCE_PATH_STYLE: "true"
+  VECTOR_BACKEND: pgvector
+  MAX_UPLOAD_SIZE_BYTES: ${MAX_UPLOAD_SIZE_BYTES:-52428800}
+  MAX_REQUEST_SIZE_BYTES: ${MAX_REQUEST_SIZE_BYTES:-1048576}
+  MAX_CONCURRENT_DOCUMENT_VALIDATIONS: ${MAX_CONCURRENT_DOCUMENT_VALIDATIONS:-2}
+  UPLOAD_REQUEST_TIMEOUT_SECONDS: ${UPLOAD_REQUEST_TIMEOUT_SECONDS:-300}
+  MAX_DOCUMENTS_PER_COURSE: ${MAX_DOCUMENTS_PER_COURSE:-1000}
+  MAX_COURSE_STORAGE_BYTES: ${MAX_COURSE_STORAGE_BYTES:-2147483648}
+  MAX_PDF_PAGES: ${MAX_PDF_PAGES:-500}
+  MAX_PDF_PAGE_PIXELS: ${MAX_PDF_PAGE_PIXELS:-40000000}
+  MAX_PDF_TOTAL_PIXELS: ${MAX_PDF_TOTAL_PIXELS:-100000000}
+  MAX_PDF_CONTENT_STREAM_BYTES: ${MAX_PDF_CONTENT_STREAM_BYTES:-5242880}
+  MAX_PDF_DRAWING_OPERATIONS: ${MAX_PDF_DRAWING_OPERATIONS:-100000}
+  PROCESSING_JOB_LEASE_SECONDS: ${PROCESSING_JOB_LEASE_SECONDS:-60}
+  PROCESSING_JOB_MAX_ATTEMPTS: ${PROCESSING_JOB_MAX_ATTEMPTS:-3}
+  PROCESSING_JOB_POLL_SECONDS: ${PROCESSING_JOB_POLL_SECONDS:-1.0}
+  PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS: ${PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS:-300}
+  MAX_EXTRACTED_CHARACTERS: ${MAX_EXTRACTED_CHARACTERS:-2000000}
+  MAX_DOCUMENT_CHUNKS: ${MAX_DOCUMENT_CHUNKS:-1000}
+  OCR_LANGUAGE: ${OCR_LANGUAGE:-eng}
+  OCR_DPI: ${OCR_DPI:-300}
+  OCR_MIN_TEXT_CHARACTERS: ${OCR_MIN_TEXT_CHARACTERS:-20}
+  DOCUMENT_CHUNK_SIZE_CHARACTERS: ${DOCUMENT_CHUNK_SIZE_CHARACTERS:-1200}
+  DOCUMENT_CHUNK_OVERLAP_CHARACTERS: ${DOCUMENT_CHUNK_OVERLAP_CHARACTERS:-200}
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+  OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+  GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
+  EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
+  EMBEDDING_TIMEOUT_SECONDS: ${EMBEDDING_TIMEOUT_SECONDS:-60}
+
+x-lumina-service: &lumina-service
+  image: ${LUMINA_IMAGE:-lumina:local}
+  build:
+    context: .
+  user: "10001:10001"
+  environment: *lumina-environment
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=${LUMINA_TMPFS_SIZE_BYTES:-268435456}
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
 
 services:
-  lumina-backend:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - DEPLOYMENT_MODE=hosted
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/lumina
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-
   db:
-    # Use pgvector image directly to support pgvector out of the box
-    image: ankane/pgvector:latest
+    image: pgvector/pgvector:0.8.1-pg17@sha256:3e8b3adfd27b5707128f60956f62a793c3c9326ea8cfaf0eab7adccb5d700b21
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=lumina
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d lumina"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+      S3_BUCKET: ${S3_BUCKET:-lumina}
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        for attempt in $(seq 1 30); do
+          if mc alias set lumina http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"; then
+            break
+          fi
+          sleep 1
+        done
+        mc alias set lumina http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "lumina/$$S3_BUCKET"
+    restart: "no"
+
+  migrate:
+    <<: *lumina-service
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *lumina-service
+    environment:
+      <<: *lumina-environment
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?set BOOTSTRAP_ADMIN_EMAIL in .env}
+      BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:?set BOOTSTRAP_ADMIN_TOKEN in .env}
+    command:
+      ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--limit-concurrency", "100", "--timeout-graceful-shutdown", "330"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    init: true
+    stop_grace_period: 345s
+    restart: unless-stopped
+
+  worker:
+    <<: *lumina-service
+    environment:
+      <<: *lumina-environment
+      JWT_SECRET_KEY: worker-does-not-serve-authentication
+      BOOTSTRAP_ADMIN_EMAIL: worker@example.com
+      BOOTSTRAP_ADMIN_TOKEN: worker-does-not-accept-admin-bootstrap
+    command: ["python", "-m", "workers.document_processor"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-m", "workers.document_processor", "--check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    init: true
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-345s}
     restart: unless-stopped
 
 volumes:
   pgdata:
+  minio-data:

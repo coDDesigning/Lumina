@@ -60,6 +60,12 @@ CONFIGURATION_KEYS = (
     "DATABASE_URL",
     "STORAGE_BACKEND",
     "STORAGE_NAMESPACE",
+    "S3_BUCKET",
+    "S3_REGION",
+    "S3_ENDPOINT_URL",
+    "S3_ACCESS_KEY_ID",
+    "S3_SECRET_ACCESS_KEY",
+    "S3_FORCE_PATH_STYLE",
     "UPLOAD_DIRECTORY",
     "CHROMA_PERSIST_DIRECTORY",
     "JWT_SECRET_KEY",
@@ -129,6 +135,21 @@ def _configure_production(
     monkeypatch.setenv("JWT_SECRET_KEY", "x" * 32)
     monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
     monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "y" * 32)
+
+
+def _configure_hosted_s3(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEPLOYMENT_MODE", MODE_HOSTED)
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://lumina:password@localhost:5432/lumina",
+    )
+    monkeypatch.setenv("STORAGE_NAMESPACE", "hosted-shared-volume")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "lumina-ci-access")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "lumina-ci-secret")
+    monkeypatch.setenv("S3_FORCE_PATH_STYLE", "true")
 
 
 def test_self_hosted_defaults_are_safe_and_runnable() -> None:
@@ -346,7 +367,7 @@ def test_production_storage_paths_must_be_absolute(
         load_settings()
 
 
-def test_hosted_production_is_not_supported(
+def test_hosted_production_requires_s3_storage(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -358,8 +379,24 @@ def test_hosted_production_is_not_supported(
     )
     monkeypatch.setenv("STORAGE_NAMESPACE", "hosted-shared-volume")
 
-    with pytest.raises(ValueError, match="Hosted production is not supported"):
+    with pytest.raises(ValueError, match="STORAGE_BACKEND=s3"):
         load_settings()
+
+
+def test_hosted_production_with_s3_storage_loads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+
+    loaded = load_settings()
+
+    assert loaded.deployment_mode == MODE_HOSTED
+    assert loaded.storage_backend == "s3"
+    assert loaded.s3_bucket == "lumina"
+    assert loaded.s3_endpoint_url == "http://localhost:9000"
+    assert loaded.s3_force_path_style is True
 
 
 def test_self_hosted_production_rejects_unqualified_postgresql(
@@ -372,8 +409,123 @@ def test_self_hosted_production_rejects_unqualified_postgresql(
         "postgresql+psycopg://lumina:password@localhost:5432/lumina",
     )
 
-    with pytest.raises(ValueError, match="PostgreSQL is not supported"):
+    with pytest.raises(ValueError, match="STORAGE_BACKEND=s3"):
         load_settings()
+
+
+def test_self_hosted_production_accepts_qualified_postgresql(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+    monkeypatch.setenv("DEPLOYMENT_MODE", MODE_SELF_HOSTED)
+
+    loaded = load_settings()
+
+    assert loaded.database_url.startswith("postgresql+psycopg://")
+    assert loaded.storage_backend == "s3"
+
+
+def test_s3_storage_requires_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+
+    with pytest.raises(ValueError, match="S3_BUCKET"):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["ftp://localhost:9000", "not-a-url", "http://"],
+)
+def test_s3_storage_rejects_invalid_endpoint_url(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+    monkeypatch.setenv("S3_ENDPOINT_URL", value)
+
+    with pytest.raises(ValueError, match="S3_ENDPOINT_URL"):
+        load_settings()
+
+
+def test_s3_storage_requires_region_without_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+
+    with pytest.raises(ValueError, match="S3_REGION"):
+        load_settings()
+
+
+@pytest.mark.parametrize("unset", ["S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"])
+def test_s3_storage_requires_credentials_together(
+    monkeypatch: pytest.MonkeyPatch,
+    unset: str,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "lumina-access")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "lumina-secret")
+    monkeypatch.delenv(unset, raising=False)
+
+    with pytest.raises(ValueError, match="must be set together"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["", "maybe", "2"])
+def test_s3_force_path_style_must_be_boolean(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "lumina-access")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "lumina-secret")
+    monkeypatch.setenv("S3_FORCE_PATH_STYLE", value)
+
+    with pytest.raises(ValueError, match="S3_FORCE_PATH_STYLE"):
+        load_settings()
+
+
+def test_s3_storage_configuration_loads_in_self_hosted_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+    monkeypatch.setenv("S3_REGION", "eu-central-1")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "lumina-access")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "lumina-secret")
+
+    loaded = load_settings()
+
+    assert loaded.storage_backend == "s3"
+    assert loaded.s3_region == "eu-central-1"
+    assert loaded.s3_endpoint_url is None
+    assert loaded.s3_access_key_id == "lumina-access"
+
+
+@pytest.mark.parametrize("backend", ["s3", "local", "invalid"])
+def test_storage_backend_accepts_only_implemented_backends(
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", backend)
+    if backend == "s3":
+        monkeypatch.setenv("S3_BUCKET", "lumina")
+        monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
+        monkeypatch.setenv("S3_ACCESS_KEY_ID", "lumina-access")
+        monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "lumina-secret")
+
+    if backend == "invalid":
+        with pytest.raises(ValueError, match="STORAGE_BACKEND"):
+            load_settings()
+    else:
+        assert load_settings().storage_backend == backend
 
 
 def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:

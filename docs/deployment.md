@@ -1,17 +1,20 @@
 # Deployment readiness
 
-Lumina's API and durable document processor support production only in
-`self_hosted` mode with SQLite and local filesystem document storage. The root
-`Dockerfile` and `docker-compose.yml` are the supported single-host container
-path for that mode. The separate `docker-compose.hosted.yml` remains an
-experimental development artifact and must not be used for production.
+Lumina's API and durable document processor support production in two container
+topologies, both built from the same image:
 
-The relational contract is tested against PostgreSQL 17.8 in CI, on a
-pgvector-enabled image, but hosted and PostgreSQL production remain blocked until
-durable shared storage and deployment topology are qualified. Chunk embeddings
-are stored, indexed, and searchable behind course isolation (see
-`docs/vector_storage.md`); production qualification of the retrieval path follows
-the same block as the rest of hosted mode.
+- `self_hosted` with SQLite, local filesystem document storage, and Chroma
+  vectors, via the root `Dockerfile` and `docker-compose.yml`; and
+- `hosted` with PostgreSQL, S3-compatible document storage, and pgvector
+  vectors, via `docker-compose.hosted.yml`.
+
+The relational contract is tested against PostgreSQL 17.8 in CI on a
+pgvector-enabled image, and the hosted topology is exercised live against
+pinned MinIO and pgvector containers before it is shipped. Chunk embeddings are
+stored, indexed, and searchable behind course isolation in both backends (see
+`docs/vector_storage.md`). Hosted production fails at startup unless
+`STORAGE_BACKEND=s3` provides durable shared storage; a single instance's local
+disk never qualifies.
 
 ## Container architecture
 
@@ -24,7 +27,7 @@ The production image:
 - keeps application files root-owned and non-writable; and
 - uses an inert entrypoint that never applies migrations.
 
-Compose runs three roles from that image:
+Compose runs three roles from that image in both topologies:
 
 | Service | Responsibility | Expected state |
 | --- | --- | --- |
@@ -67,6 +70,40 @@ available for inspection. Keep ingress closed until the command succeeds and
 `migrate` is exited with code 0 while both `api` and `worker` are healthy.
 Register `BOOTSTRAP_ADMIN_EMAIL` with the configured token in the
 `X-Bootstrap-Token` header over a trusted route before opening public ingress.
+
+## Hosted topology
+
+`docker-compose.hosted.yml` runs the same three roles against PostgreSQL and an
+S3-compatible object store, using the same pinned production image:
+
+| Service | Responsibility | Expected state |
+| --- | --- | --- |
+| `db` | pgvector-enabled PostgreSQL | Running and healthy |
+| `minio` | S3-compatible document storage | Running |
+| `minio-init` | Create `S3_BUCKET` once | Exited with code 0 |
+| `migrate` | Apply `alembic upgrade head` once | Exited with code 0 |
+| `api` | Serve HTTP and readiness probes | Running and healthy |
+| `worker` | Claim and process durable document jobs | Running and healthy |
+
+The stack requires `COMPOSE_PROJECT_NAME`, `STORAGE_NAMESPACE`,
+`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `JWT_SECRET_KEY`,
+`BOOTSTRAP_ADMIN_EMAIL`, and `BOOTSTRAP_ADMIN_TOKEN` from `.env`. The MinIO
+root user and password are the S3 access and secret keys, so keep both values
+secret and at least as strong as the JWT secret. `S3_BUCKET` defaults to
+`lumina` and is created by `minio-init`; never point an existing stack at a new
+namespace or bucket, because jobs for the prior provider identity are stranded.
+
+The API and worker healthchecks gate MinIO startup: the readiness probe runs a
+temporary S3 write/read/delete cycle (`check_ready`), so a stack started before
+MinIO serves retries until the bucket answers, and `docker compose up --wait`
+fails if the bucket never becomes writable. The MinIO image has no shell, so it
+declares no container healthcheck of its own.
+
+For a real AWS deployment, keep the same environment except:
+`S3_ENDPOINT_URL` and `S3_FORCE_PATH_STYLE` are removed, `S3_REGION` is set to
+the bucket's region, static credentials are optional (prefer an IAM role for the
+EC2 instance or ECS task), and the bucket is provisioned outside the stack
+(`minio`/`minio-init` services are not used).
 
 ## Transition from the experimental stack
 
@@ -140,7 +177,7 @@ backup, restore, and rollback qualification are separate release requirements.
 
 ## Production configuration
 
-Compose fixes the following safety-critical values:
+The self-hosted Compose fixes the following safety-critical values:
 
 | Variable | Container value |
 | --- | --- |
@@ -152,6 +189,19 @@ Compose fixes the following safety-critical values:
 | `CHROMA_PERSIST_DIRECTORY` | `/data/chroma` |
 | `VECTOR_BACKEND` | `chroma` (override via `.env`) |
 | `STORAGE_BACKEND` | `local` |
+
+The hosted Compose fixes these values instead:
+
+| Variable | Container value |
+| --- | --- |
+| `APP_ENV` | `production` |
+| `APP_DEBUG` | `false` |
+| `DEPLOYMENT_MODE` | `hosted` |
+| `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@db:5432/lumina` |
+| `STORAGE_BACKEND` | `s3` |
+| `S3_ENDPOINT_URL` | `http://minio:9000` |
+| `S3_FORCE_PATH_STYLE` | `true` |
+| `VECTOR_BACKEND` | `pgvector` |
 
 API authentication values, storage namespace, upload limits, validation limits,
 and worker limits are interpolated from `.env`. `JWT_SECRET_KEY` must contain at

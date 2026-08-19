@@ -43,3 +43,14 @@ Thumbs.db
 *.bak
 
 .user/
+
+# Terraform (AWS infrastructure)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+override.tf
+override.tf.json
+.terraform.tfstate.lock.info

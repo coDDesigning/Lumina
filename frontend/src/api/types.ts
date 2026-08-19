@@ -272,3 +272,11 @@ export interface ProfileKnowledgeImport {
   items: ProfileKnowledgeCreate[];
 }
 
+export interface CourseQARequest {
+  question: string;
+}
+
+export interface CourseQAGenerationResult extends BoundedContext {
+  answer: string;
+}
+

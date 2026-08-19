@@ -270,6 +270,7 @@ class GeminiEmbeddingProvider:
             response = self._client.models.embed_content(
                 model=self._model,
                 contents=texts,
+                config={"output_dimensionality": EMBEDDING_DIMENSIONS},
             )
         except genai_errors.APIError as exc:
             self._handle_client_error(exc)

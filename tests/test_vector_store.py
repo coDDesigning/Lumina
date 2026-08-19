@@ -423,3 +423,176 @@ def test_vector_record_rejects_a_wrong_width_embedding() -> None:
             chunk_index=0,
             embedding=[0.1] * 10,
         ).validate()
+
+
+def _directional(seed: float) -> list[float]:
+    values = [0.0] * EMBEDDING_DIMENSIONS
+    values[0] = 1.0
+    values[1] = seed
+    return values
+
+
+def _directional_records(
+    chunks, document: UploadedDocument, seed: float
+) -> list[VectorRecord]:
+    return [
+        VectorRecord(
+            chunk_id=chunk.id,
+            document_id=document.id,
+            course_id=document.course_id,
+            chunk_index=chunk.chunk_index,
+            embedding=_directional(seed + index),
+        )
+        for index, chunk in enumerate(chunks)
+    ]
+
+
+def _replace_directional(store, session, document, chunks, seed=0.2) -> None:
+    store.replace_document_vectors(
+        session,
+        document_id=document.id,
+        course_id=document.course_id,
+        records=_directional_records(chunks, document, seed),
+        embedding_provider=PROVIDER,
+        embedding_model=MODEL,
+    )
+
+
+QUERY = _directional(0.0)
+
+
+def test_search_ranks_hits_by_cosine_similarity(
+    chroma_store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-search-rank@example.com", chunk_count=3
+        )
+        _replace_directional(chroma_store, session, document, chunks)
+        session.commit()
+
+        ranked = chroma_store.search(
+            session, course_id=document.course_id, query_embedding=QUERY, limit=3
+        )
+        assert [result.chunk_id for result in ranked] == [
+            chunks[0].id,
+            chunks[1].id,
+            chunks[2].id,
+        ]
+        assert [result.similarity for result in ranked] == sorted(
+            (result.similarity for result in ranked), reverse=True
+        )
+        assert ranked[0].chunk_index == 0
+        assert ranked[0].document_id == document.id
+        assert ranked[0].course_id == document.course_id
+
+
+def test_search_never_leaks_another_course(
+    chroma_store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        course, document, chunks = _seed_document(
+            session, email="vs-search-scope@example.com", chunk_count=2
+        )
+        _replace_directional(chroma_store, session, document, chunks)
+        _, other, other_chunks = _seed_document(
+            session, email="vs-search-other@example.com", chunk_count=2
+        )
+        _replace_directional(chroma_store, session, other, other_chunks, seed=0.0)
+        session.commit()
+
+        ranked = chroma_store.search(
+            session, course_id=course.id, query_embedding=QUERY, limit=4
+        )
+        assert {result.course_id for result in ranked} == {course.id}
+        assert {result.chunk_id for result in ranked} == {chunk.id for chunk in chunks}
+
+
+def test_search_honours_the_limit(
+    chroma_store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-search-limit@example.com", chunk_count=3
+        )
+        _replace_directional(chroma_store, session, document, chunks)
+        session.commit()
+
+        ranked = chroma_store.search(
+            session, course_id=document.course_id, query_embedding=QUERY, limit=2
+        )
+        assert len(ranked) == 2
+        assert ranked[0].chunk_id == chunks[0].id
+
+
+def test_search_returns_nothing_for_a_course_without_vectors(
+    chroma_store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        course, _, _ = _seed_document(
+            session, email="vs-search-empty@example.com", chunk_count=1
+        )
+        session.commit()
+
+        assert (
+            chroma_store.search(
+                session, course_id=course.id, query_embedding=QUERY, limit=3
+            )
+            == []
+        )
+
+
+def test_search_rejects_a_wrong_width_embedding(
+    store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        course, _, _ = _seed_document(
+            session, email="vs-search-width@example.com", chunk_count=1
+        )
+        with pytest.raises(ValueError):
+            store.search(
+                session, course_id=course.id, query_embedding=[0.1] * 10, limit=3
+            )
+
+
+def test_search_rejects_a_nonpositive_limit(
+    store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        course, _, _ = _seed_document(
+            session, email="vs-search-limit-zero@example.com", chunk_count=1
+        )
+        with pytest.raises(ValueError):
+            store.search(session, course_id=course.id, query_embedding=QUERY, limit=0)
+
+
+def test_pgvector_search_requires_postgresql(
+    pgvector_store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        course, _, _ = _seed_document(
+            session, email="vs-search-dialect@example.com", chunk_count=1
+        )
+        with pytest.raises(VectorStoreError):
+            pgvector_store.search(
+                session, course_id=course.id, query_embedding=QUERY, limit=3
+            )
+
+
+def test_chroma_wraps_search_failures_as_vector_store_errors(
+    chroma_store, session_factory: sessionmaker[Session]
+) -> None:
+    class BrokenCollection:
+        def query(self, **kwargs):
+            raise RuntimeError("chroma exploded")
+
+    chroma_store._collection = BrokenCollection()
+
+    with session_factory() as session:
+        course, _, _ = _seed_document(
+            session, email="vs-search-broken@example.com", chunk_count=1
+        )
+        with pytest.raises(VectorStoreError):
+            chroma_store.search(
+                session, course_id=course.id, query_embedding=QUERY, limit=3
+            )

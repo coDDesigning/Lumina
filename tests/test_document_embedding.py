@@ -143,6 +143,26 @@ def _run(session_factory, queued, provider, store) -> bool:
     )
 
 
+def _assert_succeeded(session_factory, queued) -> None:
+    """Assert the job actually finished, naming the recorded cause when it did not.
+
+    ``process_next_job`` answers True for a job whose failure it recorded as
+    well as for one it completed, so a success path that only asserts its
+    return value lets a transient failure resurface further down as an
+    unexplained chunk or vector count.
+    """
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        document = session.get(UploadedDocument, queued.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_SUCCEEDED, (
+            f"job is {job.status} after stage {job.failed_stage}: "
+            f"{job.last_error_code} {job.last_error_message}"
+        )
+        assert document.status == "ready"
+
+
 def test_stage_is_registered_before_ready() -> None:
     from backend.app.models import DOCUMENT_PROCESSING_STAGES
 
@@ -209,6 +229,7 @@ def test_document_passes_through_the_embedding_stage(session_factory, tmp_path) 
 
     assert _run(session_factory, queued, RecordingProvider(), PgVectorStore())
 
+    _assert_succeeded(session_factory, queued)
     assert seen == [EMBEDDING_STAGE]
 
 
@@ -384,6 +405,7 @@ def test_reprocessing_replaces_stale_vectors(session_factory, tmp_path) -> None:
     )
     store = PgVectorStore()
     assert _run(session_factory, queued, StubEmbeddingProvider(), store)
+    _assert_succeeded(session_factory, queued)
 
     with session_factory() as session:
         original_chunk_ids = store.chunk_ids_with_vectors(session, queued.document_id)
@@ -432,6 +454,7 @@ def test_reprocessing_replaces_stale_vectors(session_factory, tmp_path) -> None:
         session.commit()
 
     assert _run(session_factory, queued, StubEmbeddingProvider(), store)
+    _assert_succeeded(session_factory, queued)
 
     with session_factory() as session:
         chunks = list(

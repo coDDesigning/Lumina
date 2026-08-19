@@ -273,7 +273,7 @@ jobs:
       PIP_NO_INPUT: "1"
     services:
       postgres:
-        image: postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+        image: pgvector/pgvector:0.8.1-pg17@sha256:3e8b3adfd27b5707128f60956f62a793c3c9326ea8cfaf0eab7adccb5d700b21
         env:
           POSTGRES_DB: lumina_ci
           POSTGRES_USER: lumina

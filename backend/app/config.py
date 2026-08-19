@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from email_validator import EmailNotValidError, validate_email
+from sqlalchemy.engine import make_url
 from .database_config import (
     APP_ENV_DEVELOPMENT,
     APP_ENV_PRODUCTION,
@@ -36,6 +37,17 @@ DEFAULT_AI_PROVIDER = AI_PROVIDER_OLLAMA
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1"
 OLLAMA_MODEL_PATTERN = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
+
+IMPLEMENTED_EMBEDDING_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
+DEFAULT_EMBEDDING_PROVIDER = AI_PROVIDER_OLLAMA
+DEFAULT_OLLAMA_EMBEDDING_MODEL = "nomic-embed-text"
+DEFAULT_GEMINI_EMBEDDING_MODEL = "text-embedding-004"
+DEFAULT_EMBEDDING_BATCH_SIZE = 32
+DEFAULT_EMBEDDING_TIMEOUT_SECONDS = 60
+
+VECTOR_BACKEND_PGVECTOR = "pgvector"
+VECTOR_BACKEND_CHROMA = "chroma"
+VECTOR_BACKENDS = (VECTOR_BACKEND_PGVECTOR, VECTOR_BACKEND_CHROMA)
 
 DEFAULT_MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
 DEFAULT_MAX_REQUEST_SIZE_BYTES = 1024 * 1024
@@ -104,6 +116,14 @@ class Settings:
     ai_generation_backoff_base_seconds: float
     ai_generation_backoff_max_seconds: float
     ai_generation_max_concurrency: int
+
+    # Embedding provider and durable vector storage configuration
+    embedding_provider: str
+    ollama_embedding_model: str
+    gemini_embedding_model: str
+    embedding_batch_size: int
+    embedding_timeout_seconds: int
+    vector_backend: str
 
     # Maximum accepted document size before content validation
     max_upload_size_bytes: int
@@ -434,6 +454,70 @@ def load_settings() -> Settings:
         maximum=100,
     )
 
+    embedding_provider = (
+        os.getenv("EMBEDDING_PROVIDER", DEFAULT_EMBEDDING_PROVIDER).strip().lower()
+        or DEFAULT_EMBEDDING_PROVIDER
+    )
+    if embedding_provider not in RECOGNIZED_AI_PROVIDERS:
+        raise ValueError(
+            f"EMBEDDING_PROVIDER must be one of: {', '.join(RECOGNIZED_AI_PROVIDERS)}."
+        )
+    if embedding_provider not in IMPLEMENTED_EMBEDDING_PROVIDERS:
+        raise ValueError(
+            f"EMBEDDING_PROVIDER '{embedding_provider}' is recognized but not "
+            "implemented yet. Implemented providers: "
+            f"{', '.join(IMPLEMENTED_EMBEDDING_PROVIDERS)}."
+        )
+
+    ollama_embedding_model = os.getenv(
+        "OLLAMA_EMBEDDING_MODEL",
+        DEFAULT_OLLAMA_EMBEDDING_MODEL,
+    ).strip()
+    if not OLLAMA_MODEL_PATTERN.fullmatch(ollama_embedding_model):
+        raise ValueError(
+            "OLLAMA_EMBEDDING_MODEL must contain 1-128 characters limited to letters, "
+            "digits, dots, colons, slashes, dashes, or underscores."
+        )
+    gemini_embedding_model = os.getenv(
+        "GEMINI_EMBEDDING_MODEL",
+        DEFAULT_GEMINI_EMBEDDING_MODEL,
+    ).strip()
+    if not gemini_embedding_model or len(gemini_embedding_model) > 128:
+        raise ValueError(
+            "GEMINI_EMBEDDING_MODEL must contain 1-128 non-blank characters."
+        )
+
+    embedding_batch_size = _bounded_positive_integer_setting(
+        "EMBEDDING_BATCH_SIZE",
+        DEFAULT_EMBEDDING_BATCH_SIZE,
+        minimum=1,
+        maximum=256,
+    )
+    embedding_timeout_seconds = _bounded_positive_integer_setting(
+        "EMBEDDING_TIMEOUT_SECONDS",
+        DEFAULT_EMBEDDING_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=300,
+    )
+
+    database_is_postgresql = make_url(database_url).get_backend_name() == "postgresql"
+    default_vector_backend = (
+        VECTOR_BACKEND_PGVECTOR if database_is_postgresql else VECTOR_BACKEND_CHROMA
+    )
+    vector_backend = (
+        os.getenv("VECTOR_BACKEND", default_vector_backend).strip().lower()
+        or default_vector_backend
+    )
+    if vector_backend not in VECTOR_BACKENDS:
+        raise ValueError(
+            f"VECTOR_BACKEND must be one of: {', '.join(VECTOR_BACKENDS)}."
+        )
+    if vector_backend == VECTOR_BACKEND_PGVECTOR and not database_is_postgresql:
+        raise ValueError(
+            "VECTOR_BACKEND 'pgvector' requires a PostgreSQL DATABASE_URL because the "
+            "vector extension exists only in PostgreSQL."
+        )
+
     return Settings(
         app_env=app_env,
         app_debug=app_debug,
@@ -456,6 +540,12 @@ def load_settings() -> Settings:
         ai_generation_backoff_base_seconds=ai_generation_backoff_base_seconds,
         ai_generation_backoff_max_seconds=ai_generation_backoff_max_seconds,
         ai_generation_max_concurrency=ai_generation_max_concurrency,
+        embedding_provider=embedding_provider,
+        ollama_embedding_model=ollama_embedding_model,
+        gemini_embedding_model=gemini_embedding_model,
+        embedding_batch_size=embedding_batch_size,
+        embedding_timeout_seconds=embedding_timeout_seconds,
+        vector_backend=vector_backend,
         max_upload_size_bytes=max_upload_size_bytes,
         max_request_size_bytes=max_request_size_bytes,
         max_concurrent_document_validations=max_concurrent_document_validations,

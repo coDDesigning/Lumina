@@ -258,3 +258,32 @@ success, and a stable error category. It never persists prompts, course
 material, or generated text. Provider and model default to whatever
 `AI_PROVIDER` selects, so failure telemetry attributes errors to the provider
 that actually ran.
+
+## Embedding Providers
+
+Embedding generation is a separate seam from text generation. A deployment may
+pair a large generative model with a small dedicated embedding model, and the two
+call different endpoints with different response contracts, so `EmbeddingProvider`
+in `services/embeddings.py` is not a variant of `TextGenerationProvider`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `EMBEDDING_PROVIDER` | `ollama` | Implemented: `ollama`, `gemini`. `openai` and `claude` are recognized and fail at startup, exactly as they do for `AI_PROVIDER`. |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Used with the shared `OLLAMA_BASE_URL`. |
+| `GEMINI_EMBEDDING_MODEL` | `text-embedding-004` | Used with the shared `GEMINI_API_KEY`. |
+| `EMBEDDING_BATCH_SIZE` | `32` | Texts per provider request, 1-256. |
+| `EMBEDDING_TIMEOUT_SECONDS` | `60` | Per-request deadline, 1-300. |
+
+`IMPLEMENTED_EMBEDDING_PROVIDERS` in `backend/app/config.py` is authoritative, and
+a test asserts the factory constructs every name in it.
+
+Every provider validates before returning: the response is a list, its length
+matches the input, order is preserved, and each vector is non-empty, numeric,
+finite, and exactly `EMBEDDING_DIMENSIONS` wide. A malformed or wrong-width
+response is a permanent failure, never something that reaches storage.
+
+Text generation resilience (`ReliableTextGenerationProvider`, fallback providers,
+retry, concurrency limiting) does not apply here. Embedding retries are the
+durable processing job's responsibility: a transient failure requeues the whole
+embedding stage rather than retrying inside the provider. See
+`docs/vector_storage.md` for the error codes and their retryability.

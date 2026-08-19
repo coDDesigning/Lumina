@@ -16,6 +16,8 @@ from backend.app.base import Base
 from backend.app.config import settings
 from backend.app.database_engine import create_database_engine
 from backend.app.models import (
+    EMBEDDING_DIMENSIONS,
+    ChunkEmbedding,
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
@@ -40,18 +42,19 @@ from services.processing_jobs import (
     replace_document_pages,
     update_job_stage,
 )
+from services.vector_store import PgVectorStore
 from storage.local import LocalStorage
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
 EXPECTED_POSTGRESQL_MAJOR = 17
-EXPECTED_POSTGRESQL_VERSION_NUMBER = 170006
+EXPECTED_POSTGRESQL_VERSION_NUMBER = 170008
 BASE_REVISION = "97d9fd86a3ba"
 PAGES_REVISION = "c4e6a8f1b203"
 VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
-HEAD_REVISION = "e4a7b1c90d52"
+HEAD_REVISION = "f4b18c7a2e60"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -902,6 +905,8 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
             claim.id,
             claim.claim_token,
             [ChunkData(text="Too early", page_number=1, end_page_number=1)],
+            embeddings=[[0.1] * EMBEDDING_DIMENSIONS],
+            vector_store=PgVectorStore(),
         )
     with postgresql_sessions() as session:
         job = session.get(ProcessingJob, claim.id)
@@ -920,6 +925,12 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
             claim.id,
             claim.claim_token,
             "chunking",
+        )
+        assert update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "generating_embeddings",
         )
     with postgresql_sessions() as session:
         page = session.scalar(
@@ -980,6 +991,8 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
                 )
             ],
             [enriched_page],
+            embeddings=[[0.1] * EMBEDDING_DIMENSIONS],
+            vector_store=PgVectorStore(),
         )
     with postgresql_sessions() as session:
         enriched = session.scalar(
@@ -1063,3 +1076,133 @@ def test_postgresql_terminal_failure_sanitizes_error_text(
         assert document.processing_error == "Provider failed"
         session.delete(user)
         session.commit()
+
+
+def test_postgresql_provisions_pgvector_and_its_index(
+    postgresql_sessions: sessionmaker[Session],
+) -> None:
+    """Similarity search needs the extension, a real vector column, and an index."""
+    with postgresql_sessions() as session:
+        assert session.scalar(
+            text("SELECT count(*) FROM pg_extension WHERE extname = 'vector'")
+        )
+
+        column_type = session.scalar(
+            text(
+                "SELECT udt_name FROM information_schema.columns "
+                "WHERE table_name = 'chunk_embeddings' AND column_name = 'embedding'"
+            )
+        )
+        assert column_type == "vector"
+
+        index_definition = session.scalar(
+            text(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE tablename = 'chunk_embeddings' "
+                "AND indexname = 'ix_chunk_embeddings_embedding_hnsw'"
+            )
+        )
+        assert index_definition is not None
+        assert "hnsw" in index_definition
+        assert "vector_cosine_ops" in index_definition
+
+
+def test_postgresql_chunk_embeddings_round_trip_and_rank_by_cosine(
+    postgresql_sessions: sessionmaker[Session],
+) -> None:
+    """The stored vector must behave as a vector, not as opaque bytes."""
+    document_id = uuid4()
+    with postgresql_sessions() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Vector owner",
+            email="pgvector-owner@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        course = Course(title="Vector course", owner=user)
+        document = UploadedDocument(
+            id=document_id,
+            original_file_name="vectors.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=32,
+            file_hash=document_id.hex * 2,
+            uploader=user,
+            course=course,
+            storage_provider="local",
+            storage_key=f"local/{document_id}.txt",
+            status="ready",
+        )
+        near = DocumentChunk(
+            document=document, course=course, chunk_index=0, text="near"
+        )
+        far = DocumentChunk(document=document, course=course, chunk_index=1, text="far")
+        session.add_all((user, course, document, near, far))
+        session.flush()
+
+        near_vector = [1.0] + [0.0] * (EMBEDDING_DIMENSIONS - 1)
+        far_vector = [0.0] * (EMBEDDING_DIMENSIONS - 1) + [1.0]
+        session.add_all(
+            (
+                ChunkEmbedding(
+                    chunk_id=near.id,
+                    document_id=document_id,
+                    course_id=course.id,
+                    chunk_index=0,
+                    embedding=near_vector,
+                    embedding_provider="ollama",
+                    embedding_model="nomic-embed-text",
+                    dimensions=EMBEDDING_DIMENSIONS,
+                ),
+                ChunkEmbedding(
+                    chunk_id=far.id,
+                    document_id=document_id,
+                    course_id=course.id,
+                    chunk_index=1,
+                    embedding=far_vector,
+                    embedding_provider="ollama",
+                    embedding_model="nomic-embed-text",
+                    dimensions=EMBEDDING_DIMENSIONS,
+                ),
+            )
+        )
+        session.commit()
+        user_id = user.id
+        course_id = course.id
+
+    with postgresql_sessions() as session:
+        stored = session.scalar(
+            select(ChunkEmbedding).where(ChunkEmbedding.chunk_index == 0)
+        )
+        assert stored is not None
+        assert len(stored.embedding) == EMBEDDING_DIMENSIONS
+        assert stored.embedding[0] == pytest.approx(1.0)
+
+        query = "[" + ",".join(["1.0"] + ["0.0"] * (EMBEDDING_DIMENSIONS - 1)) + "]"
+        ranked = (
+            session.execute(
+                text(
+                    "SELECT chunk_index FROM chunk_embeddings "
+                    "WHERE course_id = :course_id "
+                    "ORDER BY embedding <=> CAST(:query AS vector) LIMIT 2"
+                ),
+                {"course_id": course_id, "query": query},
+            )
+            .scalars()
+            .all()
+        )
+        assert list(ranked) == [0, 1]
+
+    with postgresql_sessions() as session:
+        user = session.get(User, user_id)
+        assert user is not None
+        session.delete(user)
+        session.commit()
+        assert (
+            session.scalar(
+                select(ChunkEmbedding).where(ChunkEmbedding.document_id == document_id)
+            )
+            is None
+        )

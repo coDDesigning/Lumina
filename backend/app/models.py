@@ -1,6 +1,9 @@
+import math
+import struct
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -21,7 +24,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.types import TypeDecorator
+from sqlalchemy.types import LargeBinary, TypeDecorator
 
 from .base import Base
 
@@ -38,11 +41,14 @@ DOCUMENT_PROCESSING_STAGES = (
     "understanding_images",
     "cleaning_text",
     "chunking",
+    "generating_embeddings",
 )
 _DOCUMENT_PROCESSING_STAGES_SQL = ", ".join(
     f"'{stage}'" for stage in DOCUMENT_PROCESSING_STAGES
 )
 _ASCII_WHITESPACE = " \t\n\r\v\f"
+
+EMBEDDING_DIMENSIONS = 768
 
 
 class UTCDateTime(TypeDecorator[datetime]):
@@ -68,6 +74,47 @@ class UTCDateTime(TypeDecorator[datetime]):
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
+
+
+class EmbeddingVector(TypeDecorator[list[float]]):
+    """Persist fixed-width float vectors on both supported databases.
+
+    PostgreSQL stores a native pgvector column so similarity search and the
+    HNSW index work. SQLite has no vector type, so the same logical value is
+    packed as little-endian float32 and unpacked on read. Both dialects hand
+    the application an ordinary list of floats.
+    """
+
+    impl = LargeBinary
+    cache_ok = True
+
+    _STRUCT = struct.Struct(f"<{EMBEDDING_DIMENSIONS}f")
+
+    def load_dialect_impl(self, dialect: Dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(Vector(EMBEDDING_DIMENSIONS))
+        return dialect.type_descriptor(LargeBinary(self._STRUCT.size))
+
+    def process_bind_param(self, value, dialect: Dialect):
+        if value is None:
+            return None
+        values = [float(item) for item in value]
+        if len(values) != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Embedding vectors must contain {EMBEDDING_DIMENSIONS} values"
+            )
+        if not all(math.isfinite(item) for item in values):
+            raise ValueError("Embedding vectors must contain finite values")
+        if dialect.name == "postgresql":
+            return values
+        return self._STRUCT.pack(*values)
+
+    def process_result_value(self, value, dialect: Dialect):
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return [float(item) for item in value]
+        return list(self._STRUCT.unpack(value))
 
 
 class Role(Base):
@@ -276,6 +323,12 @@ class DocumentChunk(Base):
     __tablename__ = "document_chunks"
     __table_args__ = (
         UniqueConstraint("document_id", "chunk_index", name="uq_chunk_doc_index"),
+        UniqueConstraint(
+            "id",
+            "document_id",
+            "course_id",
+            name="uq_document_chunks_id_document_id_course_id",
+        ),
         CheckConstraint(
             "page_number IS NULL OR page_number >= 1", name="page_number_positive"
         ),
@@ -324,6 +377,74 @@ class DocumentChunk(Base):
     course: Mapped["Course"] = relationship(
         back_populates="chunks", overlaps="document,chunks"
     )
+    embedding_record: Mapped["ChunkEmbedding | None"] = relationship(
+        back_populates="chunk",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
+
+
+class ChunkEmbedding(Base):
+    """The single current semantic vector for one current document chunk."""
+
+    __tablename__ = "chunk_embeddings"
+    __table_args__ = (
+        UniqueConstraint("chunk_id", name="uq_chunk_embeddings_chunk_id"),
+        CheckConstraint(
+            f"dimensions = {EMBEDDING_DIMENSIONS}",
+            name="dimensions_supported",
+        ),
+        CheckConstraint(
+            "chunk_index = CAST(chunk_index AS INTEGER) AND chunk_index >= 0",
+            name="chunk_index_nonnegative",
+        ),
+        CheckConstraint(
+            f"length(trim(embedding_provider, '{_ASCII_WHITESPACE}')) > 0",
+            name="embedding_provider_nonblank",
+        ),
+        CheckConstraint(
+            f"length(trim(embedding_model, '{_ASCII_WHITESPACE}')) > 0",
+            name="embedding_model_nonblank",
+        ),
+        ForeignKeyConstraint(
+            ["chunk_id", "document_id", "course_id"],
+            [
+                "document_chunks.id",
+                "document_chunks.document_id",
+                "document_chunks.course_id",
+            ],
+            name="fk_chunk_embeddings_chunk_document_course_document_chunks",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_chunk_embeddings_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ).ddl_if(dialect="postgresql"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    chunk_id: Mapped[int] = mapped_column(Integer)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), index=True)
+    course_id: Mapped[int] = mapped_column(Integer, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer)
+
+    embedding: Mapped[list[float]] = mapped_column(EmbeddingVector())
+    embedding_provider: Mapped[str] = mapped_column(String(50))
+    embedding_model: Mapped[str] = mapped_column(String(128))
+    dimensions: Mapped[int] = mapped_column(Integer)
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
+    )
+
+    chunk: Mapped["DocumentChunk"] = relationship(back_populates="embedding_record")
 
 
 class DocumentPage(Base):

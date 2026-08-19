@@ -25,6 +25,22 @@ app_env = load_app_environment()
 configured_database_url = load_database_url(app_env=app_env)
 database_url = normalize_database_url(configured_database_url)
 target_metadata = Base.metadata
+is_postgresql = database_url.get_backend_name() == "postgresql"
+
+
+POSTGRESQL_ONLY_INDEXES = frozenset({"ix_chunk_embeddings_embedding_hnsw"})
+
+
+def include_object(object_, name, type_, reflected, compare_to) -> bool:
+    """Hide the pgvector index from autogenerate on other databases.
+
+    The HNSW index is declared on the model so PostgreSQL keeps it, but
+    `ddl_if` only suppresses emission - autogenerate would still report it as
+    missing everywhere else, so `alembic check` needs it filtered out here.
+    """
+    if type_ == "index" and name in POSTGRESQL_ONLY_INDEXES:
+        return is_postgresql
+    return True
 
 
 def run_migrations_offline() -> None:
@@ -36,6 +52,7 @@ def run_migrations_offline() -> None:
         compare_type=True,
         compare_server_default=True,
         render_as_batch=is_sqlite_database(database_url),
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -62,6 +79,7 @@ def run_migrations_online() -> None:
             compare_type=True,
             compare_server_default=True,
             render_as_batch=is_sqlite_database(database_url),
+            include_object=include_object,
         )
 
         with context.begin_transaction():

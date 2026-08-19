@@ -4,6 +4,7 @@
 alembic==1.18.5
 bcrypt==5.0.0
 charset-normalizer==3.4.4
+chromadb==1.5.9
 email-validator==2.3.0
 fastapi==0.139.2
 google-genai==2.17.0

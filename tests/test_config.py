@@ -24,6 +24,11 @@ from backend.app.config import (
     DEFAULT_MAX_UPLOAD_SIZE_BYTES,
     DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS,
     DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS,
+    DEFAULT_EMBEDDING_BATCH_SIZE,
+    DEFAULT_EMBEDDING_PROVIDER,
+    DEFAULT_EMBEDDING_TIMEOUT_SECONDS,
+    DEFAULT_GEMINI_EMBEDDING_MODEL,
+    DEFAULT_OLLAMA_EMBEDDING_MODEL,
     DEFAULT_OCR_DPI,
     DEFAULT_OCR_LANGUAGE,
     DEFAULT_OCR_MIN_TEXT_CHARACTERS,
@@ -35,9 +40,12 @@ from backend.app.config import (
     DEFAULT_PROCESSING_JOB_POLL_SECONDS,
     DEFAULT_UPLOAD_REQUEST_TIMEOUT_SECONDS,
     IMPLEMENTED_AI_PROVIDERS,
+    IMPLEMENTED_EMBEDDING_PROVIDERS,
     MODE_HOSTED,
     MODE_SELF_HOSTED,
     RECOGNIZED_AI_PROVIDERS,
+    VECTOR_BACKEND_CHROMA,
+    VECTOR_BACKEND_PGVECTOR,
     load_settings,
 )
 from backend.app.database_config import load_database_url
@@ -88,6 +96,12 @@ CONFIGURATION_KEYS = (
     "OCR_MIN_TEXT_CHARACTERS",
     "DOCUMENT_CHUNK_SIZE_CHARACTERS",
     "DOCUMENT_CHUNK_OVERLAP_CHARACTERS",
+    "EMBEDDING_PROVIDER",
+    "OLLAMA_EMBEDDING_MODEL",
+    "GEMINI_EMBEDDING_MODEL",
+    "EMBEDDING_BATCH_SIZE",
+    "EMBEDDING_TIMEOUT_SECONDS",
+    "VECTOR_BACKEND",
 )
 
 
@@ -843,3 +857,141 @@ def test_env_example_advertises_every_material_budget() -> None:
         assert f"{name}=" in env_example, (
             f"{name} is read by config.py but not documented."
         )
+
+
+def test_embedding_defaults_are_self_hosted_ready() -> None:
+    loaded = load_settings()
+
+    assert loaded.embedding_provider == DEFAULT_EMBEDDING_PROVIDER
+    assert loaded.ollama_embedding_model == DEFAULT_OLLAMA_EMBEDDING_MODEL
+    assert loaded.gemini_embedding_model == DEFAULT_GEMINI_EMBEDDING_MODEL
+    assert loaded.embedding_batch_size == DEFAULT_EMBEDDING_BATCH_SIZE
+    assert loaded.embedding_timeout_seconds == DEFAULT_EMBEDDING_TIMEOUT_SECONDS
+
+
+def test_embedding_provider_rejects_unrecognized_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "unsupported")
+
+    with pytest.raises(ValueError, match="EMBEDDING_PROVIDER"):
+        load_settings()
+
+
+@pytest.mark.parametrize("provider", ["openai", "claude"])
+def test_recognized_but_unimplemented_embedding_provider_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_PROVIDER", provider)
+
+    with pytest.raises(ValueError, match="not implemented"):
+        load_settings()
+
+
+@pytest.mark.parametrize("provider", IMPLEMENTED_EMBEDDING_PROVIDERS)
+def test_every_implemented_embedding_provider_configures(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_PROVIDER", provider)
+
+    assert load_settings().embedding_provider == provider
+
+
+def test_implemented_embedding_providers_are_recognized() -> None:
+    assert IMPLEMENTED_EMBEDDING_PROVIDERS == ("gemini", "ollama")
+    assert set(IMPLEMENTED_EMBEDDING_PROVIDERS) <= set(RECOGNIZED_AI_PROVIDERS)
+
+
+def test_ollama_embedding_model_rejects_unsafe_characters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_EMBEDDING_MODEL", "bad model!")
+
+    with pytest.raises(ValueError, match="OLLAMA_EMBEDDING_MODEL"):
+        load_settings()
+
+
+def test_embedding_model_must_not_be_blank(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GEMINI_EMBEDDING_MODEL", "   ")
+
+    with pytest.raises(ValueError, match="GEMINI_EMBEDDING_MODEL"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["0", "257", "not-a-number"])
+def test_embedding_batch_size_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_BATCH_SIZE", value)
+
+    with pytest.raises(ValueError, match="EMBEDDING_BATCH_SIZE"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["0", "301"])
+def test_embedding_timeout_seconds_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_TIMEOUT_SECONDS", value)
+
+    with pytest.raises(ValueError, match="EMBEDDING_TIMEOUT_SECONDS"):
+        load_settings()
+
+
+def test_vector_backend_defaults_to_chroma_on_sqlite() -> None:
+    assert load_settings().vector_backend == VECTOR_BACKEND_CHROMA
+
+
+def test_vector_backend_defaults_to_pgvector_on_postgresql(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEPLOYMENT_MODE", MODE_HOSTED)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://lumina:password@localhost:5432/lumina",
+    )
+    monkeypatch.setenv("STORAGE_NAMESPACE", "hosted-shared-volume")
+    monkeypatch.setenv("JWT_SECRET_KEY", "x" * 32)
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "y" * 32)
+
+    assert load_settings().vector_backend == VECTOR_BACKEND_PGVECTOR
+
+
+def test_pgvector_backend_requires_a_postgresql_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VECTOR_BACKEND", VECTOR_BACKEND_PGVECTOR)
+
+    with pytest.raises(ValueError, match="VECTOR_BACKEND"):
+        load_settings()
+
+
+def test_vector_backend_rejects_unknown_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VECTOR_BACKEND", "faiss")
+
+    with pytest.raises(ValueError, match="VECTOR_BACKEND"):
+        load_settings()
+
+
+def test_chroma_backend_is_allowed_on_postgresql(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEPLOYMENT_MODE", MODE_HOSTED)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://lumina:password@localhost:5432/lumina",
+    )
+    monkeypatch.setenv("STORAGE_NAMESPACE", "hosted-shared-volume")
+    monkeypatch.setenv("JWT_SECRET_KEY", "x" * 32)
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "y" * 32)
+    monkeypatch.setenv("VECTOR_BACKEND", VECTOR_BACKEND_CHROMA)
+
+    assert load_settings().vector_backend == VECTOR_BACKEND_CHROMA

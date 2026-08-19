@@ -8,10 +8,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.models import (
     AiUsageLog,
+    ChunkEmbedding,
     Course,
     DocumentChunk,
     DocumentPage,
     DocumentVisual,
+    EMBEDDING_DIMENSIONS,
     GeneratedOutput,
     JOB_STATUS_FAILED,
     ProcessingJob,
@@ -546,3 +548,212 @@ def test_course_workspace_columns_are_migrated_as_designed(
     assert columns["updated_at"]["nullable"] is False
     assert isinstance(columns["syllabus"]["type"], Text)
     assert isinstance(columns["updated_at"]["type"], DateTime)
+
+
+def _course_with_embedded_chunk(
+    session: Session,
+    *,
+    email: str,
+    document_id: UUID,
+) -> tuple[Course, UploadedDocument, DocumentChunk, ChunkEmbedding]:
+    role = session.scalar(select(Role).where(Role.name == "user"))
+    assert role is not None
+    user = User(
+        name="Embedding user",
+        email=email,
+        password_hash="not-a-real-hash",
+        role=role,
+    )
+    course = Course(title="Embedding course", owner=user)
+    document = UploadedDocument(
+        id=document_id,
+        original_file_name="embedded.pdf",
+        file_type="pdf",
+        mime_type="application/pdf",
+        file_size=64,
+        file_hash="d" * 64,
+        uploader=user,
+        course=course,
+        storage_provider="local",
+        storage_key=f"local/{document_id}.pdf",
+        status="ready",
+    )
+    chunk = DocumentChunk(
+        document=document,
+        course=course,
+        chunk_index=0,
+        page_number=1,
+        end_page_number=1,
+        text="Embedded chunk text",
+    )
+    session.add_all((user, course, document, chunk))
+    session.flush()
+    embedding = ChunkEmbedding(
+        chunk_id=chunk.id,
+        document_id=document.id,
+        course_id=course.id,
+        chunk_index=chunk.chunk_index,
+        embedding=[0.5] * EMBEDDING_DIMENSIONS,
+        embedding_provider="ollama",
+        embedding_model="nomic-embed-text",
+        dimensions=EMBEDDING_DIMENSIONS,
+    )
+    session.add(embedding)
+    session.flush()
+    return course, document, chunk, embedding
+
+
+def test_chunk_embedding_round_trips_as_a_float_vector(
+    session_factory: sessionmaker[Session],
+) -> None:
+    document_id = uuid4()
+    with session_factory() as session:
+        _course_with_embedded_chunk(
+            session,
+            email="embedding-round-trip@example.com",
+            document_id=document_id,
+        )
+        session.commit()
+
+    with session_factory() as session:
+        stored = session.scalar(
+            select(ChunkEmbedding).where(ChunkEmbedding.document_id == document_id)
+        )
+        assert stored is not None
+        assert len(stored.embedding) == EMBEDDING_DIMENSIONS
+        assert all(isinstance(value, float) for value in stored.embedding)
+        assert stored.embedding[0] == pytest.approx(0.5)
+
+
+def test_chunk_delete_cascades_its_embedding(
+    session_factory: sessionmaker[Session],
+) -> None:
+    document_id = uuid4()
+    with session_factory() as session:
+        _, _, chunk, _ = _course_with_embedded_chunk(
+            session,
+            email="embedding-chunk-cascade@example.com",
+            document_id=document_id,
+        )
+        chunk_id = chunk.id
+        session.commit()
+
+    with session_factory() as session:
+        session.execute(delete(DocumentChunk).where(DocumentChunk.id == chunk_id))
+        session.commit()
+
+    with session_factory() as session:
+        assert (
+            session.scalar(
+                select(ChunkEmbedding).where(ChunkEmbedding.chunk_id == chunk_id)
+            )
+            is None
+        )
+
+
+def test_document_delete_cascades_its_chunk_embeddings(
+    session_factory: sessionmaker[Session],
+) -> None:
+    document_id = uuid4()
+    with session_factory() as session:
+        _course_with_embedded_chunk(
+            session,
+            email="embedding-document-cascade@example.com",
+            document_id=document_id,
+        )
+        session.commit()
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, document_id)
+        assert document is not None
+        session.delete(document)
+        session.commit()
+
+    with session_factory() as session:
+        assert (
+            session.scalar(
+                select(ChunkEmbedding).where(ChunkEmbedding.document_id == document_id)
+            )
+            is None
+        )
+
+
+def test_course_delete_cascades_its_chunk_embeddings(
+    session_factory: sessionmaker[Session],
+) -> None:
+    document_id = uuid4()
+    with session_factory() as session:
+        course, _, _, _ = _course_with_embedded_chunk(
+            session,
+            email="embedding-course-cascade@example.com",
+            document_id=document_id,
+        )
+        course_id = course.id
+        session.commit()
+
+    with session_factory() as session:
+        course = session.get(Course, course_id)
+        assert course is not None
+        session.delete(course)
+        session.commit()
+
+    with session_factory() as session:
+        assert (
+            session.scalar(
+                select(ChunkEmbedding).where(ChunkEmbedding.course_id == course_id)
+            )
+            is None
+        )
+
+
+def test_one_chunk_cannot_hold_two_embeddings(
+    session_factory: sessionmaker[Session],
+) -> None:
+    document_id = uuid4()
+    with session_factory() as session:
+        _, _, chunk, _ = _course_with_embedded_chunk(
+            session,
+            email="embedding-uniqueness@example.com",
+            document_id=document_id,
+        )
+        session.commit()
+        chunk_id = chunk.id
+        course_id = chunk.course_id
+
+    with session_factory() as session:
+        session.add(
+            ChunkEmbedding(
+                chunk_id=chunk_id,
+                document_id=document_id,
+                course_id=course_id,
+                chunk_index=0,
+                embedding=[0.25] * EMBEDDING_DIMENSIONS,
+                embedding_provider="ollama",
+                embedding_model="nomic-embed-text",
+                dimensions=EMBEDDING_DIMENSIONS,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_chunk_embedding_rejects_a_foreign_dimension_count(
+    session_factory: sessionmaker[Session],
+) -> None:
+    document_id = uuid4()
+    with session_factory() as session:
+        _, _, chunk, embedding = _course_with_embedded_chunk(
+            session,
+            email="embedding-dimension-check@example.com",
+            document_id=document_id,
+        )
+        session.commit()
+
+    with session_factory() as session:
+        stored = session.scalar(
+            select(ChunkEmbedding).where(ChunkEmbedding.document_id == document_id)
+        )
+        assert stored is not None
+        stored.dimensions = EMBEDDING_DIMENSIONS + 1
+        with pytest.raises(IntegrityError):
+            session.commit()

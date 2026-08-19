@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 
 from backend.app.database_engine import SQLITE_BUSY_TIMEOUT_MILLISECONDS
 from backend.app.models import (
+    EMBEDDING_DIMENSIONS,
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
@@ -49,6 +50,7 @@ from services.processing_jobs import (
     replace_document_pages,
     update_job_stage,
 )
+from services.vector_store import PgVectorStore
 from storage.local import LocalStorage
 from workers import document_processor
 from workers.document_processor import (
@@ -92,6 +94,26 @@ class ImmediateStorage:
         return BytesIO(self.content)
 
 
+class StubEmbeddingProvider:
+    """One deterministic vector per chunk, with no embedding service."""
+
+    def embed_documents(self, texts):
+        return [[0.1] * EMBEDDING_DIMENSIONS for _ in texts]
+
+    def embed_query(self, text):
+        return [0.1] * EMBEDDING_DIMENSIONS
+
+
+def _embeddings(count: int) -> list[list[float]]:
+    return [[0.1] * EMBEDDING_DIMENSIONS for _ in range(count)]
+
+
+def _process_next_job(**kwargs) -> bool:
+    kwargs.setdefault("embedding_provider", StubEmbeddingProvider())
+    kwargs.setdefault("vector_store", PgVectorStore())
+    return process_next_job(**kwargs)
+
+
 def _advance_to_chunking(session_factory, claim: ClaimedJob) -> None:
     for stage in ("extracting_text", "cleaning_text", "chunking"):
         with session_factory() as session:
@@ -101,6 +123,17 @@ def _advance_to_chunking(session_factory, claim: ClaimedJob) -> None:
                 claim.claim_token,
                 stage,
             )
+
+
+def _advance_to_embedding(session_factory, claim: ClaimedJob) -> None:
+    _advance_to_chunking(session_factory, claim)
+    with session_factory() as session:
+        assert update_job_stage(
+            session,
+            claim.id,
+            claim.claim_token,
+            "generating_embeddings",
+        )
 
 
 def _queue_document(
@@ -190,13 +223,13 @@ def _text_pdf(*page_texts: str) -> bytes:
 def test_worker_processes_text_into_canonical_chunks(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path)
 
-    assert process_next_job(
+    assert _process_next_job(
         session_factory=session_factory,
         storage=queued.storage,
         worker_id="test-worker",
         lease_seconds=60,
     )
-    assert not process_next_job(
+    assert not _process_next_job(
         session_factory=session_factory,
         storage=queued.storage,
         worker_id="test-worker",
@@ -248,7 +281,7 @@ def test_worker_persists_cross_page_pdf_chunk_ranges(session_factory, tmp_path):
         file_type="pdf",
     )
 
-    assert process_next_job(
+    assert _process_next_job(
         session_factory=session_factory,
         storage=queued.storage,
         worker_id="pdf-chunk-worker",
@@ -282,7 +315,7 @@ def test_image_pdf_fails_permanently_then_can_be_retried(
         file_type="pdf",
     )
 
-    assert process_next_job(
+    assert _process_next_job(
         session_factory=session_factory,
         storage=queued.storage,
         worker_id="ocr-worker",
@@ -338,7 +371,7 @@ def test_corrupted_pdf_fails_worker_without_partial_content(session_factory, tmp
         file_type="pdf",
     )
 
-    assert process_next_job(
+    assert _process_next_job(
         session_factory=session_factory,
         storage=queued.storage,
         worker_id="corrupt-pdf-worker",
@@ -367,7 +400,7 @@ def test_worker_persists_exact_raw_markdown_before_cleaning(session_factory, tmp
         file_type="markdown",
     )
 
-    assert process_next_job(
+    assert _process_next_job(
         session_factory=session_factory,
         storage=queued.storage,
         worker_id="markdown-worker",
@@ -475,6 +508,8 @@ def test_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp_path):
             winner.id,
             winner.claim_token,
             [ChunkData("Too early")],
+            embeddings=_embeddings(1),
+            vector_store=PgVectorStore(),
             now=claim_time + timedelta(seconds=6),
         )
     for stage, offset in (("extracting_text", 7), ("cleaning_text", 8)):
@@ -492,6 +527,8 @@ def test_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp_path):
             winner.id,
             winner.claim_token,
             [ChunkData("Still too early")],
+            embeddings=_embeddings(1),
+            vector_store=PgVectorStore(),
             now=claim_time + timedelta(seconds=9),
         )
     with session_factory() as session:
@@ -507,11 +544,21 @@ def test_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp_path):
             now=claim_time + timedelta(seconds=9),
         )
     with session_factory() as session:
+        assert update_job_stage(
+            session,
+            winner.id,
+            winner.claim_token,
+            "generating_embeddings",
+            now=claim_time + timedelta(seconds=9),
+        )
+    with session_factory() as session:
         assert not complete_job(
             session,
             winner.id,
             "stale-token",
             [ChunkData("Stale")],
+            embeddings=_embeddings(1),
+            vector_store=PgVectorStore(),
             now=claim_time + timedelta(seconds=10),
         )
     with session_factory() as session:
@@ -520,6 +567,8 @@ def test_claim_is_exclusive_and_completion_is_fenced(session_factory, tmp_path):
             winner.id,
             winner.claim_token,
             [ChunkData("Canonical")],
+            embeddings=_embeddings(1),
+            vector_store=PgVectorStore(),
             now=claim_time + timedelta(seconds=10),
         )
 
@@ -781,6 +830,8 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
             "stale-token",
             chunks,
             enriched_pages,
+            embeddings=_embeddings(len(chunks)),
+            vector_store=PgVectorStore(),
             now=claim_time + timedelta(seconds=3),
         )
     with session_factory() as session:
@@ -797,7 +848,7 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
         assert visual.analysis_status == "pending"
         assert job.status == JOB_STATUS_RUNNING
 
-    _advance_to_chunking(session_factory, claim)
+    _advance_to_embedding(session_factory, claim)
     with session_factory() as session:
         assert complete_job(
             session,
@@ -805,6 +856,8 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
             claim.claim_token,
             chunks,
             enriched_pages,
+            embeddings=_embeddings(len(chunks)),
+            vector_store=PgVectorStore(),
             now=claim_time + timedelta(seconds=4),
         )
 
@@ -860,7 +913,14 @@ def test_completion_fences_and_replaces_raw_pages_with_enriched_content(
 def test_completion_rejects_invalid_chunk_page_ranges(session_factory, chunk):
     with session_factory() as session:
         with pytest.raises(ValueError, match="page range"):
-            complete_job(session, 1, "claim", [chunk])
+            complete_job(
+                session,
+                1,
+                "claim",
+                [chunk],
+                embeddings=_embeddings(1),
+                vector_store=PgVectorStore(),
+            )
 
 
 @pytest.mark.parametrize(
@@ -956,6 +1016,8 @@ def test_completion_rejects_ranges_inconsistent_with_document_type(
                 claim.claim_token,
                 [chunk],
                 pages,
+                embeddings=_embeddings(1),
+                vector_store=PgVectorStore(),
                 now=queued.available_at + timedelta(seconds=2),
             )
 
@@ -1039,7 +1101,14 @@ def test_raw_page_persistence_rejects_an_empty_result(session_factory, tmp_path)
 def test_completion_rejects_a_chunk_that_sanitizes_to_empty(session_factory) -> None:
     with pytest.raises(ValueError, match="must contain text"):
         with session_factory() as session:
-            complete_job(session, 1, "claim", [ChunkData("\x00\x00")])
+            complete_job(
+                session,
+                1,
+                "claim",
+                [ChunkData("\x00\x00")],
+                embeddings=_embeddings(1),
+                vector_store=PgVectorStore(),
+            )
 
 
 @pytest.mark.parametrize(
@@ -1513,6 +1582,8 @@ def test_expired_leases_are_requeued_then_failed(session_factory, tmp_path):
             first.id,
             first.claim_token,
             [ChunkData("Late result")],
+            embeddings=_embeddings(1),
+            vector_store=PgVectorStore(),
             now=first_claim_at + timedelta(seconds=11),
         )
 
@@ -1567,6 +1638,8 @@ def test_course_deletion_immediately_fences_running_claim(session_factory, tmp_p
             claim.id,
             claim.claim_token,
             [ChunkData("Late result")],
+            embeddings=_embeddings(1),
+            vector_store=PgVectorStore(),
             now=claim_time + timedelta(seconds=2),
         )
     with session_factory() as session:
@@ -1622,7 +1695,7 @@ def test_completion_failure_rolls_back_chunks_and_state(
             now=claim_time,
         )
     assert claim is not None
-    _advance_to_chunking(session_factory, claim)
+    _advance_to_embedding(session_factory, claim)
 
     session = session_factory()
     try:
@@ -1662,6 +1735,8 @@ def test_completion_failure_rolls_back_chunks_and_state(
                         ),
                     )
                 ],
+                embeddings=_embeddings(1),
+                vector_store=PgVectorStore(),
                 now=claim_time + timedelta(seconds=1),
             )
         session.rollback()
@@ -1689,7 +1764,7 @@ def test_worker_contains_finalization_errors_until_lease_recovery(
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(document_processor, "complete_job", fail_completion)
-    assert process_next_job(
+    assert _process_next_job(
         session_factory=session_factory,
         storage=queued.storage,
         worker_id="resilient-worker",

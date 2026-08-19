@@ -198,7 +198,8 @@ coverage:
 ```
 
 `context_truncated` is derived by the application, never by the model. This whole
-module is a placeholder for semantic retrieval and is meant to be replaced by it;
+module is a placeholder for course-isolated semantic retrieval
+(`services/semantic_retrieval.py`) and is meant to be replaced by it;
 authorization, provider calls, schema validation, and persistence deliberately
 live outside it so that swap stays cheap.
 

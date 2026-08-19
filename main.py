@@ -19,6 +19,7 @@ from routes import (
     course,
     document,
     flashcard,
+    profile_knowledge,
     prompt_generator,
     quiz,
     study_guide,
@@ -45,6 +46,7 @@ app.include_router(auth.router)
 app.include_router(course.router)
 app.include_router(admin.router)
 app.include_router(user.router)
+app.include_router(profile_knowledge.router)
 app.include_router(document.router)
 app.include_router(study_guide.router)
 app.include_router(quiz.router)

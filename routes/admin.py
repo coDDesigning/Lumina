@@ -6,8 +6,7 @@ from sqlalchemy.orm import Session
 from backend.app.database import get_db
 from backend.app.models import User
 from schemas.credits import (
-    CreditAdjustRequest,
-    CreditGrantRequest,
+    CreditChangeRequest,
     CreditMutationResponse,
     CreditTransactionResponse,
 )
@@ -26,7 +25,14 @@ from utils.exceptions import NotFoundException
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
 
-@router.get("/users", response_model=BaseResponse[list[UserResponse]])
+@router.get(
+    "/users",
+    response_model=BaseResponse[list[UserResponse]],
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Administrator privileges required"},
+    },
+)
 def list_users(
     current_admin: Annotated[UserResponse, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
@@ -40,7 +46,19 @@ def list_users(
     )
 
 
-@router.put("/users/{email:path}/ban", response_model=BaseResponse[UserResponse])
+@router.put(
+    "/users/{email:path}/ban",
+    response_model=BaseResponse[UserResponse],
+    responses={
+        400: {
+            "description": "The initial administrator and the caller cannot be banned"
+        },
+        401: {"description": "Authentication required"},
+        403: {"description": "Administrator privileges required"},
+        404: {"description": "User not found"},
+        422: {"description": "The request is not a valid ban instruction"},
+    },
+)
 def ban_user(
     email: str,
     is_banned: bool,
@@ -67,7 +85,19 @@ def ban_user(
     )
 
 
-@router.put("/users/{email:path}/role", response_model=BaseResponse[UserResponse])
+@router.put(
+    "/users/{email:path}/role",
+    response_model=BaseResponse[UserResponse],
+    responses={
+        400: {
+            "description": "The initial administrator and the caller cannot be demoted"
+        },
+        401: {"description": "Authentication required"},
+        403: {"description": "Administrator privileges required"},
+        404: {"description": "User not found"},
+        422: {"description": "The request does not name a valid role"},
+    },
+)
 def change_user_role(
     email: str,
     role: Role,
@@ -105,67 +135,52 @@ def _target_user(db: Session, email: str) -> User:
 
 
 @router.post(
-    "/users/{email:path}/credits/grant",
+    "/users/{email:path}/credits",
     response_model=BaseResponse[CreditMutationResponse],
+    responses={
+        400: {
+            "description": (
+                "Credit metering is disabled, the account holds no balance, or "
+                "the change would take it below zero"
+            )
+        },
+        401: {"description": "Authentication required"},
+        403: {"description": "Administrator privileges required"},
+        404: {"description": "User not found"},
+        422: {"description": "The change is not a valid administrative operation"},
+    },
 )
-def grant_user_credits(
+def change_user_credits(
     email: str,
-    payload: CreditGrantRequest,
+    payload: CreditChangeRequest,
     current_admin: Annotated[UserResponse, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    """Adds credits to a user's balance and records who granted them.
+    """Moves a user's balance in either direction and records who did it and why.
 
-    The actor is taken from the authenticated administrator, never from the
-    request body, so a grant can always be attributed. This is account-level
-    credit administration and confers no authority over the user's courses.
+    One endpoint rather than a grant route and an adjust route: the two differed
+    only by the reason the URL implied, and a reason the caller states is more
+    honest than one inferred from a path. The actor is taken from the
+    authenticated administrator, never from the request body, so a manual change
+    can always be attributed.
+
+    This is an administrator's fastest way to lift an exhausted account off zero
+    without waiting for the next month's grant. It is account-level credit
+    administration and confers no authority over the user's courses.
     """
     target_user = _target_user(db, email)
-    transaction = CreditService.grant(
-        db,
-        target_user.id,
-        payload.amount,
-        actor=CreditActor.admin(current_admin.id, current_admin.email),
-        note=payload.note,
-    )
-    db.refresh(target_user)
-    return BaseResponse(
-        success=True,
-        message=f"Granted {payload.amount} credits",
-        data=CreditMutationResponse(
-            user=UserService.to_response(target_user),
-            transaction=CreditTransactionResponse.model_validate(transaction),
-        ),
-    )
-
-
-@router.post(
-    "/users/{email:path}/credits/adjust",
-    response_model=BaseResponse[CreditMutationResponse],
-)
-def adjust_user_credits(
-    email: str,
-    payload: CreditAdjustRequest,
-    current_admin: Annotated[UserResponse, Depends(get_current_admin)],
-    db: Annotated[Session, Depends(get_db)],
-):
-    """Corrects a user's balance in either direction.
-
-    An adjustment that would take the balance below zero is rejected whole:
-    neither the balance nor the ledger changes.
-    """
-    target_user = _target_user(db, email)
-    transaction = CreditService.adjust(
+    transaction = CreditService.apply_admin_change(
         db,
         target_user.id,
         payload.delta,
+        reason=payload.reason,
         actor=CreditActor.admin(current_admin.id, current_admin.email),
         note=payload.note,
     )
     db.refresh(target_user)
     return BaseResponse(
         success=True,
-        message=f"Adjusted credits by {payload.delta}",
+        message=f"Credits changed by {payload.delta}",
         data=CreditMutationResponse(
             user=UserService.to_response(target_user),
             transaction=CreditTransactionResponse.model_validate(transaction),
@@ -176,6 +191,12 @@ def adjust_user_credits(
 @router.get(
     "/users/{email:path}/credit-transactions",
     response_model=BaseResponse[list[CreditTransactionResponse]],
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Administrator privileges required"},
+        404: {"description": "User not found"},
+        422: {"description": "The pagination arguments are out of range"},
+    },
 )
 def list_user_credit_transactions(
     email: str,

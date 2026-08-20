@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { formatDelta, reasonLabel, transactionLabel } from './creditLabels';
+import {
+  ADMIN_CREDIT_REASONS,
+  POSITIVE_ONLY_ADMIN_REASONS,
+  formatDelta,
+  reasonLabel,
+  transactionLabel,
+} from './creditLabels';
 import type { CreditTransaction } from './types';
 
 function transaction(overrides: Partial<CreditTransaction>): CreditTransaction {
@@ -28,9 +34,22 @@ describe('creditLabels', () => {
     expect(reasonLabel('generation_charge')).toBe('AI generation');
     expect(reasonLabel('generation_refund')).toBe('Refund');
     expect(reasonLabel('admin_grant')).toBe('Administrator grant');
+    expect(reasonLabel('support_compensation')).toBe('Support compensation');
     expect(reasonLabel('admin_adjustment')).toBe('Administrator adjustment');
     expect(reasonLabel('metering_reset')).toBe('Balance re-baselined');
     expect(reasonLabel('migration_reconciliation')).toBe('Opening balance');
+  });
+
+  it('offers exactly the reasons an administrator may choose', () => {
+    expect([...ADMIN_CREDIT_REASONS]).toEqual([
+      'admin_grant',
+      'support_compensation',
+      'admin_adjustment',
+    ]);
+    expect([...POSITIVE_ONLY_ADMIN_REASONS]).toEqual([
+      'admin_grant',
+      'support_compensation',
+    ]);
   });
 
   it('falls back to a readable form for an unknown reason', () => {

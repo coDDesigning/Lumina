@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -13,9 +19,15 @@ import {
   Users,
 } from 'lucide-react';
 import { adminAPI } from '../api/admin';
-import { formatDelta, transactionLabel } from '../api/creditLabels';
+import {
+  ADMIN_CREDIT_REASONS,
+  POSITIVE_ONLY_ADMIN_REASONS,
+  formatDelta,
+  reasonLabel,
+  transactionLabel,
+} from '../api/creditLabels';
 import { describeError } from '../api/errors';
-import type { CreditTransaction, User } from '../api/types';
+import type { AdminCreditReason, CreditTransaction, User } from '../api/types';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import PageLayout from '../components/PageLayout';
 import { useAuth } from '../context/AuthContext';
@@ -33,6 +45,13 @@ export function AdminPage() {
   const [processingEmail, setProcessingEmail] = useState<string | null>(null);
   const [ledgerEmail, setLedgerEmail] = useState<string | null>(null);
   const [ledger, setLedger] = useState<CreditTransaction[]>([]);
+  const [creditTarget, setCreditTarget] = useState<User | null>(null);
+  const [creditDelta, setCreditDelta] = useState('');
+  const [creditReason, setCreditReason] =
+    useState<AdminCreditReason>('admin_grant');
+  const [creditNote, setCreditNote] = useState('');
+  const [creditError, setCreditError] = useState<string | null>(null);
+  const [creditSubmitting, setCreditSubmitting] = useState(false);
   const [ledgerLoading, setLedgerLoading] = useState(false);
 
   const fetchUsers = useCallback(async () => {
@@ -102,7 +121,8 @@ export function AdminPage() {
     targetUser: User,
     change: () => Promise<{ user: User }>,
     successMessage: string,
-  ) => {
+    onFailure?: (message: string) => void,
+  ): Promise<boolean> => {
     setProcessingEmail(targetUser.email);
     setActionError(null);
     setActionSuccess(null);
@@ -114,53 +134,79 @@ export function AdminPage() {
       if (ledgerEmail === targetUser.email) {
         await openLedger(targetUser);
       }
+      return true;
     } catch (err) {
-      setActionError(describeError(err, 'Failed to change credits.').message);
+      const { message } = describeError(err, 'Failed to change credits.');
+      if (onFailure) {
+        onFailure(message);
+      } else {
+        setActionError(message);
+      }
+      return false;
     } finally {
       setProcessingEmail(null);
     }
   };
 
-  const handleGrantCredits = async (targetUser: User) => {
-    const entered = window.prompt(
-      `How many credits should be granted to "${targetUser.email}"?`,
-      '20',
-    );
-    if (entered === null) return;
-
-    const amount = Number(entered);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setActionError('A credit grant must be a positive number.');
-      return;
-    }
-
-    const note = window.prompt('Reason for this grant (optional):', '') ?? '';
-    await applyCreditChange(
-      targetUser,
-      () => adminAPI.grantCredits(targetUser.email, amount, note.trim()),
-      `Granted ${amount} credits to "${targetUser.email}".`,
-    );
+  const openCreditModal = (targetUser: User) => {
+    setCreditTarget(targetUser);
+    setCreditDelta('');
+    setCreditReason('admin_grant');
+    setCreditNote('');
+    setCreditError(null);
   };
 
-  const handleAdjustCredits = async (targetUser: User) => {
-    const entered = window.prompt(
-      `Adjust credits for "${targetUser.email}" by how much? Use a negative number to deduct.`,
-      '-5',
-    );
-    if (entered === null) return;
+  const closeCreditModal = () => {
+    setCreditTarget(null);
+    setCreditError(null);
+  };
 
-    const delta = Number(entered);
-    if (!Number.isFinite(delta) || delta === 0) {
-      setActionError('A credit adjustment must be a non-zero number.');
+  useEffect(() => {
+    if (!creditTarget) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeCreditModal();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [creditTarget]);
+
+  const handleCreditSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!creditTarget) return;
+
+    const delta = Number(creditDelta);
+    if (creditDelta.trim() === '' || !Number.isFinite(delta) || delta === 0) {
+      setCreditError('Enter a non-zero number of credits.');
+      return;
+    }
+    if (POSITIVE_ONLY_ADMIN_REASONS.has(creditReason) && delta < 0) {
+      setCreditError(
+        'A grant must add credits. Choose Administrator adjustment to remove them.',
+      );
       return;
     }
 
-    const note = window.prompt('Reason for this adjustment (optional):', '') ?? '';
-    await applyCreditChange(
-      targetUser,
-      () => adminAPI.adjustCredits(targetUser.email, delta, note.trim()),
-      `Adjusted credits for "${targetUser.email}" by ${formatDelta(delta)}.`,
-    );
+    setCreditSubmitting(true);
+    setCreditError(null);
+    try {
+      const succeeded = await applyCreditChange(
+        creditTarget,
+        () =>
+          adminAPI.changeCredits(
+            creditTarget.email,
+            delta,
+            creditReason,
+            creditNote.trim(),
+          ),
+        `Credits for "${creditTarget.email}" changed by ${formatDelta(delta)}.`,
+        (message) => setCreditError(message),
+      );
+      if (succeeded) {
+        setCreditTarget(null);
+      }
+    } finally {
+      setCreditSubmitting(false);
+    }
   };
 
   const handleToggleLedger = async (targetUser: User) => {
@@ -560,7 +606,7 @@ export function AdminPage() {
 
                             <button
                               type="button"
-                              onClick={() => handleGrantCredits(u)}
+                              onClick={() => openCreditModal(u)}
                               disabled={isBusy || u.credits === null}
                               style={{
                                 padding: '6px 12px',
@@ -580,32 +626,7 @@ export function AdminPage() {
                                   : undefined
                               }
                             >
-                              Grant
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleAdjustCredits(u)}
-                              disabled={isBusy || u.credits === null}
-                              style={{
-                                padding: '6px 12px',
-                                borderRadius: '8px',
-                                fontSize: '12px',
-                                fontWeight: 600,
-                                border: '1px solid #e2e8f0',
-                                background: '#ffffff',
-                                color: '#334155',
-                                cursor:
-                                  isBusy || u.credits === null ? 'not-allowed' : 'pointer',
-                                opacity: u.credits === null ? 0.5 : 1,
-                              }}
-                              title={
-                                u.credits === null
-                                  ? 'This account is not metered and holds no balance'
-                                  : undefined
-                              }
-                            >
-                              Adjust
+                              Credits
                             </button>
                           </div>
                         </td>
@@ -699,6 +720,201 @@ export function AdminPage() {
           )}
         </div>
       </div>
+
+      {creditTarget && (
+        <div
+          role="presentation"
+          onClick={closeCreditModal}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+            zIndex: 50,
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="credit-modal-title"
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: 'min(440px, 100%)',
+              background: '#ffffff',
+              borderRadius: '16px',
+              padding: '24px',
+              boxShadow: '0 20px 50px rgba(15, 23, 42, 0.25)',
+            }}
+          >
+            <h2
+              id="credit-modal-title"
+              style={{ margin: 0, fontSize: '18px', color: '#0f172a' }}
+            >
+              Change credits
+            </h2>
+            <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#475569' }}>
+              {creditTarget.email}
+            </p>
+            <p style={{ margin: '2px 0 18px', fontSize: '13px', color: '#475569' }}>
+              Current balance: {creditTarget.credits}
+            </p>
+
+            <form onSubmit={handleCreditSubmit}>
+              <label
+                htmlFor="credit-delta"
+                style={{
+                  display: 'block',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#334155',
+                  marginBottom: '6px',
+                }}
+              >
+                Credit change &mdash; a negative number removes credits
+              </label>
+              <input
+                id="credit-delta"
+                type="number"
+                step="any"
+                inputMode="decimal"
+                autoFocus
+                value={creditDelta}
+                onChange={(event) => setCreditDelta(event.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '14px',
+                  marginBottom: '14px',
+                }}
+              />
+
+              <label
+                htmlFor="credit-reason"
+                style={{
+                  display: 'block',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#334155',
+                  marginBottom: '6px',
+                }}
+              >
+                Reason
+              </label>
+              <select
+                id="credit-reason"
+                value={creditReason}
+                onChange={(event) =>
+                  setCreditReason(event.target.value as AdminCreditReason)
+                }
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '14px',
+                  marginBottom: '14px',
+                  background: '#ffffff',
+                }}
+              >
+                {ADMIN_CREDIT_REASONS.map((reason) => (
+                  <option key={reason} value={reason}>
+                    {reasonLabel(reason)}
+                  </option>
+                ))}
+              </select>
+
+              <label
+                htmlFor="credit-note"
+                style={{
+                  display: 'block',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#334155',
+                  marginBottom: '6px',
+                }}
+              >
+                Note (optional)
+              </label>
+              <textarea
+                id="credit-note"
+                rows={3}
+                maxLength={500}
+                value={creditNote}
+                onChange={(event) => setCreditNote(event.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '14px',
+                  resize: 'vertical',
+                }}
+              />
+
+              {creditError && (
+                <p
+                  role="alert"
+                  style={{
+                    margin: '12px 0 0',
+                    fontSize: '13px',
+                    color: '#b91c1c',
+                  }}
+                >
+                  {creditError}
+                </p>
+              )}
+
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  gap: '8px',
+                  marginTop: '18px',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={closeCreditModal}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    border: '1px solid #e2e8f0',
+                    background: '#ffffff',
+                    color: '#334155',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creditSubmitting}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    border: '1px solid #4f46e5',
+                    background: '#4f46e5',
+                    color: '#ffffff',
+                    cursor: creditSubmitting ? 'not-allowed' : 'pointer',
+                    opacity: creditSubmitting ? 0.6 : 1,
+                  }}
+                >
+                  Apply
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </PageLayout>
   );
 }

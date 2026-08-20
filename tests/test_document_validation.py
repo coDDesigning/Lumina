@@ -35,11 +35,6 @@ EXPECTED_ERRORS = {
         "code": "UPLOAD_FILE_TOO_LARGE",
         "message": "The uploaded file exceeds the configured size limit.",
     },
-    "document_too_complex": {
-        "status_code": 422,
-        "code": "UPLOAD_DOCUMENT_TOO_COMPLEX",
-        "message": "The uploaded document exceeds the configured processing limits.",
-    },
     "course_document_limit": {
         "status_code": 409,
         "code": "UPLOAD_COURSE_DOCUMENT_LIMIT",
@@ -54,21 +49,6 @@ EXPECTED_ERRORS = {
         "status_code": 422,
         "code": "UPLOAD_EMPTY_FILE",
         "message": "The uploaded file is empty.",
-    },
-    "corrupted_pdf": {
-        "status_code": 422,
-        "code": "UPLOAD_CORRUPTED_PDF",
-        "message": "The uploaded PDF is corrupted or invalid.",
-    },
-    "corrupted_text": {
-        "status_code": 422,
-        "code": "UPLOAD_CORRUPTED_TEXT",
-        "message": "The uploaded text file is corrupted or contains binary data.",
-    },
-    "password_protected_pdf": {
-        "status_code": 422,
-        "code": "UPLOAD_PASSWORD_PROTECTED_PDF",
-        "message": "Password-protected PDFs are not supported.",
     },
     "document_required": {
         "status_code": 422,
@@ -123,8 +103,8 @@ def test_configuration_accepts_another_text_extension(
 ) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        '{"supported_file_types":{"rst":'
-        '{"validator":"text","content_type":"text/plain"}}}',
+        '{"supported_file_types":{'
+        '"rst":{"validator":"text","content_type":"text/plain"}}}',
         encoding="utf-8",
     )
     monkeypatch.setattr(validation, "CONFIG_PATH", config_path)
@@ -305,3 +285,36 @@ def test_final_stream_reset_failure_is_safe() -> None:
         validate_basic_upload(upload)
 
     assert raised.value.error_key == "upload_failed"
+
+
+def test_request_time_catalog_contains_only_reachable_keys() -> None:
+    """Every key in UPLOAD_ERRORS must be referenced by reachable code.
+
+    Keys are reachable if they appear as a string argument to
+    DocumentValidationError() in document_validation.py, or as a string
+    argument to _error_response() in routes/document.py.
+    """
+    import ast
+
+    validation_src = Path(validation.__file__).read_text(encoding="utf-8")
+    route_path = (
+        Path(validation.__file__).resolve().parents[1] / "routes" / "document.py"
+    )
+    route_src = route_path.read_text(encoding="utf-8")
+
+    referenced_keys: set[str] = set()
+
+    for source in (validation_src, route_src):
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id in ("DocumentValidationError", "_error_response"):
+                    for arg in node.args:
+                        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                            referenced_keys.add(arg.value)
+
+    catalog_keys = set(validation.UPLOAD_ERRORS.keys())
+    unreachable = catalog_keys - referenced_keys
+    assert not unreachable, (
+        f"Upload error keys not referenced by any reachable code path: {unreachable}"
+    )

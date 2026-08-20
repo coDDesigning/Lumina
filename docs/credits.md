@@ -24,8 +24,7 @@ These are all of them. There are no others.
 |---|---|---|---|
 | Initial grant at registration | Yes | Recorded, not enforced | Yes |
 | Monthly grant, trimmed to a ceiling | Yes | No | Yes |
-| Administrator grant | Yes | No | Yes |
-| Administrator adjustment (may be positive) | Yes | No | Yes |
+| Administrator credit change, either sign | Yes | No | Yes |
 | Purchase with money | No | No | **No** |
 
 **Credit purchase is not supported.** There is no payment provider, no purchase
@@ -41,7 +40,7 @@ otherwise.
 | Do credits expire? | No. |
 | Do unused credits roll over? | Yes, up to the ceiling. |
 | Is there a maximum? | `CREDIT_MAX_BALANCE` (default 100) bounds **automatic granting only**. It never reduces a balance. |
-| What happens at zero? | Generation returns HTTP 402 and no provider is called. |
+| What happens at zero? | Generation returns HTTP 402 and no provider is called. Zero is recoverable; see [Recovering an exhausted account](#recovering-an-exhausted-account). |
 | When is a charge applied? | Before the provider call, after material assembly. |
 | When is a refund issued? | When a charge was taken and the generation then failed. |
 | What does a null balance mean? | The account is not metered. Administrators have always worked this way. |
@@ -83,28 +82,63 @@ accrues nothing until it does.
 
 Granting is idempotent by construction. The unique constraint on
 `(user_id, grant_period)` means concurrent requests cannot both grant, however
-many race.
+many race. The loser of that race sees the same quiet skip as a caller who
+found the row already there: the duplicate is rejected when the row is
+flushed, and the whole attempt is rolled back rather than surfacing.
 
 **Eligibility.** Active, metered, non-banned accounts. A banned account is
 skipped and receives nothing for the months it stays banned.
 
-### Administrator grant and adjustment
+### Administrator credit changes
 
-| Operation | Endpoint | Sign | Ledger reason |
-|---|---|---|---|
-| Grant | `POST /api/admin/users/{email}/credits/grant` | Positive only | `admin_grant` |
-| Adjust | `POST /api/admin/users/{email}/credits/adjust` | Either | `admin_adjustment` |
+One endpoint moves a balance in either direction:
 
-Both take an optional `note` for human context, kept separate from the
-machine-readable `reason` so history stays aggregatable.
+```
+POST /api/admin/users/{email}/credits
+{ "delta": 25, "reason": "support_compensation", "note": "Outage INC-123" }
+```
+
+There is no separate grant route and no separate adjust route. They differed
+only by the reason the URL implied, and a reason the caller states is more
+honest than one inferred from a path. There is also no set-balance operation:
+every ledger row is an actual delta, so `delta: 60` is how a balance of 40
+becomes 100.
+
+`reason` is mandatory and drawn from exactly these values:
+
+| Reason | Sign | Meaning |
+|---|---|---|
+| `admin_grant` | Positive only | A deliberate allowance |
+| `support_compensation` | Positive only | Goodwill for a failure the platform caused |
+| `admin_adjustment` | Either, never zero | A correction |
+
+`note` stays optional and free-form. Keeping it separate from the
+machine-readable `reason` is what lets history be aggregated: every
+compensation is still findable as a compensation once the prose is forgotten.
 
 The actor is taken from the authenticated administrator and is never read from
 the request body, so a manual change always answers who received the credits,
 who changed them, when, why, and how much.
 
-Neither is bounded by `CREDIT_MAX_BALANCE`: both are deliberate acts. Both are
-rejected against an account with a null balance, because there is no balance to
-change.
+The request is refused whole, changing neither the balance nor the ledger,
+when:
+
+| Condition | Status |
+|---|---|
+| Not authenticated | 401 |
+| Not an administrator | 403 |
+| No account with that email | 404 |
+| Zero, non-finite, wrong-signed, or unnamed reason | 422 |
+| Metering disabled, unmetered account, or a result below zero | 400 |
+
+`delta` must be finite. JSON admits `Infinity` and `NaN`; a balance must not,
+because either passes the below-zero guard and leaves an account that can
+never be charged again.
+
+A manual change is **not** bounded by `CREDIT_MAX_BALANCE`, and there is no
+ceiling on a single change: it is a deliberate act by a trusted operator, and
+the ledger names who made it. A banned account can still be credited, because
+unbanning should not also require re-granting.
 
 This is account-level credit administration. It confers no authority over
 another owner's course workspace, where administrators remain read-only.
@@ -120,6 +154,28 @@ A refund carries `refunds_transaction_id` pointing at the charge it reverses,
 and that column is unique, so **a charge can be refunded at most once** even if a
 failure handler runs twice. Refunds are not trimmed to the ceiling: they return
 credit the account already held.
+
+## Recovering an exhausted account
+
+A balance of zero is not a dead end. There are exactly two ways out, and no
+others.
+
+**Wait for the next month.** The monthly grant is lazy, so it lands on the
+account's next charge or balance read in a new period. Nobody has to intervene
+and no scheduler has to have run. The cost of this route is its latency: an
+account that spends its allowance early waits out the rest of the month.
+
+**Ask an administrator.** A credit change applies immediately, in any amount,
+and names the administrator who made it. This is the support path for an
+account that cannot wait, and the only one that works within the month the
+allowance ran out.
+
+Neither route rewrites history. Both leave a row explaining the recovery, and
+the balance still equals the sum of the deltas on either side of it.
+
+A banned account is not replenished by the first route, so unbanning is what
+restores it; the second route still works, because a suspension is not a
+statement about what the account is owed.
 
 ## Self-hosted deployments
 
@@ -192,6 +248,7 @@ the ledger's shape needs to change for that.
 | `generation_charge` | − | user | An AI generation was paid for |
 | `generation_refund` | + | system | A paid-for generation failed |
 | `admin_grant` | + | admin | Deliberate support grant |
+| `support_compensation` | + | admin | Goodwill for a failure the platform caused |
 | `admin_adjustment` | ± | admin | Deliberate correction |
 | `metering_reset` | ± | system | Re-baseline after an account re-enters metering |
 | `migration_reconciliation` | + | migration | Legacy balance baseline |
@@ -236,6 +293,7 @@ direction.
 | `GET /api/users/me/credits` | The account itself. Evaluates the monthly grant first. |
 | `GET /api/users/me/credit-transactions` | The account itself. Newest first. |
 | `GET /api/admin/users/{email}/credit-transactions` | Administrators, read-only. |
+| `POST /api/admin/users/{email}/credits` | Administrators. The only manual write. |
 
 `users.credits` remains the fast current balance that product surfaces read. The
 ledger is the authority for audit and reconciliation. Summing thousands of rows

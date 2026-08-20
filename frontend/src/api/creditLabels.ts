@@ -1,4 +1,4 @@
-import type { CreditTransaction } from './types';
+import type { AdminCreditReason, CreditTransaction } from './types';
 
 const REASON_LABELS: Record<string, string> = {
   initial_grant: 'Welcome credits',
@@ -6,6 +6,7 @@ const REASON_LABELS: Record<string, string> = {
   generation_charge: 'AI generation',
   generation_refund: 'Refund',
   admin_grant: 'Administrator grant',
+  support_compensation: 'Support compensation',
   admin_adjustment: 'Administrator adjustment',
   metering_reset: 'Balance re-baselined',
   migration_reconciliation: 'Opening balance',
@@ -20,6 +21,15 @@ const SOURCE_LABELS: Record<string, string> = {
   course_qa: 'Course Q&A',
   prompt_generator: 'Prompt generator',
 };
+
+export const ADMIN_CREDIT_REASONS: readonly AdminCreditReason[] = [
+  'admin_grant',
+  'support_compensation',
+  'admin_adjustment',
+];
+
+export const POSITIVE_ONLY_ADMIN_REASONS: ReadonlySet<AdminCreditReason> =
+  new Set<AdminCreditReason>(['admin_grant', 'support_compensation']);
 
 export function reasonLabel(reason: string): string {
   return REASON_LABELS[reason] ?? reason.replace(/_/g, ' ');

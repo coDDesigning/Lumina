@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.database import SessionLocal
+from backend.app.observability import configure_logging, emit_emf_metrics
 from backend.app.readiness import ReadinessError, check_readiness
 from services.document_embedding import (
     EMBEDDING_STAGE,
@@ -34,6 +35,7 @@ from services.processing_jobs import (
     complete_job,
     fail_job,
     heartbeat_job,
+    processing_queue_metrics,
     recover_expired_jobs,
     replace_document_pages,
     update_job_stage,
@@ -383,6 +385,7 @@ def process_next_job(
         )
     if job is None:
         return False
+    processing_started = time.monotonic()
 
     stop = threading.Event()
     claim_lost = threading.Event()
@@ -463,6 +466,10 @@ def process_next_job(
                 _record_failure(session_factory, job, exc)
             except Exception:
                 logger.exception("Failed to record processing error for job %s", job.id)
+        emit_emf_metrics(
+            {"JobsRetried" if exc.retryable else "JobsFailed": 1},
+            dimensions={"Service": "worker", "Environment": settings.app_env},
+        )
         return True
     except Exception:
         logger.exception("Unexpected processing failure for job %s", job.id)
@@ -480,6 +487,10 @@ def process_next_job(
                 )
             except Exception:
                 logger.exception("Failed to record processing error for job %s", job.id)
+        emit_emf_metrics(
+            {"JobsRetried": 1},
+            dimensions={"Service": "worker", "Environment": settings.app_env},
+        )
         return True
 
     if not _stop_heartbeat(stop, heartbeat, claim_lost) or claim_lost.is_set():
@@ -510,6 +521,17 @@ def process_next_job(
         return True
     if not completed:
         logger.info("Processing claim was lost before job %s completed", job.id)
+    else:
+        emit_emf_metrics(
+            {
+                "JobsSucceeded": 1,
+                "ProcessingDurationMs": round(
+                    (time.monotonic() - processing_started) * 1000, 3
+                ),
+            },
+            dimensions={"Service": "worker", "Environment": settings.app_env},
+            units={"ProcessingDurationMs": "Milliseconds"},
+        )
     return True
 
 
@@ -579,6 +601,22 @@ def run_worker(
                         logger.info(
                             "Recovered %s expired processing jobs", recovered_total
                         )
+                    with session_factory() as session:
+                        queue = processing_queue_metrics(session)
+                    emit_emf_metrics(
+                        {
+                            "QueuedJobs": queue.queued,
+                            "RunningJobs": queue.running,
+                            "FailedJobs": queue.failed,
+                            "OldestQueuedAgeSeconds": queue.oldest_queued_age_seconds,
+                            "RecoveredJobs": recovered_total,
+                        },
+                        dimensions={
+                            "Service": "worker",
+                            "Environment": settings.app_env,
+                        },
+                        units={"OldestQueuedAgeSeconds": "Seconds"},
+                    )
                 except Exception:
                     logger.exception("Failed to recover expired processing jobs")
                 next_recovery = (
@@ -629,7 +667,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--worker-id", help="stable identifier shown in job leases")
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO)
+    configure_logging(service="worker", environment=settings.app_env)
     if args.check:
         try:
             check_worker_ready()

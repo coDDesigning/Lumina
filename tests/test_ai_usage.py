@@ -131,6 +131,7 @@ def test_logger_is_resilient_to_database_errors(
             success=True,
         )
         assert result is None
+        assert session.scalar(select(User.id).where(User.id == user.id)) == user.id
 
 
 def test_logger_skips_when_user_id_missing(

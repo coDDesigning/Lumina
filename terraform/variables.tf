@@ -182,3 +182,9 @@ variable "runtime_secrets" {
   default     = {}
   sensitive   = true
 }
+
+variable "alarm_email" {
+  description = "Optional email subscribed to production alarms. Confirmation is required."
+  type        = string
+  default     = ""
+}

@@ -144,6 +144,21 @@ module "github_oidc" {
   tags                   = local.tags
 }
 
+module "observability" {
+  source                  = "./modules/observability"
+  name_prefix             = local.name_prefix
+  environment             = var.environment
+  alarm_email             = var.alarm_email
+  alb_arn_suffix          = module.alb.arn_suffix
+  target_group_arn_suffix = module.alb.target_group_arn_suffix
+  ecs_cluster_name        = module.ecs.cluster_name
+  api_service_name        = module.ecs.api_service_name
+  worker_service_name     = module.ecs.worker_service_name
+  rds_instance_identifier = module.rds.instance_identifier
+  rds_proxy_name          = module.rds_proxy.name
+  tags                    = local.tags
+}
+
 moved {
   from = module.ecs.aws_security_group.this
   to   = module.security.aws_security_group.this

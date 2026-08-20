@@ -113,7 +113,7 @@ describe('adminAPI', () => {
     );
   });
 
-  it('grants credits and returns the new balance with its ledger row', async () => {
+  it('changes credits and returns the new balance with its ledger row', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       jsonResponse({
         success: true,
@@ -126,9 +126,10 @@ describe('adminAPI', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await adminAPI.grantCredits(
+    const result = await adminAPI.changeCredits(
       'user@example.com',
       20,
+      'admin_grant',
       'Support adjustment',
     );
 
@@ -136,10 +137,14 @@ describe('adminAPI', () => {
     expect(result.transaction.reason).toBe('admin_grant');
     expect(result.transaction.actor_label).toBe('admin@example.com');
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/admin/users/user%40example.com/credits/grant',
+      '/api/admin/users/user%40example.com/credits',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ amount: 20, note: 'Support adjustment' }),
+        body: JSON.stringify({
+          delta: 20,
+          reason: 'admin_grant',
+          note: 'Support adjustment',
+        }),
       }),
     );
   });
@@ -157,14 +162,22 @@ describe('adminAPI', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await adminAPI.adjustCredits('user@example.com', -5);
+    const result = await adminAPI.changeCredits(
+      'user@example.com',
+      -5,
+      'admin_adjustment',
+    );
 
     expect(result.transaction.delta).toBe(-5);
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/admin/users/user%40example.com/credits/adjust',
+      '/api/admin/users/user%40example.com/credits',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ delta: -5, note: null }),
+        body: JSON.stringify({
+          delta: -5,
+          reason: 'admin_adjustment',
+          note: null,
+        }),
       }),
     );
   });

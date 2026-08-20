@@ -6,63 +6,39 @@ The invariant helper is the thread running through them.
 """
 
 from dataclasses import replace
+from typing import get_args
 
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.models import CreditTransaction, User
-from schemas.credits import CreditActorType, CreditReason
+from main import app
+from schemas.credits import (
+    ADMIN_CREDIT_REASONS,
+    CreditActorType,
+    CreditChangeRequest,
+    CreditReason,
+)
 from schemas.user import UserUpdate
 from services import credits as credits_service
 from services.credits import ChargeReceipt, CreditActor, CreditService
 from services.user import UserService
-from tests.conftest import set_credit_policy
+from tests.conftest import (
+    assert_balance_is_derivable,
+    rows,
+    set_balance,
+    set_credit_policy,
+)
 from utils.exceptions import BadRequestException
 
-
-def ledger_sum(session: Session, user_id: int) -> float:
-    return (
-        session.scalar(
-            select(func.coalesce(func.sum(CreditTransaction.delta), 0.0)).where(
-                CreditTransaction.user_id == user_id
-            )
-        )
-        or 0.0
-    )
+CREDITS_URL = "/api/admin/users/owner-a@example.com/credits"
 
 
-def assert_balance_is_derivable(session: Session, user_id: int) -> None:
-    """The invariant: a metered balance equals the sum of its deltas."""
-    user = session.get(User, user_id)
-    assert user is not None
-    if user.credits is None:
-        return
-    assert user.credits == pytest.approx(ledger_sum(session, user_id))
-
-
-def rows(session: Session, user_id: int, reason: CreditReason | None = None):
-    statement = select(CreditTransaction).where(CreditTransaction.user_id == user_id)
-    if reason is not None:
-        statement = statement.where(CreditTransaction.reason == reason.value)
-    return list(session.scalars(statement.order_by(CreditTransaction.id)).all())
-
-
-def set_balance(session_factory: sessionmaker[Session], user_id: int, balance: float):
-    """Move a balance the way a support correction would, ledger included."""
-    with session_factory() as session:
-        user = session.get(User, user_id)
-        delta = balance - (user.credits or 0.0)
-        if delta:
-            CreditService.adjust(
-                session,
-                user_id,
-                delta,
-                actor=CreditActor.admin(user_id, "fixture@example.com"),
-                note="Test balance setup",
-            )
+def total_rows(session: Session) -> int:
+    return session.scalar(select(func.count()).select_from(CreditTransaction)) or 0
 
 
 def test_registration_grants_credits_and_records_why(authz_api):
@@ -231,11 +207,12 @@ def test_concurrent_charges_cannot_overspend(authz_api):
 
 
 def test_an_administrator_grant_names_the_administrator(authz_api):
+    """The audit answers who was credited, by whom, why, how much, and when."""
     set_balance(authz_api.session_factory, authz_api.user_a_id, 5.0)
 
     response = authz_api.client.post(
-        "/api/admin/users/owner-a@example.com/credits/grant",
-        json={"amount": 20, "note": "Support adjustment"},
+        CREDITS_URL,
+        json={"delta": 20, "reason": "admin_grant", "note": "Support adjustment"},
         headers=authz_api.authorization_admin,
     )
     assert response.status_code == 200
@@ -243,20 +220,24 @@ def test_an_administrator_grant_names_the_administrator(authz_api):
 
     with authz_api.session_factory() as session:
         grant = rows(session, authz_api.user_a_id, CreditReason.ADMIN_GRANT)[-1]
+        assert grant.user_id == authz_api.user_a_id
         assert grant.delta == 20.0
         assert grant.balance_after == 25.0
+        assert grant.reason == CreditReason.ADMIN_GRANT.value
         assert grant.actor_type == CreditActorType.ADMIN.value
         assert grant.actor_user_id == authz_api.admin_id
         assert grant.actor_label == "authz-admin@example.com"
         assert grant.note == "Support adjustment"
+        assert grant.created_at is not None
+        assert response.json()["data"]["transaction"]["id"] == grant.id
         assert_balance_is_derivable(session, authz_api.user_a_id)
 
 
 def test_an_administrator_grant_may_exceed_the_automatic_ceiling(authz_api):
     """The ceiling bounds automatic granting, not a deliberate support decision."""
     response = authz_api.client.post(
-        "/api/admin/users/owner-a@example.com/credits/grant",
-        json={"amount": 500},
+        CREDITS_URL,
+        json={"delta": 500, "reason": "admin_grant"},
         headers=authz_api.authorization_admin,
     )
 
@@ -268,8 +249,8 @@ def test_a_negative_adjustment_reduces_the_balance(authz_api):
     set_balance(authz_api.session_factory, authz_api.user_a_id, 25.0)
 
     response = authz_api.client.post(
-        "/api/admin/users/owner-a@example.com/credits/adjust",
-        json={"delta": -5, "note": "Correction"},
+        CREDITS_URL,
+        json={"delta": -5, "reason": "admin_adjustment", "note": "Correction"},
         headers=authz_api.authorization_admin,
     )
 
@@ -286,8 +267,8 @@ def test_an_adjustment_below_zero_is_rejected_whole(authz_api):
         before = len(rows(session, authz_api.user_a_id))
 
     response = authz_api.client.post(
-        "/api/admin/users/owner-a@example.com/credits/adjust",
-        json={"delta": -5},
+        CREDITS_URL,
+        json={"delta": -5, "reason": "admin_adjustment"},
         headers=authz_api.authorization_admin,
     )
 
@@ -300,8 +281,8 @@ def test_an_adjustment_below_zero_is_rejected_whole(authz_api):
 def test_an_unmetered_account_cannot_be_granted_credits(authz_api):
     """An administrator holds no balance, so there is nothing to grant into."""
     response = authz_api.client.post(
-        "/api/admin/users/authz-admin@example.com/credits/grant",
-        json={"amount": 10},
+        "/api/admin/users/authz-admin@example.com/credits",
+        json={"delta": 10, "reason": "admin_grant"},
         headers=authz_api.authorization_admin,
     )
 
@@ -313,8 +294,8 @@ def test_an_unmetered_account_cannot_be_granted_credits(authz_api):
 
 def test_a_zero_adjustment_is_refused(authz_api):
     response = authz_api.client.post(
-        "/api/admin/users/owner-a@example.com/credits/adjust",
-        json={"delta": 0},
+        CREDITS_URL,
+        json={"delta": 0, "reason": "admin_adjustment"},
         headers=authz_api.authorization_admin,
     )
     assert response.status_code == 422
@@ -322,8 +303,8 @@ def test_a_zero_adjustment_is_refused(authz_api):
 
 def test_credit_administration_requires_an_administrator(authz_api):
     response = authz_api.client.post(
-        "/api/admin/users/owner-b@example.com/credits/grant",
-        json={"amount": 10},
+        "/api/admin/users/owner-b@example.com/credits",
+        json={"delta": 10, "reason": "admin_grant"},
         headers=authz_api.authorization_a,
     )
     assert response.status_code == 403
@@ -487,8 +468,8 @@ def test_a_deployment_without_metering_refuses_administration(
     )
 
     response = authz_api.client.post(
-        "/api/admin/users/owner-a@example.com/credits/grant",
-        json={"amount": 10},
+        CREDITS_URL,
+        json={"delta": 10, "reason": "admin_grant"},
         headers=authz_api.authorization_admin,
     )
 
@@ -610,15 +591,34 @@ def test_a_charge_must_be_positive(authz_api):
         assert rows(session, authz_api.user_a_id, CreditReason.GENERATION_CHARGE) == []
 
 
-def test_a_grant_must_be_positive(authz_api):
+def test_the_service_refuses_a_negative_delta_for_a_positive_only_reason(authz_api):
     with authz_api.session_factory() as session:
         with pytest.raises(BadRequestException):
-            CreditService.grant(
+            CreditService.apply_admin_change(
                 session,
                 authz_api.user_a_id,
                 -5.0,
+                reason=CreditReason.ADMIN_GRANT,
                 actor=CreditActor.admin(authz_api.admin_id, "a@example.com"),
             )
+        assert session.get(User, authz_api.user_a_id).credits == 50.0
+        assert rows(session, authz_api.user_a_id, CreditReason.ADMIN_GRANT) == []
+
+
+def test_the_service_refuses_a_reason_outside_administration(authz_api):
+    """The single writer guards its own rules rather than trusting its caller."""
+    with authz_api.session_factory() as session:
+        before = len(rows(session, authz_api.user_a_id))
+        with pytest.raises(BadRequestException):
+            CreditService.apply_admin_change(
+                session,
+                authz_api.user_a_id,
+                5.0,
+                reason=CreditReason.GENERATION_CHARGE,
+                actor=CreditActor.admin(authz_api.admin_id, "a@example.com"),
+            )
+        assert session.get(User, authz_api.user_a_id).credits == 50.0
+        assert len(rows(session, authz_api.user_a_id)) == before
 
 
 def test_refunding_an_exempt_receipt_does_nothing(authz_api):
@@ -656,6 +656,281 @@ def test_the_profile_update_path_cannot_move_a_balance(authz_api):
 def test_every_ledger_reason_is_one_the_policy_supports(authz_api):
     """The enum reflects the implemented lifecycle, so purchase is absent."""
     assert "purchase" not in {reason.value for reason in CreditReason}
+    assert CreditReason.SUPPORT_COMPENSATION in ADMIN_CREDIT_REASONS
+    assert ADMIN_CREDIT_REASONS == {
+        CreditReason.ADMIN_GRANT,
+        CreditReason.SUPPORT_COMPENSATION,
+        CreditReason.ADMIN_ADJUSTMENT,
+    }
+
+
+def test_the_request_offers_exactly_the_administrative_reasons(authz_api):
+    """The published contract and the service rule cannot drift apart."""
+    published = set(get_args(CreditChangeRequest.model_fields["reason"].annotation))
+    assert published == ADMIN_CREDIT_REASONS
+
+
+def test_credit_administration_requires_authentication(authz_api):
+    with authz_api.session_factory() as session:
+        before = total_rows(session)
+
+    response = authz_api.client.post(
+        CREDITS_URL, json={"delta": 10, "reason": "admin_grant"}
+    )
+
+    assert response.status_code == 401
+    with authz_api.session_factory() as session:
+        assert total_rows(session) == before
+
+
+def test_a_user_cannot_change_their_own_balance(authz_api):
+    """An exhausted account cannot replenish itself by calling the admin route."""
+    with authz_api.session_factory() as session:
+        before = len(rows(session, authz_api.user_a_id))
+
+    response = authz_api.client.post(
+        CREDITS_URL,
+        json={"delta": 50, "reason": "admin_grant"},
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 403
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 50.0
+        assert len(rows(session, authz_api.user_a_id)) == before
+
+
+def test_a_credit_change_must_name_a_reason(authz_api):
+    """An unexplained balance change is not auditable, so it is not accepted."""
+    with authz_api.session_factory() as session:
+        before = len(rows(session, authz_api.user_a_id))
+
+    response = authz_api.client.post(
+        CREDITS_URL,
+        json={"delta": 10},
+        headers=authz_api.authorization_admin,
+    )
+
+    assert response.status_code == 422
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 50.0
+        assert len(rows(session, authz_api.user_a_id)) == before
+
+
+@pytest.mark.parametrize("reason", ["admin_grant", "support_compensation"])
+def test_a_positive_only_reason_refuses_a_negative_delta(authz_api, reason: str):
+    with authz_api.session_factory() as session:
+        before = len(rows(session, authz_api.user_a_id))
+
+    response = authz_api.client.post(
+        CREDITS_URL,
+        json={"delta": -5, "reason": reason},
+        headers=authz_api.authorization_admin,
+    )
+
+    assert response.status_code == 422
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 50.0
+        assert len(rows(session, authz_api.user_a_id)) == before
+
+
+def test_support_compensation_is_recorded_under_its_own_reason(authz_api):
+    """Goodwill stays queryable as goodwill rather than blurring into a grant."""
+    response = authz_api.client.post(
+        CREDITS_URL,
+        json={
+            "delta": 10,
+            "reason": "support_compensation",
+            "note": "Outage INC-123",
+        },
+        headers=authz_api.authorization_admin,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["user"]["credits"] == 60.0
+
+    with authz_api.session_factory() as session:
+        compensations = rows(
+            session, authz_api.user_a_id, CreditReason.SUPPORT_COMPENSATION
+        )
+        assert len(compensations) == 1
+        assert compensations[0].delta == 10.0
+        assert compensations[0].actor_type == CreditActorType.ADMIN.value
+        assert compensations[0].actor_user_id == authz_api.admin_id
+        assert compensations[0].note == "Outage INC-123"
+        assert rows(session, authz_api.user_a_id, CreditReason.ADMIN_GRANT) == []
+        assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
+def test_a_reason_outside_administration_is_refused(authz_api):
+    """A charge is something the platform does, never something an admin files."""
+    with authz_api.session_factory() as session:
+        before = len(rows(session, authz_api.user_a_id))
+
+    response = authz_api.client.post(
+        CREDITS_URL,
+        json={"delta": -1, "reason": "generation_charge"},
+        headers=authz_api.authorization_admin,
+    )
+
+    assert response.status_code == 422
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 50.0
+        assert len(rows(session, authz_api.user_a_id)) == before
+
+
+def test_a_credit_change_for_an_unknown_account_writes_nothing(authz_api):
+    with authz_api.session_factory() as session:
+        before = total_rows(session)
+
+    response = authz_api.client.post(
+        "/api/admin/users/nobody@example.com/credits",
+        json={"delta": 10, "reason": "admin_grant"},
+        headers=authz_api.authorization_admin,
+    )
+
+    assert response.status_code == 404
+    with authz_api.session_factory() as session:
+        assert total_rows(session) == before
+
+
+@pytest.mark.parametrize("literal", ["Infinity", "-Infinity", "NaN"])
+def test_a_non_finite_delta_is_refused(authz_api, literal: str):
+    """JSON admits Infinity and NaN; a balance must not.
+
+    A balance of infinity, or one poisoned by NaN, passes every comparison the
+    below-zero guard makes and leaves the account unable to be charged again.
+    The contract rejects the value before it can reach the column.
+    """
+    with authz_api.session_factory() as session:
+        before = len(rows(session, authz_api.user_a_id))
+
+    response = authz_api.client.post(
+        CREDITS_URL,
+        content=f'{{"delta": {literal}, "reason": "admin_adjustment"}}',
+        headers={**authz_api.authorization_admin, "content-type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 50.0
+        assert len(rows(session, authz_api.user_a_id)) == before
+
+
+def test_the_credit_routes_do_not_shadow_each_other(authz_api):
+    """A greedy email path must not swallow the suffix that follows it."""
+    changed = authz_api.client.post(
+        CREDITS_URL,
+        json={"delta": 10, "reason": "admin_grant"},
+        headers=authz_api.authorization_admin,
+    )
+    assert changed.status_code == 200
+
+    history = authz_api.client.get(
+        "/api/admin/users/owner-a@example.com/credit-transactions",
+        headers=authz_api.authorization_admin,
+    )
+    assert history.status_code == 200
+    assert any(
+        row["reason"] == CreditReason.ADMIN_GRANT.value
+        for row in history.json()["data"]
+    )
+
+    published = set(app.openapi()["paths"])
+    assert "/api/admin/users/{email}/credits" in published
+    assert "/api/admin/users/{email}/credit-transactions" in published
+    assert "/api/admin/users/{email}/credits/grant" not in published
+    assert "/api/admin/users/{email}/credits/adjust" not in published
+
+
+def test_the_credit_change_endpoint_documents_its_failures(authz_api):
+    """Every way this route can refuse is discoverable from its schema."""
+    operation = app.openapi()["paths"]["/api/admin/users/{email}/credits"]["post"]
+    assert set(operation["responses"]) == {"200", "400", "401", "403", "404", "422"}
+
+    schema = app.openapi()["components"]["schemas"]["CreditChangeRequest"]
+    assert set(schema["required"]) == {"delta", "reason"}
+    assert schema["properties"]["reason"]["enum"] == [
+        CreditReason.ADMIN_GRANT.value,
+        CreditReason.SUPPORT_COMPENSATION.value,
+        CreditReason.ADMIN_ADJUSTMENT.value,
+    ]
+
+
+def test_a_failed_ledger_write_rolls_an_administrator_change_back(
+    authz_api, monkeypatch: pytest.MonkeyPatch
+):
+    """The consolidated admin path keeps the balance and the ledger together."""
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("ledger unavailable")
+
+    monkeypatch.setattr(CreditService, "_record", staticmethod(explode))
+
+    with authz_api.session_factory() as session:
+        with pytest.raises(RuntimeError):
+            CreditService.apply_admin_change(
+                session,
+                authz_api.user_a_id,
+                25.0,
+                reason=CreditReason.ADMIN_GRANT,
+                actor=CreditActor.admin(authz_api.admin_id, "admin@example.com"),
+            )
+        session.rollback()
+
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 50.0
+        assert rows(session, authz_api.user_a_id, CreditReason.ADMIN_GRANT) == []
+        assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
+def test_the_database_refuses_a_second_grant_for_one_period(authz_api):
+    """The period uniqueness guard holds even if the service check is bypassed."""
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 10.0)
+    _clear_period_rows(authz_api)
+
+    with authz_api.session_factory() as session:
+        CreditService.ensure_current_period_grant(session, authz_api.user_a_id)
+
+    with authz_api.session_factory() as session:
+        duplicate = CreditTransaction(
+            user_id=authz_api.user_a_id,
+            delta=settings.credit_periodic_grant,
+            balance_after=110.0,
+            reason=CreditReason.PERIODIC_GRANT.value,
+            actor_type=CreditActorType.SYSTEM.value,
+            grant_period=credits_service.current_grant_period(),
+        )
+        session.add(duplicate)
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_a_racing_replenishment_is_absorbed_by_the_period_constraint(
+    authz_api, monkeypatch: pytest.MonkeyPatch
+):
+    """Two workers both believing a grant is owed still deliver it once.
+
+    The pre-check is an optimisation, not the guarantee. Blinding it is what
+    makes the race the constraint actually defends against observable, rather
+    than one the second caller quietly opts out of.
+    """
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 10.0)
+    _clear_period_rows(authz_api)
+
+    monkeypatch.setattr(
+        CreditService, "_period_grant_id", staticmethod(lambda *a, **k: None)
+    )
+
+    for _ in range(2):
+        with authz_api.session_factory() as session:
+            CreditService.ensure_current_period_grant(session, authz_api.user_a_id)
+
+    with authz_api.session_factory() as session:
+        periodic = rows(session, authz_api.user_a_id, CreditReason.PERIODIC_GRANT)
+        assert len(periodic) == 1
+        assert session.get(User, authz_api.user_a_id).credits == 60.0
+        assert_balance_is_derivable(session, authz_api.user_a_id)
 
 
 def _clear_period_rows(authz_api) -> None:

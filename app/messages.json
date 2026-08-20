@@ -15,11 +15,6 @@
       "code": "UPLOAD_FILE_TOO_LARGE",
       "message": "The uploaded file exceeds the configured size limit."
     },
-    "document_too_complex": {
-      "status_code": 422,
-      "code": "UPLOAD_DOCUMENT_TOO_COMPLEX",
-      "message": "The uploaded document exceeds the configured processing limits."
-    },
     "course_document_limit": {
       "status_code": 409,
       "code": "UPLOAD_COURSE_DOCUMENT_LIMIT",
@@ -34,21 +29,6 @@
       "status_code": 422,
       "code": "UPLOAD_EMPTY_FILE",
       "message": "The uploaded file is empty."
-    },
-    "corrupted_pdf": {
-      "status_code": 422,
-      "code": "UPLOAD_CORRUPTED_PDF",
-      "message": "The uploaded PDF is corrupted or invalid."
-    },
-    "corrupted_text": {
-      "status_code": 422,
-      "code": "UPLOAD_CORRUPTED_TEXT",
-      "message": "The uploaded text file is corrupted or contains binary data."
-    },
-    "password_protected_pdf": {
-      "status_code": 422,
-      "code": "UPLOAD_PASSWORD_PROTECTED_PDF",
-      "message": "Password-protected PDFs are not supported."
     },
     "document_required": {
       "status_code": 422,

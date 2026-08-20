@@ -1,16 +1,20 @@
 # Deployment readiness
 
-Lumina's API and durable document processor support production only in
-`self_hosted` mode with SQLite and local filesystem document storage. The root
-`Dockerfile` and `docker-compose.yml` are the supported single-host container
-path for that mode. The separate `docker-compose.hosted.yml` remains an
-experimental development artifact and must not be used for production.
+Lumina's API and durable document processor support production in two container
+topologies, both built from the same image:
 
-The relational contract is tested against PostgreSQL 17.8 in CI, on a
-pgvector-enabled image, but hosted and PostgreSQL production remain blocked until
-durable shared storage and deployment topology are qualified. Chunk embeddings
-are stored and indexed (see `docs/vector_storage.md`); vector *retrieval* is not
-implemented or production-qualified.
+- `self_hosted` with SQLite, local filesystem document storage, and Chroma
+  vectors, via the root `Dockerfile` and `docker-compose.yml`; and
+- `hosted` with PostgreSQL, S3-compatible document storage, and pgvector
+  vectors, via `docker-compose.hosted.yml`.
+
+The relational contract is tested against PostgreSQL 17.8 in CI on a
+pgvector-enabled image, and the hosted topology is exercised live against
+pinned MinIO and pgvector containers before it is shipped. Chunk embeddings are
+stored, indexed, and searchable behind course isolation in both backends (see
+`docs/vector_storage.md`). Hosted production fails at startup unless
+`STORAGE_BACKEND=s3` provides durable shared storage; a single instance's local
+disk never qualifies.
 
 ## Container architecture
 
@@ -23,7 +27,7 @@ The production image:
 - keeps application files root-owned and non-writable; and
 - uses an inert entrypoint that never applies migrations.
 
-Compose runs three roles from that image:
+Compose runs three roles from that image in both topologies:
 
 | Service | Responsibility | Expected state |
 | --- | --- | --- |
@@ -66,6 +70,120 @@ available for inspection. Keep ingress closed until the command succeeds and
 `migrate` is exited with code 0 while both `api` and `worker` are healthy.
 Register `BOOTSTRAP_ADMIN_EMAIL` with the configured token in the
 `X-Bootstrap-Token` header over a trusted route before opening public ingress.
+
+## Hosted topology
+
+`docker-compose.hosted.yml` runs the same three roles against PostgreSQL and an
+S3-compatible object store, using the same pinned production image:
+
+| Service | Responsibility | Expected state |
+| --- | --- | --- |
+| `db` | pgvector-enabled PostgreSQL | Running and healthy |
+| `minio` | S3-compatible document storage | Running |
+| `minio-init` | Create `S3_BUCKET` once | Exited with code 0 |
+| `migrate` | Apply `alembic upgrade head` once | Exited with code 0 |
+| `api` | Serve HTTP and readiness probes | Running and healthy |
+| `worker` | Claim and process durable document jobs | Running and healthy |
+
+The stack requires `COMPOSE_PROJECT_NAME`, `STORAGE_NAMESPACE`,
+`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `JWT_SECRET_KEY`,
+`BOOTSTRAP_ADMIN_EMAIL`, and `BOOTSTRAP_ADMIN_TOKEN` from `.env`. The MinIO
+root user and password are the S3 access and secret keys, so keep both values
+secret and at least as strong as the JWT secret. `S3_BUCKET` defaults to
+`lumina` and is created by `minio-init`; never point an existing stack at a new
+namespace or bucket, because jobs for the prior provider identity are stranded.
+
+The API and worker healthchecks gate MinIO startup: the readiness probe runs a
+temporary S3 write/read/delete cycle (`check_ready`), so a stack started before
+MinIO serves retries until the bucket answers, and `docker compose up --wait`
+fails if the bucket never becomes writable. The MinIO image has no shell, so it
+declares no container healthcheck of its own.
+
+For a real AWS deployment, keep the same environment except:
+`S3_ENDPOINT_URL` and `S3_FORCE_PATH_STYLE` are removed, `S3_REGION` is set to
+the bucket's region, static credentials are optional (prefer an IAM role for the
+EC2 instance or ECS task), and the bucket is provisioned outside the stack
+(`minio`/`minio-init` services are not used).
+
+## AWS production topology (Terraform)
+
+The `terraform/` configuration provisions the hosted production topology on
+AWS and is the supported way to run Lumina in the cloud. It builds the same
+image (`Dockerfile`) and runs the same three roles:
+
+| Resource | Provisioned by Terraform |
+| --- | --- |
+| VPC | Public/private subnets, one NAT gateway, route tables |
+| ECR | `lumina` repository (immutable tags, scan on push, keep 20 images) |
+| S3 | Document bucket (versioned, encrypted, TLS-only policy) |
+| RDS | PostgreSQL 16 with pgvector preloaded; `DATABASE_URL` in Secrets Manager |
+| ECS | Fargate `api` + `worker` services, one-off `migrate` task definition |
+| ALB | HTTPS (ACM) listener, HTTP-to-HTTPS redirect, `/health/ready` target check |
+| Route53 | Optional A alias to the ALB |
+
+Apply order matters once, on the first rollout: the ECS tasks read
+`JWT_SECRET_KEY`, `BOOTSTRAP_ADMIN_TOKEN`, and `GEMINI_API_KEY` from SSM
+parameter paths under `/<project>-<environment>/` (see `terraform/README.md`),
+and the `DATABASE_URL` from Secrets Manager. The secrets module (SCRUM-94)
+creates those parameters, so run the full Terraform apply before the first
+deploy pipeline run. ECS services retry task starts until the parameters
+exist. On the first RDS apply, the `vector` preload in the parameter group
+requires a one-time instance reboot.
+
+On AWS the application uses IAM roles, not static credentials: the ECS task
+role gets `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject` on the document
+bucket, and `S3_ENDPOINT_URL`/`S3_FORCE_PATH_STYLE` are not set. The worker
+remains a single Fargate task (durable single consumer); the API autoscales
+between `api_min_instances` and `api_max_instances` on CPU.
+
+Deployments run through the SCRUM-93 workflow: it builds and pushes the image
+to ECR, registers new task definition revisions, runs the one-off `migrate`
+task, and rolls out both services. The state bucket is passed to Terraform
+with `-backend-config`; never commit `.tfstate` or `terraform.tfvars`.
+
+### AWS secrets management
+
+Runtime secrets are stored in AWS Systems Manager Parameter Store as
+`SecureString` parameters under `/<project>-<environment>/` and are injected
+into the ECS task definitions at task start (container `secrets` entries, read
+by the task execution role). The Terraform `secrets` module creates them from
+the `runtime_secrets` map in `terraform.tfvars`; no secret value is committed
+or stored in GitHub. The `DATABASE_URL` with the generated RDS password lives
+in Secrets Manager. The ECS task role authenticates to S3 with an IAM role; no
+static AWS keys exist on the platform side.
+
+The GitHub Actions deploy role uses OIDC federation
+(`github-oidc` Terraform module): the trust policy accepts the `main` branch
+of the repository only, and the role can deploy but cannot read the runtime
+secrets. Set its ARN as the `AWS_DEPLOY_ROLE_ARN` secret and the Terraform
+outputs as variables on the GitHub `production` environment, then the SCRUM-93
+workflow deploys without any stored long-lived credentials.
+
+### AWS deploy pipeline
+
+`.github/workflows/deploy.yml` deploys the repository to the AWS topology on a
+push to `main` or through manual dispatch. The workflow authenticates with the
+GitHub OIDC role created by the secrets module (SCRUM-94), never with stored
+long-lived keys. It requires these repository environment variables and
+secrets on the `production` environment:
+
+| Setting | Source |
+| --- | --- |
+| `vars.AWS_REGION`, `vars.ECR_REPOSITORY`, `vars.ECS_CLUSTER` | Terraform outputs |
+| `vars.API_SERVICE`, `vars.WORKER_SERVICE` | Terraform outputs |
+| `vars.API_TASK_DEFINITION`, `vars.WORKER_TASK_DEFINITION`, `vars.MIGRATE_TASK_DEFINITION` | Terraform outputs |
+| `vars.ALB_DNS` | Terraform output |
+| `vars.PRIVATE_SUBNETS`, `vars.ECS_SECURITY_GROUP` | Terraform outputs (comma-separated subnet list) |
+| `secrets.AWS_DEPLOY_ROLE_ARN` | OIDC role from SCRUM-94 |
+
+The workflow builds the image with tag `github.sha`, registers new task
+definition revisions for `api`, `worker`, and `migrate`, runs the one-off
+migration task (skipped on rollback), rolls out both services, and smoke-tests
+`GET /health/ready` through the ALB. A rollback deploys an already-published
+image tag (`rollback_to` input) without building or migrating. The first
+deployment needs the Terraform task definitions to reference an existing
+image: either set `image_tag` to the first deployed SHA at apply time or push
+a `latest`-tagged image manually before the first rollout.
 
 ## Transition from the experimental stack
 
@@ -144,7 +262,7 @@ backup, restore, and rollback qualification are separate release requirements.
 
 ## Production configuration
 
-Compose fixes the following safety-critical values:
+The self-hosted Compose fixes the following safety-critical values:
 
 | Variable | Container value |
 | --- | --- |
@@ -156,6 +274,19 @@ Compose fixes the following safety-critical values:
 | `CHROMA_PERSIST_DIRECTORY` | `/data/chroma` |
 | `VECTOR_BACKEND` | `chroma` (override via `.env`) |
 | `STORAGE_BACKEND` | `local` |
+
+The hosted Compose fixes these values instead:
+
+| Variable | Container value |
+| --- | --- |
+| `APP_ENV` | `production` |
+| `APP_DEBUG` | `false` |
+| `DEPLOYMENT_MODE` | `hosted` |
+| `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@db:5432/lumina` |
+| `STORAGE_BACKEND` | `s3` |
+| `S3_ENDPOINT_URL` | `http://minio:9000` |
+| `S3_FORCE_PATH_STYLE` | `true` |
+| `VECTOR_BACKEND` | `pgvector` |
 
 API authentication values, storage namespace, upload limits, validation limits,
 and worker limits are interpolated from `.env`. `JWT_SECRET_KEY` must contain at

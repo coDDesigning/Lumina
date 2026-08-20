@@ -28,11 +28,16 @@ from backend.app.config import (
     DEFAULT_EMBEDDING_PROVIDER,
     DEFAULT_EMBEDDING_TIMEOUT_SECONDS,
     DEFAULT_GEMINI_EMBEDDING_MODEL,
-    DEFAULT_OLLAMA_EMBEDDING_MODEL,
+    DEFAULT_GEMINI_IMAGE_MODEL,
+    DEFAULT_IMAGE_PROVIDER,
+    DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES,
+    DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS,
     DEFAULT_OCR_DPI,
     DEFAULT_OCR_LANGUAGE,
     DEFAULT_OCR_MIN_TEXT_CHARACTERS,
     DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OLLAMA_EMBEDDING_MODEL,
+    DEFAULT_OLLAMA_IMAGE_MODEL,
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
     DEFAULT_PROCESSING_JOB_LEASE_SECONDS,
@@ -41,9 +46,11 @@ from backend.app.config import (
     DEFAULT_UPLOAD_REQUEST_TIMEOUT_SECONDS,
     IMPLEMENTED_AI_PROVIDERS,
     IMPLEMENTED_EMBEDDING_PROVIDERS,
+    IMPLEMENTED_IMAGE_PROVIDERS,
     MODE_HOSTED,
     MODE_SELF_HOSTED,
     RECOGNIZED_AI_PROVIDERS,
+    RECOGNIZED_IMAGE_PROVIDERS,
     VECTOR_BACKEND_CHROMA,
     VECTOR_BACKEND_PGVECTOR,
     load_settings,
@@ -60,6 +67,12 @@ CONFIGURATION_KEYS = (
     "DATABASE_URL",
     "STORAGE_BACKEND",
     "STORAGE_NAMESPACE",
+    "S3_BUCKET",
+    "S3_REGION",
+    "S3_ENDPOINT_URL",
+    "S3_ACCESS_KEY_ID",
+    "S3_SECRET_ACCESS_KEY",
+    "S3_FORCE_PATH_STYLE",
     "UPLOAD_DIRECTORY",
     "CHROMA_PERSIST_DIRECTORY",
     "JWT_SECRET_KEY",
@@ -101,7 +114,17 @@ CONFIGURATION_KEYS = (
     "GEMINI_EMBEDDING_MODEL",
     "EMBEDDING_BATCH_SIZE",
     "EMBEDDING_TIMEOUT_SECONDS",
+    "IMAGE_PROVIDER",
+    "OLLAMA_IMAGE_MODEL",
+    "GEMINI_IMAGE_MODEL",
+    "IMAGE_UNDERSTANDING_TIMEOUT_SECONDS",
+    "IMAGE_UNDERSTANDING_MAX_BYTES",
     "VECTOR_BACKEND",
+    "STUDY_GUIDE_MATERIAL_MAX_CHARS",
+    "QUIZ_MATERIAL_MAX_CHARS",
+    "FLASHCARD_MATERIAL_MAX_CHARS",
+    "AI_TUTOR_MATERIAL_MAX_CHARS",
+    "COURSE_QA_MATERIAL_MAX_CHARS",
 )
 
 
@@ -124,6 +147,21 @@ def _configure_production(
     monkeypatch.setenv("JWT_SECRET_KEY", "x" * 32)
     monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
     monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "y" * 32)
+
+
+def _configure_hosted_s3(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEPLOYMENT_MODE", MODE_HOSTED)
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://lumina:password@localhost:5432/lumina",
+    )
+    monkeypatch.setenv("STORAGE_NAMESPACE", "hosted-shared-volume")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "lumina-ci-access")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "lumina-ci-secret")
+    monkeypatch.setenv("S3_FORCE_PATH_STYLE", "true")
 
 
 def test_self_hosted_defaults_are_safe_and_runnable() -> None:
@@ -341,7 +379,7 @@ def test_production_storage_paths_must_be_absolute(
         load_settings()
 
 
-def test_hosted_production_is_not_supported(
+def test_hosted_production_requires_s3_storage(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -353,8 +391,24 @@ def test_hosted_production_is_not_supported(
     )
     monkeypatch.setenv("STORAGE_NAMESPACE", "hosted-shared-volume")
 
-    with pytest.raises(ValueError, match="Hosted production is not supported"):
+    with pytest.raises(ValueError, match="STORAGE_BACKEND=s3"):
         load_settings()
+
+
+def test_hosted_production_with_s3_storage_loads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+
+    loaded = load_settings()
+
+    assert loaded.deployment_mode == MODE_HOSTED
+    assert loaded.storage_backend == "s3"
+    assert loaded.s3_bucket == "lumina"
+    assert loaded.s3_endpoint_url == "http://localhost:9000"
+    assert loaded.s3_force_path_style is True
 
 
 def test_self_hosted_production_rejects_unqualified_postgresql(
@@ -367,8 +421,123 @@ def test_self_hosted_production_rejects_unqualified_postgresql(
         "postgresql+psycopg://lumina:password@localhost:5432/lumina",
     )
 
-    with pytest.raises(ValueError, match="PostgreSQL is not supported"):
+    with pytest.raises(ValueError, match="STORAGE_BACKEND=s3"):
         load_settings()
+
+
+def test_self_hosted_production_accepts_qualified_postgresql(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+    monkeypatch.setenv("DEPLOYMENT_MODE", MODE_SELF_HOSTED)
+
+    loaded = load_settings()
+
+    assert loaded.database_url.startswith("postgresql+psycopg://")
+    assert loaded.storage_backend == "s3"
+
+
+def test_s3_storage_requires_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+
+    with pytest.raises(ValueError, match="S3_BUCKET"):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["ftp://localhost:9000", "not-a-url", "http://"],
+)
+def test_s3_storage_rejects_invalid_endpoint_url(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+    monkeypatch.setenv("S3_ENDPOINT_URL", value)
+
+    with pytest.raises(ValueError, match="S3_ENDPOINT_URL"):
+        load_settings()
+
+
+def test_s3_storage_requires_region_without_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+
+    with pytest.raises(ValueError, match="S3_REGION"):
+        load_settings()
+
+
+@pytest.mark.parametrize("unset", ["S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"])
+def test_s3_storage_requires_credentials_together(
+    monkeypatch: pytest.MonkeyPatch,
+    unset: str,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "lumina-access")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "lumina-secret")
+    monkeypatch.delenv(unset, raising=False)
+
+    with pytest.raises(ValueError, match="must be set together"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["", "maybe", "2"])
+def test_s3_force_path_style_must_be_boolean(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "lumina-access")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "lumina-secret")
+    monkeypatch.setenv("S3_FORCE_PATH_STYLE", value)
+
+    with pytest.raises(ValueError, match="S3_FORCE_PATH_STYLE"):
+        load_settings()
+
+
+def test_s3_storage_configuration_loads_in_self_hosted_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "lumina")
+    monkeypatch.setenv("S3_REGION", "eu-central-1")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "lumina-access")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "lumina-secret")
+
+    loaded = load_settings()
+
+    assert loaded.storage_backend == "s3"
+    assert loaded.s3_region == "eu-central-1"
+    assert loaded.s3_endpoint_url is None
+    assert loaded.s3_access_key_id == "lumina-access"
+
+
+@pytest.mark.parametrize("backend", ["s3", "local", "invalid"])
+def test_storage_backend_accepts_only_implemented_backends(
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", backend)
+    if backend == "s3":
+        monkeypatch.setenv("S3_BUCKET", "lumina")
+        monkeypatch.setenv("S3_ENDPOINT_URL", "http://localhost:9000")
+        monkeypatch.setenv("S3_ACCESS_KEY_ID", "lumina-access")
+        monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "lumina-secret")
+
+    if backend == "invalid":
+        with pytest.raises(ValueError, match="STORAGE_BACKEND"):
+            load_settings()
+    else:
+        assert load_settings().storage_backend == backend
 
 
 def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -995,3 +1164,91 @@ def test_chroma_backend_is_allowed_on_postgresql(
     monkeypatch.setenv("VECTOR_BACKEND", VECTOR_BACKEND_CHROMA)
 
     assert load_settings().vector_backend == VECTOR_BACKEND_CHROMA
+
+
+def test_image_understanding_defaults_are_disabled() -> None:
+    loaded = load_settings()
+
+    assert loaded.image_provider == DEFAULT_IMAGE_PROVIDER
+    assert loaded.ollama_image_model == DEFAULT_OLLAMA_IMAGE_MODEL
+    assert loaded.gemini_image_model == DEFAULT_GEMINI_IMAGE_MODEL
+    assert (
+        loaded.image_understanding_timeout_seconds
+        == DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS
+    )
+    assert loaded.image_understanding_max_bytes == DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES
+
+
+def test_image_provider_rejects_unrecognized_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", "unsupported")
+
+    with pytest.raises(ValueError, match="IMAGE_PROVIDER"):
+        load_settings()
+
+
+@pytest.mark.parametrize("provider", ["openai", "claude"])
+def test_recognized_but_unimplemented_image_provider_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", provider)
+
+    with pytest.raises(ValueError, match="not implemented"):
+        load_settings()
+
+
+@pytest.mark.parametrize("provider", IMPLEMENTED_IMAGE_PROVIDERS)
+def test_every_implemented_image_provider_configures(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", provider)
+
+    assert load_settings().image_provider == provider
+
+
+def test_implemented_image_providers_are_recognized() -> None:
+    assert IMPLEMENTED_IMAGE_PROVIDERS == ("none", "gemini", "ollama")
+    assert set(IMPLEMENTED_IMAGE_PROVIDERS) <= set(RECOGNIZED_IMAGE_PROVIDERS)
+
+
+def test_ollama_image_model_rejects_unsafe_characters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "bad vision model!")
+
+    with pytest.raises(ValueError, match="OLLAMA_IMAGE_MODEL"):
+        load_settings()
+
+
+def test_gemini_image_model_must_not_be_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_IMAGE_MODEL", "   ")
+
+    with pytest.raises(ValueError, match="GEMINI_IMAGE_MODEL"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["0", "301", "not-a-number"])
+def test_image_understanding_timeout_seconds_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("IMAGE_UNDERSTANDING_TIMEOUT_SECONDS", value)
+
+    with pytest.raises(ValueError, match="IMAGE_UNDERSTANDING_TIMEOUT_SECONDS"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["0", "1023", str(51 * 1024 * 1024), "not-a-number"])
+def test_image_understanding_max_bytes_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("IMAGE_UNDERSTANDING_MAX_BYTES", value)
+
+    with pytest.raises(ValueError, match="IMAGE_UNDERSTANDING_MAX_BYTES"):
+        load_settings()

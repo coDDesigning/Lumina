@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from backend.app.config import (
@@ -60,6 +60,17 @@ class VectorRecord:
             raise ValueError("Vector records must carry a nonnegative chunk index")
 
 
+@dataclass(frozen=True, slots=True)
+class SearchResult:
+    """One ranked vector hit, resolved by the retrieval layer to its chunk."""
+
+    chunk_id: int
+    document_id: UUID
+    course_id: int
+    chunk_index: int
+    similarity: float
+
+
 class VectorStore(Protocol):
     def replace_document_vectors(
         self,
@@ -98,6 +109,15 @@ class VectorStore(Protocol):
     def count_document_vectors(self, session: Session, document_id: UUID) -> int: ...
 
     def count_course_vectors(self, session: Session, course_id: int) -> int: ...
+
+    def search(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        query_embedding: list[float],
+        limit: int,
+    ) -> list[SearchResult]: ...
 
 
 def _validated(
@@ -248,6 +268,52 @@ class PgVectorStore:
             )
             or 0
         )
+
+    def search(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        query_embedding: list[float],
+        limit: int,
+    ) -> list[SearchResult]:
+        if len(query_embedding) != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Query embeddings must contain {EMBEDDING_DIMENSIONS} values, "
+                f"got {len(query_embedding)}"
+            )
+        if limit < 1:
+            raise ValueError("Search limit must be a positive integer")
+        if session.get_bind().dialect.name != "postgresql":
+            raise VectorStoreConfigurationError(
+                "pgvector similarity search requires a PostgreSQL connection."
+            )
+        query = "[" + ",".join(repr(value) for value in query_embedding) + "]"
+        statement = text(
+            "SELECT chunk_id, document_id, course_id, chunk_index, "
+            "1.0 - (embedding <=> CAST(:query AS vector)) AS similarity "
+            "FROM chunk_embeddings "
+            "WHERE course_id = :course_id "
+            "ORDER BY embedding <=> CAST(:query AS vector) "
+            "LIMIT :limit"
+        )
+        try:
+            rows = session.execute(
+                statement,
+                {"query": query, "course_id": course_id, "limit": limit},
+            )
+        except Exception as exc:
+            raise VectorStoreError("The vector store could not be searched.") from exc
+        return [
+            SearchResult(
+                chunk_id=row.chunk_id,
+                document_id=row.document_id,
+                course_id=row.course_id,
+                chunk_index=row.chunk_index,
+                similarity=row.similarity,
+            )
+            for row in rows
+        ]
 
 
 class ChromaVectorStore:
@@ -408,6 +474,47 @@ class ChromaVectorStore:
 
     def count_course_vectors(self, session: Session, course_id: int) -> int:
         return len(self._get_where({"course_id": course_id}).get("ids", []))
+
+    def search(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        query_embedding: list[float],
+        limit: int,
+    ) -> list[SearchResult]:
+        if len(query_embedding) != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Query embeddings must contain {EMBEDDING_DIMENSIONS} values, "
+                f"got {len(query_embedding)}"
+            )
+        if limit < 1:
+            raise ValueError("Search limit must be a positive integer")
+        collection = self._get_collection()
+        try:
+            found = collection.query(
+                query_embeddings=[query_embedding],
+                where={"course_id": course_id},
+                n_results=limit,
+                include=["metadatas", "distances"],
+            )
+        except Exception as exc:
+            raise VectorStoreError("The vector store could not be searched.") from exc
+        ids = found.get("ids", [[]])[0]
+        metadatas = found.get("metadatas", [[]])[0] or []
+        distances = found.get("distances", [[]])[0] or []
+        return [
+            SearchResult(
+                chunk_id=int(identifier),
+                document_id=UUID(metadata["document_id"]),
+                course_id=metadata["course_id"],
+                chunk_index=metadata["chunk_index"],
+                similarity=1.0 - distance,
+            )
+            for identifier, metadata, distance in zip(
+                ids, metadatas, distances, strict=True
+            )
+        ]
 
     def metadata_for_chunk(self, chunk_id: int) -> dict:
         collection = self._get_collection()

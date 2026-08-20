@@ -194,6 +194,21 @@ soft-deleted course, and another owner's course all return `404` with the same
 are additionally scoped to their authorized course, so a document identifier
 from one course cannot be reached through another.
 
+### Course identifier strategy
+
+Course resources use sequential integer identifiers (`courses.id` auto-increment
+primary keys). This is an explicit, accepted design decision:
+
+- **Security boundary is authorization, not ID obscurity**: Access control is
+  strictly enforced by `utils/authorization.py` on every course-scoped request.
+  Possession or guessing of a course integer ID confers no access.
+- **Uniform 404 responses prevent enumeration**: Missing, deleted, or unowned
+  courses all return an identical `404 Course not found` response, preventing
+  attackers from determining whether an ID exists or belongs to another user.
+- **Opaque IDs not required**: Because ownership validation occurs inside the
+  database query before any course-scoped logic executes, replacing sequential
+  integers with UUIDs is unnecessary and not planned.
+
 ## Processing API
 
 Authenticated owners can inspect, retry, and delete course-scoped documents:
@@ -218,6 +233,49 @@ document is still tombstoned, so a failure there is retryable and never leaves
 deleted content searchable. Storage or database failures retain the tombstone
 so the same deletion request can safely resume cleanup. Matching uploads return
 `409` while deletion is in progress.
+
+## Document upload validation contract
+
+Validation of uploaded documents is intentionally partitioned into synchronous
+request-time admission and asynchronous worker-time deep validation:
+
+### Synchronous request-time validation
+
+The API endpoint (`POST /api/courses/{course_id}/documents`) performs fast,
+lightweight, non-parsing checks (`services/document_validation.py`) to safely
+admit files without CPU-expensive inspection:
+
+| Condition | Status | Error Code | Description |
+| --- | --- | --- | --- |
+| Unsupported extension | `415` | `UPLOAD_UNSUPPORTED_FILE_TYPE` | Not `.pdf`, `.txt`, `.md`, or `.markdown` |
+| Invalid / long filename | `422` | `UPLOAD_INVALID_FILE_NAME` | Name > 255 chars or contains NUL bytes |
+| File exceeds limit | `413` | `UPLOAD_FILE_TOO_LARGE` | Stream exceeds `MAX_UPLOAD_SIZE_BYTES` |
+| Empty file | `422` | `UPLOAD_EMPTY_FILE` | 0-byte upload |
+| Missing file part | `422` | `UPLOAD_DOCUMENT_REQUIRED` | Multipart body missing document field |
+| Malformed multipart | `400` | `UPLOAD_INVALID_MULTIPART` | Invalid multipart payload |
+| Storage quota reached | `409` | `UPLOAD_COURSE_DOCUMENT_LIMIT` | Course storage limit reached |
+| Deletion in progress | `409` | `UPLOAD_DOCUMENT_DELETION_IN_PROGRESS` | Matching document being deleted |
+| Registration failure | `500` | `UPLOAD_FAILED` | Internal registration or hash error |
+
+### Asynchronous worker-time deep validation
+
+Once admitted and enqueued, deep document inspection runs inside the worker
+process (`services/document_pipeline.py`). Content-level errors are recorded on
+the `processing_jobs` row and surfaced via document status polling as `failed`:
+
+| Condition | Failed Stage | Error Code | Description |
+| --- | --- | --- | --- |
+| Corrupted / invalid PDF | `validating` | `CORRUPTED_PDF` | PDF syntax error or broken stream |
+| Encrypted PDF | `validating` | `PASSWORD_PROTECTED_PDF` | Password-protected PDF |
+| PDF complexity exceeded | `validating` | `DOCUMENT_TOO_COMPLEX` | Page count, pixel, or stream limit exceeded |
+| Corrupted / binary text | `validating` | `CORRUPTED_TEXT` | Non-decodable binary data in text file |
+| Text size limit exceeded | `extracting_text` | `EXTRACTED_TEXT_LIMIT_EXCEEDED` | Total extracted text exceeds limit |
+| Chunk count exceeded | `chunking` | `DOCUMENT_CHUNK_LIMIT_EXCEEDED` | Generated chunks exceed limit |
+| Empty extracted content | `cleaning_text` | `NO_PROCESSABLE_TEXT` | No readable text found |
+
+This architectural separation keeps the API admission path fast and bounded,
+preventing slow or maliciously crafted documents from consuming API worker
+threads or causing denial-of-service.
 
 ## Limits and failure behavior
 

@@ -8,6 +8,7 @@ class GenerationType(str, Enum):
     AI_TUTOR = "ai_tutor"
     PROMPT_GENERATOR = "prompt_generator"
     COURSE_QA = "course_qa"
+    QUIZ_GRADING = "quiz_grading"
 
 
 class ErrorCategory(str, Enum):

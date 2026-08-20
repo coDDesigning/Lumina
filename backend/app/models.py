@@ -30,6 +30,8 @@ from sqlalchemy.types import LargeBinary, TypeDecorator
 from .base import Base
 
 
+QUESTION_TYPE_MULTIPLE_CHOICE = "multiple_choice"
+
 JOB_TYPE_EXTRACT_DOCUMENT = "extract_document"
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_RUNNING = "running"
@@ -171,6 +173,8 @@ class User(Base):
     )
 
     # Every quiz attempt this user has made.
+    quizzes: Mapped[list["Quiz"]] = relationship(back_populates="user")
+
     quiz_attempts: Mapped[list["QuizAttempt"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
@@ -921,7 +925,17 @@ class Quiz(Base):
         ForeignKey("courses.id", ondelete="CASCADE"), index=True
     )
 
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     title: Mapped[str] = mapped_column(String(200))
+
+    model_used: Mapped[str | None] = mapped_column(String(150), nullable=True)
+
+    generation_settings: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    generation_context: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
@@ -929,6 +943,8 @@ class Quiz(Base):
 
     # Navigation up to the course
     course: Mapped["Course"] = relationship(back_populates="quizzes")
+
+    user: Mapped["User | None"] = relationship(back_populates="quizzes")
 
     questions: Mapped[list["QuizQuestion"]] = relationship(
         back_populates="quiz", cascade="all, delete-orphan", passive_deletes=True
@@ -956,8 +972,9 @@ class QuizQuestion(Base):
             name="question_index_nonnegative",
         ),
         CheckConstraint(
-            "correct_option_index = CAST(correct_option_index AS INTEGER) "
-            "AND correct_option_index >= 0",
+            "correct_option_index IS NULL OR "
+            "(correct_option_index = CAST(correct_option_index AS INTEGER) "
+            "AND correct_option_index >= 0)",
             name="correct_option_index_nonnegative",
         ),
     )
@@ -979,9 +996,19 @@ class QuizQuestion(Base):
     # of a separate options table because options are only ever read
     # and written together as one bundle
 
-    options: Mapped[list] = mapped_column(JSON)
+    options: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
-    correct_option_index: Mapped[int] = mapped_column(Integer)
+    correct_option_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    question_type: Mapped[str] = mapped_column(
+        String(20),
+        default=QUESTION_TYPE_MULTIPLE_CHOICE,
+        server_default=QUESTION_TYPE_MULTIPLE_CHOICE,
+    )
+
+    difficulty: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+    correct_answer: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     topic: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
@@ -1050,6 +1077,10 @@ class QuizAttemptAnswer(Base):
             "selected_option_index IS NULL OR selected_option_index >= 0",
             name="selected_option_index_nonnegative",
         ),
+        CheckConstraint(
+            "score IS NULL OR (score >= 0 AND score <= 1)",
+            name="score_fraction",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -1064,7 +1095,13 @@ class QuizAttemptAnswer(Base):
 
     selected_option_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    is_correct: Mapped[bool] = mapped_column(Boolean)
+    answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    is_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     attempt: Mapped["QuizAttempt"] = relationship(back_populates="answers")
     question: Mapped["QuizQuestion"] = relationship(back_populates="answers")

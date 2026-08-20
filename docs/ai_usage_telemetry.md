@@ -30,7 +30,7 @@ Lumina implements strict privacy-safe logging controls:
 | `id` | `INTEGER` (PK) | No | Auto-incrementing identifier |
 | `user_id` | `INTEGER` (FK `users.id`) | No | User who initiated the AI interaction (cascades on delete) |
 | `course_id` | `INTEGER` (FK `courses.id`) | Yes | Course context if applicable (cascades on delete) |
-| `generation_type` | `VARCHAR(50)` | No | AI feature (`study_guide`, `quiz`, `flashcard`, `ai_tutor`, `prompt_generator`) |
+| `generation_type` | `VARCHAR(50)` | No | AI feature (`study_guide`, `quiz`, `quiz_grading`, `flashcard`, `ai_tutor`, `prompt_generator`, `course_qa`) |
 | `provider` | `VARCHAR(50)` | No | Model provider backend (e.g., `gemini`) |
 | `model` | `VARCHAR(100)` | No | Model identifier (e.g., `gemini-2.5-flash`) |
 | `prompt_tokens` | `INTEGER` | Yes | Token count for input (prompt) when exposed by provider |
@@ -45,3 +45,9 @@ Lumina implements strict privacy-safe logging controls:
 
 - **Self-Hosted Mode**: Telemetry records are maintained locally within the deployment's SQLite/PostgreSQL database. Records are cascaded automatically upon user or course deletion.
 - **Retention Schedule**: Telemetry data older than 90 days may be periodically purged or aggregated for reporting without impacting core student artifacts (`generated_outputs`, `quizzes`, etc.).
+
+## Quiz grading
+
+`quiz_grading` is logged when an attempt contains an open-ended answer and the text-generation provider is asked to score it against the stored reference answer. It is the only generation type triggered by a read-shaped student action rather than an explicit generate request.
+
+A grading failure is logged with its error category and the credit is refunded, but the attempt still succeeds with the affected answers recorded ungraded.

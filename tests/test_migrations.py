@@ -31,7 +31,8 @@ CONVERSATION_HISTORY_REVISION = "910e2719d549"
 MODEL_CREDITS_REVISION = "2a7c4e9f8b10"
 COURSE_SETTINGS_REVISION = "7b3e1a9c4d28"
 GENERATION_SETTINGS_REVISION = "b2f47c8d0915"
-HEAD_REVISION = GENERATION_SETTINGS_REVISION
+QUIZ_SCHEMA_REVISION = "c8d4a1f39e72"
+HEAD_REVISION = QUIZ_SCHEMA_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -59,7 +60,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: COURSE_SETTINGS_REVISION,
+        HEAD_REVISION: GENERATION_SETTINGS_REVISION,
+        GENERATION_SETTINGS_REVISION: COURSE_SETTINGS_REVISION,
         COURSE_SETTINGS_REVISION: MODEL_CREDITS_REVISION,
         MODEL_CREDITS_REVISION: CONVERSATION_HISTORY_REVISION,
         CONVERSATION_HISTORY_REVISION: CHUNK_EMBEDDINGS_REVISION,
@@ -1171,6 +1173,176 @@ def test_generated_output_settings_migration_round_trips(tmp_path: Path) -> None
             "WHERE id = ?",
             (legacy_id,),
         ).fetchone() == (None, None)
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)
+
+
+def quiz_question_columns(connection: sqlite3.Connection) -> set[str]:
+    return {row[1] for row in connection.execute("PRAGMA table_info(quiz_questions)")}
+
+
+def quiz_columns(connection: sqlite3.Connection) -> set[str]:
+    return {row[1] for row in connection.execute("PRAGMA table_info(quizzes)")}
+
+
+def not_null_flags(connection: sqlite3.Connection, table: str) -> dict[str, int]:
+    return {row[1]: row[3] for row in connection.execute(f"PRAGMA table_info({table})")}
+
+
+def test_quiz_schema_migration_backfills_and_round_trips(tmp_path: Path) -> None:
+    """Legacy multiple-choice questions gain the answer document their index encodes."""
+    database_path = tmp_path / "quiz-schema.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", GENERATION_SETTINGS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert "question_type" not in quiz_question_columns(connection)
+        assert "user_id" not in quiz_columns(connection)
+
+        role_id = connection.execute(
+            "SELECT id FROM roles WHERE name = 'user'"
+        ).fetchone()[0]
+        user_id = connection.execute(
+            "INSERT INTO users "
+            "(name, email, password_hash, role_id, is_banned, preferred_model) "
+            "VALUES (?, ?, ?, ?, 0, ?)",
+            ("Quiz user", "quiz-schema@example.com", "hash", role_id, "model"),
+        ).lastrowid
+        course_id = connection.execute(
+            "INSERT INTO courses "
+            "(title, description, is_deleted, owner_id, created_at) "
+            "VALUES (?, NULL, 0, ?, ?)",
+            ("Quiz course", user_id, "2026-01-02 03:04:05"),
+        ).lastrowid
+        quiz_id = connection.execute(
+            "INSERT INTO quizzes (course_id, title, created_at) VALUES (?, ?, ?)",
+            (course_id, "Legacy Quiz", "2026-01-02 03:04:05"),
+        ).lastrowid
+        question_id = connection.execute(
+            "INSERT INTO quiz_questions "
+            "(quiz_id, question_index, question_text, options, correct_option_index, "
+            "topic, explanation) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                quiz_id,
+                0,
+                "Which complexity is binary search?",
+                '["O(n)", "O(log n)", "O(n^2)", "O(1)"]',
+                1,
+                "Searching",
+                "It halves the range.",
+            ),
+        ).lastrowid
+        attempt_id = connection.execute(
+            "INSERT INTO quiz_attempts (user_id, quiz_id, score, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, quiz_id, 1.0, "2026-01-02 03:04:05"),
+        ).lastrowid
+        answer_id = connection.execute(
+            "INSERT INTO quiz_attempt_answers "
+            "(attempt_id, quiz_question_id, selected_option_index, is_correct) "
+            "VALUES (?, ?, ?, ?)",
+            (attempt_id, question_id, 1, 1),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        assert {
+            "question_type",
+            "difficulty",
+            "correct_answer",
+        } <= quiz_question_columns(connection)
+        assert {
+            "user_id",
+            "model_used",
+            "generation_settings",
+            "generation_context",
+        } <= quiz_columns(connection)
+        assert {"answer_text", "score", "feedback"} <= {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(quiz_attempt_answers)")
+        }
+
+        assert connection.execute(
+            "SELECT question_type, difficulty, correct_answer, correct_option_index "
+            "FROM quiz_questions WHERE id = ?",
+            (question_id,),
+        ).fetchone() == (
+            "multiple_choice",
+            None,
+            '{"type": "multiple_choice", "option_index": 1}',
+            1,
+        )
+
+        # The relaxations are what make the other three question types storable.
+        flags = not_null_flags(connection, "quiz_questions")
+        assert flags["options"] == 0
+        assert flags["correct_option_index"] == 0
+        assert not_null_flags(connection, "quiz_attempt_answers")["is_correct"] == 0
+
+        connection.execute(
+            "INSERT INTO quiz_questions "
+            "(quiz_id, question_index, question_text, question_type, difficulty, "
+            "correct_answer) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                quiz_id,
+                1,
+                "Explain why sorting is required.",
+                "open_ended",
+                "medium",
+                '{"type": "open_ended", "reference_answer": "Ordering."}',
+            ),
+        )
+
+        # The SQLite tables are rebuilt, so indexes and foreign keys must survive.
+        indexes = {row[1] for row in connection.execute("PRAGMA index_list(quizzes)")}
+        assert {"ix_quizzes_course_id", "ix_quizzes_user_id"} <= indexes
+
+        references = {
+            (row[2], row[3], row[6])
+            for row in connection.execute("PRAGMA foreign_key_list(quizzes)")
+        }
+        assert ("users", "user_id", "SET NULL") in references
+        assert ("courses", "course_id", "CASCADE") in references
+
+        assert connection.execute(
+            "SELECT selected_option_index, is_correct FROM quiz_attempt_answers "
+            "WHERE id = ?",
+            (answer_id,),
+        ).fetchone() == (1, 1)
+
+    run_alembic(database_path, tmp_path, "downgrade", GENERATION_SETTINGS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = quiz_question_columns(connection)
+        assert "question_type" not in columns
+        assert "difficulty" not in columns
+        assert "correct_answer" not in columns
+        assert "user_id" not in quiz_columns(connection)
+
+        assert connection.execute(
+            "SELECT options, correct_option_index FROM quiz_questions WHERE id = ?",
+            (question_id,),
+        ).fetchone() == ('["O(n)", "O(log n)", "O(n^2)", "O(1)"]', 1)
+
+        # The open-ended question has no option list, so the downgrade must give
+        # it one for the restored NOT NULL constraint to hold.
+        assert connection.execute(
+            "SELECT options, correct_option_index FROM quiz_questions "
+            "WHERE quiz_id = ? AND question_index = 1",
+            (quiz_id,),
+        ).fetchone() == ("[]", 0)
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT question_type, correct_answer FROM quiz_questions WHERE id = ?",
+            (question_id,),
+        ).fetchone() == (
+            "multiple_choice",
+            '{"type": "multiple_choice", "option_index": 1}',
+        )
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone() == (HEAD_REVISION,)

@@ -13,12 +13,14 @@ import {
 import { quizAPI } from '../../api/quiz';
 import { describeError, describeGenerationError, isAbortError } from '../../api/errors';
 import type {
+  QuizAnswerResult,
   QuizAttemptResponse,
   QuizDifficulty,
   QuizQuestionType,
   QuizQuestionView,
   QuizView,
 } from '../../api/types';
+import { isOptionBased } from '../../api/types';
 import './study.css';
 
 interface QuizModalProps {
@@ -30,11 +32,17 @@ interface QuizModalProps {
 }
 
 interface QuizSetup {
-  questionType: QuizQuestionType;
+  questionTypes: QuizQuestionType[];
   questionCount: number;
   difficulty: QuizDifficulty;
   topic: string;
   hasTimer: boolean;
+}
+
+/** One in-progress answer, in whichever form its question type calls for. */
+interface AnswerDraft {
+  optionIndex: number | null;
+  text: string;
 }
 
 type QuizStep =
@@ -48,6 +56,61 @@ type QuizStep =
 const ALL_TOPICS = 'All Topics';
 const SECONDS_PER_QUESTION = 60;
 const QUESTION_COUNTS = [5, 10, 15, 20];
+
+const QUESTION_TYPE_OPTIONS: { value: QuizQuestionType; label: string }[] = [
+  { value: 'multiple_choice', label: 'Multiple Choice (4 options)' },
+  { value: 'true_false', label: 'True / False' },
+  { value: 'short_answer', label: 'Short Answer' },
+  { value: 'open_ended', label: 'Open Ended' },
+];
+
+const QUESTION_TYPE_LABELS: Record<QuizQuestionType, string> = {
+  multiple_choice: 'Multiple Choice',
+  true_false: 'True / False',
+  short_answer: 'Short Answer',
+  open_ended: 'Open Ended',
+};
+
+const EMPTY_DRAFT: AnswerDraft = { optionIndex: null, text: '' };
+
+// Matches MAX_ANSWER_TEXT_CHARS in schemas/quiz_attempt.py.
+const MAX_ANSWER_TEXT_CHARS = 5000;
+
+function reviewStatusClass(isCorrect: boolean | null): string {
+  if (isCorrect === null) return 'ungraded';
+  return isCorrect ? 'correct' : 'incorrect';
+}
+
+function describeSubmittedAnswer(
+  question: QuizQuestionView,
+  answer: QuizAnswerResult,
+): string {
+  if (answer.answer_text) return answer.answer_text;
+  if (answer.selected_option_index !== null && question.options) {
+    return question.options[answer.selected_option_index] ?? 'Unanswered';
+  }
+  return 'Unanswered';
+}
+
+function describeCorrectAnswer(question: QuizQuestionView): string {
+  const answer = question.correct_answer;
+  if (!answer) {
+    if (question.correct_option_index !== null && question.options) {
+      return question.options[question.correct_option_index] ?? '';
+    }
+    return '';
+  }
+  switch (answer.type) {
+    case 'multiple_choice':
+      return question.options?.[answer.option_index] ?? '';
+    case 'true_false':
+      return answer.value ? 'True' : 'False';
+    case 'short_answer':
+      return answer.text;
+    case 'open_ended':
+      return answer.reference_answer;
+  }
+}
 
 function formatTime(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
@@ -65,7 +128,7 @@ export function QuizModal({
   const [step, setStep] = useState<QuizStep>('config');
   const [errorMessage, setErrorMessage] = useState('');
   const [setup, setSetup] = useState<QuizSetup>({
-    questionType: 'multiple_choice',
+    questionTypes: ['multiple_choice'],
     questionCount: 5,
     difficulty: 'medium',
     topic: ALL_TOPICS,
@@ -74,7 +137,7 @@ export function QuizModal({
 
   const [quiz, setQuiz] = useState<QuizView | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [userAnswers, setUserAnswers] = useState<Record<number, number>>({});
+  const [userAnswers, setUserAnswers] = useState<Record<number, AnswerDraft>>({});
   const [timeLeft, setTimeLeft] = useState(0);
   const [attempt, setAttempt] = useState<QuizAttemptResponse | null>(null);
 
@@ -104,10 +167,19 @@ export function QuizModal({
         courseId,
         quiz.quiz_id,
         {
-          answers: quiz.questions.map((question) => ({
-            question_id: question.question_id,
-            selected_option_index: userAnswers[question.question_id] ?? null,
-          })),
+          answers: quiz.questions.map((question) => {
+            const draft = userAnswers[question.question_id] ?? EMPTY_DRAFT;
+            if (isOptionBased(question.question_type)) {
+              return {
+                question_id: question.question_id,
+                selected_option_index: draft.optionIndex,
+              };
+            }
+            return {
+              question_id: question.question_id,
+              answer_text: draft.text.trim() || null,
+            };
+          }),
           time_spent_seconds: elapsed,
         },
         { signal: controller.signal },
@@ -147,7 +219,7 @@ export function QuizModal({
         courseId,
         {
           question_count: setup.questionCount,
-          question_type: setup.questionType,
+          question_types: setup.questionTypes,
           difficulty: setup.difficulty,
           topic_focus: setup.topic,
         },
@@ -269,22 +341,33 @@ export function QuizModal({
                     </select>
                   </div>
 
-                  <div className="study-field-group">
-                    <label htmlFor="question-type">Question Type</label>
-                    <select
-                      id="question-type"
-                      value={setup.questionType}
-                      onChange={(event) =>
-                        setSetup({
-                          ...setup,
-                          questionType: event.target.value as QuizQuestionType,
-                        })
-                      }
-                    >
-                      <option value="multiple_choice">Multiple Choice (4 options)</option>
-                      <option value="true_false">True / False</option>
-                    </select>
-                  </div>
+                  <fieldset className="study-field-group">
+                    <legend>Question Types</legend>
+                    {QUESTION_TYPE_OPTIONS.map(({ value, label }) => {
+                      const checked = setup.questionTypes.includes(value);
+                      return (
+                        <label key={value} className="study-toggle-label">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setSetup((previous) => {
+                                const next = checked
+                                  ? previous.questionTypes.filter(
+                                      (item) => item !== value,
+                                    )
+                                  : [...previous.questionTypes, value];
+                                return next.length === 0
+                                  ? previous
+                                  : { ...previous, questionTypes: next };
+                              })
+                            }
+                          />
+                          <span>{label}</span>
+                        </label>
+                      );
+                    })}
+                  </fieldset>
 
                   <div className="study-field-group">
                     <label htmlFor="question-count">Number of Questions</label>
@@ -377,32 +460,62 @@ export function QuizModal({
                 {currentQuestion.topic ? (
                   <span className="summary-meta-badge">{currentQuestion.topic}</span>
                 ) : null}
+                <span className="summary-meta-badge">
+                  {QUESTION_TYPE_LABELS[currentQuestion.question_type]}
+                </span>
                 <h3>{currentQuestion.question}</h3>
 
-                <div className="quiz-options-list">
-                  {currentQuestion.options.map((option, index) => {
-                    const isSelected =
-                      userAnswers[currentQuestion.question_id] === index;
-                    return (
-                      <button
-                        key={index}
-                        type="button"
-                        className={`quiz-option-btn${isSelected ? ' selected' : ''}`}
-                        onClick={() =>
-                          setUserAnswers((previous) => ({
-                            ...previous,
-                            [currentQuestion.question_id]: index,
-                          }))
-                        }
-                      >
-                        <span className="option-letter">
-                          {String.fromCharCode(65 + index)}
-                        </span>
-                        <span>{option}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                {currentQuestion.options ? (
+                  <div className="quiz-options-list">
+                    {currentQuestion.options.map((option, index) => {
+                      const isSelected =
+                        userAnswers[currentQuestion.question_id]?.optionIndex === index;
+                      return (
+                        <button
+                          key={index}
+                          type="button"
+                          className={`quiz-option-btn${isSelected ? ' selected' : ''}`}
+                          onClick={() =>
+                            setUserAnswers((previous) => ({
+                              ...previous,
+                              [currentQuestion.question_id]: {
+                                optionIndex: index,
+                                text: '',
+                              },
+                            }))
+                          }
+                        >
+                          <span className="option-letter">
+                            {String.fromCharCode(65 + index)}
+                          </span>
+                          <span>{option}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <textarea
+                    className="quiz-answer-input"
+                    aria-label="Your answer"
+                    maxLength={MAX_ANSWER_TEXT_CHARS}
+                    rows={currentQuestion.question_type === 'open_ended' ? 6 : 2}
+                    placeholder={
+                      currentQuestion.question_type === 'open_ended'
+                        ? 'Explain your reasoning...'
+                        : 'Type your answer...'
+                    }
+                    value={userAnswers[currentQuestion.question_id]?.text ?? ''}
+                    onChange={(event) =>
+                      setUserAnswers((previous) => ({
+                        ...previous,
+                        [currentQuestion.question_id]: {
+                          optionIndex: null,
+                          text: event.target.value,
+                        },
+                      }))
+                    }
+                  />
+                )}
               </div>
             </div>
           ) : null}
@@ -465,15 +578,15 @@ export function QuizModal({
                     return (
                       <div
                         key={answer.question_id}
-                        className={`review-item ${
-                          answer.is_correct ? 'correct' : 'incorrect'
-                        }`}
+                        className={`review-item ${reviewStatusClass(answer.is_correct)}`}
                       >
                         <div className="review-header">
                           <h4>
                             {index + 1}. {question.question}
                           </h4>
-                          {answer.is_correct ? (
+                          {answer.is_correct === null ? (
+                            <HelpCircle aria-hidden="true" className="review-icon-bad" />
+                          ) : answer.is_correct ? (
                             <CheckCircle2 aria-hidden="true" className="review-icon-ok" />
                           ) : (
                             <XCircle aria-hidden="true" className="review-icon-bad" />
@@ -488,20 +601,34 @@ export function QuizModal({
                                 answer.is_correct ? 'answer-correct' : 'answer-incorrect'
                               }
                             >
-                              {answer.selected_option_index !== null
-                                ? question.options[answer.selected_option_index]
-                                : 'Unanswered'}
+                              {describeSubmittedAnswer(question, answer)}
                             </span>
                           </div>
-                          {!answer.is_correct ? (
+                          {answer.is_correct === null ? (
                             <div>
-                              <strong>Correct Answer: </strong>
+                              <strong>Not graded: </strong>
+                              <span>This answer could not be scored automatically.</span>
+                            </div>
+                          ) : !answer.is_correct ? (
+                            <div>
+                              <strong>
+                                {question.question_type === 'open_ended'
+                                  ? 'Reference Answer: '
+                                  : 'Correct Answer: '}
+                              </strong>
                               <span className="answer-correct">
-                                {question.options[answer.correct_option_index]}
+                                {describeCorrectAnswer(question)}
                               </span>
                             </div>
                           ) : null}
                         </div>
+
+                        {answer.feedback ? (
+                          <div className="review-explanation">
+                            <strong>Feedback: </strong>
+                            {answer.feedback}
+                          </div>
+                        ) : null}
 
                         {question.explanation ? (
                           <div className="review-explanation">

@@ -178,22 +178,28 @@ def test_quiz_template_regression() -> None:
     rendered = PromptLoader.render(
         "quiz",
         {
-            "TEXT": "Linear Algebra Lecture",
             "QUESTION_COUNT": "8",
-            "QUESTION_TYPE_DIRECTIVE": "Every question must be multiple choice.",
+            "QUESTION_TYPES_DIRECTIVE": "Use only these question types: true_false.",
+            "QUESTION_SCHEMAS": '{"question_type": "true_false"}',
             "DIFFICULTY_DIRECTIVE": "Every question must be hard.",
+            "REQUESTED_DIFFICULTY": "hard",
             "TOPIC_FOCUS": "Eigenvalues",
+            "TEXT": "Linear Algebra Lecture",
         },
     )
     assert "Linear Algebra Lecture" in rendered
     assert "{{TEXT}}" not in rendered
     assert "{{QUESTION_COUNT}}" not in rendered
-    assert "{{QUESTION_TYPE_DIRECTIVE}}" not in rendered
+    assert "{{QUESTION_TYPES_DIRECTIVE}}" not in rendered
+    assert "{{QUESTION_SCHEMAS}}" not in rendered
     assert "{{DIFFICULTY_DIRECTIVE}}" not in rendered
+    assert "{{REQUESTED_DIFFICULTY}}" not in rendered
     assert "{{TOPIC_FOCUS}}" not in rendered
     assert "Generate exactly 8 questions" in rendered
-    assert "Every question must be multiple choice." in rendered
+    assert "Use only these question types: true_false." in rendered
     assert "Every question must be hard." in rendered
+    assert '{"question_type": "true_false"}' in rendered
+    assert 'difficulty field must be exactly "hard"' in rendered
     assert "Eigenvalues" in rendered
 
     template = PromptLoader.load_template("quiz")
@@ -201,10 +207,30 @@ def test_quiz_template_regression() -> None:
     assert template.required_variables == [
         "TEXT",
         "QUESTION_COUNT",
-        "QUESTION_TYPE_DIRECTIVE",
+        "QUESTION_TYPES_DIRECTIVE",
+        "QUESTION_SCHEMAS",
+        "REQUESTED_DIFFICULTY",
         "DIFFICULTY_DIRECTIVE",
         "TOPIC_FOCUS",
     ]
+
+
+def test_quiz_grading_template_regression() -> None:
+    rendered = PromptLoader.render(
+        "quiz_grading",
+        {
+            "SUBMISSION_COUNT": "2",
+            "SUBMISSIONS": "question_number: 1 Question: Why sorted?",
+        },
+    )
+    assert "{{SUBMISSION_COUNT}}" not in rendered
+    assert "{{SUBMISSIONS}}" not in rendered
+    assert "Why sorted?" in rendered
+    assert "2 open-ended question(s)" in rendered
+
+    template = PromptLoader.load_template("quiz_grading")
+    assert template.output_schema_ref == "OpenEndedGradingResponse"
+    assert template.required_variables == ["SUBMISSION_COUNT", "SUBMISSIONS"]
 
 
 def test_flashcard_template_regression() -> None:

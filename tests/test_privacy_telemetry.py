@@ -59,6 +59,8 @@ class PrivacySafeMockProvider:
                 "questions": [
                     {
                         "question_number": i + 1,
+                        "question_type": "multiple_choice",
+                        "difficulty": "medium",
                         "topic": "General",
                         "question": f"Question {i + 1}?",
                         "options": ["A", "B", "C", "D"],
@@ -196,7 +198,7 @@ def test_privacy_regression_asserts_raw_prompts_and_chunks_are_never_persisted(
             course_id,
             QuizRequest(
                 question_count=10,
-                question_type=QuizQuestionType.MULTIPLE_CHOICE,
+                question_types=[QuizQuestionType.MULTIPLE_CHOICE],
                 difficulty=QuizDifficulty.MEDIUM,
                 topic_focus="All Topics",
             ),

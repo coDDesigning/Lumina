@@ -1,13 +1,13 @@
-"""Reading the AI artifacts a course has already generated.
+"""The AI artifacts a course has already generated.
 
-Rows are written by the feature services; this module is the only place that
-reads them back. Persisted JSON is parsed permissively on the way out: a row
-whose stored document no longer matches its feature schema must still render,
-because a history view that fails on one bad row is worse than one that shows it.
+Feature services own generation; this module owns the ``generated_outputs``
+row. Writing goes through ``record`` so every feature stores attribution and its
+settings the same way. Persisted JSON is parsed permissively on the way out: a
+row whose stored document no longer matches its feature schema must still
+render, because a history view that fails on one bad row is worse than one that
+shows it.
 """
 
-import json
-import logging
 from collections.abc import Sequence
 from typing import Any
 
@@ -17,8 +17,7 @@ from sqlalchemy.orm import Session
 from backend.app.models import GeneratedOutput
 from schemas.generated_output import GeneratedOutputDetail, GeneratedOutputSummary
 from utils.exceptions import NotFoundException
-
-logger = logging.getLogger(__name__)
+from utils.json_documents import parse_json_object
 
 GENERATED_OUTPUT_NOT_FOUND = "Generated output not found"
 
@@ -26,21 +25,9 @@ GENERATED_OUTPUT_NOT_FOUND = "Generated output not found"
 def _parse_object(
     raw: str | None, *, field: str, output_id: int
 ) -> dict[str, Any] | None:
-    if raw is None:
-        return None
-    try:
-        parsed = json.loads(raw)
-    except ValueError:
-        logger.warning(
-            "generated_outputs.%s for row %s is not valid JSON", field, output_id
-        )
-        return None
-    if not isinstance(parsed, dict):
-        logger.warning(
-            "generated_outputs.%s for row %s is not a JSON object", field, output_id
-        )
-        return None
-    return parsed
+    return parse_json_object(
+        raw, field=field, table="generated_outputs", row_id=output_id
+    )
 
 
 def _parse_content(row: GeneratedOutput) -> dict[str, Any] | str:
@@ -49,6 +36,35 @@ def _parse_content(row: GeneratedOutput) -> dict[str, Any] | str:
 
 
 class GeneratedOutputService:
+    @staticmethod
+    def record(
+        db: Session,
+        *,
+        course_id: int,
+        user_id: int,
+        output_type: str,
+        content: str,
+        model_used: str | None = None,
+        generation_settings: str | None = None,
+        generation_context: str | None = None,
+    ) -> GeneratedOutput:
+        """Store one generation, with the user and model that actually produced it."""
+        generated_output = GeneratedOutput(
+            course_id=course_id,
+            user_id=user_id,
+            model_used=model_used,
+            output_type=output_type,
+            content=content,
+            generation_settings=generation_settings,
+            generation_context=generation_context,
+        )
+        db.add(generated_output)
+        db.flush()
+        db.refresh(generated_output)
+        db.commit()
+
+        return generated_output
+
     @staticmethod
     def list_course_outputs(
         db: Session,

@@ -630,7 +630,6 @@ def test_hard_course_delete_removes_registered_document_file(upload_api) -> None
 
     deleted = upload_api.client.delete(
         f"/api/courses/{upload_api.course_id}",
-        params={"hard_delete": "true"},
         headers=upload_api.authorization,
     )
 
@@ -654,7 +653,6 @@ def test_failed_hard_delete_retains_metadata_and_can_be_retried(
     monkeypatch.setattr(upload_api.storage, "delete", fail_delete)
     failed = upload_api.client.delete(
         f"/api/courses/{upload_api.course_id}",
-        params={"hard_delete": "true"},
         headers=upload_api.authorization,
     )
 
@@ -669,7 +667,6 @@ def test_failed_hard_delete_retains_metadata_and_can_be_retried(
     monkeypatch.setattr(upload_api.storage, "delete", original_delete)
     retried = upload_api.client.delete(
         f"/api/courses/{upload_api.course_id}",
-        params={"hard_delete": "true"},
         headers=upload_api.authorization,
     )
 

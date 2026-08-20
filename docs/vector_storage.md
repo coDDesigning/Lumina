@@ -123,7 +123,8 @@ record exists to make detectable.
 | Reprocess | The document's vectors are deleted before the new set is written, so a shrinking chunk set leaves nothing stale. |
 | Embedding failure | Nothing is published. The job records a classified error and either requeues or fails permanently. |
 | Document delete | Vectors are removed while the document is still tombstoned, before its row is deleted. |
-| Course hard delete | Vectors are removed before the course row is deleted. |
+| Course delete | Vectors are removed before the course row is deleted. |
+| Course purge | `python -m workers.course_purge` reruns that same deletion for every tombstoned course, so an interrupted one still ends with no vectors. |
 | Backfill | Reconciles missing vectors; safe to rerun; `--prune-orphans` removes vectors whose chunk is gone. |
 
 On PostgreSQL, `ON DELETE CASCADE` would already remove vectors with their chunks.

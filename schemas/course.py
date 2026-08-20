@@ -34,7 +34,6 @@ class CourseUpdate(BaseModel):
     exam_date: str | None = Field(default=None, max_length=20)
     syllabus: str | None = None
     topics: str | None = None
-    is_deleted: bool | None = None
 
     @field_validator(
         "title", "description", "semester", "exam_date", "syllabus", "topics"
@@ -45,7 +44,7 @@ class CourseUpdate(BaseModel):
 
     @model_validator(mode="after")
     def reject_null_for_required_columns(self) -> "CourseUpdate":
-        required_columns = {"title", "is_deleted"}
+        required_columns = {"title"}
         explicitly_null = required_columns & self.model_fields_set
         if any(getattr(self, field) is None for field in explicitly_null):
             raise ValueError("Required course fields cannot be null")

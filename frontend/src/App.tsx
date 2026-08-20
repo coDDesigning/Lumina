@@ -659,6 +659,21 @@ function App() {
     }
   }
 
+  const deleteWorkspace = async (workspaceId: string) => {
+    await coursesAPI.delete(Number(workspaceId))
+    const remaining = workspaces.filter(
+      workspace => workspace.id !== workspaceId
+    )
+    setWorkspaces(remaining)
+
+    if (activeWorkspaceId !== workspaceId) return
+    const nextWorkspaceId = remaining[0]?.id ?? ''
+    if (!nextWorkspaceId) {
+      localStorage.removeItem(ACTIVE_WORKSPACE_STORAGE_KEY)
+    }
+    setActiveWorkspaceId(nextWorkspaceId)
+  }
+
   const updateWorkspace = async (updatedWorkspace: Workspace) => {
     try {
       const updatedCourse = await coursesAPI.update(Number(updatedWorkspace.id), {
@@ -703,6 +718,7 @@ function App() {
               activeWorkspaceId={activeWorkspaceId}
               onCreate={createWorkspace}
               onSelect={selectWorkspace}
+              onDelete={deleteWorkspace}
             />
           }
         />

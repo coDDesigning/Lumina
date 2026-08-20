@@ -657,7 +657,7 @@ def test_study_guide_endpoint_hides_a_missing_course(
     assert provider.calls == 0
 
 
-def test_study_guide_endpoint_hides_a_soft_deleted_course(
+def test_study_guide_endpoint_hides_a_tombstoned_course(
     upload_api,
     monkeypatch,
 ) -> None:

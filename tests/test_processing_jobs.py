@@ -1697,7 +1697,7 @@ def test_course_deletion_immediately_fences_running_claim(session_factory, tmp_p
     assert claim is not None
 
     with session_factory() as session:
-        CourseService.soft_delete_course(session, queued.course_id)
+        CourseService.prepare_hard_delete(session, queued.course_id)
     with session_factory() as session:
         assert not complete_job(
             session,
@@ -1720,25 +1720,31 @@ def test_course_deletion_immediately_fences_running_claim(session_factory, tmp_p
 
 
 @pytest.mark.database_contract
-def test_generic_course_update_cannot_bypass_job_fencing(session_factory, tmp_path):
+def test_course_update_can_no_longer_reach_the_deletion_flag(session_factory, tmp_path):
+    """Deletion left the update surface, so a stale payload must change nothing.
+
+    ``is_deleted`` used to be an updatable field, which made a plain edit a
+    second, silent soft delete that fenced running work. It is now internal
+    deletion state and an update carrying it is simply ignored.
+    """
     queued = _queue_document(session_factory, tmp_path)
+    assert "is_deleted" not in CourseUpdate.model_fields
 
     with session_factory() as session:
         updated = CourseService.update_course(
             session,
             queued.course_id,
-            CourseUpdate(is_deleted=True),
+            CourseUpdate.model_validate({"is_deleted": True}),
         )
-        assert updated.is_deleted is True
+        assert updated.is_deleted is False
 
     with session_factory() as session:
         job = session.get(ProcessingJob, queued.job_id)
         document = session.get(UploadedDocument, queued.document_id)
         assert job is not None
         assert document is not None
-        assert job.status == JOB_STATUS_FAILED
-        assert job.last_error_code == "COURSE_DELETED"
-        assert document.status == "failed"
+        assert job.status == JOB_STATUS_QUEUED
+        assert document.status == "uploaded"
 
 
 @pytest.mark.database_contract

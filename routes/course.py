@@ -8,8 +8,8 @@ from backend.app.database import get_db
 from schemas.course import CourseCreate, CourseResponse, CourseUpdate
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
-from services.course import CourseService
-from storage.base import Storage, StorageError
+from services.course import CourseDeletionError, CourseService
+from storage.base import Storage
 from storage.dependencies import get_storage
 from utils.authorization import AuthorizedCourse, DeletableCourse, OwnedCourse
 from utils.deps import get_current_user
@@ -108,32 +108,21 @@ def delete_course(
     course: DeletableCourse,
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[Storage, Depends(get_storage)],
-    hard_delete: bool = False,
 ):
+    """Permanently erases a course the caller owns.
+
+    Deletion is unconditional: the course, its documents, stored files, pages,
+    visuals, chunks, vectors, generated outputs, quizzes, attempts, and progress
+    all go. The caller's profile knowledge is user-scoped and is not touched.
+    Cleanup that cannot finish leaves the course tombstoned so the same request
+    can safely resume it.
     """
-    Deletes a course the caller owns.
-    Performs a soft delete by default (moves to trash).
-    Permanently deletes if hard_delete=True.
-    """
-    if hard_delete:
-        stored_documents = CourseService.prepare_hard_delete(db, course.id)
-        try:
-            for storage_provider, storage_key in stored_documents:
-                if storage_provider != storage.provider:
-                    raise StorageError("Stored document uses another provider.")
-                storage.delete(storage_key)
-        except StorageError as exc:
-            logger.exception("Course storage cleanup failed; metadata retained")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Course cleanup failed; retry hard deletion",
-            ) from exc
-        CourseService.finalize_hard_delete(db, course.id)
-        return BaseResponse(
-            success=True, message="Course permanently deleted", data=None
-        )
-    else:
-        deleted_course = CourseService.soft_delete_course(db, course.id)
-        return BaseResponse(
-            success=True, message="Course soft deleted", data=deleted_course
-        )
+    try:
+        CourseService.hard_delete_course(db, course.id, storage)
+    except CourseDeletionError as exc:
+        logger.exception("Course cleanup failed; metadata retained")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Course cleanup failed; retry hard deletion",
+        ) from exc
+    return BaseResponse(success=True, message="Course permanently deleted", data=None)

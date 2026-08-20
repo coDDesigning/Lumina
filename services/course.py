@@ -7,9 +7,14 @@ from backend.app.models import Course, UploadedDocument
 from schemas.course import CourseCreate, CourseResponse, CourseUpdate
 from schemas.user import UserResponse
 from services.processing_jobs import fence_course_jobs
-from services.vector_store import VectorStore, get_vector_store
+from services.vector_store import VectorStore, VectorStoreError, get_vector_store
+from storage.base import Storage, StorageError
 from utils.authorization import readable_course_criteria
 from utils.exceptions import NotFoundException
+
+
+class CourseDeletionError(Exception):
+    """Course erasure left work behind; the tombstone remains for a retry."""
 
 
 class CourseService:
@@ -66,46 +71,18 @@ class CourseService:
         db: Session, course_id: int, update_data: CourseUpdate
     ) -> CourseResponse:
         updates = update_data.model_dump(exclude_unset=True)
-        if updates.get("is_deleted") is True:
-            db.rollback()
-            begin_serialized_write(db)
-        statement = select(Course).where(
-            Course.id == course_id,
-            Course.is_deleted.is_(False),
+        course = db.scalar(
+            select(Course).where(
+                Course.id == course_id,
+                Course.is_deleted.is_(False),
+            )
         )
-        if updates.get("is_deleted") is True:
-            statement = statement.with_for_update()
-        course = db.scalar(statement)
         if course is None:
             raise NotFoundException(detail="Course not found")
 
         for field, value in updates.items():
             setattr(course, field, value)
-        if course.is_deleted:
-            fence_course_jobs(db, course_id)
 
-        db.commit()
-        db.refresh(course)
-        return CourseResponse.model_validate(course)
-
-    @staticmethod
-    def soft_delete_course(db: Session, course_id: int) -> CourseResponse:
-        """Moves the course to trash (soft delete by setting is_deleted=True)."""
-        db.rollback()
-        begin_serialized_write(db)
-        course = db.scalar(
-            select(Course)
-            .where(
-                Course.id == course_id,
-                Course.is_deleted.is_(False),
-            )
-            .with_for_update()
-        )
-        if course is None:
-            raise NotFoundException(detail="Course not found")
-
-        course.is_deleted = True
-        fence_course_jobs(db, course_id)
         db.commit()
         db.refresh(course)
         return CourseResponse.model_validate(course)
@@ -153,7 +130,11 @@ class CourseService:
             raise RuntimeError("Course must be tombstoned before hard deletion.")
 
         store = vector_store if vector_store is not None else get_vector_store()
-        store.delete_course_vectors(db, course_id)
+        try:
+            store.delete_course_vectors(db, course_id)
+        except VectorStoreError:
+            db.rollback()
+            raise
 
         db.delete(course)
         try:
@@ -170,3 +151,30 @@ class CourseService:
                 raise exc from verification_exc
             if not deletion_committed:
                 raise
+
+    @staticmethod
+    def hard_delete_course(
+        db: Session,
+        course_id: int,
+        storage: Storage,
+        vector_store: VectorStore | None = None,
+    ) -> None:
+        """Erase a course, its stored files, and its vectors, in a resumable order.
+
+        Every step is idempotent and the tombstone outlives all of them, so a
+        failure anywhere leaves a course the owner can delete again rather than
+        untracked files or searchable vectors.
+        """
+        stored_documents = CourseService.prepare_hard_delete(db, course_id)
+        try:
+            for storage_provider, storage_key in stored_documents:
+                if storage_provider != storage.provider:
+                    raise StorageError("Stored document uses another provider.")
+                storage.delete(storage_key)
+        except (StorageError, ValueError) as exc:
+            raise CourseDeletionError from exc
+
+        try:
+            CourseService.finalize_hard_delete(db, course_id, vector_store)
+        except VectorStoreError as exc:
+            raise CourseDeletionError from exc

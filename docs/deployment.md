@@ -134,8 +134,18 @@ version older than 0.8.0.
 On AWS the application uses IAM roles, not static credentials: the ECS task
 role gets `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject` on the document
 bucket, and `S3_ENDPOINT_URL`/`S3_FORCE_PATH_STYLE` are not set. The worker
-remains a single Fargate task (durable single consumer); the API autoscales
-between `api_min_instances` and `api_max_instances` on CPU.
+autoscales between `worker_min_instances` and `worker_max_instances` on the
+oldest queued-job age; the API autoscales between `api_min_instances` and
+`api_max_instances` on CPU.
+
+Horizontal scaling is qualified only for the AWS hosted topology:
+PostgreSQL `SKIP LOCKED` partitions claims across workers, claim tokens and
+leases fence stale workers, RDS Proxy bounds database connections, and S3 plus
+pgvector provide shared durable state. Scale-in has a 120-second Fargate stop
+timeout; a task killed after that cannot publish through an expired token and
+the next worker recovers its lease. Self-hosted SQLite/local/Chroma remains a
+single-host, single-worker topology. Provider concurrency and upload limits are
+per process, so raising replica maxima multiplies upstream AI/embedding load.
 
 Deployments run through the SCRUM-93 workflow: it builds and pushes the image
 to ECR, registers new task definition revisions, runs the one-off `migrate`

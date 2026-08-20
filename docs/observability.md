@@ -42,7 +42,9 @@ The worker emits CloudWatch Embedded Metric Format events under
 
 Each worker reports the same queue snapshot, so dashboards and alarms use
 `Maximum`, never `Sum`, for queue gauges. Outcome metrics are event counters and
-use `Sum`.
+use `Sum`. AWS Application Auto Scaling uses `OldestQueuedAgeSeconds` with
+`Maximum` to add/remove worker tasks; CPU is deliberately not the worker signal
+because extraction and provider calls are frequently I/O-bound.
 
 ## Alarms
 

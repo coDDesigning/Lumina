@@ -114,8 +114,10 @@ deploy.
 - Set `alarm_email` to subscribe an operator to alarm and recovery events; SNS
   requires the recipient to confirm the subscription.
 - API autoscaling is CPU-based target tracking between `api_min_instances` and
-  `api_max_instances`. The worker stays at a single task: it is a durable
-  single-consumer job processor.
+  `api_max_instances`. Workers scale between `worker_min_instances` and
+  `worker_max_instances` on the maximum oldest queued-job age. PostgreSQL
+  `SKIP LOCKED`, claim tokens, and expiring leases make concurrent claims safe;
+  self-hosted SQLite/Chroma is not horizontally scaled.
 - `terraform destroy` refuses to delete the protected RDS instance and ALB
   until protection is lifted; that is deliberate.
 - The state bucket is configured with `backend "s3" {}` and the concrete

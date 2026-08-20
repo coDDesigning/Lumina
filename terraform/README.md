@@ -12,6 +12,7 @@ same image used by `docker-compose.hosted.yml`:
 - ECS Fargate services `api` (behind an ALB with ACM TLS and autoscaling) and
   `worker`, plus a one-off `migrate` task definition;
 - an optional Route53 alias to the ALB.
+- CloudWatch JSON logs, dashboard, worker EMF metrics, alarms, and an SNS topic.
 
 The initial ECS task definitions read runtime secrets from AWS Systems Manager
 Parameter Store paths under `/<project>-<environment>/` (for example
@@ -110,6 +111,8 @@ deploy.
 
 - The ALB health check targets `GET /health/ready` on the container port, the
   same probe used by Compose.
+- Set `alarm_email` to subscribe an operator to alarm and recovery events; SNS
+  requires the recipient to confirm the subscription.
 - API autoscaling is CPU-based target tracking between `api_min_instances` and
   `api_max_instances`. The worker stays at a single task: it is a durable
   single-consumer job processor.

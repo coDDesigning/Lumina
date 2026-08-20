@@ -84,6 +84,14 @@ class ClaimedJob:
     file_size: int
 
 
+@dataclass(frozen=True, slots=True)
+class QueueMetrics:
+    queued: int
+    running: int
+    failed: int
+    oldest_queued_age_seconds: float
+
+
 class ProcessingJobStateError(RuntimeError):
     """A requested transition is not valid for the current durable state."""
 
@@ -185,6 +193,52 @@ def enqueue_document_job(
     session.add(job)
     session.flush()
     return job
+
+
+def processing_queue_metrics(
+    session: Session,
+    *,
+    now: datetime | None = None,
+) -> QueueMetrics:
+    """Return one bounded aggregate snapshot for worker metrics."""
+    current = _database_now(session, now)
+    row = session.execute(
+        select(
+            func.coalesce(
+                func.sum(case((ProcessingJob.status == JOB_STATUS_QUEUED, 1), else_=0)),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case((ProcessingJob.status == JOB_STATUS_RUNNING, 1), else_=0)
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(case((ProcessingJob.status == JOB_STATUS_FAILED, 1), else_=0)),
+                0,
+            ),
+            func.min(
+                case(
+                    (
+                        ProcessingJob.status == JOB_STATUS_QUEUED,
+                        ProcessingJob.available_at,
+                    ),
+                    else_=None,
+                )
+            ),
+        )
+    ).one()
+    oldest = row[3]
+    if oldest is not None and oldest.tzinfo is None:
+        oldest = oldest.replace(tzinfo=timezone.utc)
+    age = 0.0 if oldest is None else max(0.0, (current - oldest).total_seconds())
+    return QueueMetrics(
+        queued=int(row[0]),
+        running=int(row[1]),
+        failed=int(row[2]),
+        oldest_queued_age_seconds=age,
+    )
 
 
 def claim_next_job(

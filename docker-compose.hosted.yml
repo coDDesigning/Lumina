@@ -123,7 +123,7 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?set BOOTSTRAP_ADMIN_EMAIL in .env}
       BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:?set BOOTSTRAP_ADMIN_TOKEN in .env}
     command:
-      ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--limit-concurrency", "100", "--timeout-graceful-shutdown", "330"]
+      ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--limit-concurrency", "100", "--timeout-graceful-shutdown", "330", "--no-access-log"]
     depends_on:
       migrate:
         condition: service_completed_successfully

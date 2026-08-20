@@ -162,6 +162,16 @@ secrets. Set its ARN as the `AWS_DEPLOY_ROLE_ARN` secret and the Terraform
 outputs as variables on the GitHub `production` environment, then the SCRUM-93
 workflow deploys without any stored long-lived credentials.
 
+### AWS observability
+
+Application and worker logs are single-line privacy-safe JSON in CloudWatch
+Logs. Request IDs correlate API events; worker queue and outcome metrics use
+CloudWatch Embedded Metric Format. Terraform provisions the operations
+dashboard, SNS alarm topic, and baseline ALB/ECS/RDS/RDS Proxy/queue alarms.
+Set the optional `alarm_email` Terraform variable and confirm the SNS
+subscription before launch. See `docs/observability.md` for the field contract,
+thresholds, and required staging alarm exercise.
+
 ### AWS deploy pipeline
 
 `.github/workflows/deploy.yml` deploys the repository to the AWS topology on a

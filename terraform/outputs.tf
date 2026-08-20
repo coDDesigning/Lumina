@@ -77,3 +77,13 @@ output "runtime_ssm_parameters" {
   description = "SSM parameter names created from runtime_secrets."
   value       = module.secrets.parameter_names
 }
+
+output "alarm_topic_arn" {
+  description = "SNS topic receiving production alarm and recovery notifications."
+  value       = module.observability.alarm_topic_arn
+}
+
+output "operations_dashboard_name" {
+  description = "CloudWatch operations dashboard."
+  value       = module.observability.dashboard_name
+}

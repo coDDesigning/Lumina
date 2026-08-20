@@ -33,6 +33,7 @@ from services.embeddings import (
     EmbeddingTimeoutError,
 )
 from services.retrieval_material import (
+    MaterialNotIndexedError,
     MaterialRetrievalError,
     MaterialRetrievalRateLimitError,
     MaterialRetrievalTimeoutError,
@@ -281,12 +282,31 @@ def test_raises_when_nothing_clears_the_similarity_floor(
 def test_raises_when_the_course_has_no_indexed_material(
     db_session: Session, retrieval_store: ChromaVectorStore
 ) -> None:
+    """Ready chunks with no vectors is an indexing gap, not a relevance miss.
+
+    Reporting it as a relevance miss tells the student to broaden a topic that
+    was never the problem, so it has to be its own error.
+    """
     course, _document, _chunks = _seed_course(
         db_session, email="novectors@example.com", texts=["alpha"]
     )
 
-    with pytest.raises(NoRelevantMaterialError):
+    with pytest.raises(MaterialNotIndexedError):
         _load(db_session, course.id, store=retrieval_store)
+
+
+def test_a_relevance_miss_is_not_reported_as_an_indexing_gap(
+    db_session: Session, retrieval_store: ChromaVectorStore
+) -> None:
+    course, document, chunks = _seed_course(
+        db_session, email="stillindexed@example.com", texts=["unrelated"]
+    )
+    _index(retrieval_store, db_session, document, chunks, [4.0])
+
+    with pytest.raises(NoRelevantMaterialError) as excinfo:
+        _load(db_session, course.id, store=retrieval_store, min_similarity=0.9)
+
+    assert not isinstance(excinfo.value, MaterialNotIndexedError)
 
 
 def test_skips_chunks_whose_document_is_not_ready(

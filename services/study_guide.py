@@ -21,6 +21,7 @@ from services.prompt_loader import PromptLoader
 from services.course_material import count_available_chunks
 from services.retrieval_query import build_retrieval_query
 from services.retrieval_material import (
+    MaterialNotIndexedError,
     MaterialRetrievalError,
     NoRelevantMaterialError,
     RetrievedCourseMaterial,
@@ -214,6 +215,9 @@ class StudyGuideService:
 
         try:
             material = cls.get_course_material(db, course_id, query=query)
+        except MaterialNotIndexedError:
+            log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
+            raise
         except NoRelevantMaterialError:
             log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
             raise

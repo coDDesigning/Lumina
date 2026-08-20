@@ -1245,7 +1245,7 @@ def test_study_guide_endpoint_rejects_a_course_whose_material_is_not_indexed(
 
     assert response.status_code == 409
     assert (
-        response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.NO_RELEVANT_MATERIAL]
+        response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.MATERIAL_NOT_INDEXED]
     )
     assert provider.calls == 0
     assert _persisted_outputs(upload_api.session_factory, upload_api.course_id) == []

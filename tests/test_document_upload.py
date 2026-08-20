@@ -792,3 +792,22 @@ def test_main_app_openapi_describes_document_upload_contract() -> None:
         "500",
     } <= set(operation["responses"])
     assert operation["security"] == [{"OAuth2PasswordBearer": []}]
+
+
+def test_corrupted_and_encrypted_content_is_admitted_at_upload_time(
+    upload_api,
+) -> None:
+    """Request-time validation does not deep-parse content; deep validation is asynchronous."""
+    corrupt_pdf = b"%PDF-1.7\ntruncated-corrupt-data"
+    response = upload_document(
+        upload_api,
+        "corrupted.pdf",
+        corrupt_pdf,
+        "application/pdf",
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["duplicate"] is False
+    assert payload["document"]["status"] == "uploaded"
+    assert payload["document"]["file_type"] == "pdf"
+    assert payload["document"]["file_size"] == len(corrupt_pdf)

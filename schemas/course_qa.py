@@ -10,6 +10,11 @@ class CourseQARequest(BaseModel):
         max_length=2000,
         description="The question about course materials",
     )
+    conversation_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="Existing conversation to continue, or omit to start a new one",
+    )
 
 
 class CourseQAResponse(BaseModel):
@@ -18,3 +23,4 @@ class CourseQAResponse(BaseModel):
 
 class CourseQAGenerationResult(BoundedContext):
     answer: str
+    conversation_id: int

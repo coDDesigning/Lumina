@@ -1,6 +1,8 @@
 import routes.course_qa as course_qa_route
 from backend.app.models import (
     AiUsageLog,
+    Conversation,
+    ConversationMessage,
     Course,
     DocumentChunk,
     Role,
@@ -9,6 +11,7 @@ from backend.app.models import (
 )
 from schemas.ai_usage import GenerationType
 from services.course_qa import (
+    ConversationNotFoundError,
     CourseQAError,
     CourseQAService,
     NoReadyCourseMaterialError,
@@ -476,3 +479,312 @@ def test_course_qa_provider_error_status_codes(
         headers=upload_api.authorization,
     )
     assert res.status_code == 429
+
+def test_course_qa_creates_conversation_and_persists_messages(
+    upload_api,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        assert user is not None and course is not None
+
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="9" * 64,
+            text="Gravity attracts objects with mass toward each other.",
+        )
+
+    class FakeProvider:
+        def generate_text_with_metadata(self, prompt: str):
+            assert "Gravity attracts objects with mass" in prompt
+            assert "What is gravity?" in prompt
+            return (
+                "Gravity is the attraction between objects with mass.",
+                GenerationMetadata(
+                    provider="ollama",
+                    model="llama3.1",
+                    latency_ms=10,
+                ),
+            )
+
+    monkeypatch.setattr(
+        course_qa_route,
+        "get_text_generation_provider",
+        lambda: FakeProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "What is gravity?"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    conversation_id = payload["data"]["conversation_id"]
+
+    assert isinstance(conversation_id, int)
+    assert conversation_id > 0
+
+    with upload_api.session_factory() as session:
+        conversation = session.get(Conversation, conversation_id)
+
+        assert conversation is not None
+        assert conversation.user_id == upload_api.user_id
+        assert conversation.course_id == upload_api.course_id
+
+        messages = (
+            session.query(ConversationMessage)
+            .filter_by(conversation_id=conversation_id)
+            .order_by(ConversationMessage.id)
+            .all()
+        )
+
+        assert len(messages) == 2
+        assert messages[0].role == "user"
+        assert messages[0].content == "What is gravity?"
+        assert messages[1].role == "assistant"
+        assert (
+            messages[1].content
+            == "Gravity is the attraction between objects with mass."
+        )
+
+
+def test_course_qa_continues_existing_conversation_with_history(
+    upload_api,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        assert user is not None and course is not None
+
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="a" * 64,
+            text="Photosynthesis converts light energy into chemical energy.",
+        )
+
+    captured_prompts: list[str] = []
+
+    class FakeProvider:
+        def generate_text_with_metadata(self, prompt: str):
+            captured_prompts.append(prompt)
+
+            if len(captured_prompts) == 1:
+                return (
+                    "Photosynthesis converts light energy into chemical energy.",
+                    GenerationMetadata(
+                        provider="ollama",
+                        model="llama3.1",
+                        latency_ms=10,
+                    ),
+                )
+
+            return (
+                "It means plants use light to produce stored chemical energy.",
+                GenerationMetadata(
+                    provider="ollama",
+                    model="llama3.1",
+                    latency_ms=10,
+                ),
+            )
+
+    monkeypatch.setattr(
+        course_qa_route,
+        "get_text_generation_provider",
+        lambda: FakeProvider(),
+    )
+
+    first_response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "What is photosynthesis?"},
+        headers=upload_api.authorization,
+    )
+
+    assert first_response.status_code == 200
+
+    conversation_id = first_response.json()["data"]["conversation_id"]
+
+    second_response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={
+            "question": "Can you explain that more simply?",
+            "conversation_id": conversation_id,
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert second_response.status_code == 200
+    assert second_response.json()["data"]["conversation_id"] == conversation_id
+
+    assert len(captured_prompts) == 2
+
+    second_prompt = captured_prompts[1]
+
+    assert "User: What is photosynthesis?" in second_prompt
+    assert (
+        "Assistant: Photosynthesis converts light energy into chemical energy."
+        in second_prompt
+    )
+    assert "Can you explain that more simply?" in second_prompt
+
+    with upload_api.session_factory() as session:
+        messages = (
+            session.query(ConversationMessage)
+            .filter_by(conversation_id=conversation_id)
+            .order_by(ConversationMessage.id)
+            .all()
+        )
+
+        assert len(messages) == 4
+        assert [message.role for message in messages] == [
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+        ]
+
+
+def test_get_conversation_rejects_wrong_course(
+    db_session,
+    model_graph,
+) -> None:
+    other_course = Course(
+        owner=model_graph.user,
+        title="Other Course",
+    )
+    db_session.add(other_course)
+    db_session.flush()
+
+    conversation = Conversation(
+        user_id=model_graph.user.id,
+        course_id=other_course.id,
+    )
+    db_session.add(conversation)
+    db_session.commit()
+
+    try:
+        CourseQAService.get_conversation(
+            db_session,
+            conversation.id,
+            user_id=model_graph.user.id,
+            course_id=model_graph.course.id,
+        )
+    except ConversationNotFoundError as exc:
+        assert "Conversation not found." in str(exc)
+    else:
+        raise AssertionError("Expected ConversationNotFoundError")
+
+
+def test_get_conversation_rejects_wrong_user(
+    db_session,
+    model_graph,
+) -> None:
+    role = db_session.query(Role).filter_by(name="user").first()
+
+    other_user = User(
+        name="Conversation Intruder",
+        email="conversation-intruder@example.com",
+        password_hash="hash",
+        role=role,
+    )
+    db_session.add(other_user)
+    db_session.flush()
+
+    conversation = Conversation(
+        user_id=model_graph.user.id,
+        course_id=model_graph.course.id,
+    )
+    db_session.add(conversation)
+    db_session.commit()
+
+    try:
+        CourseQAService.get_conversation(
+            db_session,
+            conversation.id,
+            user_id=other_user.id,
+            course_id=model_graph.course.id,
+        )
+    except ConversationNotFoundError as exc:
+        assert "Conversation not found." in str(exc)
+    else:
+        raise AssertionError("Expected ConversationNotFoundError")
+
+
+def test_course_qa_provider_failure_does_not_create_conversation(
+    upload_api,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        assert user is not None and course is not None
+
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="b" * 64,
+            text="Ready course material",
+        )
+
+        conversations_before = (
+            session.query(Conversation)
+            .filter_by(
+                user_id=upload_api.user_id,
+                course_id=upload_api.course_id,
+            )
+            .count()
+        )
+
+    class FailingProvider:
+        def generate_text(self, prompt: str) -> str:
+            raise TextGenerationError("Generation failed")
+
+    monkeypatch.setattr(
+        course_qa_route,
+        "get_text_generation_provider",
+        lambda: FailingProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "This generation should fail"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code >= 400
+
+    with upload_api.session_factory() as session:
+        conversations_after = (
+            session.query(Conversation)
+            .filter_by(
+                user_id=upload_api.user_id,
+                course_id=upload_api.course_id,
+            )
+            .count()
+        )
+
+        assert conversations_after == conversations_before
+
+
+def test_course_qa_rejects_nonpositive_conversation_id(
+    upload_api,
+) -> None:
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={
+            "question": "Continue this conversation",
+            "conversation_id": 0,
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 422

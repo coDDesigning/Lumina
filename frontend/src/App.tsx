@@ -11,6 +11,7 @@ import type { Workspace, WorkspaceDraft } from './data/workspaces'
 import EditPage from './pages/EditPage'
 import ProfilePage from './pages/ProfilePage'
 import SettingsPage from './pages/SettingsPage'
+import AdminPage from './pages/AdminPage'
 import WorkspacesPage from './pages/WorkspacesPage'
 import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
@@ -21,6 +22,8 @@ import { useAuth } from './context/AuthContext'
 import { coursesAPI } from './api/courses'
 import { progressAPI } from './api/progress'
 import { courseQaAPI } from './api/courseQa'
+import { aiTutorAPI } from './api/aiTutor'
+import { promptGeneratorAPI } from './api/promptGenerator'
 import { describeError, describeUploadError, isAbortError } from './api/errors'
 import type { Course, CourseProgressResponse } from './api/types'
 import { useCourseDocuments } from './hooks/useCourseDocuments'
@@ -31,6 +34,7 @@ import './pages/workspaces.css'
 
 import { SummaryModal } from './components/study/SummaryModal'
 import { QuizModal } from './components/study/QuizModal'
+import { FlashcardModal } from './components/study/FlashcardModal'
 import { ProgressDashboard } from './components/study/ProgressDashboard'
 
 type WorkspaceTab = 'Exam' | 'Tutoring' | 'Practice' | 'Analytics'
@@ -81,6 +85,9 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const [lastPrompt, setLastPrompt] = useState('')
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false)
   const [isQuizModalOpen, setIsQuizModalOpen] = useState(false)
+  const [isFlashcardModalOpen, setIsFlashcardModalOpen] = useState(false)
+  const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false)
+  const [promptGeneratorError, setPromptGeneratorError] = useState<string | null>(null)
   const [uploadErrors, setUploadErrors] = useState<{ fileName: string; message: string }[]>([])
   const [uploadNotices, setUploadNotices] = useState<string[]>([])
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
@@ -88,7 +95,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const [isProgressLoading, setIsProgressLoading] = useState(false)
   const [progressError, setProgressError] = useState<string | null>(null)
   const [progressToken, setProgressToken] = useState(0)
-  const [qaResult, setQaResult] = useState<{ question: string; answer: string; truncated?: boolean } | null>(null)
+  const [qaResult, setQaResult] = useState<{ question: string; answer: string; truncated?: boolean; isTutor?: boolean } | null>(null)
   const [isQaLoading, setIsQaLoading] = useState(false)
   const [qaError, setQaError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -169,25 +176,25 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
     setUploadProgress(null)
   }
 
-  const generatePrompt = (event: FormEvent<HTMLFormElement>) => {
+  const generatePrompt = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const request = generatorPrompt.trim()
-    if (!request) return
+    if (!request || isGeneratingPrompt) return
 
-    if (request.toLowerCase().includes('summary') || request.toLowerCase().includes('özet')) {
-      setIsSummaryModalOpen(true)
+    setIsGeneratingPrompt(true)
+    setPromptGeneratorError(null)
+
+    try {
+      const res = await promptGeneratorAPI.generate({ description: request })
+      setMainPrompt(res.generated_prompt)
       setGeneratorPrompt('')
-      return
+    } catch (err) {
+      setPromptGeneratorError(
+        describeError(err, 'Failed to generate prompt. Please try again.').message,
+      )
+    } finally {
+      setIsGeneratingPrompt(false)
     }
-
-    if (request.toLowerCase().includes('quiz') || request.toLowerCase().includes('soru') || request.toLowerCase().includes('test')) {
-      setIsQuizModalOpen(true)
-      setGeneratorPrompt('')
-      return
-    }
-
-    setMainPrompt(`Create a clear study activity about: ${request}`)
-    setGeneratorPrompt('')
   }
 
   const submitPrompt = (event: FormEvent<HTMLFormElement>) => {
@@ -207,22 +214,40 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
       return
     }
 
+    if (prompt.toLowerCase().includes('flashcard') || prompt.toLowerCase().includes('kart')) {
+      setIsFlashcardModalOpen(true)
+      setMainPrompt('')
+      return
+    }
+
     setLastPrompt(prompt)
     setMainPrompt('')
     setIsQaLoading(true)
     setQaError(null)
 
-    courseQaAPI
-      .ask(courseId, { question: prompt })
+    const isTutorMode = activeTab === 'Tutoring'
+    const requestPromise = isTutorMode
+      ? aiTutorAPI.ask(courseId, { question: prompt })
+      : courseQaAPI.ask(courseId, { question: prompt })
+
+    requestPromise
       .then((res) => {
         setQaResult({
           question: prompt,
           answer: res.answer,
           truncated: res.context_truncated,
+          isTutor: isTutorMode,
         })
       })
       .catch((err: unknown) => {
-        setQaError(describeError(err, 'Failed to generate answer from course materials.').message)
+        setQaError(
+          describeError(
+            err,
+            isTutorMode
+              ? 'Failed to generate tutor explanation from course materials.'
+              : 'Failed to generate answer from course materials.',
+          ).message,
+        )
       })
       .finally(() => {
         setIsQaLoading(false)
@@ -355,12 +380,34 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
               id="generator-prompt"
               value={generatorPrompt}
               onChange={(event) => setGeneratorPrompt(event.target.value)}
-              placeholder="e.g. Generate summary or Quiz"
+              placeholder="e.g. Create an exam revision guide"
+              disabled={isGeneratingPrompt}
             />
-            <button type="submit" aria-label="Generate prompt">
-              <Search aria-hidden="true" />
+            <button
+              type="submit"
+              aria-label="Generate prompt"
+              disabled={isGeneratingPrompt}
+            >
+              {isGeneratingPrompt ? (
+                <LoadingSpinner size="sm" />
+              ) : (
+                <Search aria-hidden="true" />
+              )}
             </button>
           </form>
+          {promptGeneratorError && (
+            <p
+              style={{
+                color: '#dc2626',
+                fontSize: '12px',
+                marginTop: '8px',
+                padding: '0 4px',
+              }}
+              role="alert"
+            >
+              {promptGeneratorError}
+            </p>
+          )}
         </section>
       </aside>
 
@@ -409,6 +456,14 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
                   </button>
                   <button
                     type="button"
+                    className="secondary-button"
+                    style={{ padding: '6px 12px', fontSize: '13px' }}
+                    onClick={() => setIsFlashcardModalOpen(true)}
+                  >
+                    🃏 Flashcards
+                  </button>
+                  <button
+                    type="button"
                     className="primary-button"
                     style={{ padding: '6px 12px', fontSize: '13px' }}
                     onClick={() => setIsQuizModalOpen(true)}
@@ -436,7 +491,11 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
 
                 {isQaLoading && (
                   <div className="qa-loading-indicator" role="status" style={{ padding: '12px', background: 'var(--color-surface, #f5f5f5)', borderRadius: '8px', margin: '12px 0' }}>
-                    <p style={{ margin: 0, fontStyle: 'italic' }}>🔍 Searching course materials and generating answer…</p>
+                    <p style={{ margin: 0, fontStyle: 'italic' }}>
+                      {activeTab === 'Tutoring'
+                        ? '🎓 AI Tutor is formulating personalized guidance…'
+                        : '🔍 Searching course materials and generating answer…'}
+                    </p>
                   </div>
                 )}
 
@@ -448,7 +507,14 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
 
                 {qaResult && (
                   <div className="qa-result-card" style={{ padding: '16px', background: 'var(--color-surface, #f8fafc)', border: '1px solid var(--color-border, #e2e8f0)', borderRadius: '8px', margin: '16px 0' }}>
-                    <p style={{ fontWeight: 600, margin: '0 0 8px 0', color: 'var(--color-text-primary, #0f172a)' }}>Q: {qaResult.question}</p>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <p style={{ fontWeight: 600, margin: 0, color: 'var(--color-text-primary, #0f172a)' }}>Q: {qaResult.question}</p>
+                      {qaResult.isTutor && (
+                        <span style={{ fontSize: '11px', fontWeight: 600, background: '#ede9fe', color: '#7c3aed', padding: '2px 8px', borderRadius: '999px' }}>
+                          🎓 AI Tutor
+                        </span>
+                      )}
+                    </div>
                     <p style={{ whiteSpace: 'pre-wrap', margin: '0 0 8px 0', lineHeight: 1.6 }}>{qaResult.answer}</p>
                     {qaResult.truncated && (
                       <small style={{ color: '#d97706', display: 'block' }}>⚠️ Note: Only a portion of course materials was used due to length.</small>
@@ -472,7 +538,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
                   id="main-prompt"
                   value={mainPrompt}
                   onChange={(event) => setMainPrompt(event.target.value)}
-                  placeholder="Enter prompt (type 'summary' or 'quiz' for quick tools)..."
+                  placeholder="Enter prompt (type 'summary', 'quiz', or 'flashcard' for quick tools)..."
                 />
                 <button type="submit" aria-label="Submit prompt">
                   <Search aria-hidden="true" />
@@ -502,7 +568,17 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
           onAttemptRecorded={() => setProgressToken((token) => token + 1)}
         />
       ) : null}
+
+      {isFlashcardModalOpen ? (
+        <FlashcardModal
+          courseId={courseId}
+          courseName={workspace.name}
+          readyDocumentCount={readyCount}
+          onClose={() => setIsFlashcardModalOpen(false)}
+        />
+      ) : null}
     </main>
+
   )
 }
 
@@ -751,6 +827,10 @@ function App() {
         <Route
           path="/profile"
           element={<ProfilePage workspaceId={activeWorkspaceId} />}
+        />
+        <Route
+          path="/admin"
+          element={<AdminPage />}
         />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -4,11 +4,15 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
-from schemas.flashcard import FlashcardGenerationResult
+from schemas.flashcard import FlashcardGenerationResult, FlashcardRequest
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.flashcard import FlashcardGenerationError, FlashcardService
-from services.text_generation import TextGenerationError, get_text_generation_provider
+from services.text_generation import (
+    TextGenerationError,
+    get_text_generation_provider,
+    resolve_effective_model,
+)
 from utils.ai_errors import ai_generation_http_exception
 from utils.authorization import OwnedCourse
 from utils.deps import get_current_user
@@ -25,6 +29,7 @@ router = APIRouter(
     responses={
         400: {"description": "No processed course material is available"},
         401: {"description": "Authentication required"},
+        402: {"description": "Insufficient credits"},
         404: {"description": "Course not found"},
         429: {"description": "AI provider rate limited"},
         503: {"description": "AI provider unreachable"},
@@ -35,9 +40,17 @@ def generate_flashcards(
     course: OwnedCourse,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
+    request: FlashcardRequest | None = None,
 ):
     try:
-        provider = get_text_generation_provider()
+        effective_model = resolve_effective_model(
+            request.model if request else None,
+            current_user.preferred_model,
+        )
+        try:
+            provider = get_text_generation_provider(effective_model=effective_model)
+        except TypeError:
+            provider = get_text_generation_provider()
 
         generation = FlashcardService.generate(
             db,
@@ -54,7 +67,7 @@ def generate_flashcards(
             model_used=generation.model_used,
         )
 
-    except (TextGenerationError, FlashcardGenerationError) as exc:
+    except (TextGenerationError, FlashcardGenerationError, Exception) as exc:
         raise ai_generation_http_exception(exc, feature="flashcard") from exc
 
     return BaseResponse(

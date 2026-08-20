@@ -4,10 +4,13 @@ import {
   Brain,
   CheckCircle2,
   Clock3,
+  Coins,
+  Cpu,
   Edit3,
   GraduationCap,
   LogOut,
   Plus,
+  RefreshCw,
   Smile,
   Sparkles,
   Trash2,
@@ -17,21 +20,17 @@ import {
 import { useNavigate } from 'react-router-dom'
 import PageLayout from '../components/PageLayout'
 import { useAuth } from '../context/AuthContext'
+import { modelsAPI } from '../api/models'
 import { profileKnowledgeAPI } from '../api/profileKnowledge'
-import type { ProfileKnowledgeItem } from '../api/types'
-
-const profileStats = [
-  { label: 'Active courses', value: '4', icon: BookOpen },
-  { label: 'Study sessions', value: '12', icon: Clock3 },
-  { label: 'Quiz average', value: '82%', icon: Trophy },
-]
+import { userAPI } from '../api/user'
+import type { AiModelInfo, ProfileKnowledgeItem } from '../api/types'
 
 type ProfilePageProps = {
   workspaceId?: string
 }
 
 function ProfilePage({ workspaceId }: ProfilePageProps) {
-  const { user, logout } = useAuth()
+  const { user, logout, refreshUser } = useAuth()
   const navigate = useNavigate()
 
   const nameParts = user?.name ? user.name.split(' ') : ['Lumina', 'Learner']
@@ -48,6 +47,15 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
   })
   const [saved, setSaved] = useState(false)
 
+  // AI Models & Credits State
+  const [models, setModels] = useState<AiModelInfo[]>([])
+  const [loadingModels, setLoadingModels] = useState(true)
+  const [selectedModel, setSelectedModel] = useState(user?.preferred_model || '')
+  const [modelSaving, setModelSaving] = useState(false)
+  const [modelSuccess, setModelSuccess] = useState<string | null>(null)
+  const [modelError, setModelError] = useState<string | null>(null)
+  const [refreshingCredits, setRefreshingCredits] = useState(false)
+
   // Profile Knowledge State
   const [knowledgeItems, setKnowledgeItems] = useState<ProfileKnowledgeItem[]>([])
   const [loadingKnowledge, setLoadingKnowledge] = useState(true)
@@ -61,18 +69,30 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
   const [formDetail, setFormDetail] = useState('')
   const [submittingKnowledge, setSubmittingKnowledge] = useState(false)
 
+  const fetchModels = useCallback(async () => {
+    try {
+      setLoadingModels(true)
+      const available = await modelsAPI.list()
+      setModels(available)
+    } catch (err: unknown) {
+      console.error('Failed to load AI models', err)
+    } finally {
+      setLoadingModels(false)
+    }
+  }, [])
+
   const fetchKnowledge = useCallback(async () => {
     try {
-      setLoadingKnowledge(true);
-      setKnowledgeError(null);
-      const items = await profileKnowledgeAPI.list();
-      setKnowledgeItems(items);
+      setLoadingKnowledge(true)
+      setKnowledgeError(null)
+      const items = await profileKnowledgeAPI.list()
+      setKnowledgeItems(items)
     } catch (err: unknown) {
       setKnowledgeError(
         err instanceof Error ? err.message : 'Failed to load profile knowledge.',
-      );
+      )
     } finally {
-      setLoadingKnowledge(false);
+      setLoadingKnowledge(false)
     }
   }, [])
 
@@ -86,9 +106,40 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
         email: user.email,
         role: user.role || 'Student',
       }))
+      if (user.preferred_model) {
+        setSelectedModel(user.preferred_model)
+      }
     }
+    fetchModels()
     fetchKnowledge()
-  }, [user, fetchKnowledge])
+  }, [user, fetchModels, fetchKnowledge])
+
+  const handleModelChange = async (newModel: string) => {
+    setSelectedModel(newModel)
+    setModelSaving(true)
+    setModelSuccess(null)
+    setModelError(null)
+    try {
+      await userAPI.updatePreferredModel(newModel)
+      await refreshUser()
+      setModelSuccess(`Preferred AI model updated to ${newModel}`)
+    } catch (err: unknown) {
+      setModelError(
+        err instanceof Error ? err.message : 'Failed to update preferred AI model',
+      )
+    } finally {
+      setModelSaving(false)
+    }
+  }
+
+  const handleRefreshCredits = async () => {
+    setRefreshingCredits(true)
+    try {
+      await refreshUser()
+    } finally {
+      setRefreshingCredits(false)
+    }
+  }
 
   const updateProfile = (field: keyof typeof profile, value: string) => {
     setProfile((current) => ({ ...current, [field]: value }))
@@ -222,6 +273,17 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
     }
   }
 
+  const stats = [
+    {
+      label: 'AI Credits',
+      value: user?.credits === null ? 'Unlimited' : `${user?.credits ?? 50}`,
+      icon: Coins,
+    },
+    { label: 'Active courses', value: '4', icon: BookOpen },
+    { label: 'Study sessions', value: '12', icon: Clock3 },
+    { label: 'Quiz average', value: '82%', icon: Trophy },
+  ]
+
   return (
     <PageLayout
       title="Profile"
@@ -247,7 +309,7 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
           </div>
 
           <div className="profile-stats">
-            {profileStats.map(({ label, value, icon: Icon }) => (
+            {stats.map(({ label, value, icon: Icon }) => (
               <article key={label}>
                 <Icon aria-hidden="true" />
                 <div>
@@ -325,6 +387,177 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
               <span>Role</span>
               <input value={profile.role} readOnly aria-readonly="true" />
             </label>
+          </div>
+        </section>
+
+        <section
+          className="form-section profile-form-section"
+          style={{ marginTop: '24px' }}
+          aria-label="AI Model Preferences"
+        >
+          <header
+            className="form-section-header"
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+            }}
+          >
+            <div style={{ display: 'flex', gap: '16px' }}>
+              <Cpu
+                aria-hidden="true"
+                style={{ width: '24px', height: '24px', color: '#6366f1' }}
+              />
+              <div>
+                <h2 style={{ fontSize: '18px', margin: '0 0 4px' }}>
+                  AI Model Preferences & Credits
+                </h2>
+                <p style={{ margin: 0, color: '#6b7280', fontSize: '14px' }}>
+                  Select your default model for Study Guides, Quizzes, Flashcards, AI Tutor, and Course Q&A.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={handleRefreshCredits}
+              disabled={refreshingCredits}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '13px',
+                padding: '6px 12px',
+              }}
+            >
+              <RefreshCw
+                style={{
+                  width: '14px',
+                  height: '14px',
+                  animation: refreshingCredits ? 'spin 1s linear infinite' : 'none',
+                }}
+              />
+              Refresh Credits
+            </button>
+          </header>
+
+          <div
+            style={{
+              marginTop: '16px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '16px',
+                padding: '12px 16px',
+                background: '#f8fafc',
+                borderRadius: '10px',
+                border: '1px solid #e2e8f0',
+              }}
+            >
+              <Coins
+                style={{ width: '20px', height: '20px', color: '#f59e0b' }}
+              />
+              <div style={{ flex: 1 }}>
+                <strong style={{ fontSize: '14px', color: '#1e293b' }}>
+                  Available Balance:{' '}
+                  {user?.credits === null ? (
+                    <span style={{ color: '#10b981', fontWeight: 700 }}>
+                      Unlimited (Admin)
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        color:
+                          user?.credits && user.credits > 0
+                            ? '#10b981'
+                            : '#ef4444',
+                        fontWeight: 700,
+                      }}
+                    >
+                      {user?.credits ?? 0} Credits
+                    </span>
+                  )}
+                </strong>
+                <p
+                  style={{
+                    margin: '2px 0 0',
+                    fontSize: '12px',
+                    color: '#64748b',
+                  }}
+                >
+                  Each AI generation deducts 1 credit. Regular accounts start with 50 credits.
+                </p>
+              </div>
+            </div>
+
+            <label className="form-field">
+              <span>Preferred AI Model</span>
+              <select
+                value={selectedModel}
+                onChange={(e) => handleModelChange(e.target.value)}
+                disabled={loadingModels || modelSaving}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  fontSize: '14px',
+                }}
+              >
+                {loadingModels ? (
+                  <option value="">Loading available models...</option>
+                ) : (
+                  models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.display_name} {m.is_default ? '(Default)' : ''}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+
+            {modelSuccess && (
+              <div
+                role="status"
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  color: '#166534',
+                  fontSize: '13px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <CheckCircle2 style={{ width: '15px', height: '15px' }} />
+                {modelSuccess}
+              </div>
+            )}
+
+            {modelError && (
+              <div
+                role="alert"
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  color: '#991b1b',
+                  fontSize: '13px',
+                }}
+              >
+                {modelError}
+              </div>
+            )}
           </div>
         </section>
 

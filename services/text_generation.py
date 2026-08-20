@@ -661,6 +661,78 @@ class ReliableTextGenerationProvider:
         return result
 
 
+def get_available_models() -> list[dict[str, object]]:
+    """Return the catalog of models actually available under the current deployment."""
+    primary_name = settings.ai_provider
+    provider_names = [primary_name]
+
+    if settings.ai_fallback_providers:
+        for fallback_token in (
+            item.strip().lower()
+            for item in settings.ai_fallback_providers.split(",")
+            if item.strip()
+        ):
+            if fallback_token not in provider_names and fallback_token in (
+                AI_PROVIDER_GEMINI,
+                AI_PROVIDER_OLLAMA,
+            ):
+                provider_names.append(fallback_token)
+
+    models: list[dict[str, object]] = []
+    for prov in provider_names:
+        if prov == AI_PROVIDER_GEMINI:
+            model_name = GeminiTextGenerationProvider.MODEL
+            models.append(
+                {
+                    "id": f"{prov}:{model_name}",
+                    "provider": prov,
+                    "model": model_name,
+                    "display_name": f"Gemini ({model_name})",
+                    "is_default": prov == primary_name,
+                }
+            )
+        elif prov == AI_PROVIDER_OLLAMA:
+            model_name = settings.ollama_model
+            models.append(
+                {
+                    "id": f"{prov}:{model_name}",
+                    "provider": prov,
+                    "model": model_name,
+                    "display_name": f"Ollama ({model_name})",
+                    "is_default": prov == primary_name,
+                }
+            )
+    return models
+
+
+def resolve_effective_model(
+    request_model: str | None = None,
+    user_preferred_model: str | None = None,
+) -> str:
+    """Resolve the effective model using precedence rule:
+    1. Explicit request override (if valid in catalog)
+    2. User preferred model (if valid in catalog)
+    3. Deployment default
+    """
+    catalog = get_available_models()
+    valid_ids = {m["id"] for m in catalog}
+
+    if request_model and request_model in valid_ids:
+        return request_model
+    if user_preferred_model and user_preferred_model in valid_ids:
+        return user_preferred_model
+
+    for m in catalog:
+        if m.get("is_default"):
+            return str(m["id"])
+
+    if catalog:
+        return str(catalog[0]["id"])
+
+    prov, model = configured_provider_identity()
+    return f"{prov}:{model}"
+
+
 def _instantiate_provider(provider_name: str) -> TextGenerationProvider:
     clean_name = provider_name.strip().lower()
     if clean_name == AI_PROVIDER_GEMINI:
@@ -673,7 +745,9 @@ def _instantiate_provider(provider_name: str) -> TextGenerationProvider:
     )
 
 
-def get_text_generation_provider() -> TextGenerationProvider:
+def get_text_generation_provider(
+    effective_model: str | None = None,
+) -> TextGenerationProvider:
     primary_name = settings.ai_provider
     provider_names = [primary_name]
 
@@ -685,6 +759,12 @@ def get_text_generation_provider() -> TextGenerationProvider:
         ):
             if fallback_token not in provider_names:
                 provider_names.append(fallback_token)
+
+    if effective_model:
+        preferred_provider = effective_model.split(":", 1)[0].strip().lower()
+        if preferred_provider in provider_names:
+            provider_names.remove(preferred_provider)
+            provider_names.insert(0, preferred_provider)
 
     providers: list[TextGenerationProvider] = []
     for name in provider_names:

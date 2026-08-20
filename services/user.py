@@ -1,7 +1,7 @@
 import secrets
 
 from email_validator import EmailNotValidError, validate_email
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -9,6 +9,7 @@ from backend.app.config import settings
 from backend.app.models import Role as RoleModel
 from backend.app.models import User
 from schemas.user import Role, UserCreate, UserResponse, UserUpdate
+from services.text_generation import get_available_models
 from utils.exceptions import BadRequestException, NotFoundException
 from utils.security import get_password_hash
 
@@ -145,15 +146,23 @@ class UserService:
         canonical_email = UserService.canonicalize_email(user_data.email)
         if canonical_email is None:
             raise BadRequestException("Invalid email address")
+
+        models = get_available_models()
+        default_model = str(models[0]["id"]) if models else "gemini:gemini-3.6-flash"
+        for m in models:
+            if m.get("is_default"):
+                default_model = str(m["id"])
+                break
+
         return User(
             name=user_data.name,
             email=canonical_email,
             password_hash=get_password_hash(user_data.password),
             role=UserService._get_role(db, role),
             is_initial_admin=True if claims_initial_admin else None,
-            credits=None if role == Role.ADMIN else 100.0,
+            credits=None if role == Role.ADMIN else 50.0,
             is_banned=False,
-            preferred_model="gpt-4o-mini",
+            preferred_model=default_model,
         )
 
     @staticmethod
@@ -171,7 +180,13 @@ class UserService:
             if role == Role.ADMIN:
                 user.credits = None
             elif previous_role == Role.ADMIN and user.credits is None:
-                user.credits = 100.0
+                user.credits = 50.0
+
+        pref_model = update_dict.get("preferred_model")
+        if pref_model is not None:
+            available_model_ids = {m["id"] for m in get_available_models()}
+            if pref_model not in available_model_ids:
+                raise BadRequestException(f"Unsupported AI model: {pref_model}")
 
         for field, value in update_dict.items():
             setattr(user, field, value)
@@ -179,3 +194,40 @@ class UserService:
         db.commit()
         db.refresh(user)
         return UserService.to_response(user)
+
+    @staticmethod
+    def charge_credits(db: Session, user_id: int, amount: float = 1.0) -> bool:
+        """Atomically deducts credits from a user. Returns True if successful, False if insufficient credits."""
+        user = db.get(User, user_id)
+        if user is None:
+            return False
+        if user.credits is None:
+            # Admin has unlimited credits
+            return True
+        if user.credits < amount:
+            return False
+
+        stmt = (
+            update(User)
+            .where(
+                User.id == user_id,
+                (User.credits.is_(None) | (User.credits >= amount)),
+            )
+            .values(credits=User.credits - amount)
+        )
+        result = db.execute(stmt)
+        if result.rowcount == 0:
+            return False
+        db.commit()
+        return True
+
+    @staticmethod
+    def refund_credits(db: Session, user_id: int, amount: float = 1.0) -> None:
+        """Atomically refunds credits to a user upon generation failure."""
+        stmt = (
+            update(User)
+            .where(User.id == user_id, User.credits.is_not(None))
+            .values(credits=User.credits + amount)
+        )
+        db.execute(stmt)
+        db.commit()

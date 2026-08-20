@@ -38,6 +38,10 @@ class RetrievalRateLimitedError(RetrievalUnavailableError):
     pass
 
 
+class InsufficientCreditsError(RuntimeError):
+    pass
+
+
 class AiErrorCode(str, Enum):
     NO_READY_MATERIAL = "no_ready_material"
     NO_RELEVANT_MATERIAL = "no_relevant_material"
@@ -46,6 +50,7 @@ class AiErrorCode(str, Enum):
     PROVIDER_TIMEOUT = "provider_timeout"
     PROVIDER_RATE_LIMITED = "provider_rate_limited"
     INVALID_GENERATED_STRUCTURE = "invalid_generated_structure"
+    INSUFFICIENT_CREDITS = "insufficient_credits"
     GENERATION_FAILED = "generation_failed"
 
 
@@ -72,6 +77,9 @@ PUBLIC_MESSAGES: dict[AiErrorCode, str] = {
     AiErrorCode.INVALID_GENERATED_STRUCTURE: (
         "The AI service returned an unusable result. Please try again."
     ),
+    AiErrorCode.INSUFFICIENT_CREDITS: (
+        "You do not have enough credits to complete this generation."
+    ),
     AiErrorCode.GENERATION_FAILED: (
         "The request could not be completed. Please try again later."
     ),
@@ -85,6 +93,7 @@ STATUS_CODES: dict[AiErrorCode, int] = {
     AiErrorCode.PROVIDER_TIMEOUT: status.HTTP_504_GATEWAY_TIMEOUT,
     AiErrorCode.PROVIDER_RATE_LIMITED: status.HTTP_429_TOO_MANY_REQUESTS,
     AiErrorCode.INVALID_GENERATED_STRUCTURE: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    AiErrorCode.INSUFFICIENT_CREDITS: status.HTTP_402_PAYMENT_REQUIRED,
     AiErrorCode.GENERATION_FAILED: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }
 
@@ -100,6 +109,8 @@ def _exception_chain(exc: BaseException) -> Iterator[BaseException]:
 
 def classify_generation_error(exc: BaseException) -> AiErrorCode:
     for error in _exception_chain(exc):
+        if isinstance(error, InsufficientCreditsError):
+            return AiErrorCode.INSUFFICIENT_CREDITS
         if isinstance(error, CourseMaterialUnavailableError):
             return AiErrorCode.NO_READY_MATERIAL
         if isinstance(error, NoRelevantCourseMaterialError):
@@ -122,6 +133,8 @@ def classify_generation_error(exc: BaseException) -> AiErrorCode:
             return AiErrorCode.PROVIDER_RATE_LIMITED
         if category == ErrorCategory.INVALID_STRUCTURE.value:
             return AiErrorCode.INVALID_GENERATED_STRUCTURE
+        if category == ErrorCategory.INSUFFICIENT_CREDITS.value:
+            return AiErrorCode.INSUFFICIENT_CREDITS
 
     return AiErrorCode.GENERATION_FAILED
 

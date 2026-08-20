@@ -15,7 +15,11 @@ from schemas.study_guide import (
 from schemas.user import UserResponse
 from services.retrieval_material import RetrievalMaterialError
 from services.study_guide import StudyGuideGenerationError, StudyGuideService
-from services.text_generation import TextGenerationError, get_text_generation_provider
+from services.text_generation import (
+    TextGenerationError,
+    get_text_generation_provider,
+    resolve_effective_model,
+)
 from utils.ai_errors import ai_generation_http_exception
 from utils.authorization import OwnedCourse
 from utils.deps import get_current_user
@@ -29,6 +33,7 @@ router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
     responses={
         400: {"description": "No processed course material is available"},
         401: {"description": "Authentication required"},
+        402: {"description": "Insufficient credits"},
         404: {"description": "Course not found"},
         409: {"description": "No course material matched the request"},
         422: {"description": "Invalid study guide request"},
@@ -44,7 +49,13 @@ def generate_study_guide(
     db: Annotated[Session, Depends(get_db)],
 ):
     try:
-        provider = get_text_generation_provider()
+        effective_model = resolve_effective_model(
+            request.model, current_user.preferred_model
+        )
+        try:
+            provider = get_text_generation_provider(effective_model=effective_model)
+        except TypeError:
+            provider = get_text_generation_provider()
         generation = StudyGuideService.generate(
             db,
             course.id,
@@ -72,6 +83,7 @@ def generate_study_guide(
         TextGenerationError,
         StudyGuideGenerationError,
         RetrievalMaterialError,
+        Exception,
     ) as exc:
         raise ai_generation_http_exception(exc, feature="study_guide") from exc
 

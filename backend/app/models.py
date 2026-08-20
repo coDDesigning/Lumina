@@ -143,7 +143,9 @@ class User(Base):
         Boolean, default=False, server_default=false()
     )
     preferred_model: Mapped[str] = mapped_column(
-        String(100), default="gpt-4o-mini", server_default="gpt-4o-mini"
+        String(100),
+        default="gemini:gemini-3.6-flash",
+        server_default="gemini:gemini-3.6-flash",
     )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()

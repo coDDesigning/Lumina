@@ -1,5 +1,5 @@
 import { apiClient, unwrapData } from './client';
-import type { BaseResponse, User } from './types';
+import type { BaseResponse, CreditTransaction, User } from './types';
 
 export const userAPI = {
   updatePreferredModel: async (modelName: string): Promise<User> => {
@@ -14,5 +14,12 @@ export const userAPI = {
       '/users/me/credits',
     );
     return unwrapData(res, 'User credits');
+  },
+
+  getCreditTransactions: async (limit = 20): Promise<CreditTransaction[]> => {
+    const res = await apiClient.get<BaseResponse<CreditTransaction[]>>(
+      `/users/me/credit-transactions?limit=${limit}`,
+    );
+    return unwrapData(res, 'User credit transactions');
   },
 };

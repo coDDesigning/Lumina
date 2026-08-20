@@ -1,7 +1,7 @@
 import secrets
 
 from email_validator import EmailNotValidError, validate_email
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -9,6 +9,7 @@ from backend.app.config import settings
 from backend.app.models import Role as RoleModel
 from backend.app.models import User
 from schemas.user import Role, UserCreate, UserResponse, UserUpdate
+from services.credits import CreditService
 from services.text_generation import get_available_models
 from utils.exceptions import BadRequestException, NotFoundException
 from utils.security import get_password_hash
@@ -25,7 +26,7 @@ class UserService:
             email=user.email,
             role=Role(user.role.name),
             is_banned=user.is_banned,
-            credits=user.credits,
+            credits=CreditService.reported_balance(user),
             preferred_model=user.preferred_model,
         )
 
@@ -162,16 +163,20 @@ class UserService:
                 default_model = str(m["id"])
                 break
 
-        return User(
+        user = User(
             name=user_data.name,
             email=canonical_email,
             password_hash=get_password_hash(user_data.password),
             role=UserService._get_role(db, role),
             is_initial_admin=True if claims_initial_admin else None,
-            credits=None if role == Role.ADMIN else 50.0,
+            credits=None if role == Role.ADMIN else settings.credit_initial_grant,
             is_banned=False,
             preferred_model=default_model,
         )
+        initial_grant = CreditService.build_initial_grant(user)
+        if initial_grant is not None:
+            user.credit_transactions.append(initial_grant)
+        return user
 
     @staticmethod
     def update_user(db: Session, email: str, update_data: UserUpdate) -> UserResponse:
@@ -182,13 +187,15 @@ class UserService:
 
         update_dict = update_data.model_dump(exclude_unset=True)
         role = update_dict.pop("role", None)
+        remetered = False
         if role is not None:
             previous_role = Role(user.role.name)
             user.role = UserService._get_role(db, role)
             if role == Role.ADMIN:
                 user.credits = None
             elif previous_role == Role.ADMIN and user.credits is None:
-                user.credits = 50.0
+                user.credits = settings.credit_initial_grant
+                remetered = True
 
         pref_model = update_dict.get("preferred_model")
         if pref_model is not None:
@@ -199,43 +206,9 @@ class UserService:
         for field, value in update_dict.items():
             setattr(user, field, value)
 
+        if remetered:
+            CreditService.record_metering_reset(db, user)
+
         db.commit()
         db.refresh(user)
         return UserService.to_response(user)
-
-    @staticmethod
-    def charge_credits(db: Session, user_id: int, amount: float = 1.0) -> bool:
-        """Atomically deducts credits from a user. Returns True if successful, False if insufficient credits."""
-        user = db.get(User, user_id)
-        if user is None:
-            return False
-        if user.credits is None:
-            # Admin has unlimited credits
-            return True
-        if user.credits < amount:
-            return False
-
-        stmt = (
-            update(User)
-            .where(
-                User.id == user_id,
-                (User.credits.is_(None) | (User.credits >= amount)),
-            )
-            .values(credits=User.credits - amount)
-        )
-        result = db.execute(stmt)
-        if result.rowcount == 0:
-            return False
-        db.commit()
-        return True
-
-    @staticmethod
-    def refund_credits(db: Session, user_id: int, amount: float = 1.0) -> None:
-        """Atomically refunds credits to a user upon generation failure."""
-        stmt = (
-            update(User)
-            .where(User.id == user_id, User.credits.is_not(None))
-            .values(credits=User.credits + amount)
-        )
-        db.execute(stmt)
-        db.commit()

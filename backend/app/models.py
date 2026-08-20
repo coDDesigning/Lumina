@@ -194,6 +194,15 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
 
+    # Every balance change ever applied to this account.
+    credit_transactions: Mapped[list["CreditTransaction"]] = relationship(
+        back_populates="user",
+        foreign_keys="CreditTransaction.user_id",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="CreditTransaction.id",
+    )
+
 
 class Course(Base):
     __tablename__ = "courses"
@@ -1260,3 +1269,55 @@ class AiUsageLog(Base):
 
     user: Mapped["User"] = relationship(back_populates="ai_usage_logs")
     course: Mapped["Course | None"] = relationship(back_populates="ai_usage_logs")
+
+
+class CreditTransaction(Base):
+    """Immutable accounting event explaining one change to a credit balance.
+
+    The ledger is append-only: a mistake is corrected by a new, opposing
+    transaction, never by editing or deleting an existing row. For every
+    account with a non-null balance, ``users.credits`` equals the sum of that
+    account's deltas. Accounts with a null balance are not metered and own no
+    transactions. See docs/credits.md.
+    """
+
+    __tablename__ = "credit_transactions"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "grant_period",
+            name="uq_credit_transactions_user_grant_period",
+        ),
+        UniqueConstraint(
+            "refunds_transaction_id",
+            name="uq_credit_transactions_refunds_transaction_id",
+        ),
+        Index("ix_credit_transactions_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    delta: Mapped[float] = mapped_column(Float)
+    balance_after: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(String(40))
+    actor_type: Mapped[str] = mapped_column(String(20))
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    refunds_transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("credit_transactions.id", ondelete="CASCADE"), nullable=True
+    )
+    grant_period: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship(
+        back_populates="credit_transactions", foreign_keys=[user_id]
+    )

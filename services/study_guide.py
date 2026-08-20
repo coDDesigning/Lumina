@@ -32,7 +32,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.user import UserService
+from services.credits import CreditService
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -228,9 +228,12 @@ class StudyGuideService:
         prompt = cls.build_prompt(material.text, request)
         metadata = None
 
+        receipt = None
         if resolved_user_id:
-            charged = UserService.charge_credits(db, resolved_user_id, 1.0)
-            if not charged:
+            receipt = CreditService.charge(
+                db, resolved_user_id, 1.0, source_type="study_guide"
+            )
+            if receipt is None:
                 AiUsageLogger.log_failure(
                     db,
                     user_id=resolved_user_id,
@@ -247,19 +250,19 @@ class StudyGuideService:
                 result = provider.generate_json(prompt)
         except TextGenerationError as exc:
             if resolved_user_id:
-                UserService.refund_credits(db, resolved_user_id, 1.0)
+                CreditService.refund(db, receipt)
             log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
             raise StudyGuideGenerationError("Text generation provider failed.") from exc
         except Exception:
             if resolved_user_id:
-                UserService.refund_credits(db, resolved_user_id, 1.0)
+                CreditService.refund(db, receipt)
             raise
 
         try:
             validated = StudyGuideResponse.model_validate(result)
         except ValidationError as exc:
             if resolved_user_id:
-                UserService.refund_credits(db, resolved_user_id, 1.0)
+                CreditService.refund(db, receipt)
             log_failure(
                 ErrorCategory.INVALID_STRUCTURE,
                 latency_ms=metadata.latency_ms if metadata else None,

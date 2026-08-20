@@ -29,9 +29,11 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
+from services.user import UserService
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
+    InsufficientCreditsError,
     InvalidGeneratedStructureError,
 )
 
@@ -245,18 +247,38 @@ class StudyGuideService:
         prompt = cls.build_prompt(material.text, request)
         metadata = None
 
+        if resolved_user_id:
+            charged = UserService.charge_credits(db, resolved_user_id, 1.0)
+            if not charged:
+                AiUsageLogger.log_failure(
+                    db,
+                    user_id=resolved_user_id,
+                    course_id=course_id,
+                    generation_type=GenerationType.STUDY_GUIDE,
+                    error_category=ErrorCategory.INSUFFICIENT_CREDITS,
+                )
+                raise InsufficientCreditsError("Insufficient credits.")
+
         try:
             if hasattr(provider, "generate_json_with_metadata"):
                 result, metadata = provider.generate_json_with_metadata(prompt)
             else:
                 result = provider.generate_json(prompt)
         except TextGenerationError as exc:
+            if resolved_user_id:
+                UserService.refund_credits(db, resolved_user_id, 1.0)
             log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
             raise StudyGuideGenerationError("Text generation provider failed.") from exc
+        except Exception:
+            if resolved_user_id:
+                UserService.refund_credits(db, resolved_user_id, 1.0)
+            raise
 
         try:
             validated = StudyGuideResponse.model_validate(result)
         except ValidationError as exc:
+            if resolved_user_id:
+                UserService.refund_credits(db, resolved_user_id, 1.0)
             log_failure(
                 ErrorCategory.INVALID_STRUCTURE,
                 latency_ms=metadata.latency_ms if metadata else None,

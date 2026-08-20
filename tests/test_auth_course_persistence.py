@@ -66,7 +66,7 @@ def test_registration_login_and_admin_course_creation_persist(api_context) -> No
         assert users[0].credits is None
         assert users[1].role.name == "user"
         assert users[1].is_initial_admin is None
-        assert users[1].credits == 100.0
+        assert users[1].credits == 50.0
         admin_id = users[0].id
 
     login = api_context.client.post(
@@ -745,7 +745,7 @@ def test_admin_cannot_self_lock_and_role_changes_keep_credit_invariant(
         headers=authorization,
     )
     assert demoted.status_code == 200
-    assert demoted.json()["data"]["credits"] == 100.0
+    assert demoted.json()["data"]["credits"] == 50.0
 
     with api_context.session_factory() as session:
         user = UserService.get_user_by_email(session, "user@example.com")

@@ -1,7 +1,7 @@
 """add generated output settings
 
 Revision ID: b2f47c8d0915
-Revises: 910e2719d549
+Revises: 2a7c4e9f8b10
 Create Date: 2026-08-20 12:00:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b2f47c8d0915"
-down_revision: str | Sequence[str] | None = "910e2719d549"
+down_revision: str | Sequence[str] | None = "2a7c4e9f8b10"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

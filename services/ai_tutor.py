@@ -15,9 +15,11 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
+from services.user import UserService
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
+    InsufficientCreditsError,
 )
 
 
@@ -104,6 +106,18 @@ class AiTutorService:
         )
         metadata = None
 
+        if resolved_user_id:
+            charged = UserService.charge_credits(db, resolved_user_id, 1.0)
+            if not charged:
+                AiUsageLogger.log_failure(
+                    db,
+                    user_id=resolved_user_id,
+                    course_id=course_id,
+                    generation_type=GenerationType.AI_TUTOR,
+                    error_category=ErrorCategory.INSUFFICIENT_CREDITS,
+                )
+                raise InsufficientCreditsError("Insufficient credits.")
+
         try:
             if hasattr(provider, "generate_text_with_metadata"):
                 answer, metadata = provider.generate_text_with_metadata(prompt)
@@ -111,6 +125,7 @@ class AiTutorService:
                 answer = provider.generate_text(prompt)
         except TextGenerationError as exc:
             if resolved_user_id:
+                UserService.refund_credits(db, resolved_user_id, 1.0)
                 AiUsageLogger.log_failure(
                     db,
                     user_id=resolved_user_id,
@@ -121,6 +136,10 @@ class AiTutorService:
                     ),
                 )
             raise AiTutorError("Text generation provider failed.") from exc
+        except Exception:
+            if resolved_user_id:
+                UserService.refund_credits(db, resolved_user_id, 1.0)
+            raise
 
         if resolved_user_id:
             AiUsageLogger.log_success(

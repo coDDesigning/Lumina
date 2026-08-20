@@ -36,6 +36,10 @@ class StudyGuideRequest(BaseModel):
     summary_length: SummaryLength = SummaryLength.MEDIUM
     detail_level: DetailLevel = DetailLevel.STANDARD
     summary_mode: SummaryMode = SummaryMode.GENERAL
+    model: str | None = Field(
+        default=None,
+        description="Explicit model override, or omit to use preferred/default model",
+    )
 
 
 class StudyGuideGenerationSettings(BaseModel):

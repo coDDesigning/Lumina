@@ -601,7 +601,7 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
                 },
                 {
                     "question_id": q3["question_id"],
-                    "answer_text": "adenosine triphosphate",
+                    "text_response": "adenosine triphosphate",
                 },
             ],
             "time_spent_seconds": 65,

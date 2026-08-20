@@ -120,7 +120,7 @@ def test_short_answer_accepts_every_stored_variant(upload_api, monkeypatch, writ
         upload_api,
         upload_api.course_id,
         quiz_id,
-        [{"question_id": question_ids[0], "answer_text": written}],
+        [{"question_id": question_ids[0], "text_response": written}],
         upload_api.authorization,
     )
 
@@ -139,7 +139,7 @@ def test_short_answer_rejects_a_wrong_answer(upload_api, monkeypatch):
         upload_api,
         upload_api.course_id,
         quiz_id,
-        [{"question_id": question_ids[0], "answer_text": "O(n squared)"}],
+        [{"question_id": question_ids[0], "text_response": "O(n squared)"}],
         upload_api.authorization,
     )
 
@@ -154,7 +154,7 @@ def test_unanswered_short_answer_scores_zero(upload_api, monkeypatch):
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}/attempts",
-        json={"answers": [{"question_id": 999999, "answer_text": "x"}]},
+        json={"answers": [{"question_id": 999999, "text_response": "x"}]},
         headers=upload_api.authorization,
     )
 
@@ -179,7 +179,7 @@ def test_open_ended_is_scored_by_the_provider(upload_api, monkeypatch):
         upload_api,
         upload_api.course_id,
         quiz_id,
-        [{"question_id": question_ids[0], "answer_text": "Because it is sorted."}],
+        [{"question_id": question_ids[0], "text_response": "Because it is sorted."}],
         upload_api.authorization,
     )
 
@@ -197,9 +197,41 @@ def test_open_ended_is_scored_by_the_provider(upload_api, monkeypatch):
     assert data["graded_count"] == 1
 
     stored = _stored_answers(upload_api, data["attempt_id"])
-    assert stored[0].answer_text == "Because it is sorted."
+    assert stored[0].text_response == "Because it is sorted."
     assert stored[0].score == pytest.approx(0.75)
     assert stored[0].feedback == "Solid."
+
+
+def test_a_score_outside_the_unit_interval_is_refused(upload_api, monkeypatch):
+    """The unit interval is enforced on the way in, not by a check constraint.
+
+    A provider is free to answer 5.0; nothing downstream clamps it, so the
+    verdict schema has to be what stops it from ever reaching a stored score.
+    """
+    quiz_id, question_ids = _quiz(upload_api, upload_api.course_id, ["open_ended"])
+    _install_provider(
+        monkeypatch,
+        GradingProvider(
+            {"verdicts": [{"question_number": 1, "score": 5.0, "feedback": "Great."}]}
+        ),
+    )
+
+    response = _submit(
+        upload_api,
+        upload_api.course_id,
+        quiz_id,
+        [{"question_id": question_ids[0], "text_response": "Because it is sorted."}],
+        upload_api.authorization,
+    )
+
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["answers"][0]["is_correct"] is None
+    assert data["answers"][0]["score"] is None
+    assert data["graded_count"] == 0
+
+    stored = _stored_answers(upload_api, data["attempt_id"])
+    assert stored[0].score is None
 
 
 def test_open_ended_below_the_threshold_is_not_correct(upload_api, monkeypatch):
@@ -214,7 +246,7 @@ def test_open_ended_below_the_threshold_is_not_correct(upload_api, monkeypatch):
         upload_api,
         upload_api.course_id,
         quiz_id,
-        [{"question_id": question_ids[0], "answer_text": "Not much."}],
+        [{"question_id": question_ids[0], "text_response": "Not much."}],
         upload_api.authorization,
     )
 
@@ -269,7 +301,7 @@ def test_a_grading_failure_leaves_the_answer_ungraded_but_persisted(
         quiz_id,
         [
             {"question_id": question_ids[0], "selected_option_index": 0},
-            {"question_id": question_ids[1], "answer_text": "A written answer."},
+            {"question_id": question_ids[1], "text_response": "A written answer."},
         ],
         upload_api.authorization,
     )
@@ -283,7 +315,7 @@ def test_a_grading_failure_leaves_the_answer_ungraded_but_persisted(
     assert data["score"] == pytest.approx(1.0)
 
     stored = _stored_answers(upload_api, data["attempt_id"])
-    assert stored[1].answer_text == "A written answer."
+    assert stored[1].text_response == "A written answer."
     assert stored[1].is_correct is None
 
 
@@ -301,8 +333,8 @@ def test_a_missing_verdict_leaves_only_that_answer_ungraded(upload_api, monkeypa
         upload_api.course_id,
         quiz_id,
         [
-            {"question_id": question_ids[0], "answer_text": "First answer."},
-            {"question_id": question_ids[1], "answer_text": "Second answer."},
+            {"question_id": question_ids[0], "text_response": "First answer."},
+            {"question_id": question_ids[1], "text_response": "Second answer."},
         ],
         upload_api.authorization,
     )
@@ -326,7 +358,7 @@ def test_text_answer_is_rejected_for_an_option_question(upload_api, monkeypatch)
         upload_api,
         upload_api.course_id,
         quiz_id,
-        [{"question_id": question_ids[0], "answer_text": "Option A"}],
+        [{"question_id": question_ids[0], "text_response": "Option A"}],
         upload_api.authorization,
     )
 
@@ -383,8 +415,8 @@ def test_all_four_types_grade_in_one_attempt(upload_api, monkeypatch):
         [
             {"question_id": question_ids[0], "selected_option_index": 0},
             {"question_id": question_ids[1], "selected_option_index": 1},
-            {"question_id": question_ids[2], "answer_text": "O(log n)"},
-            {"question_id": question_ids[3], "answer_text": "Because it is sorted."},
+            {"question_id": question_ids[2], "text_response": "O(log n)"},
+            {"question_id": question_ids[3], "text_response": "Because it is sorted."},
         ],
         upload_api.authorization,
     )
@@ -434,7 +466,7 @@ def test_grading_charges_a_credit_only_when_an_open_ended_answer_is_graded(
         quiz_id,
         [
             {"question_id": question_ids[0], "selected_option_index": 0},
-            {"question_id": question_ids[1], "answer_text": "O(log n)"},
+            {"question_id": question_ids[1], "text_response": "O(log n)"},
         ],
         authz_api.authorization_a,
     )
@@ -455,7 +487,7 @@ def test_grading_charges_a_credit_for_an_open_ended_answer(authz_api, monkeypatc
         authz_api,
         authz_api.a_course_id,
         quiz_id,
-        [{"question_id": question_ids[0], "answer_text": "Because it is sorted."}],
+        [{"question_id": question_ids[0], "text_response": "Because it is sorted."}],
         authz_api.authorization_a,
     )
 
@@ -473,7 +505,7 @@ def test_a_grading_failure_refunds_the_credit(authz_api, monkeypatch):
         authz_api,
         authz_api.a_course_id,
         quiz_id,
-        [{"question_id": question_ids[0], "answer_text": "Because it is sorted."}],
+        [{"question_id": question_ids[0], "text_response": "Because it is sorted."}],
         authz_api.authorization_a,
     )
 
@@ -503,7 +535,7 @@ def test_a_quiz_without_open_ended_questions_never_builds_a_grader(
         [
             {"question_id": question_ids[0], "selected_option_index": 0},
             {"question_id": question_ids[1], "selected_option_index": 0},
-            {"question_id": question_ids[2], "answer_text": "O(log n)"},
+            {"question_id": question_ids[2], "text_response": "O(log n)"},
         ],
         upload_api.authorization,
     )
@@ -532,7 +564,7 @@ def test_a_grader_that_cannot_be_built_leaves_open_ended_ungraded(
         quiz_id,
         [
             {"question_id": question_ids[0], "selected_option_index": 0},
-            {"question_id": question_ids[1], "answer_text": "A written answer."},
+            {"question_id": question_ids[1], "text_response": "A written answer."},
         ],
         upload_api.authorization,
     )
@@ -543,7 +575,7 @@ def test_a_grader_that_cannot_be_built_leaves_open_ended_ungraded(
     assert data["graded_count"] == 1
 
     stored = _stored_answers(upload_api, data["attempt_id"])
-    assert stored[1].answer_text == "A written answer."
+    assert stored[1].text_response == "A written answer."
 
 
 def test_a_grader_that_cannot_be_built_charges_no_credit(authz_api, monkeypatch):
@@ -559,7 +591,7 @@ def test_a_grader_that_cannot_be_built_charges_no_credit(authz_api, monkeypatch)
         authz_api,
         authz_api.a_course_id,
         quiz_id,
-        [{"question_id": question_ids[0], "answer_text": "Because it is sorted."}],
+        [{"question_id": question_ids[0], "text_response": "Because it is sorted."}],
         authz_api.authorization_a,
     )
 
@@ -589,7 +621,7 @@ def test_progress_ignores_ungraded_answers(upload_api, monkeypatch):
         quiz_id,
         [
             {"question_id": question_ids[0], "selected_option_index": 0},
-            {"question_id": question_ids[1], "answer_text": "A written answer."},
+            {"question_id": question_ids[1], "text_response": "A written answer."},
         ],
         upload_api.authorization,
     )
@@ -621,7 +653,7 @@ def test_attempt_and_answers_are_written_together(upload_api, monkeypatch):
         quiz_id,
         [
             {"question_id": question_ids[0], "selected_option_index": 0},
-            {"question_id": question_ids[1], "answer_text": "Because it is sorted."},
+            {"question_id": question_ids[1], "text_response": "Because it is sorted."},
         ],
         upload_api.authorization,
     )

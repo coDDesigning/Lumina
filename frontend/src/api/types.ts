@@ -334,7 +334,8 @@ export interface QuizGenerationResult extends RetrievedContext {
 export interface QuizAnswerSubmission {
   question_id: number;
   selected_option_index?: number | null;
-  answer_text?: string | null;
+  text_response?: string | null;
+  time_spent_seconds?: number | null;
 }
 
 export interface QuizAttemptRequest {
@@ -351,12 +352,24 @@ export interface QuizAnswerResult {
   question_id: number;
   question_type: QuizQuestionType;
   selected_option_index: number | null;
-  answer_text: string | null;
+  text_response: string | null;
   correct_option_index: number | null;
   correct_answer: QuizCorrectAnswer | null;
   is_correct: boolean | null;
   score: number | null;
   feedback: string | null;
+  time_spent_seconds?: number | null;
+  topic?: string | null;
+}
+
+export interface QuizHistoryItem {
+  attempt_id: number;
+  quiz_id: number;
+  score: number;
+  correct_count: number;
+  total_questions: number;
+  time_spent_seconds?: number | null;
+  created_at: string;
 }
 
 export interface QuizAttemptResponse {
@@ -382,9 +395,16 @@ export interface TopicMastery {
 }
 
 export interface CourseProgressResponse {
+  quizzes_completed?: number;
   attempts_count: number;
   average_score: number | null;
+  correct_count?: number;
+  incorrect_count?: number;
+  total_questions_answered?: number;
+  completion?: number;
+  weak_topics?: string[];
   topic_mastery: TopicMastery[];
+  quiz_history?: QuizHistoryItem[];
 }
 
 export interface ProfileKnowledgeItem {

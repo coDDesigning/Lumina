@@ -5,7 +5,7 @@ from services.text_generation import (
     GenerationMetadata,
     TextGenerationConnectionError,
 )
-from services.user import UserService
+from services.credits import CreditService
 
 
 class StubProvider:
@@ -98,14 +98,12 @@ def test_user_initial_credits_and_charge(authz_api):
         user = session.get(User, authz_api.user_a_id)
         assert user.credits == 50.0
 
-        # Charge 1 credit
-        success = UserService.charge_credits(session, user.id, 1.0)
-        assert success is True
+        receipt = CreditService.charge(session, user.id, 1.0, source_type="course_qa")
+        assert receipt is not None
         session.refresh(user)
         assert user.credits == 49.0
 
-        # Refund 1 credit
-        UserService.refund_credits(session, user.id, 1.0)
+        CreditService.refund(session, receipt)
         session.refresh(user)
         assert user.credits == 50.0
 
@@ -115,9 +113,9 @@ def test_admin_has_unlimited_credits(authz_api):
         admin = session.get(User, authz_api.admin_id)
         assert admin.credits is None
 
-        # Charging admin always succeeds without decreasing credits
-        success = UserService.charge_credits(session, admin.id, 1.0)
-        assert success is True
+        receipt = CreditService.charge(session, admin.id, 1.0, source_type="course_qa")
+        assert receipt is not None
+        assert receipt.is_exempt is True
         session.refresh(admin)
         assert admin.credits is None
 

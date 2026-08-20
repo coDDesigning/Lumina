@@ -1,5 +1,10 @@
 import { apiClient, unwrapData } from './client';
-import type { BaseResponse, User } from './types';
+import type {
+  BaseResponse,
+  CreditMutation,
+  CreditTransaction,
+  User,
+} from './types';
 
 export const adminAPI = {
   listUsers: async (options?: RequestInit): Promise<User[]> => {
@@ -36,5 +41,39 @@ export const adminAPI = {
       options,
     );
     return unwrapData(res, 'Admin change user role');
+  },
+
+  grantCredits: async (
+    email: string,
+    amount: number,
+    note?: string,
+  ): Promise<CreditMutation> => {
+    const res = await apiClient.post<BaseResponse<CreditMutation>>(
+      `/admin/users/${encodeURIComponent(email)}/credits/grant`,
+      { amount, note: note || null },
+    );
+    return unwrapData(res, 'Admin grant credits');
+  },
+
+  adjustCredits: async (
+    email: string,
+    delta: number,
+    note?: string,
+  ): Promise<CreditMutation> => {
+    const res = await apiClient.post<BaseResponse<CreditMutation>>(
+      `/admin/users/${encodeURIComponent(email)}/credits/adjust`,
+      { delta, note: note || null },
+    );
+    return unwrapData(res, 'Admin adjust credits');
+  },
+
+  listUserCreditTransactions: async (
+    email: string,
+    limit = 20,
+  ): Promise<CreditTransaction[]> => {
+    const res = await apiClient.get<BaseResponse<CreditTransaction[]>>(
+      `/admin/users/${encodeURIComponent(email)}/credit-transactions?limit=${limit}`,
+    );
+    return unwrapData(res, 'Admin user credit transactions');
   },
 };

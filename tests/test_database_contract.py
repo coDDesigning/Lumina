@@ -10,6 +10,7 @@ from backend.app.models import (
     AiUsageLog,
     ChunkEmbedding,
     Course,
+    CreditTransaction,
     DocumentChunk,
     DocumentPage,
     DocumentVisual,
@@ -149,6 +150,15 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
             latency_ms=150,
             success=True,
         )
+        credit_transaction = CreditTransaction(
+            user=user,
+            delta=-1.0,
+            balance_after=49.0,
+            reason="generation_charge",
+            actor_type="user",
+            actor_user_id=None,
+            source_type="study_guide",
+        )
         session.add_all(
             (
                 document,
@@ -162,6 +172,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
                 progress,
                 knowledge,
                 usage_log,
+                credit_transaction,
             )
         )
         session.flush()
@@ -181,6 +192,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         progress_id = progress.id
         knowledge_id = knowledge.id
         usage_log_id = usage_log.id
+        credit_transaction_id = credit_transaction.id
 
     with session_factory() as session:
         persisted_document = session.get(UploadedDocument, document_id)
@@ -202,6 +214,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
             session.get(QuizAttempt, attempt_id),
             session.get(Progress, progress_id),
             session.get(ProfileKnowledge, knowledge_id),
+            session.get(CreditTransaction, credit_transaction_id),
         )
         for row in timestamped_rows:
             assert row is not None
@@ -228,6 +241,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         assert session.get(Progress, progress_id) is None
         assert session.get(ProfileKnowledge, knowledge_id) is None
         assert session.get(AiUsageLog, usage_log_id) is None
+        assert session.get(CreditTransaction, credit_transaction_id) is None
         assert session.scalar(select(Role.id).where(Role.name == "user")) is not None
 
 

@@ -13,34 +13,6 @@ resource "aws_ecs_cluster" "this" {
   tags = var.tags
 }
 
-resource "aws_security_group" "this" {
-  name_prefix = "${var.name_prefix}-ecs"
-  vpc_id      = var.vpc_id
-  description = "Lumina ECS tasks: receive HTTP from the ALB, egress for outbound calls"
-  tags        = var.tags
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_security_group_rule" "ingress_http" {
-  type                     = "ingress"
-  from_port                = 8000
-  to_port                  = 8000
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.this.id
-  source_security_group_id = var.alb_security_group_id
-}
-
-resource "aws_security_group_rule" "egress_all" {
-  type              = "egress"
-  from_port         = 0
-  to_port           = 0
-  protocol          = "-1"
-  cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.this.id
-}
-
 data "aws_iam_policy_document" "ecs_assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -67,7 +39,8 @@ resource "aws_iam_role" "execution" {
             "ssm:GetParameters",
           ]
           Resource = [
-            var.database_url_secret_arn,
+            var.runtime_database_url_secret_arn,
+            var.migration_database_url_secret_arn,
             "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_base}/*",
           ]
         }
@@ -150,7 +123,7 @@ resource "aws_ecs_service" "api" {
   platform_version = "LATEST"
   network_configuration {
     subnets          = var.private_subnet_ids
-    security_groups  = [aws_security_group.this.id]
+    security_groups  = [var.ecs_security_group_id]
     assign_public_ip = false
   }
   load_balancer {
@@ -174,7 +147,7 @@ resource "aws_ecs_service" "worker" {
   platform_version = "LATEST"
   network_configuration {
     subnets          = var.private_subnet_ids
-    security_groups  = [aws_security_group.this.id]
+    security_groups  = [var.ecs_security_group_id]
     assign_public_ip = false
   }
   deployment_minimum_healthy_percent = 100

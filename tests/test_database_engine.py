@@ -128,3 +128,29 @@ def test_migration_engine_can_disable_postgresql_runtime_timeouts(
     assert created is sentinel
     assert captured_options["connect_args"] == {"connect_timeout": 5}
     assert captured_options["hide_parameters"] is True
+
+
+def test_postgresql_runtime_pool_options_are_forwarded(monkeypatch) -> None:
+    captured_options = {}
+    sentinel = object()
+
+    def capture_engine(_url, **options):
+        captured_options.update(options)
+        return sentinel
+
+    monkeypatch.setattr(database_engine, "create_engine", capture_engine)
+
+    created = create_database_engine(
+        "postgresql://lumina:password@proxy.example.com/lumina",
+        pool_size=8,
+        max_overflow=3,
+        pool_recycle=600,
+        pool_pre_ping=True,
+    )
+
+    assert created is sentinel
+    assert captured_options["pool_size"] == 8
+    assert captured_options["max_overflow"] == 3
+    assert captured_options["pool_recycle"] == 600
+    assert captured_options["pool_pre_ping"] is True
+    assert captured_options["pool_timeout"] == 5

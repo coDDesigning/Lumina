@@ -116,7 +116,8 @@ image (`Dockerfile`) and runs the same three roles:
 | VPC | Public/private subnets, one NAT gateway, route tables |
 | ECR | `lumina` repository (immutable tags, scan on push, keep 20 images) |
 | S3 | Document bucket (versioned, encrypted, TLS-only policy) |
-| RDS | PostgreSQL 16 with pgvector preloaded; `DATABASE_URL` in Secrets Manager |
+| RDS | PostgreSQL 16.8+, pgvector 0.8+, storage autoscaling, Performance Insights |
+| RDS Proxy | TLS-only runtime connection pool; direct RDS access is migrator-only |
 | ECS | Fargate `api` + `worker` services, one-off `migrate` task definition |
 | ALB | HTTPS (ACM) listener, HTTP-to-HTTPS redirect, `/health/ready` target check |
 | Route53 | Optional A alias to the ALB |
@@ -124,11 +125,11 @@ image (`Dockerfile`) and runs the same three roles:
 Apply order matters once, on the first rollout: the ECS tasks read
 `JWT_SECRET_KEY`, `BOOTSTRAP_ADMIN_TOKEN`, and `GEMINI_API_KEY` from SSM
 parameter paths under `/<project>-<environment>/` (see `terraform/README.md`),
-and the `DATABASE_URL` from Secrets Manager. The secrets module (SCRUM-94)
+and the runtime `DATABASE_URL` from Secrets Manager. The secrets module (SCRUM-94)
 creates those parameters, so run the full Terraform apply before the first
 deploy pipeline run. ECS services retry task starts until the parameters
-exist. On the first RDS apply, the `vector` preload in the parameter group
-requires a one-time instance reboot.
+exist. Alembic installs and upgrades the `vector` extension and refuses a
+version older than 0.8.0.
 
 On AWS the application uses IAM roles, not static credentials: the ECS task
 role gets `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject` on the document
@@ -148,9 +149,11 @@ Runtime secrets are stored in AWS Systems Manager Parameter Store as
 into the ECS task definitions at task start (container `secrets` entries, read
 by the task execution role). The Terraform `secrets` module creates them from
 the `runtime_secrets` map in `terraform.tfvars`; no secret value is committed
-or stored in GitHub. The `DATABASE_URL` with the generated RDS password lives
-in Secrets Manager. The ECS task role authenticates to S3 with an IAM role; no
-static AWS keys exist on the platform side.
+or stored in GitHub. Secrets Manager holds separate TLS URLs for runtime and
+migration: API/worker use RDS Proxy, while the one-shot migrator connects
+directly to RDS. A third credential document is readable only by RDS Proxy.
+The ECS task role authenticates to S3 with an IAM role; no static AWS keys
+exist on the platform side.
 
 The GitHub Actions deploy role uses OIDC federation
 (`github-oidc` Terraform module): the trust policy accepts the `main` branch

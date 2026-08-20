@@ -54,7 +54,7 @@ PAGES_REVISION = "c4e6a8f1b203"
 VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
-HEAD_REVISION = "c8d4a1f39e72"
+HEAD_REVISION = "f5a7c2d9e104"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -1085,6 +1085,14 @@ def test_postgresql_provisions_pgvector_and_its_index(
     with postgresql_sessions() as session:
         assert session.scalar(
             text("SELECT count(*) FROM pg_extension WHERE extname = 'vector'")
+        )
+        extension_version = session.scalar(
+            text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+        )
+        assert tuple(int(part) for part in extension_version.split(".")[:3]) >= (
+            0,
+            8,
+            0,
         )
 
         column_type = session.scalar(

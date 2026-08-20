@@ -60,7 +60,14 @@ locals {
   ]
 
   app_secrets = [
-    { name = "DATABASE_URL", valueFrom = var.database_url_secret_arn },
+    { name = "DATABASE_URL", valueFrom = var.runtime_database_url_secret_arn },
+    { name = "JWT_SECRET_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.jwt_secret_key}" },
+    { name = "BOOTSTRAP_ADMIN_TOKEN", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.bootstrap_admin_token}" },
+    { name = "GEMINI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.gemini_api_key}" },
+  ]
+
+  migrate_secrets = [
+    { name = "DATABASE_URL", valueFrom = var.migration_database_url_secret_arn },
     { name = "JWT_SECRET_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.jwt_secret_key}" },
     { name = "BOOTSTRAP_ADMIN_TOKEN", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.bootstrap_admin_token}" },
     { name = "GEMINI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.gemini_api_key}" },
@@ -119,7 +126,7 @@ locals {
   migrate_container = merge(local.container_base, {
     name        = "migrate"
     environment = local.common_env
-    secrets     = local.app_secrets
+    secrets     = local.migrate_secrets
     command     = ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check"]
   })
 }

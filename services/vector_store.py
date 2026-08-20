@@ -298,6 +298,8 @@ class PgVectorStore:
             "LIMIT :limit"
         )
         try:
+            session.execute(text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
+            session.execute(text("SET LOCAL hnsw.max_scan_tuples = 20000"))
             rows = session.execute(
                 statement,
                 {"query": query, "course_id": course_id, "limit": limit},

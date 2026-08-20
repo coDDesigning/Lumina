@@ -10,10 +10,6 @@ variable "region" {
   type = string
 }
 
-variable "vpc_id" {
-  type = string
-}
-
 variable "ecr_repository_url" {
   type = string
 }
@@ -26,7 +22,7 @@ variable "private_subnet_ids" {
   type = list(string)
 }
 
-variable "alb_security_group_id" {
+variable "ecs_security_group_id" {
   type = string
 }
 
@@ -42,7 +38,11 @@ variable "s3_bucket_arn" {
   type = string
 }
 
-variable "database_url_secret_arn" {
+variable "runtime_database_url_secret_arn" {
+  type = string
+}
+
+variable "migration_database_url_secret_arn" {
   type = string
 }
 

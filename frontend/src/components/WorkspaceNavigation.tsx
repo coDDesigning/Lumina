@@ -1,4 +1,4 @@
-import { LayoutGrid, LogOut, Pencil, Settings, Smile } from 'lucide-react'
+import { LayoutGrid, LogOut, Pencil, Settings, Shield, Smile } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
@@ -24,6 +24,9 @@ function WorkspaceNavigation({ workspaceId }: WorkspaceNavigationProps) {
     },
     { label: 'Settings', path: '/settings', icon: Settings },
     { label: 'Profile', path: '/profile', icon: Smile },
+    ...(user?.role === 'admin'
+      ? [{ label: 'Admin', path: '/admin', icon: Shield }]
+      : []),
   ]
 
   return (

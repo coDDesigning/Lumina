@@ -31,7 +31,8 @@ CONVERSATION_HISTORY_REVISION = "910e2719d549"
 MODEL_CREDITS_REVISION = "2a7c4e9f8b10"
 COURSE_SETTINGS_REVISION = "7b3e1a9c4d28"
 GENERATION_SETTINGS_REVISION = "b2f47c8d0915"
-HEAD_REVISION = GENERATION_SETTINGS_REVISION
+QUIZ_PROGRESS_REVISION = "c8e1f5a9b3d2"
+HEAD_REVISION = QUIZ_PROGRESS_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -59,7 +60,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: COURSE_SETTINGS_REVISION,
+        HEAD_REVISION: GENERATION_SETTINGS_REVISION,
+        GENERATION_SETTINGS_REVISION: COURSE_SETTINGS_REVISION,
         COURSE_SETTINGS_REVISION: MODEL_CREDITS_REVISION,
         MODEL_CREDITS_REVISION: CONVERSATION_HISTORY_REVISION,
         CONVERSATION_HISTORY_REVISION: CHUNK_EMBEDDINGS_REVISION,
@@ -1237,6 +1239,82 @@ def test_profile_knowledge_migration_round_trips(tmp_path: Path) -> None:
     with sqlite3.connect(database_path) as connection:
         columns = profile_knowledge_columns(connection)
         assert "updated_at" in columns
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)
+
+
+def quiz_questions_columns(connection: sqlite3.Connection) -> set[str]:
+    return {row[1] for row in connection.execute("PRAGMA table_info(quiz_questions)")}
+
+
+def quiz_attempt_answers_columns(connection: sqlite3.Connection) -> set[str]:
+    return {
+        row[1] for row in connection.execute("PRAGMA table_info(quiz_attempt_answers)")
+    }
+
+
+def progress_columns(connection: sqlite3.Connection) -> set[str]:
+    return {row[1] for row in connection.execute("PRAGMA table_info(progress)")}
+
+
+def test_quiz_progress_migration_round_trips(tmp_path: Path) -> None:
+    """Quiz questions, attempt answers, and progress tables expand and round-trip."""
+    database_path = tmp_path / "quiz-progress.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", GENERATION_SETTINGS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        q_cols = quiz_questions_columns(connection)
+        ans_cols = quiz_attempt_answers_columns(connection)
+        prog_cols = progress_columns(connection)
+
+        assert "question_type" not in q_cols
+        assert "text_response" not in ans_cols
+        assert "time_spent_seconds" not in ans_cols
+        assert "topic" not in ans_cols
+        assert "quizzes_completed" not in prog_cols
+        assert "correct_answers_count" not in prog_cols
+        assert "incorrect_answers_count" not in prog_cols
+        assert "total_questions_answered" not in prog_cols
+        assert "weak_topics" not in prog_cols
+        assert "quiz_history" not in prog_cols
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        q_cols = quiz_questions_columns(connection)
+        ans_cols = quiz_attempt_answers_columns(connection)
+        prog_cols = progress_columns(connection)
+
+        assert "question_type" in q_cols
+        assert "text_response" in ans_cols
+        assert "time_spent_seconds" in ans_cols
+        assert "topic" in ans_cols
+        assert "quizzes_completed" in prog_cols
+        assert "correct_answers_count" in prog_cols
+        assert "incorrect_answers_count" in prog_cols
+        assert "total_questions_answered" in prog_cols
+        assert "weak_topics" in prog_cols
+        assert "quiz_history" in prog_cols
+
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)
+
+    run_alembic(database_path, tmp_path, "downgrade", GENERATION_SETTINGS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        q_cols = quiz_questions_columns(connection)
+        ans_cols = quiz_attempt_answers_columns(connection)
+        prog_cols = progress_columns(connection)
+
+        assert "question_type" not in q_cols
+        assert "text_response" not in ans_cols
+        assert "quizzes_completed" not in prog_cols
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone() == (HEAD_REVISION,)

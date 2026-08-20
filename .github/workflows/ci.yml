@@ -444,6 +444,7 @@ jobs:
       COMPOSE_PROJECT_NAME: lumina-ci-${{ github.run_id }}-${{ github.run_attempt }}
       JWT_SECRET_KEY: ci-only-jwt-secret-key-0123456789abcdef
       LUMINA_IMAGE: lumina:ci
+      LUMINA_BACKUP_DIRECTORY: /tmp/lumina-backups-${{ github.run_id }}-${{ github.run_attempt }}
       STORAGE_NAMESPACE: container-ci
     steps:
       - name: Check out repository
@@ -510,10 +511,14 @@ jobs:
             if [ "$result" -ne 0 ]; then
               docker compose ps --all || true
               docker compose logs --no-color || true
+              COMPOSE_PROJECT_NAME="$restore_project" docker compose ps --all || true
+              COMPOSE_PROJECT_NAME="$restore_project" docker compose logs --no-color || true
             fi
+            COMPOSE_PROJECT_NAME="$restore_project" docker compose down --volumes --remove-orphans || true
             docker compose down --volumes --remove-orphans || true
             exit "$result"
           }
+          restore_project="${COMPOSE_PROJECT_NAME}-restore"
           trap cleanup EXIT
 
           docker compose up --detach --no-build --wait --wait-timeout 180
@@ -537,7 +542,45 @@ jobs:
           assert shutil.disk_usage("/tmp").total >= required
           '
 
+          sudo install -d -o 10001 -g 10001 -m 0700 "$LUMINA_BACKUP_DIRECTORY"
+          export BACKUP_ARCHIVE_NAME=lumina-ci-backup.tar.gz
+          docker compose run --rm --no-deps \
+            --env LUMINA_RESTART_SERVICES="api worker" migrate sh -c '
+              umask 077
+              printf "%s\n" "$LUMINA_RESTART_SERVICES" > /data/.lumina-backup-restart-services
+            '
           docker compose stop api worker
+          sudo mv "$LUMINA_BACKUP_DIRECTORY" "${LUMINA_BACKUP_DIRECTORY}.offline"
+          set +e
+          sh ops/self_hosted_backup.sh
+          recovery_status=$?
+          set -e
+          test "$recovery_status" = "2"
+          for service in api worker; do
+            container_id="$(docker compose ps --quiet "$service")"
+            test "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = "healthy"
+          done
+          docker compose run --rm --no-deps migrate \
+            test ! -f /data/.lumina-backup-restart-services
+          sudo mv "${LUMINA_BACKUP_DIRECTORY}.offline" "$LUMINA_BACKUP_DIRECTORY"
+
+          sh ops/self_hosted_backup.sh
+          docker compose run --rm --no-deps migrate \
+            test ! -f /data/.lumina-backup-restart-services
+          sudo test -s "$LUMINA_BACKUP_DIRECTORY/$BACKUP_ARCHIVE_NAME"
+          test "$(sudo stat -c '%a' "$LUMINA_BACKUP_DIRECTORY/$BACKUP_ARCHIVE_NAME")" = "600"
+          curl --fail --silent --show-error http://127.0.0.1:18000/health/ready
+
+          docker compose stop api worker
+          test -z "$(docker compose ps --status running --services api worker)"
+          COMPOSE_PROJECT_NAME="$restore_project" docker compose --profile maintenance run --rm restore
+          COMPOSE_PROJECT_NAME="$restore_project" docker compose run --rm migrate
+          COMPOSE_PROJECT_NAME="$restore_project" docker compose run --rm --no-deps worker \
+            python -m workers.embedding_backfill --prune-orphans
+          COMPOSE_PROJECT_NAME="$restore_project" docker compose up --detach --no-build --wait --wait-timeout 180 api worker
+          curl --fail --silent --show-error http://127.0.0.1:18000/health/ready
+          COMPOSE_PROJECT_NAME="$restore_project" docker compose down --volumes --remove-orphans
+
           docker compose start api worker
           for service in api worker; do
             container_id="$(docker compose ps --quiet "$service")"

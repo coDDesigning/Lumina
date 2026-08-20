@@ -35,12 +35,22 @@ typo (`gemeni`) distinguishable from a genuine roadmap provider (`openai`).
 
 ## Self-Hosted Ollama Setup
 
-1. Install Ollama from <https://ollama.com> and start it. It listens on
-   `http://localhost:11434` by default.
+1. Install Ollama from <https://ollama.com> and start it. A backend process
+   running directly on the host can use Ollama's loopback default:
 
    ```bash
    ollama serve
    ```
+
+   Root Compose reaches the host through `host.docker.internal`, so on Linux
+   Ollama must listen on an address reachable from the Docker bridge:
+
+   ```bash
+   OLLAMA_HOST=0.0.0.0:11434 ollama serve
+   ```
+
+   Restrict port 11434 to the host and Docker bridge with the host firewall; do
+   not expose an unauthenticated Ollama listener to the public network.
 
 2. Pull a model that meets the capability bar below.
 
@@ -48,13 +58,17 @@ typo (`gemeni`) distinguishable from a genuine roadmap provider (`openai`).
    ollama pull llama3.1
    ```
 
-3. Configure the backend. These are the defaults, so a local Ollama on the
-   standard port needs no configuration at all:
+3. Configure the backend. Use `localhost` for Python processes on the host and
+   `host.docker.internal` for root Compose:
 
    ```bash
    AI_PROVIDER=ollama
    OLLAMA_BASE_URL=http://localhost:11434
    OLLAMA_MODEL=llama3.1
+   ```
+
+   ```bash
+   OLLAMA_BASE_URL=http://host.docker.internal:11434
    ```
 
    Local models are much slower than a hosted API. `AI_GENERATION_TIMEOUT_SECONDS`

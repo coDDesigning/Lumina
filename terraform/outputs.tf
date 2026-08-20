@@ -49,13 +49,23 @@ output "s3_bucket" {
 }
 
 output "database_url_secret_arn" {
-  description = "Secrets Manager ARN holding the DATABASE_URL."
+  description = "Secrets Manager ARN holding the runtime DATABASE_URL through RDS Proxy."
+  value       = module.rds_proxy.runtime_database_url_secret_arn
+}
+
+output "migration_database_url_secret_arn" {
+  description = "Secrets Manager ARN holding the direct RDS URL used only by migrations."
   value       = module.rds.database_url_secret_arn
 }
 
 output "database_endpoint" {
   description = "RDS endpoint."
   value       = module.rds.endpoint
+}
+
+output "rds_proxy_endpoint" {
+  description = "TLS-only RDS Proxy endpoint used by API and worker tasks."
+  value       = module.rds_proxy.endpoint
 }
 
 output "github_actions_role_arn" {

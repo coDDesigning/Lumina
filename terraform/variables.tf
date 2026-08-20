@@ -99,6 +99,12 @@ variable "rds_allocated_storage_gb" {
   default     = 20
 }
 
+variable "rds_max_allocated_storage_gb" {
+  description = "Maximum RDS storage autoscaling limit."
+  type        = number
+  default     = 100
+}
+
 variable "rds_multi_az" {
   description = "Use a Multi-AZ RDS deployment."
   type        = bool
@@ -106,9 +112,21 @@ variable "rds_multi_az" {
 }
 
 variable "rds_engine_version" {
-  description = "PostgreSQL engine version. 16.3 or newer bundles the pgvector extension."
+  description = "PostgreSQL engine version qualified with pgvector 0.8 or newer."
   type        = string
-  default     = "16.3"
+  default     = "16.8"
+}
+
+variable "rds_proxy_max_connections_percent" {
+  description = "Maximum percentage of RDS connections available to RDS Proxy."
+  type        = number
+  default     = 80
+}
+
+variable "rds_proxy_max_idle_connections_percent" {
+  description = "Maximum percentage of idle database connections retained by RDS Proxy."
+  type        = number
+  default     = 40
 }
 
 variable "rds_database_name" {

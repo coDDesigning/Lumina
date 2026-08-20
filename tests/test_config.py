@@ -9,6 +9,9 @@ from backend.app.config import (
     APP_ENV_DEVELOPMENT,
     APP_ENV_PRODUCTION,
     APP_ENV_STAGING,
+    DEFAULT_DATABASE_MAX_OVERFLOW,
+    DEFAULT_DATABASE_POOL_RECYCLE_SECONDS,
+    DEFAULT_DATABASE_POOL_SIZE,
     DEFAULT_MAX_CONCURRENT_DOCUMENT_VALIDATIONS,
     DEFAULT_MAX_COURSE_STORAGE_BYTES,
     DEFAULT_MAX_DOCUMENT_CHUNKS,
@@ -67,6 +70,9 @@ CONFIGURATION_KEYS = (
     "DEPLOYMENT_MODE",
     "AI_PROVIDER",
     "DATABASE_URL",
+    "DATABASE_POOL_SIZE",
+    "DATABASE_MAX_OVERFLOW",
+    "DATABASE_POOL_RECYCLE_SECONDS",
     "STORAGE_BACKEND",
     "STORAGE_NAMESPACE",
     "S3_BUCKET",
@@ -175,6 +181,9 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
     assert loaded.app_debug is True
     assert loaded.deployment_mode == MODE_SELF_HOSTED
     assert loaded.database_url == "sqlite:///./data/lumina.db"
+    assert loaded.database_pool_size == DEFAULT_DATABASE_POOL_SIZE
+    assert loaded.database_max_overflow == DEFAULT_DATABASE_MAX_OVERFLOW
+    assert loaded.database_pool_recycle_seconds == DEFAULT_DATABASE_POOL_RECYCLE_SECONDS
     assert loaded.storage_backend == "local"
     assert loaded.storage_namespace == "self-hosted"
     assert loaded.bootstrap_admin_email is None
@@ -218,6 +227,42 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
     assert loaded.quiz_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
     assert loaded.flashcard_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
     assert loaded.ai_tutor_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
+
+
+def test_database_pool_settings_are_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_POOL_SIZE", "8")
+    monkeypatch.setenv("DATABASE_MAX_OVERFLOW", "3")
+    monkeypatch.setenv("DATABASE_POOL_RECYCLE_SECONDS", "600")
+
+    loaded = load_settings()
+
+    assert loaded.database_pool_size == 8
+    assert loaded.database_max_overflow == 3
+    assert loaded.database_pool_recycle_seconds == 600
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("DATABASE_POOL_SIZE", "0"),
+        ("DATABASE_POOL_SIZE", "21"),
+        ("DATABASE_MAX_OVERFLOW", "-1"),
+        ("DATABASE_MAX_OVERFLOW", "21"),
+        ("DATABASE_POOL_RECYCLE_SECONDS", "59"),
+        ("DATABASE_POOL_RECYCLE_SECONDS", "3601"),
+    ],
+)
+def test_database_pool_settings_are_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match=name):
+        load_settings()
 
 
 def test_application_does_not_load_discovered_dotenv_file(tmp_path: Path) -> None:

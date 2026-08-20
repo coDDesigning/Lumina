@@ -96,6 +96,9 @@ DEFAULT_AI_GENERATION_MAX_ATTEMPTS = 3
 DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS = 10.0
 DEFAULT_AI_GENERATION_MAX_CONCURRENCY = 10
+DEFAULT_DATABASE_POOL_SIZE = 5
+DEFAULT_DATABASE_MAX_OVERFLOW = 5
+DEFAULT_DATABASE_POOL_RECYCLE_SECONDS = 900
 
 
 @dataclass(frozen=True)
@@ -108,6 +111,9 @@ class Settings:
 
     # Structured database connection URL (SQLAlchemy format)
     database_url: str
+    database_pool_size: int
+    database_max_overflow: int
+    database_pool_recycle_seconds: int
 
     # Where ChromaDB persists its vector data (self-hosted mode only)
     chroma_persist_directory: str
@@ -224,6 +230,20 @@ def load_settings() -> Settings:
 
     storage_backend = os.getenv("STORAGE_BACKEND", STORAGE_BACKEND_LOCAL).strip()
     database_url = load_database_url(mode, app_env=app_env)
+    database_pool_size = _bounded_positive_integer_setting(
+        "DATABASE_POOL_SIZE", DEFAULT_DATABASE_POOL_SIZE, minimum=1, maximum=20
+    )
+    database_max_overflow = _nonnegative_integer_setting(
+        "DATABASE_MAX_OVERFLOW", DEFAULT_DATABASE_MAX_OVERFLOW
+    )
+    if database_max_overflow > 20:
+        raise ValueError("DATABASE_MAX_OVERFLOW must be at most 20.")
+    database_pool_recycle_seconds = _bounded_positive_integer_setting(
+        "DATABASE_POOL_RECYCLE_SECONDS",
+        DEFAULT_DATABASE_POOL_RECYCLE_SECONDS,
+        minimum=60,
+        maximum=3600,
+    )
 
     if storage_backend not in STORAGE_BACKENDS:
         raise ValueError(
@@ -658,6 +678,9 @@ def load_settings() -> Settings:
         app_debug=app_debug,
         deployment_mode=mode,
         database_url=database_url,
+        database_pool_size=database_pool_size,
+        database_max_overflow=database_max_overflow,
+        database_pool_recycle_seconds=database_pool_recycle_seconds,
         chroma_persist_directory=chroma_persist_directory,
         upload_directory=upload_directory,
         storage_backend=storage_backend,

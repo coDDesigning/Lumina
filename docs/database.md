@@ -121,6 +121,15 @@ This qualification covers the hosted production database path. Hosted
 production additionally requires S3-compatible document storage
 (`STORAGE_BACKEND=s3`); see `docs/deployment.md` for the hosted topology.
 
+AWS API and worker tasks use TLS-only RDS Proxy. Each process has an explicit
+SQLAlchemy pool budget (`DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW`, and
+`DATABASE_POOL_RECYCLE_SECONDS`); RDS Proxy then limits database-side
+connections to a configured share of the instance. The migrator bypasses the
+proxy with a separate direct URL so DDL and schema locks never contend with
+runtime pooling. RDS parameters log queries slower than one second, bound idle
+transactions, and set conservative work-memory/autovacuum defaults; tune them
+only from observed production plans and memory pressure.
+
 ## Durable state machine
 
 Each document has one `extract_document` job.

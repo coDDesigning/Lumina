@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Lock,
+  Coins,
   Search,
   Shield,
   ShieldAlert,
@@ -12,8 +13,9 @@ import {
   Users,
 } from 'lucide-react';
 import { adminAPI } from '../api/admin';
+import { formatDelta, transactionLabel } from '../api/creditLabels';
 import { describeError } from '../api/errors';
-import type { User } from '../api/types';
+import type { CreditTransaction, User } from '../api/types';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import PageLayout from '../components/PageLayout';
 import { useAuth } from '../context/AuthContext';
@@ -29,6 +31,9 @@ export function AdminPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [processingEmail, setProcessingEmail] = useState<string | null>(null);
+  const [ledgerEmail, setLedgerEmail] = useState<string | null>(null);
+  const [ledger, setLedger] = useState<CreditTransaction[]>([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     setIsLoading(true);
@@ -78,6 +83,93 @@ export function AdminPage() {
     } finally {
       setProcessingEmail(null);
     }
+  };
+
+  const openLedger = async (targetUser: User) => {
+    setLedgerEmail(targetUser.email);
+    setLedgerLoading(true);
+    try {
+      setLedger(await adminAPI.listUserCreditTransactions(targetUser.email, 20));
+    } catch (err) {
+      setLedger([]);
+      setActionError(describeError(err, 'Failed to load credit history.').message);
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  const applyCreditChange = async (
+    targetUser: User,
+    change: () => Promise<{ user: User }>,
+    successMessage: string,
+  ) => {
+    setProcessingEmail(targetUser.email);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const { user: updated } = await change();
+      setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+      setActionSuccess(successMessage);
+      if (ledgerEmail === targetUser.email) {
+        await openLedger(targetUser);
+      }
+    } catch (err) {
+      setActionError(describeError(err, 'Failed to change credits.').message);
+    } finally {
+      setProcessingEmail(null);
+    }
+  };
+
+  const handleGrantCredits = async (targetUser: User) => {
+    const entered = window.prompt(
+      `How many credits should be granted to "${targetUser.email}"?`,
+      '20',
+    );
+    if (entered === null) return;
+
+    const amount = Number(entered);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setActionError('A credit grant must be a positive number.');
+      return;
+    }
+
+    const note = window.prompt('Reason for this grant (optional):', '') ?? '';
+    await applyCreditChange(
+      targetUser,
+      () => adminAPI.grantCredits(targetUser.email, amount, note.trim()),
+      `Granted ${amount} credits to "${targetUser.email}".`,
+    );
+  };
+
+  const handleAdjustCredits = async (targetUser: User) => {
+    const entered = window.prompt(
+      `Adjust credits for "${targetUser.email}" by how much? Use a negative number to deduct.`,
+      '-5',
+    );
+    if (entered === null) return;
+
+    const delta = Number(entered);
+    if (!Number.isFinite(delta) || delta === 0) {
+      setActionError('A credit adjustment must be a non-zero number.');
+      return;
+    }
+
+    const note = window.prompt('Reason for this adjustment (optional):', '') ?? '';
+    await applyCreditChange(
+      targetUser,
+      () => adminAPI.adjustCredits(targetUser.email, delta, note.trim()),
+      `Adjusted credits for "${targetUser.email}" by ${formatDelta(delta)}.`,
+    );
+  };
+
+  const handleToggleLedger = async (targetUser: User) => {
+    if (ledgerEmail === targetUser.email) {
+      setLedgerEmail(null);
+      setLedger([]);
+      return;
+    }
+    await openLedger(targetUser);
   };
 
   const handleToggleRole = async (targetUser: User) => {
@@ -395,7 +487,33 @@ export function AdminPage() {
                         </td>
 
                         <td style={{ padding: '16px 20px', fontSize: '14px', fontWeight: 600, color: '#334155' }}>
-                          {u.credits === null ? '∞ Unlimited' : u.credits}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span>{u.credits === null ? '∞ Unlimited' : u.credits}</span>
+                            {u.credits !== null && (
+                              <button
+                                type="button"
+                                onClick={() => handleToggleLedger(u)}
+                                disabled={isBusy}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 8px',
+                                  borderRadius: '999px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  border: '1px solid #e2e8f0',
+                                  background: ledgerEmail === u.email ? '#eef2ff' : '#ffffff',
+                                  color: '#475569',
+                                  cursor: isBusy ? 'not-allowed' : 'pointer',
+                                }}
+                                title="Show why this balance is what it is"
+                              >
+                                <Coins size={11} />
+                                History
+                              </button>
+                            )}
+                          </div>
                         </td>
 
                         <td style={{ padding: '16px 20px', textAlign: 'right' }}>
@@ -439,6 +557,56 @@ export function AdminPage() {
                             >
                               {u.is_banned ? 'Unban' : 'Ban'}
                             </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleGrantCredits(u)}
+                              disabled={isBusy || u.credits === null}
+                              style={{
+                                padding: '6px 12px',
+                                borderRadius: '8px',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                border: '1px solid #c7d2fe',
+                                background: '#eef2ff',
+                                color: '#3730a3',
+                                cursor:
+                                  isBusy || u.credits === null ? 'not-allowed' : 'pointer',
+                                opacity: u.credits === null ? 0.5 : 1,
+                              }}
+                              title={
+                                u.credits === null
+                                  ? 'This account is not metered and holds no balance'
+                                  : undefined
+                              }
+                            >
+                              Grant
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleAdjustCredits(u)}
+                              disabled={isBusy || u.credits === null}
+                              style={{
+                                padding: '6px 12px',
+                                borderRadius: '8px',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                border: '1px solid #e2e8f0',
+                                background: '#ffffff',
+                                color: '#334155',
+                                cursor:
+                                  isBusy || u.credits === null ? 'not-allowed' : 'pointer',
+                                opacity: u.credits === null ? 0.5 : 1,
+                              }}
+                              title={
+                                u.credits === null
+                                  ? 'This account is not metered and holds no balance'
+                                  : undefined
+                              }
+                            >
+                              Adjust
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -447,6 +615,87 @@ export function AdminPage() {
                 </tbody>
               </table>
             </div>
+          )}
+
+          {ledgerEmail && (
+            <section
+              style={{
+                marginTop: '20px',
+                border: '1px solid #e2e8f0',
+                borderRadius: '12px',
+                overflow: 'hidden',
+              }}
+            >
+              <header
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '12px 20px',
+                  background: '#f8fafc',
+                  borderBottom: '1px solid #e2e8f0',
+                }}
+              >
+                <Coins size={15} style={{ color: '#6366f1' }} />
+                <strong style={{ fontSize: '14px', color: '#1e293b' }}>
+                  Credit history for {ledgerEmail}
+                </strong>
+              </header>
+
+              {ledgerLoading ? (
+                <p style={{ margin: 0, padding: '16px 20px', color: '#64748b', fontSize: '13px' }}>
+                  Loading credit history...
+                </p>
+              ) : ledger.length === 0 ? (
+                <p style={{ margin: 0, padding: '16px 20px', color: '#64748b', fontSize: '13px' }}>
+                  No credit transactions recorded for this account.
+                </p>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                  <thead>
+                    <tr style={{ background: '#ffffff', borderBottom: '1px solid #e2e8f0' }}>
+                      <th style={{ padding: '10px 20px', fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>When</th>
+                      <th style={{ padding: '10px 20px', fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Reason</th>
+                      <th style={{ padding: '10px 20px', fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>By</th>
+                      <th style={{ padding: '10px 20px', fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', textAlign: 'right' }}>Change</th>
+                      <th style={{ padding: '10px 20px', fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', textAlign: 'right' }}>Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ledger.map((entry) => (
+                      <tr key={entry.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '10px 20px', fontSize: '13px', color: '#64748b', whiteSpace: 'nowrap' }}>
+                          {new Date(entry.created_at).toLocaleString()}
+                        </td>
+                        <td style={{ padding: '10px 20px', fontSize: '13px', color: '#1e293b' }}>
+                          {transactionLabel(entry)}
+                          {entry.note ? (
+                            <span style={{ color: '#94a3b8' }}> &middot; {entry.note}</span>
+                          ) : null}
+                        </td>
+                        <td style={{ padding: '10px 20px', fontSize: '13px', color: '#64748b' }}>
+                          {entry.actor_label ?? entry.actor_type}
+                        </td>
+                        <td
+                          style={{
+                            padding: '10px 20px',
+                            fontSize: '13px',
+                            fontWeight: 700,
+                            textAlign: 'right',
+                            color: entry.delta >= 0 ? '#059669' : '#dc2626',
+                          }}
+                        >
+                          {formatDelta(entry.delta)}
+                        </td>
+                        <td style={{ padding: '10px 20px', fontSize: '13px', color: '#334155', textAlign: 'right' }}>
+                          {entry.balance_after}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
           )}
         </div>
       </div>

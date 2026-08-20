@@ -421,6 +421,29 @@ denominator, and is skipped by topic mastery. Losing a student's written work
 because a grading model timed out would be a much worse outcome than an unscored
 answer, so a grading failure never fails the attempt.
 
+## Credit ledger
+
+`credit_transactions` makes every credit balance change attributable. For any
+account with a non-null balance, that balance equals the sum of the account's
+deltas; an account with a null balance is unmetered and owns no rows.
+
+The table carries two constraints that enforce behavior rather than describe
+shape. `UNIQUE (user_id, grant_period)` is the idempotency key for the lazy
+monthly grant, so an account receives at most one grant per calendar month
+however many requests race. `UNIQUE (refunds_transaction_id)` makes a charge
+refundable at most once, so a failure handler that runs twice cannot mint
+credit. Both rely on NULL comparing as distinct, which SQLite and PostgreSQL
+agree on, so the many rows carrying neither value never collide.
+
+`user_id` cascades on delete, because a deleted account's ledger has no subject.
+`actor_user_id` uses `SET NULL` instead: deleting an administrator must not erase
+the record of grants they made, so `actor_label` keeps their email as a snapshot.
+
+The ledger is append-only. `services/credits.py` offers no update or delete path,
+and corrections are recorded as new, opposing transactions.
+
+Full policy, reasons, and the migration backfill rule are in `docs/credits.md`.
+
 ## Limits and failure behavior
 
 Worker behavior is configured through:

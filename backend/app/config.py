@@ -100,6 +100,11 @@ DEFAULT_DATABASE_POOL_SIZE = 5
 DEFAULT_DATABASE_MAX_OVERFLOW = 5
 DEFAULT_DATABASE_POOL_RECYCLE_SECONDS = 900
 
+DEFAULT_CREDIT_INITIAL_GRANT = 50.0
+DEFAULT_CREDIT_PERIODIC_GRANT = 50.0
+DEFAULT_CREDIT_MAX_BALANCE = 100.0
+MAX_CREDIT_BALANCE_CEILING = 1_000_000.0
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -195,6 +200,12 @@ class Settings:
     flashcard_material_max_chars: int
     ai_tutor_material_max_chars: int
     course_qa_material_max_chars: int
+
+    # Credit lifecycle. See docs/credits.md.
+    credit_metering_enabled: bool
+    credit_initial_grant: float
+    credit_periodic_grant: float
+    credit_max_balance: float
 
     @property
     def is_hosted(self) -> bool:
@@ -673,6 +684,29 @@ def load_settings() -> Settings:
                 "Production CHROMA_PERSIST_DIRECTORY must use an absolute path."
             )
 
+    credit_metering_enabled = _boolean_setting(
+        "CREDIT_METERING_ENABLED",
+        default=mode == MODE_HOSTED,
+    )
+    credit_initial_grant = _nonnegative_float_setting(
+        "CREDIT_INITIAL_GRANT",
+        DEFAULT_CREDIT_INITIAL_GRANT,
+    )
+    credit_periodic_grant = _nonnegative_float_setting(
+        "CREDIT_PERIODIC_GRANT",
+        DEFAULT_CREDIT_PERIODIC_GRANT,
+    )
+    credit_max_balance = _bounded_float_setting(
+        "CREDIT_MAX_BALANCE",
+        DEFAULT_CREDIT_MAX_BALANCE,
+        minimum=0.0,
+        maximum=MAX_CREDIT_BALANCE_CEILING,
+    )
+    if credit_max_balance < credit_initial_grant:
+        raise ValueError("CREDIT_MAX_BALANCE must be at least CREDIT_INITIAL_GRANT.")
+    if credit_max_balance < credit_periodic_grant:
+        raise ValueError("CREDIT_MAX_BALANCE must be at least CREDIT_PERIODIC_GRANT.")
+
     return Settings(
         app_env=app_env,
         app_debug=app_debug,
@@ -746,6 +780,10 @@ def load_settings() -> Settings:
         flashcard_material_max_chars=material_budgets["FLASHCARD_MATERIAL_MAX_CHARS"],
         ai_tutor_material_max_chars=material_budgets["AI_TUTOR_MATERIAL_MAX_CHARS"],
         course_qa_material_max_chars=material_budgets["COURSE_QA_MATERIAL_MAX_CHARS"],
+        credit_metering_enabled=credit_metering_enabled,
+        credit_initial_grant=credit_initial_grant,
+        credit_periodic_grant=credit_periodic_grant,
+        credit_max_balance=credit_max_balance,
     )
 
 
@@ -789,6 +827,17 @@ def _boolean_setting(name: str, *, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError(f"{name} must be true or false.")
+
+
+def _nonnegative_float_setting(name: str, default: float) -> float:
+    raw_value = os.getenv(name, str(default))
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a nonnegative finite number.") from exc
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{name} must be a nonnegative finite number.")
+    return value
 
 
 def _positive_float_setting(name: str, default: float) -> float:

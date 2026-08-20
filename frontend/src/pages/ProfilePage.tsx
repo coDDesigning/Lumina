@@ -23,7 +23,12 @@ import { useAuth } from '../context/AuthContext'
 import { modelsAPI } from '../api/models'
 import { profileKnowledgeAPI } from '../api/profileKnowledge'
 import { userAPI } from '../api/user'
-import type { AiModelInfo, ProfileKnowledgeItem } from '../api/types'
+import { formatDelta, transactionLabel } from '../api/creditLabels'
+import type {
+  AiModelInfo,
+  CreditTransaction,
+  ProfileKnowledgeItem,
+} from '../api/types'
 
 type ProfilePageProps = {
   workspaceId?: string
@@ -55,6 +60,7 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
   const [modelSuccess, setModelSuccess] = useState<string | null>(null)
   const [modelError, setModelError] = useState<string | null>(null)
   const [refreshingCredits, setRefreshingCredits] = useState(false)
+  const [creditHistory, setCreditHistory] = useState<CreditTransaction[]>([])
 
   // Profile Knowledge State
   const [knowledgeItems, setKnowledgeItems] = useState<ProfileKnowledgeItem[]>([])
@@ -132,10 +138,24 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
     }
   }
 
+  const loadCreditHistory = useCallback(async () => {
+    try {
+      setCreditHistory(await userAPI.getCreditTransactions(20))
+    } catch {
+      // History is supporting detail; the balance above stays usable without it.
+      setCreditHistory([])
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadCreditHistory()
+  }, [loadCreditHistory])
+
   const handleRefreshCredits = async () => {
     setRefreshingCredits(true)
     try {
       await refreshUser()
+      await loadCreditHistory()
     } finally {
       setRefreshingCredits(false)
     }
@@ -491,10 +511,97 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
                     color: '#64748b',
                   }}
                 >
-                  Each AI generation deducts 1 credit. Regular accounts start with 50 credits.
+                  {user?.credits === null
+                    ? 'This account is not metered, so generations are never charged.'
+                    : 'Each AI generation costs 1 credit. You start with 50 and receive up to 50 more each month, capped at 100. Failed generations are refunded.'}
                 </p>
               </div>
             </div>
+
+            {user?.credits !== null && creditHistory.length > 0 && (
+              <div
+                style={{
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '10px',
+                  overflow: 'hidden',
+                }}
+              >
+                <h3
+                  style={{
+                    margin: 0,
+                    padding: '10px 16px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: '#475569',
+                    background: '#f8fafc',
+                    borderBottom: '1px solid #e2e8f0',
+                  }}
+                >
+                  Recent credit activity
+                </h3>
+                <ul
+                  style={{
+                    listStyle: 'none',
+                    margin: 0,
+                    padding: 0,
+                    maxHeight: '260px',
+                    overflowY: 'auto',
+                  }}
+                >
+                  {creditHistory.map((entry) => (
+                    <li
+                      key={entry.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '12px',
+                        padding: '10px 16px',
+                        fontSize: '13px',
+                        borderTop: '1px solid #f1f5f9',
+                      }}
+                    >
+                      <span style={{ color: '#1e293b' }}>
+                        {transactionLabel(entry)}
+                        {entry.note ? (
+                          <span style={{ color: '#94a3b8' }}> · {entry.note}</span>
+                        ) : null}
+                      </span>
+                      <span
+                        style={{
+                          display: 'flex',
+                          alignItems: 'baseline',
+                          gap: '10px',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <span style={{ color: '#94a3b8', fontSize: '12px' }}>
+                          {new Date(entry.created_at).toLocaleDateString()}
+                        </span>
+                        <span
+                          style={{
+                            fontWeight: 700,
+                            color: entry.delta >= 0 ? '#10b981' : '#ef4444',
+                          }}
+                        >
+                          {formatDelta(entry.delta)}
+                        </span>
+                        <span
+                          style={{
+                            color: '#64748b',
+                            fontSize: '12px',
+                            minWidth: '48px',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {entry.balance_after}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <label className="form-field">
               <span>Preferred AI Model</span>

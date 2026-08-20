@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
@@ -29,6 +29,7 @@ from backend.app.models import (
     User,
 )
 from main import app
+from services import credits as credits_service
 from services import semantic_retrieval as semantic_retrieval_service
 from services.processing_jobs import claim_next_job, fail_job
 from services.vector_store import (
@@ -96,6 +97,49 @@ def _reset_postgresql_contract_data(engine: Engine) -> None:
             Role.__table__.insert(),
             [{"name": "admin"}, {"name": "user"}],
         )
+
+
+def seed_registration_grant(*users: User) -> None:
+    """Give a directly-built fixture user the ledger baseline registration gives.
+
+    Fixtures construct users without going through ``UserService.create_user``,
+    so they would otherwise start with a balance no ledger row explains and be
+    owed the current month's grant on their very first request. Attaching the
+    row registration would have written keeps fixture accounts realistic.
+    """
+    for user in users:
+        grant = credits_service.CreditService.build_initial_grant(user)
+        if grant is not None:
+            user.credit_transactions.append(grant)
+
+
+@pytest.fixture(autouse=True)
+def metered_credits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the suite as a deployment that meters credits.
+
+    CI exercises the backend in self-hosted mode, where credits are exempt by
+    default, but nearly every credit assertion in this suite is about the
+    metered behavior a hosted deployment gets. Making metering the ambient state
+    keeps those tests honest; the exempt path is proven by the tests that turn
+    metering back off explicitly.
+    """
+    monkeypatch.setattr(
+        credits_service,
+        "settings",
+        replace(settings, credit_metering_enabled=True),
+    )
+
+
+def set_credit_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    **overrides: object,
+) -> None:
+    """Point services.credits at a variant policy for one test."""
+    monkeypatch.setattr(
+        credits_service,
+        "settings",
+        replace(settings, credit_metering_enabled=True, **overrides),
+    )
 
 
 @pytest.fixture(scope="session")
@@ -424,6 +468,7 @@ def upload_api(api_context: ApiContext) -> UploadApiContext:
             owner=user,
             is_deleted=True,
         )
+        seed_registration_grant(user)
         session.add_all([course, other_course, deleted_course])
         session.commit()
         user_id = user.id
@@ -490,6 +535,8 @@ def authz_api(api_context: ApiContext) -> AuthorizationApiContext:
             is_banned=False,
             preferred_model="gemini:gemini-3.6-flash",
         )
+
+        seed_registration_grant(user_a, user_b, administrator)
 
         a_course = Course(
             title="Owner A Active Course",

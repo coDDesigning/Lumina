@@ -33,7 +33,8 @@ GENERATION_SETTINGS_REVISION = "b2f47c8d0915"
 QUIZ_PROGRESS_REVISION = "c8e1f5a9b3d2"
 QUIZ_SCHEMA_REVISION = "c8d4a1f39e72"
 PGVECTOR_HARDENING_REVISION = "f5a7c2d9e104"
-HEAD_REVISION = PGVECTOR_HARDENING_REVISION
+CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
+HEAD_REVISION = CREDIT_LEDGER_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -61,7 +62,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: QUIZ_SCHEMA_REVISION,
+        HEAD_REVISION: PGVECTOR_HARDENING_REVISION,
+        PGVECTOR_HARDENING_REVISION: QUIZ_SCHEMA_REVISION,
         QUIZ_SCHEMA_REVISION: QUIZ_PROGRESS_REVISION,
         QUIZ_PROGRESS_REVISION: GENERATION_SETTINGS_REVISION,
         GENERATION_SETTINGS_REVISION: COURSE_SETTINGS_REVISION,
@@ -242,6 +244,7 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert "document_visuals" in tables
         assert "processing_jobs" in tables
         assert "ai_usage_logs" in tables
+        assert "credit_transactions" in tables
 
         roles = connection.execute("SELECT name FROM roles ORDER BY name").fetchall()
         assert roles == [("admin",), ("user",)]
@@ -1491,3 +1494,115 @@ def test_quiz_progress_migration_round_trips(tmp_path: Path) -> None:
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone() == (HEAD_REVISION,)
+
+
+def insert_legacy_user(
+    connection: sqlite3.Connection,
+    *,
+    email: str,
+    credits: float | None,
+    role: str = "user",
+) -> int:
+    role_id = connection.execute(
+        "SELECT id FROM roles WHERE name = ?", (role,)
+    ).fetchone()[0]
+    cursor = connection.execute(
+        "INSERT INTO users "
+        "(name, email, password_hash, role_id, credits, is_banned, preferred_model) "
+        "VALUES (?, ?, 'not-a-real-hash', ?, ?, 0, 'gemini:gemini-3.6-flash')",
+        (email.split("@")[0], email, role_id, credits),
+    )
+    return int(cursor.lastrowid)
+
+
+def test_credit_ledger_migration_reconciles_existing_balances(tmp_path: Path) -> None:
+    """Every legacy balance gains one truthful baseline row and nothing more.
+
+    The reconciliation deliberately invents no history: a balance of 37 becomes
+    a single +37 row, not a fabricated grant-and-spend sequence it cannot know
+    happened. An unmetered administrator stays outside the ledger entirely.
+    """
+    database_path = tmp_path / "credit-ledger.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", QUIZ_SCHEMA_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert "credit_transactions" not in database_tables(connection)
+        insert_legacy_user(connection, email="alice@example.com", credits=37.0)
+        insert_legacy_user(connection, email="bob@example.com", credits=0.0)
+        insert_legacy_user(connection, email="carol@example.com", credits=83.0)
+        insert_legacy_user(
+            connection, email="root@example.com", credits=None, role="admin"
+        )
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        assert "credit_transactions" in database_tables(connection)
+
+        reconciled = connection.execute(
+            "SELECT u.email, t.delta, t.balance_after, t.reason, t.actor_type, "
+            "t.grant_period "
+            "FROM credit_transactions t JOIN users u ON u.id = t.user_id "
+            "ORDER BY u.email"
+        ).fetchall()
+        assert reconciled == [
+            (
+                "alice@example.com",
+                37.0,
+                37.0,
+                "migration_reconciliation",
+                "migration",
+                None,
+            ),
+            (
+                "bob@example.com",
+                0.0,
+                0.0,
+                "migration_reconciliation",
+                "migration",
+                None,
+            ),
+            (
+                "carol@example.com",
+                83.0,
+                83.0,
+                "migration_reconciliation",
+                "migration",
+                None,
+            ),
+        ]
+
+        # A metered balance is now derivable; an unmetered one owns no rows.
+        drift = connection.execute(
+            "SELECT u.email, u.credits, "
+            "COALESCE((SELECT SUM(t.delta) FROM credit_transactions t "
+            "WHERE t.user_id = u.id), 0) "
+            "FROM users u"
+        ).fetchall()
+        for email, credits, ledger_total in drift:
+            if credits is None:
+                assert ledger_total == 0, email
+            else:
+                assert credits == ledger_total, email
+
+    run_alembic(database_path, tmp_path, "downgrade", QUIZ_SCHEMA_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert "credit_transactions" not in database_tables(connection)
+        # The ledger is lossy to drop, but no balance is disturbed by dropping it.
+        assert connection.execute(
+            "SELECT email, credits FROM users ORDER BY email"
+        ).fetchall() == [
+            ("alice@example.com", 37.0),
+            ("bob@example.com", 0.0),
+            ("carol@example.com", 83.0),
+            ("root@example.com", None),
+        ]
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        # Re-upgrading rebuilds exactly one baseline per metered user.
+        assert connection.execute(
+            "SELECT COUNT(*) FROM credit_transactions"
+        ).fetchone() == (3,)

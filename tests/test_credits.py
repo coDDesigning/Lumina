@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy.orm import Session
 
 from backend.app.models import Course, DocumentChunk, UploadedDocument, User
 from services.text_generation import (
@@ -120,8 +121,15 @@ def test_admin_has_unlimited_credits(authz_api):
         assert admin.credits is None
 
 
-def test_insufficient_credits_returns_402(authz_api, monkeypatch: pytest.MonkeyPatch):
-    _add_material(authz_api.session_factory, authz_api.user_a_id, authz_api.a_course_id)
+def test_insufficient_credits_returns_402(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+):
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
 
     with authz_api.session_factory() as session:
         user = session.get(User, authz_api.user_a_id)
@@ -146,8 +154,15 @@ def test_insufficient_credits_returns_402(authz_api, monkeypatch: pytest.MonkeyP
     assert "credits" in res.json()["detail"].lower()
 
 
-def test_failed_generation_refunds_credits(authz_api, monkeypatch: pytest.MonkeyPatch):
-    _add_material(authz_api.session_factory, authz_api.user_a_id, authz_api.a_course_id)
+def test_failed_generation_refunds_credits(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+):
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
 
     with authz_api.session_factory() as session:
         user = session.get(User, authz_api.user_a_id)
@@ -171,6 +186,55 @@ def test_failed_generation_refunds_credits(authz_api, monkeypatch: pytest.Monkey
     assert res.status_code == 503
 
     # Credits must be refunded back to 10.0
+    with authz_api.session_factory() as session:
+        user = session.get(User, authz_api.user_a_id)
+        assert user.credits == 10.0
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "provider_dependency"),
+    [
+        ("qa", "routes.course_qa.get_text_generation_provider"),
+        ("ai-tutor", "routes.ai_tutor.get_text_generation_provider"),
+    ],
+)
+def test_conversation_persistence_failure_refunds_credits(
+    authz_api,
+    retrieval_env,
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    provider_dependency: str,
+):
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
+    with authz_api.session_factory() as session:
+        user = session.get(User, authz_api.user_a_id)
+        user.credits = 10.0
+        session.commit()
+
+    monkeypatch.setattr(provider_dependency, lambda **kwargs: StubProvider())
+    original_commit = Session.commit
+    commit_count = 0
+
+    def fail_conversation_commit(session: Session) -> None:
+        nonlocal commit_count
+        commit_count += 1
+        if commit_count == 2:
+            raise RuntimeError("Conversation persistence failed")
+        original_commit(session)
+
+    monkeypatch.setattr(Session, "commit", fail_conversation_commit)
+    response = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/{endpoint}",
+        json={"question": "What is sorting?"},
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 500
     with authz_api.session_factory() as session:
         user = session.get(User, authz_api.user_a_id)
         assert user.credits == 10.0

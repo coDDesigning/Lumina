@@ -222,6 +222,33 @@ while `created_at` stays fixed.
 so neither an owner nor an administrator can transfer a workspace through the
 API.
 
+### Course conversations
+
+Course Q&A and AI Tutor persist successful exchanges in the shared
+`conversations` and `conversation_messages` tables. `conversation_type` is
+mandatory and checked as either `course_qa` or `ai_tutor`, so one feature cannot
+continue the other feature's thread. Rows written before Tutor persistence were
+introduced are backfilled as `course_qa` by the migration that adds the type.
+
+Generation continuation scopes a conversation identifier to the current user,
+authorized course, and expected type in one query. Missing, cross-course,
+cross-user, and cross-type identifiers all return `404 Conversation not found`.
+Only a successful provider response appends the user and assistant pair; a
+retrieval or generation failure leaves the thread unchanged.
+
+The read-only history API lists course conversations newest-first and returns
+one detail with chronological messages:
+
+```text
+GET /api/courses/{course_id}/conversations
+GET /api/courses/{course_id}/conversations/{conversation_id}
+```
+
+These endpoints use `require_course_access`, so owners read their own course
+history and administrators retain the standard support read override. The
+detail lookup includes the parent course in the same query, making an identifier
+from another course indistinguishable from a missing conversation.
+
 Unauthorized access never discloses existence. A nonexistent course, a course
 whose purge has not finished, and another owner's course all return `404` with the same
 `Course not found` body, so course identifiers cannot be enumerated. Documents

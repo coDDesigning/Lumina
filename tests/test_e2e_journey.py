@@ -6,9 +6,10 @@ Proves the primary Lumina student journey end-to-end across:
 3. Real document upload through the public API
 4. Real document processing worker pipeline (extraction -> chunking -> embedding -> vector indexing)
 5. Semantic retrieval and structured study guide generation
-6. Quiz generation, quiz attempt submission, and course progress tracking
-7. Cross-user authorization isolation and tenant boundary enforcement
-8. Course hard deletion and residual cleanup across DB, vector store, and physical storage
+6. Persisted conversation reads and continuation
+7. Quiz generation, quiz attempt submission, and course progress tracking
+8. Cross-user authorization isolation and tenant boundary enforcement
+9. Course hard deletion and residual cleanup across DB, vector store, and physical storage
 """
 
 import json
@@ -28,6 +29,8 @@ from backend.app.database import get_db
 from backend.app.models import (
     EMBEDDING_DIMENSIONS,
     ChunkEmbedding,
+    Conversation,
+    ConversationMessage,
     Course,
     DocumentChunk,
     DocumentPage,
@@ -545,9 +548,73 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
     assert detail_res.json()["data"]["content"] == guide_payload["study_guide"]
 
     # =========================================================================
-    # STAGE 6: Quiz Generation, Attempt Submission & Course Progress
+    # STAGE 6: Persisted Conversation Read & Resume
     # =========================================================================
-    # 6a. Generate Quiz
+    first_qa = client.post(
+        f"/api/courses/{course_id}/qa",
+        headers=auth1,
+        json={"question": "What does mitosis produce?"},
+    )
+    assert first_qa.status_code == 200, first_qa.text
+    conversation_id = first_qa.json()["data"]["conversation_id"]
+
+    conversation_list = client.get(
+        f"/api/courses/{course_id}/conversations", headers=auth1
+    )
+    assert conversation_list.status_code == 200, conversation_list.text
+    assert conversation_list.json()["data"] == [
+        {
+            "id": conversation_id,
+            "course_id": course_id,
+            "user_id": student1_user_id,
+            "conversation_type": "course_qa",
+            "preview": "What does mitosis produce?",
+            "message_count": 2,
+            "created_at": conversation_list.json()["data"][0]["created_at"],
+            "updated_at": conversation_list.json()["data"][0]["updated_at"],
+        }
+    ]
+
+    first_detail = client.get(
+        f"/api/courses/{course_id}/conversations/{conversation_id}", headers=auth1
+    )
+    assert first_detail.status_code == 200, first_detail.text
+    assert [
+        (message["role"], message["content"])
+        for message in first_detail.json()["data"]["messages"]
+    ] == [
+        ("user", "What does mitosis produce?"),
+        ("assistant", "Deterministic generated text response."),
+    ]
+
+    resumed_qa = client.post(
+        f"/api/courses/{course_id}/qa",
+        headers=auth1,
+        json={
+            "question": "Can you restate that?",
+            "conversation_id": conversation_id,
+        },
+    )
+    assert resumed_qa.status_code == 200, resumed_qa.text
+    assert resumed_qa.json()["data"]["conversation_id"] == conversation_id
+
+    resumed_detail = client.get(
+        f"/api/courses/{course_id}/conversations/{conversation_id}", headers=auth1
+    )
+    assert resumed_detail.status_code == 200, resumed_detail.text
+    resumed_messages = resumed_detail.json()["data"]["messages"]
+    assert [message["role"] for message in resumed_messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert resumed_messages[2]["content"] == "Can you restate that?"
+
+    # =========================================================================
+    # STAGE 7: Quiz Generation, Attempt Submission & Course Progress
+    # =========================================================================
+    # 7a. Generate Quiz
     quiz_res = client.post(
         f"/api/courses/{course_id}/quiz",
         headers=auth1,
@@ -585,7 +652,7 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
         3,
     ]
 
-    # 6b. Submit Quiz Attempt
+    # 7b. Submit Quiz Attempt
     attempt_res = client.post(
         f"/api/courses/{course_id}/quizzes/{quiz_id}/attempts",
         headers=auth1,
@@ -614,7 +681,7 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
     assert attempt_data["graded_count"] == 3
     assert attempt_data["total_questions"] == 3
 
-    # 6c. Verify Course Progress
+    # 7c. Verify Course Progress
     progress_res = client.get(f"/api/courses/{course_id}/progress", headers=auth1)
     assert progress_res.status_code == 200, progress_res.text
     progress_data = progress_res.json()["data"]
@@ -623,7 +690,7 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
     assert len(progress_data["topic_mastery"]) >= 1
 
     # =========================================================================
-    # STAGE 7: Cross-User Authorization Isolation
+    # STAGE 8: Cross-User Authorization Isolation
     # =========================================================================
     reg2_res = client.post(
         "/api/auth/register",
@@ -686,6 +753,16 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
         == 404
     )
     assert (
+        client.get(f"/api/courses/{course_id}/conversations", headers=auth2).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            f"/api/courses/{course_id}/conversations/{conversation_id}", headers=auth2
+        ).status_code
+        == 404
+    )
+    assert (
         client.post(
             f"/api/courses/{course_id}/quiz",
             headers=auth2,
@@ -739,7 +816,7 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
         assert len(s2_retrieval) == 0
 
     # =========================================================================
-    # STAGE 8: Course Hard Deletion & Residue Verification
+    # STAGE 9: Course Hard Deletion & Residue Verification
     # =========================================================================
     delete_res = client.delete(
         f"/api/courses/{course_id}?hard_delete=true",
@@ -747,7 +824,7 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
     )
     assert delete_res.status_code == 200, delete_res.text
 
-    # 8a. Verify Course and related metadata are gone
+    # 9a. Verify Course and related metadata are gone
     assert client.get(f"/api/courses/{course_id}", headers=auth1).status_code == 404
 
     with session_factory() as session:
@@ -757,6 +834,15 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
                 select(func.count())
                 .select_from(UploadedDocument)
                 .where(UploadedDocument.course_id == course_id)
+            )
+            == 0
+        )
+        assert session.get(Conversation, conversation_id) is None
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(ConversationMessage)
+                .where(ConversationMessage.conversation_id == conversation_id)
             )
             == 0
         )
@@ -821,10 +907,10 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
         # Vector store returns 0 records for deleted course
         assert vector_store.count_course_vectors(session, course_id) == 0
 
-    # 8b. Verify physical storage file is deleted
+    # 9b. Verify physical storage file is deleted
     assert storage.exists(doc_row.storage_key) is False
 
-    # 8c. Verify User and ProfileKnowledge survived
+    # 9c. Verify User and ProfileKnowledge survived
     with session_factory() as session:
         user1 = session.get(User, student1_user_id)
         assert user1 is not None

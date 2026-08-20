@@ -473,13 +473,41 @@ export interface FlashcardRequest {
   model?: string;
 }
 
+export type ConversationType = 'course_qa' | 'ai_tutor';
+
+export type ConversationRole = 'user' | 'assistant';
+
+export interface ConversationMessage {
+  id: number;
+  role: ConversationRole;
+  content: string;
+  created_at: string;
+}
+
+export interface ConversationSummary {
+  id: number;
+  course_id: number;
+  user_id: number;
+  conversation_type: ConversationType;
+  preview: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[];
+}
+
 export interface CourseQARequest {
   question: string;
+  conversation_id?: number;
   model?: string;
 }
 
-export interface CourseQAGenerationResult extends BoundedContext {
+export interface CourseQAGenerationResult extends RetrievedContext {
   answer: string;
+  conversation_id: number;
 }
 
 export interface PromptGenerationRequest {
@@ -493,11 +521,13 @@ export interface PromptGenerationResponse {
 
 export interface AiTutorRequest {
   question: string;
+  conversation_id?: number;
   model?: string;
 }
 
-export interface AiTutorGenerationResult extends BoundedContext {
+export interface AiTutorGenerationResult extends RetrievedContext {
   answer: string;
+  conversation_id: number;
 }
 
 export interface GeneratedFlashcard {
@@ -536,4 +566,3 @@ export interface CourseSettingsUpdate {
   notifications?: boolean;
   progress_reminders?: boolean;
 }
-

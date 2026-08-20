@@ -1,3 +1,5 @@
+import pytest
+
 import routes.course_qa as course_qa_route
 from backend.app.models import (
     AiUsageLog,
@@ -10,11 +12,15 @@ from backend.app.models import (
     User,
 )
 from schemas.ai_usage import GenerationType
+from schemas.conversation import ConversationType
 from services.course_qa import (
-    ConversationNotFoundError,
     CourseQAError,
     CourseQAService,
     NoReadyCourseMaterialError,
+)
+from services.retrieval_material import (
+    MaterialNotIndexedError,
+    NoRelevantMaterialError,
 )
 from services.text_generation import (
     GenerationMetadata,
@@ -23,7 +29,19 @@ from services.text_generation import (
     TextGenerationRateLimitError,
     TextGenerationTimeoutError,
 )
-from utils.ai_errors import NO_READY_MATERIAL_MESSAGE
+from utils.ai_errors import (
+    NO_READY_MATERIAL_MESSAGE,
+    PUBLIC_MESSAGES,
+    AiErrorCode,
+)
+
+
+IRRELEVANT_SEED = 4.0
+
+
+class UncalledTextProvider:
+    def generate_text(self, prompt: str) -> str:
+        raise AssertionError("Provider should not be called")
 
 
 def _add_ready_document(
@@ -32,8 +50,10 @@ def _add_ready_document(
     user: User,
     course: Course,
     file_hash: str,
-    text: str,
-) -> None:
+    text: str | list[str],
+    retrieval_env=None,
+    seeds: list[float] | None = None,
+) -> UploadedDocument:
     document = UploadedDocument(
         original_file_name="qa-notes.txt",
         file_type="txt",
@@ -49,21 +69,29 @@ def _add_ready_document(
     db_session.add(document)
     db_session.flush()
 
-    db_session.add(
+    texts = [text] if isinstance(text, str) else text
+    chunks = [
         DocumentChunk(
             document=document,
             course=course,
-            chunk_index=0,
+            chunk_index=index,
             page_number=None,
-            text=text,
+            text=chunk_text,
         )
-    )
+        for index, chunk_text in enumerate(texts)
+    ]
+    db_session.add_all(chunks)
+    db_session.flush()
+    if retrieval_env is not None:
+        retrieval_env.index(db_session, document, chunks, seeds=seeds)
     db_session.commit()
+    return document
 
 
-def test_get_course_material_uses_ready_chunks(
+def test_get_course_material_uses_semantic_retrieval_and_ready_chunks(
     db_session,
     model_graph,
+    retrieval_env,
 ) -> None:
     ready_document = UploadedDocument(
         original_file_name="ready.txt",
@@ -90,42 +118,51 @@ def test_get_course_material_uses_ready_chunks(
         status="uploaded",
     )
 
-    db_session.add_all(
-        [
-            DocumentChunk(
-                document=ready_document,
-                course=model_graph.course,
-                chunk_index=0,
-                page_number=None,
-                text="First ready chunk",
-            ),
-            DocumentChunk(
-                document=ready_document,
-                course=model_graph.course,
-                chunk_index=1,
-                page_number=None,
-                text="Second ready chunk",
-            ),
-            DocumentChunk(
-                document=uploaded_document,
-                course=model_graph.course,
-                chunk_index=0,
-                page_number=None,
-                text="Should not be included",
-            ),
-        ]
+    ready_chunks = [
+        DocumentChunk(
+            document=ready_document,
+            course=model_graph.course,
+            chunk_index=index,
+            page_number=None,
+            text=text,
+        )
+        for index, text in enumerate(["First ready chunk", "Second ready chunk"])
+    ]
+    uploaded_chunk = DocumentChunk(
+        document=uploaded_document,
+        course=model_graph.course,
+        chunk_index=0,
+        page_number=None,
+        text="Should not be included",
     )
+    db_session.add_all([*ready_chunks, uploaded_chunk])
+    db_session.flush()
+    retrieval_env.index(db_session, ready_document, ready_chunks, seeds=[0.0, 0.1])
+    retrieval_env.index(db_session, uploaded_document, [uploaded_chunk])
     db_session.commit()
 
+    question = "Which chunks are ready?"
     material = CourseQAService.get_course_material(
         db_session,
         model_graph.course.id,
+        query=question,
     )
 
     assert material.text == "First ready chunk\n\nSecond ready chunk"
     assert material.chunks_used == 2
     assert material.chunks_available == 2
     assert material.truncated is False
+    assert material.lowest_similarity is not None
+    assert material.highest_similarity == pytest.approx(1.0)
+    assert retrieval_env.provider.embed_query_calls == [question]
+
+
+def test_retrieval_query_is_the_current_question(model_graph) -> None:
+    question = "How does a red-black tree stay balanced?"
+
+    assert (
+        CourseQAService.build_retrieval_query(model_graph.course, question) == question
+    )
 
 
 def test_build_prompt_inserts_material_and_question() -> None:
@@ -143,6 +180,7 @@ def test_build_prompt_inserts_material_and_question() -> None:
 def test_generate_returns_answer_and_logs_telemetry(
     db_session,
     model_graph,
+    retrieval_env,
 ) -> None:
     _add_ready_document(
         db_session,
@@ -150,6 +188,7 @@ def test_generate_returns_answer_and_logs_telemetry(
         course=model_graph.course,
         file_hash="3" * 64,
         text="The cell membrane controls the movement of substances in and out of cells.",
+        retrieval_env=retrieval_env,
     )
 
     class FakeProvider:
@@ -182,7 +221,11 @@ def test_generate_returns_answer_and_logs_telemetry(
     )
     assert result.material.truncated is False
     assert result.material.chunks_used == 1
+    assert result.material.retrieval_narrowed is False
+    assert result.material.lowest_similarity == pytest.approx(1.0)
+    assert result.material.highest_similarity == pytest.approx(1.0)
     assert result.model_used == "gemini:gemini-2.5-flash"
+    assert retrieval_env.provider.embed_query_calls == ["What is the cell membrane?"]
 
     # Verify telemetry log
     log = (
@@ -200,6 +243,44 @@ def test_generate_returns_answer_and_logs_telemetry(
     assert log.model == "gemini-2.5-flash"
     assert log.prompt_tokens == 100
     assert log.completion_tokens == 20
+
+
+def test_generate_uses_only_retrieved_chunks(
+    db_session,
+    model_graph,
+    retrieval_env,
+) -> None:
+    _add_ready_document(
+        db_session,
+        user=model_graph.user,
+        course=model_graph.course,
+        file_hash="31" + "3" * 62,
+        text=["relevant-cell-material", "unrelated-alpha", "unrelated-beta"],
+        retrieval_env=retrieval_env,
+        seeds=[0.0, IRRELEVANT_SEED, IRRELEVANT_SEED],
+    )
+    captured_prompts: list[str] = []
+
+    class FakeProvider:
+        def generate_text(self, prompt: str) -> str:
+            captured_prompts.append(prompt)
+            return "Answer"
+
+    generation = CourseQAService.generate(
+        db_session,
+        model_graph.course.id,
+        "Explain cells",
+        FakeProvider(),
+        user_id=model_graph.user.id,
+    )
+
+    assert "relevant-cell-material" in captured_prompts[0]
+    assert "unrelated-alpha" not in captured_prompts[0]
+    assert "unrelated-beta" not in captured_prompts[0]
+    assert generation.material.chunks_used == 1
+    assert generation.material.chunks_available == 3
+    assert generation.material.retrieval_narrowed is True
+    assert generation.material.truncated is False
 
 
 def test_generate_rejects_missing_material_and_logs_failure(
@@ -238,9 +319,62 @@ def test_generate_rejects_missing_material_and_logs_failure(
     assert log.error_category == "no_ready_material"
 
 
+@pytest.mark.parametrize(
+    ("indexed", "seeds", "expected_error", "error_category"),
+    [
+        (False, None, MaterialNotIndexedError, "material_not_indexed"),
+        (True, [IRRELEVANT_SEED], NoRelevantMaterialError, "no_relevant_material"),
+    ],
+)
+def test_generate_reports_retrieval_failures_without_calling_provider(
+    db_session,
+    model_graph,
+    retrieval_env,
+    indexed,
+    seeds,
+    expected_error,
+    error_category,
+) -> None:
+    _add_ready_document(
+        db_session,
+        user=model_graph.user,
+        course=model_graph.course,
+        file_hash=("32" if indexed else "33") + "3" * 62,
+        text="Material that retrieval must classify",
+        retrieval_env=retrieval_env if indexed else None,
+        seeds=seeds,
+    )
+
+    class UncalledProvider:
+        def generate_text(self, prompt: str) -> str:
+            raise AssertionError("Provider should not be called")
+
+    with pytest.raises(expected_error):
+        CourseQAService.generate(
+            db_session,
+            model_graph.course.id,
+            "Explain a relevant topic",
+            UncalledProvider(),
+            user_id=model_graph.user.id,
+        )
+
+    log = (
+        db_session.query(AiUsageLog)
+        .filter_by(
+            user_id=model_graph.user.id,
+            course_id=model_graph.course.id,
+            generation_type=GenerationType.COURSE_QA.value,
+        )
+        .one()
+    )
+    assert log.success is False
+    assert log.error_category == error_category
+
+
 def test_generate_wraps_provider_error(
     db_session,
     model_graph,
+    retrieval_env,
 ) -> None:
     _add_ready_document(
         db_session,
@@ -248,6 +382,7 @@ def test_generate_wraps_provider_error(
         course=model_graph.course,
         file_hash="4" * 64,
         text="Sample material",
+        retrieval_env=retrieval_env,
     )
 
     class FailingProvider:
@@ -270,6 +405,7 @@ def test_generate_wraps_provider_error(
 
 def test_course_qa_api_success(
     upload_api,
+    retrieval_env,
     monkeypatch,
 ) -> None:
     with upload_api.session_factory() as session:
@@ -283,6 +419,7 @@ def test_course_qa_api_success(
             course=course,
             file_hash="5" * 64,
             text="Mitochondria are the powerhouse of the cell.",
+            retrieval_env=retrieval_env,
         )
 
     class FakeProvider:
@@ -312,8 +449,66 @@ def test_course_qa_api_success(
     assert payload["message"] == "Course Q&A answer generated successfully"
     assert payload["data"]["answer"] == "Mitochondria generate cellular energy (ATP)."
     assert payload["data"]["context_truncated"] is False
+    assert payload["data"]["retrieval_narrowed"] is False
     assert payload["data"]["chunks_used"] == 1
     assert payload["data"]["chunks_available"] == 1
+    assert payload["data"]["lowest_similarity"] == pytest.approx(1.0)
+    assert payload["data"]["highest_similarity"] == pytest.approx(1.0)
+    assert retrieval_env.provider.embed_query_calls == ["What is mitochondria?"]
+
+
+@pytest.mark.parametrize(
+    ("indexed", "seeds", "error_code"),
+    [
+        (False, None, AiErrorCode.MATERIAL_NOT_INDEXED),
+        (True, [IRRELEVANT_SEED], AiErrorCode.NO_RELEVANT_MATERIAL),
+    ],
+)
+def test_course_qa_api_curates_retrieval_failures(
+    upload_api,
+    retrieval_env,
+    monkeypatch,
+    indexed,
+    seeds,
+    error_code,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        assert user is not None and course is not None
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash=("51" if indexed else "52") + "5" * 62,
+            text="Material whose retrieval state is under test",
+            retrieval_env=retrieval_env if indexed else None,
+            seeds=seeds,
+        )
+
+    class UncalledProvider:
+        calls = 0
+
+        def generate_text(self, prompt: str) -> str:
+            self.calls += 1
+            return "Unexpected answer"
+
+    provider = UncalledProvider()
+    monkeypatch.setattr(
+        course_qa_route,
+        "get_text_generation_provider",
+        lambda: provider,
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "Explain the requested topic"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == PUBLIC_MESSAGES[error_code]
+    assert provider.calls == 0
 
 
 def test_course_qa_api_unauthorized_returns_404(
@@ -355,6 +550,7 @@ def test_course_qa_api_requires_auth(
 
 def test_course_qa_cross_course_isolation(
     upload_api,
+    retrieval_env,
     monkeypatch,
 ) -> None:
     with upload_api.session_factory() as session:
@@ -369,6 +565,7 @@ def test_course_qa_cross_course_isolation(
             course=course1,
             file_hash="6" * 64,
             text="Course 1 Secret Physics Formula E=mc^2",
+            retrieval_env=retrieval_env,
         )
 
         # Course 2 material for the same user
@@ -382,6 +579,7 @@ def test_course_qa_cross_course_isolation(
             course=course2,
             file_hash="7" * 64,
             text="Course 2 Chemistry Formula H2O",
+            retrieval_env=retrieval_env,
         )
         course2_id = course2.id
 
@@ -416,6 +614,7 @@ def test_course_qa_cross_course_isolation(
 
 def test_course_qa_provider_error_status_codes(
     upload_api,
+    retrieval_env,
     monkeypatch,
 ) -> None:
     with upload_api.session_factory() as session:
@@ -427,6 +626,7 @@ def test_course_qa_provider_error_status_codes(
             course=course,
             file_hash="8" * 64,
             text="Ready material",
+            retrieval_env=retrieval_env,
         )
 
     # Test 503 Provider Unavailable
@@ -483,6 +683,7 @@ def test_course_qa_provider_error_status_codes(
 
 def test_course_qa_creates_conversation_and_persists_messages(
     upload_api,
+    retrieval_env,
     monkeypatch,
 ) -> None:
     with upload_api.session_factory() as session:
@@ -496,6 +697,7 @@ def test_course_qa_creates_conversation_and_persists_messages(
             course=course,
             file_hash="9" * 64,
             text="Gravity attracts objects with mass toward each other.",
+            retrieval_env=retrieval_env,
         )
 
     class FakeProvider:
@@ -537,6 +739,7 @@ def test_course_qa_creates_conversation_and_persists_messages(
         assert conversation is not None
         assert conversation.user_id == upload_api.user_id
         assert conversation.course_id == upload_api.course_id
+        assert conversation.conversation_type == ConversationType.COURSE_QA.value
 
         messages = (
             session.query(ConversationMessage)
@@ -557,6 +760,7 @@ def test_course_qa_creates_conversation_and_persists_messages(
 
 def test_course_qa_continues_existing_conversation_with_history(
     upload_api,
+    retrieval_env,
     monkeypatch,
 ) -> None:
     with upload_api.session_factory() as session:
@@ -570,6 +774,7 @@ def test_course_qa_continues_existing_conversation_with_history(
             course=course,
             file_hash="a" * 64,
             text="Photosynthesis converts light energy into chemical energy.",
+            retrieval_env=retrieval_env,
         )
 
     captured_prompts: list[str] = []
@@ -635,6 +840,10 @@ def test_course_qa_continues_existing_conversation_with_history(
         in second_prompt
     )
     assert "Can you explain that more simply?" in second_prompt
+    assert retrieval_env.provider.embed_query_calls == [
+        "What is photosynthesis?",
+        "Can you explain that more simply?",
+    ]
 
     with upload_api.session_factory() as session:
         messages = (
@@ -653,74 +862,108 @@ def test_course_qa_continues_existing_conversation_with_history(
         ]
 
 
-def test_get_conversation_rejects_wrong_course(
-    db_session,
-    model_graph,
+def test_course_qa_rejects_conversation_from_another_course(
+    upload_api,
+    monkeypatch,
 ) -> None:
-    other_course = Course(
-        owner=model_graph.user,
-        title="Other Course",
-    )
-    db_session.add(other_course)
-    db_session.flush()
-
-    conversation = Conversation(
-        user_id=model_graph.user.id,
-        course_id=other_course.id,
-    )
-    db_session.add(conversation)
-    db_session.commit()
-
-    try:
-        CourseQAService.get_conversation(
-            db_session,
-            conversation.id,
-            user_id=model_graph.user.id,
-            course_id=model_graph.course.id,
+    with upload_api.session_factory() as session:
+        conversation = Conversation(
+            user_id=upload_api.user_id,
+            course_id=upload_api.other_course_id,
+            conversation_type=ConversationType.COURSE_QA.value,
         )
-    except ConversationNotFoundError as exc:
-        assert "Conversation not found." in str(exc)
-    else:
-        raise AssertionError("Expected ConversationNotFoundError")
+        session.add(conversation)
+        session.commit()
+        conversation_id = conversation.id
+
+    monkeypatch.setattr(
+        course_qa_route,
+        "get_text_generation_provider",
+        lambda: UncalledTextProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "Continue", "conversation_id": conversation_id},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Conversation not found"}
 
 
-def test_get_conversation_rejects_wrong_user(
-    db_session,
-    model_graph,
+def test_course_qa_rejects_another_users_conversation(
+    upload_api,
+    monkeypatch,
 ) -> None:
-    role = db_session.query(Role).filter_by(name="user").first()
-
-    other_user = User(
-        name="Conversation Intruder",
-        email="conversation-intruder@example.com",
-        password_hash="hash",
-        role=role,
-    )
-    db_session.add(other_user)
-    db_session.flush()
-
-    conversation = Conversation(
-        user_id=model_graph.user.id,
-        course_id=model_graph.course.id,
-    )
-    db_session.add(conversation)
-    db_session.commit()
-
-    try:
-        CourseQAService.get_conversation(
-            db_session,
-            conversation.id,
+    with upload_api.session_factory() as session:
+        role = session.query(Role).filter_by(name="user").first()
+        other_user = User(
+            name="Conversation Intruder",
+            email="conversation-intruder@example.com",
+            password_hash="hash",
+            role=role,
+        )
+        session.add(other_user)
+        session.flush()
+        conversation = Conversation(
             user_id=other_user.id,
-            course_id=model_graph.course.id,
+            course_id=upload_api.course_id,
+            conversation_type=ConversationType.COURSE_QA.value,
         )
-    except ConversationNotFoundError as exc:
-        assert "Conversation not found." in str(exc)
-    else:
-        raise AssertionError("Expected ConversationNotFoundError")
+        session.add(conversation)
+        session.commit()
+        conversation_id = conversation.id
+
+    monkeypatch.setattr(
+        course_qa_route,
+        "get_text_generation_provider",
+        lambda: UncalledTextProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "Continue", "conversation_id": conversation_id},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Conversation not found"}
+
+
+def test_course_qa_rejects_ai_tutor_conversation(
+    upload_api,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        conversation = Conversation(
+            user_id=upload_api.user_id,
+            course_id=upload_api.course_id,
+            conversation_type=ConversationType.AI_TUTOR.value,
+        )
+        session.add(conversation)
+        session.commit()
+        conversation_id = conversation.id
+
+    monkeypatch.setattr(
+        course_qa_route,
+        "get_text_generation_provider",
+        lambda: UncalledTextProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "Continue", "conversation_id": conversation_id},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Conversation not found"}
 
 
 def test_course_qa_provider_failure_does_not_create_conversation(
     upload_api,
+    retrieval_env,
     monkeypatch,
 ) -> None:
     with upload_api.session_factory() as session:
@@ -734,6 +977,7 @@ def test_course_qa_provider_failure_does_not_create_conversation(
             course=course,
             file_hash="b" * 64,
             text="Ready course material",
+            retrieval_env=retrieval_env,
         )
 
         conversations_before = (

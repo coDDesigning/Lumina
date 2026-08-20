@@ -32,6 +32,9 @@ from .base import Base
 
 QUESTION_TYPE_MULTIPLE_CHOICE = "multiple_choice"
 
+CONVERSATION_TYPES = ("course_qa", "ai_tutor")
+_CONVERSATION_TYPES_SQL = ", ".join(f"'{kind}'" for kind in CONVERSATION_TYPES)
+
 JOB_TYPE_EXTRACT_DOCUMENT = "extract_document"
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_RUNNING = "running"
@@ -845,6 +848,12 @@ class GeneratedOutput(Base):
 
 class Conversation(Base):
     __tablename__ = "conversations"
+    __table_args__ = (
+        CheckConstraint(
+            f"conversation_type IN ({_CONVERSATION_TYPES_SQL})",
+            name="conversation_type_valid",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -856,6 +865,11 @@ class Conversation(Base):
     course_id: Mapped[int] = mapped_column(
         ForeignKey("courses.id", ondelete="CASCADE"),
         index=True,
+    )
+
+    conversation_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
     )
 
     created_at: Mapped[datetime] = mapped_column(

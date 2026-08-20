@@ -4,12 +4,22 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
-from backend.app.models import Course
+from backend.app.models import Conversation, Course
 from schemas.ai_tutor import AiTutorResponse
 from schemas.ai_usage import ErrorCategory, GenerationType
+from schemas.conversation import ConversationType
 from services.ai_usage_logger import AiUsageLogger
-from services.course_material import CourseMaterial, load_course_material
+from services.conversation import CONVERSATION_NOT_FOUND, ConversationService
+from services.course_material import count_available_chunks
 from services.prompt_loader import PromptLoader
+from services.retrieval_material import (
+    MaterialNotIndexedError,
+    MaterialRetrievalError,
+    NoRelevantMaterialError,
+    RetrievedCourseMaterial,
+    load_retrieved_material,
+)
+from services.retrieval_query import build_retrieval_query as make_retrieval_query
 from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
@@ -21,6 +31,7 @@ from utils.ai_errors import (
     CourseMaterialUnavailableError,
     InsufficientCreditsError,
 )
+from utils.exceptions import NotFoundException
 
 
 class AiTutorError(RuntimeError):
@@ -34,8 +45,9 @@ class NoReadyCourseMaterialError(AiTutorError, CourseMaterialUnavailableError):
 @dataclass(frozen=True)
 class AiTutorGeneration:
     response: AiTutorResponse
-    material: CourseMaterial
+    material: RetrievedCourseMaterial
     model_used: str
+    conversation_id: int
 
 
 class AiTutorService:
@@ -48,23 +60,34 @@ class AiTutorService:
     def get_course_material(
         db: Session,
         course_id: int,
-    ) -> CourseMaterial:
-        return load_course_material(
+        *,
+        query: str,
+    ) -> RetrievedCourseMaterial:
+        return load_retrieved_material(
             db,
             course_id,
+            query=query,
+            limit=settings.retrieval_chunk_limit,
+            min_similarity=settings.retrieval_min_similarity,
             max_characters=settings.ai_tutor_material_max_chars,
         )
+
+    @staticmethod
+    def build_retrieval_query(course: Course | None, question: str) -> str:
+        return make_retrieval_query(course, question)
 
     @classmethod
     def build_prompt(
         cls,
         course_material: str,
         question: str,
+        conversation_history: str = "",
     ) -> str:
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {
                 "COURSE_MATERIAL": course_material,
+                "CONVERSATION_HISTORY": conversation_history,
                 "QUESTION": question,
             },
         )
@@ -77,32 +100,60 @@ class AiTutorService:
         question: str,
         provider: TextGenerationProvider,
         user_id: int | None = None,
+        conversation_id: int | None = None,
     ) -> AiTutorGeneration:
+        course = db.get(Course, course_id)
         resolved_user_id = user_id
-        if resolved_user_id is None:
-            course = db.get(Course, course_id)
-            if course is not None:
-                resolved_user_id = course.owner_id
+        if resolved_user_id is None and course is not None:
+            resolved_user_id = course.owner_id
 
-        material = cls.get_course_material(
-            db,
-            course_id,
-        )
-
-        if material.is_empty:
+        def log_failure(category: ErrorCategory) -> None:
             if resolved_user_id:
                 AiUsageLogger.log_failure(
                     db,
                     user_id=resolved_user_id,
                     course_id=course_id,
                     generation_type=GenerationType.AI_TUTOR,
-                    error_category=ErrorCategory.NO_READY_MATERIAL,
+                    error_category=category,
                 )
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
+        conversation: Conversation | None = None
+        if conversation_id is not None:
+            if resolved_user_id is None:
+                raise NotFoundException(CONVERSATION_NOT_FOUND)
+            conversation = ConversationService.get_for_append(
+                db,
+                conversation_id,
+                user_id=resolved_user_id,
+                course_id=course_id,
+                conversation_type=ConversationType.AI_TUTOR,
+            )
+
+        if count_available_chunks(db, course_id) == 0:
+            log_failure(ErrorCategory.NO_READY_MATERIAL)
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
+
+        query = cls.build_retrieval_query(course, question)
+        try:
+            material = cls.get_course_material(db, course_id, query=query)
+        except MaterialNotIndexedError:
+            log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
+            raise
+        except NoRelevantMaterialError:
+            log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
+            raise
+        except MaterialRetrievalError:
+            log_failure(ErrorCategory.RETRIEVAL_ERROR)
+            raise
 
         prompt = cls.build_prompt(
             material.text,
             question,
+            ConversationService.format_history(conversation),
         )
         metadata = None
 
@@ -112,13 +163,7 @@ class AiTutorService:
                 db, resolved_user_id, 1.0, source_type="ai_tutor"
             )
             if receipt is None:
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.AI_TUTOR,
-                    error_category=ErrorCategory.INSUFFICIENT_CREDITS,
-                )
+                log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
                 raise InsufficientCreditsError("Insufficient credits.")
 
         try:
@@ -129,14 +174,8 @@ class AiTutorService:
         except TextGenerationError as exc:
             if resolved_user_id:
                 CreditService.refund(db, receipt)
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.AI_TUTOR,
-                    error_category=getattr(
-                        exc, "error_category", ErrorCategory.PROVIDER_ERROR
-                    ),
+                log_failure(
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
                 )
             raise AiTutorError("Text generation provider failed.") from exc
         except Exception:
@@ -144,7 +183,19 @@ class AiTutorService:
                 CreditService.refund(db, receipt)
             raise
 
-        if resolved_user_id:
+        if resolved_user_id is None:
+            raise AiTutorError("Unable to determine conversation owner.")
+
+        try:
+            conversation = ConversationService.record_exchange(
+                db,
+                conversation=conversation,
+                user_id=resolved_user_id,
+                course_id=course_id,
+                conversation_type=ConversationType.AI_TUTOR,
+                question=question,
+                answer=answer,
+            )
             AiUsageLogger.log_success(
                 db,
                 user_id=resolved_user_id,
@@ -152,9 +203,16 @@ class AiTutorService:
                 generation_type=GenerationType.AI_TUTOR,
                 metadata=metadata,
             )
+            db.commit()
+        except Exception:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.UNKNOWN_ERROR)
+            raise
 
         return AiTutorGeneration(
             response=AiTutorResponse(answer=answer),
             material=material,
             model_used=model_identifier(metadata),
+            conversation_id=conversation.id,
         )

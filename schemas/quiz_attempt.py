@@ -17,6 +17,12 @@ class MasteryStatus(str, Enum):
 class QuizAnswerSubmission(BaseModel):
     question_id: int = Field(ge=1)
     selected_option_index: int | None = Field(default=None, ge=0)
+    text_response: str | None = Field(default=None, max_length=10000)
+    time_spent_seconds: int | None = Field(
+        default=None,
+        ge=0,
+        le=MAX_TIME_SPENT_SECONDS,
+    )
 
 
 class QuizAttemptRequest(BaseModel):
@@ -30,9 +36,22 @@ class QuizAttemptRequest(BaseModel):
 
 class QuizAnswerResult(BaseModel):
     question_id: int
-    selected_option_index: int | None
-    correct_option_index: int
-    is_correct: bool
+    selected_option_index: int | None = None
+    text_response: str | None = None
+    correct_option_index: int | None = None
+    is_correct: bool | None = None
+    time_spent_seconds: int | None = None
+    topic: str | None = None
+
+
+class QuizHistoryItem(BaseModel):
+    attempt_id: int
+    quiz_id: int
+    score: float
+    correct_count: int
+    total_questions: int
+    time_spent_seconds: int | None = None
+    created_at: datetime
 
 
 class QuizAttemptResponse(BaseModel):
@@ -41,7 +60,7 @@ class QuizAttemptResponse(BaseModel):
     score: float
     correct_count: int
     total_questions: int
-    time_spent_seconds: int | None
+    time_spent_seconds: int | None = None
     created_at: datetime
     answers: list[QuizAnswerResult]
 
@@ -55,6 +74,13 @@ class TopicMastery(BaseModel):
 
 
 class CourseProgressResponse(BaseModel):
-    attempts_count: int
-    average_score: float | None
-    topic_mastery: list[TopicMastery]
+    quizzes_completed: int = 0
+    attempts_count: int = 0
+    average_score: float | None = None
+    correct_count: int = 0
+    incorrect_count: int = 0
+    total_questions_answered: int = 0
+    completion: float = 0.0
+    weak_topics: list[str] = Field(default_factory=list)
+    topic_mastery: list[TopicMastery] = Field(default_factory=list)
+    quiz_history: list[QuizHistoryItem] = Field(default_factory=list)

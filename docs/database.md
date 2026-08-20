@@ -324,6 +324,79 @@ courses soft-deleted under the older behavior. It reruns this same path against
 every tombstoned course, so it is idempotent, and a course it cannot finish is
 logged and left tombstoned rather than blocking the rest.
 
+## Quizzes
+
+A quiz belongs to one course, carries the attribution of the generation that
+produced it, and owns an ordered list of questions.
+
+`quizzes` records `user_id`, `model_used`, `generation_settings`, and
+`generation_context` the same way `generated_outputs` does for study guides:
+the requesting user, the model that actually produced the row, the options that
+were asked for, and what retrieval actually returned. The two JSON documents are
+written strictly through their Pydantic models and read back permissively, so
+one bad row can never fail a list or detail read. `user_id` is `ON DELETE SET
+NULL` because a quiz outlives the account that generated it; the course cascade
+still removes it with its course.
+
+Generation also writes a `generated_outputs` row of `output_type` `quiz`, so a
+course's generation history is one list regardless of feature.
+
+### Question types
+
+`quiz_questions.question_type` is explicit rather than inferred from whether
+`options` happens to be present. The four MVP types are `multiple_choice`,
+`true_false`, `short_answer`, and `open_ended`. Each question also carries its
+own `difficulty`, `topic`, and `explanation`.
+
+`correct_answer` is the authoritative answer, stored as a JSON document
+discriminated by `type`:
+
+| Question type | Stored `correct_answer` | `options` | `correct_option_index` |
+| --- | --- | --- | --- |
+| `multiple_choice` | `{"type": "multiple_choice", "option_index": 1}` | four choices | mirrored |
+| `true_false` | `{"type": "true_false", "value": true}` | `["True", "False"]` | mirrored |
+| `short_answer` | `{"type": "short_answer", "text": "...", "accepted_answers": [...]}` | `NULL` | `NULL` |
+| `open_ended` | `{"type": "open_ended", "reference_answer": "..."}` | `NULL` | `NULL` |
+
+`options` and `correct_option_index` stay populated for the two option-based
+types. They are a mirror, not a second source of truth: grading and the frontend
+may read either, and revision `c8d4a1f39e72` backfilled the document for every
+question that predates it. Both columns are nullable because a short-answer or
+open-ended question genuinely has neither.
+
+`UNIQUE(quiz_id, question_index)` is what makes question order a property of the
+data rather than of insertion order. Reads sort by `question_index` with the
+identifier as a tie-breaker, so a quiz presents its questions the way the model
+generated them no matter how the rows were written.
+
+### Generation is atomic
+
+The provider's whole response is validated, and checked against the settings
+that asked for it, before any row is written. Question count, allowed question
+types, and difficulty are all enforced after generation rather than trusted to
+prompt compliance. The quiz and every one of its questions are then written in a
+single transaction, so a malformed response or a failed insert leaves no quiz
+and no partial questions behind.
+
+### Attempts and grading
+
+`quiz_attempt_answers` records `selected_option_index` for option-based
+questions and `answer_text` for written ones, plus `is_correct`, `score`, and
+`feedback`.
+
+Multiple-choice and true/false grade by option index. Short answers are matched
+against the stored accepted variants after normalizing case, punctuation, and
+whitespace. Open-ended answers are scored by the text-generation provider
+against the stored reference answer, which costs one credit per attempt that
+contains at least one of them.
+
+`is_correct` and `score` are both nullable, and are null together, for one
+reason: an open-ended answer the grader could not score. Such an answer is
+recorded ungraded rather than wrong, is excluded from the attempt score's
+denominator, and is skipped by topic mastery. Losing a student's written work
+because a grading model timed out would be a much worse outcome than an unscored
+answer, so a grading failure never fails the attempt.
+
 ## Limits and failure behavior
 
 Worker behavior is configured through:

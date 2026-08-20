@@ -16,8 +16,10 @@ from schemas.study_guide import (
     SummaryMode,
 )
 from services.ai_usage_logger import AiUsageLogger
+from services.generated_output import GeneratedOutputService
 from services.prompt_loader import PromptLoader
 from services.course_material import count_available_chunks
+from services.retrieval_query import build_retrieval_query
 from services.retrieval_material import (
     MaterialRetrievalError,
     NoRelevantMaterialError,
@@ -93,13 +95,9 @@ SUMMARY_MODE_DIRECTIVES: dict[SummaryMode, str] = {
     ),
 }
 
-ALL_TOPICS_SENTINEL = "All Topics"
-
 EXAM_FOCUS_QUERY_TERMS = (
     "exam preparation key definitions formulas worked examples common problems"
 )
-
-RETRIEVAL_QUERY_MAX_CHARS = 500
 
 
 class StudyGuideGenerationError(RuntimeError):
@@ -150,37 +148,16 @@ class StudyGuideService:
 
     @staticmethod
     def build_retrieval_query(course: Course | None, options: StudyGuideRequest) -> str:
-        """Turn a generation request into the query retrieval should rank against.
-
-        The sentinel and a blank focus both mean "the whole course": embedding the
-        literal words would rank nothing usefully, and an empty query is not a
-        query at all, so both expand to a description of the course instead.
-        """
-        topic = options.topic_focus.strip()
-        if not topic or topic.casefold() == ALL_TOPICS_SENTINEL.casefold():
-            descriptors = (
-                getattr(course, "title", None),
-                getattr(course, "description", None),
-                getattr(course, "syllabus", None),
-            )
-            topic = ". ".join(
-                " ".join(part.split()) for part in descriptors if part and part.strip()
-            )
-            if not topic:
-                topic = ALL_TOPICS_SENTINEL
-
-        suffix = (
-            EXAM_FOCUS_QUERY_TERMS
-            if options.summary_mode is SummaryMode.EXAM_FOCUSED
-            else ""
+        """Turn a generation request into the query retrieval should rank against."""
+        return build_retrieval_query(
+            course,
+            options.topic_focus,
+            suffix=(
+                EXAM_FOCUS_QUERY_TERMS
+                if options.summary_mode is SummaryMode.EXAM_FOCUSED
+                else ""
+            ),
         )
-        # Reserve room before trimming: a syllabus is unbounded text, so appending
-        # the mode terms and trimming afterwards would drop them from exactly the
-        # courses with the most material.
-        budget = RETRIEVAL_QUERY_MAX_CHARS - (len(suffix) + 1 if suffix else 0)
-        topic = topic[:budget].strip()
-
-        return f"{topic} {suffix}".strip() if suffix else topic
 
     @classmethod
     def build_prompt(cls, course_material: str, options: StudyGuideRequest) -> str:
@@ -313,18 +290,13 @@ class StudyGuideService:
         generation_settings: str | None = None,
         generation_context: str | None = None,
     ) -> GeneratedOutput:
-        generated_output = GeneratedOutput(
+        return GeneratedOutputService.record(
+            db,
             course_id=course_id,
             user_id=user_id,
-            model_used=model_used,
             output_type="study_guide",
             content=study_guide.model_dump_json(),
+            model_used=model_used,
             generation_settings=generation_settings,
             generation_context=generation_context,
         )
-        db.add(generated_output)
-        db.flush()
-        db.refresh(generated_output)
-        db.commit()
-
-        return generated_output

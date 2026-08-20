@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 import routes.study_guide as study_guide_route
 import services.retrieval_material as retrieval_material_service
+import services.retrieval_query as retrieval_query
 import services.study_guide as study_guide_service
 import services.text_generation as text_generation
 from backend.app.models import Course, DocumentChunk, GeneratedOutput, UploadedDocument
@@ -287,7 +288,7 @@ def test_exam_focus_terms_survive_a_long_course_description(
         _request(topic_focus="All Topics", summary_mode=SummaryMode.EXAM_FOCUSED),
     )
 
-    assert len(query) <= study_guide_service.RETRIEVAL_QUERY_MAX_CHARS
+    assert len(query) <= retrieval_query.RETRIEVAL_QUERY_MAX_CHARS
     assert query.endswith(study_guide_service.EXAM_FOCUS_QUERY_TERMS)
 
 
@@ -297,7 +298,7 @@ def test_retrieval_query_is_bounded(model_graph) -> None:
         _request(topic_focus="z" * 200, summary_mode=SummaryMode.EXAM_FOCUSED),
     )
 
-    assert len(query) <= study_guide_service.RETRIEVAL_QUERY_MAX_CHARS
+    assert len(query) <= retrieval_query.RETRIEVAL_QUERY_MAX_CHARS
 
 
 # ---------------------------------------------------------------------------

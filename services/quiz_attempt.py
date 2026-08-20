@@ -1,18 +1,22 @@
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from backend.app.models import Quiz, QuizAttempt, QuizAttemptAnswer, QuizQuestion
+from schemas.quiz import OPTION_BASED_QUESTION_TYPES, QuizQuestionType
 from schemas.quiz_attempt import (
     MASTERED_THRESHOLD,
     NEEDS_REVIEW_THRESHOLD,
     CourseProgressResponse,
     MasteryStatus,
     QuizAnswerResult,
+    QuizAnswerSubmission,
     QuizAttemptRequest,
     QuizAttemptResponse,
     TopicMastery,
 )
-from utils.exceptions import BadRequestException, NotFoundException
+from services.quiz import QuizService
+from services.quiz_grading import ProviderFactory, QuizGradingService
+from utils.exceptions import BadRequestException
 
 UNTAGGED_TOPIC = "Untagged"
 
@@ -27,35 +31,17 @@ def _mastery_status(percentage: int) -> MasteryStatus:
 
 class QuizAttemptService:
     @staticmethod
-    def _load_course_quiz(db: Session, course_id: int, quiz_id: int) -> Quiz:
-        quiz = db.scalars(
-            select(Quiz)
-            .where(Quiz.id == quiz_id, Quiz.course_id == course_id)
-            .options(selectinload(Quiz.questions))
-        ).one_or_none()
+    def _validate_submissions(
+        request: QuizAttemptRequest, questions: dict[int, QuizQuestion]
+    ) -> dict[int, QuizAnswerSubmission]:
+        """Match every submitted answer to a question of this quiz and its type.
 
-        if quiz is None:
-            raise NotFoundException("Quiz not found")
+        An answer given in the wrong form for its question type is rejected
+        rather than silently graded as unanswered, so a client bug surfaces as a
+        400 instead of a zero the student cannot explain.
+        """
+        submitted: dict[int, QuizAnswerSubmission] = {}
 
-        return quiz
-
-    @classmethod
-    def record_attempt(
-        cls,
-        db: Session,
-        course_id: int,
-        quiz_id: int,
-        request: QuizAttemptRequest,
-        *,
-        user_id: int,
-    ) -> QuizAttemptResponse:
-        quiz = cls._load_course_quiz(db, course_id, quiz_id)
-        questions = {question.id: question for question in quiz.questions}
-
-        if not questions:
-            raise BadRequestException("This quiz has no questions to answer.")
-
-        submitted: dict[int, int | None] = {}
         for answer in request.answers:
             question = questions.get(answer.question_id)
             if question is None:
@@ -66,63 +52,121 @@ class QuizAttemptService:
                 raise BadRequestException(
                     "Each question may only be answered once per attempt."
                 )
+
+            question_type = QuizQuestionType(question.question_type)
             selected = answer.selected_option_index
-            if selected is not None and selected >= len(question.options):
+            written = answer.answer_text
+
+            if question_type in OPTION_BASED_QUESTION_TYPES:
+                if written is not None:
+                    raise BadRequestException(
+                        "A multiple choice or true/false question is answered by "
+                        "selecting an option, not by writing text."
+                    )
+                options = question.options or []
+                if selected is not None and selected >= len(options):
+                    raise BadRequestException(
+                        "One of the submitted answers selects an option that does "
+                        "not exist."
+                    )
+            elif selected is not None:
                 raise BadRequestException(
-                    "One of the submitted answers selects an option that does not exist."
+                    "A short answer or open ended question is answered by writing "
+                    "text, not by selecting an option."
                 )
-            submitted[answer.question_id] = selected
+
+            submitted[answer.question_id] = answer
+
+        return submitted
+
+    @classmethod
+    def record_attempt(
+        cls,
+        db: Session,
+        course_id: int,
+        quiz_id: int,
+        request: QuizAttemptRequest,
+        *,
+        user_id: int,
+        provider_factory: ProviderFactory | None = None,
+    ) -> QuizAttemptResponse:
+        quiz = QuizService.get_course_quiz(db, course_id, quiz_id)
+        questions = {question.id: question for question in quiz.questions}
+
+        if not questions:
+            raise BadRequestException("This quiz has no questions to answer.")
+
+        submitted = cls._validate_submissions(request, questions)
+
+        ordered = sorted(quiz.questions, key=lambda row: (row.question_index, row.id))
+        graded = QuizGradingService.grade(
+            db,
+            questions=ordered,
+            submissions=submitted,
+            provider_factory=provider_factory,
+            user_id=user_id,
+            course_id=course_id,
+        )
+
+        scored = [answer for answer in graded if answer.score is not None]
+        correct_count = sum(1 for answer in graded if answer.is_correct)
+        score = sum(answer.score for answer in scored) / len(scored) if scored else 0.0
 
         attempt = QuizAttempt(
             user_id=user_id,
             quiz_id=quiz.id,
-            score=0.0,
+            score=min(max(score, 0.0), 1.0),
             time_spent_seconds=request.time_spent_seconds,
         )
-        db.add(attempt)
-        db.flush()
 
-        results: list[QuizAnswerResult] = []
-        correct_count = 0
+        try:
+            db.add(attempt)
+            db.flush()
 
-        for question in sorted(quiz.questions, key=lambda row: row.question_index):
-            selected = submitted.get(question.id)
-            is_correct = selected == question.correct_option_index
-            if is_correct:
-                correct_count += 1
-
-            db.add(
-                QuizAttemptAnswer(
-                    attempt_id=attempt.id,
-                    quiz_question_id=question.id,
-                    selected_option_index=selected,
-                    is_correct=is_correct,
+            for answer in graded:
+                db.add(
+                    QuizAttemptAnswer(
+                        attempt_id=attempt.id,
+                        quiz_question_id=answer.question_id,
+                        selected_option_index=answer.selected_option_index,
+                        answer_text=answer.answer_text,
+                        is_correct=answer.is_correct,
+                        score=answer.score,
+                        feedback=answer.feedback,
+                    )
                 )
-            )
-            results.append(
-                QuizAnswerResult(
-                    question_id=question.id,
-                    selected_option_index=selected,
-                    correct_option_index=question.correct_option_index,
-                    is_correct=is_correct,
-                )
-            )
 
-        total_questions = len(quiz.questions)
-        attempt.score = correct_count / total_questions
-        db.flush()
+            db.flush()
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
         db.refresh(attempt)
-        db.commit()
 
         return QuizAttemptResponse(
             attempt_id=attempt.id,
             quiz_id=quiz.id,
             score=attempt.score,
             correct_count=correct_count,
-            total_questions=total_questions,
+            graded_count=len(scored),
+            total_questions=len(ordered),
             time_spent_seconds=attempt.time_spent_seconds,
             created_at=attempt.created_at,
-            answers=results,
+            answers=[
+                QuizAnswerResult(
+                    question_id=answer.question_id,
+                    question_type=answer.question_type,
+                    selected_option_index=answer.selected_option_index,
+                    answer_text=answer.answer_text,
+                    correct_option_index=answer.correct_option_index,
+                    correct_answer=answer.correct_answer,
+                    is_correct=answer.is_correct,
+                    score=answer.score,
+                    feedback=answer.feedback,
+                )
+                for answer in graded
+            ],
         )
 
     @staticmethod
@@ -145,7 +189,11 @@ class QuizAttemptService:
             )
             .join(QuizAttempt, QuizAttempt.id == QuizAttemptAnswer.attempt_id)
             .join(Quiz, Quiz.id == QuizQuestion.quiz_id)
-            .where(Quiz.course_id == course_id, QuizAttempt.user_id == user_id)
+            .where(
+                Quiz.course_id == course_id,
+                QuizAttempt.user_id == user_id,
+                QuizAttemptAnswer.is_correct.is_not(None),
+            )
         ).all()
 
         totals: dict[str, list[int]] = {}

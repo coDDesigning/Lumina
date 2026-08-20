@@ -172,6 +172,8 @@ class DeterministicTextGenerationProvider(TextGenerationProvider):
             "questions": [
                 {
                     "question_number": 1,
+                    "question_type": "multiple_choice",
+                    "difficulty": "medium",
                     "topic": "Cell Division",
                     "question": "Which phase of mitosis involves chromosomes aligning at the cell equator?",
                     "options": ["Prophase", "Metaphase", "Anaphase", "Telophase"],
@@ -180,11 +182,22 @@ class DeterministicTextGenerationProvider(TextGenerationProvider):
                 },
                 {
                     "question_number": 2,
+                    "question_type": "true_false",
+                    "difficulty": "medium",
                     "topic": "Cellular Energy",
-                    "question": "What is the primary chemical energy carrier in human cells?",
-                    "options": ["ATP", "DNA", "RNA", "Glucose"],
-                    "correct_option_index": 0,
+                    "question": "ATP is the primary chemical energy carrier in human cells.",
+                    "correct_answer": True,
                     "explanation": "Adenosine triphosphate (ATP) transports chemical energy within cells.",
+                },
+                {
+                    "question_number": 3,
+                    "question_type": "short_answer",
+                    "difficulty": "medium",
+                    "topic": "Cellular Energy",
+                    "question": "Which molecule carries chemical energy within cells?",
+                    "correct_answer": "ATP",
+                    "accepted_answers": ["adenosine triphosphate"],
+                    "explanation": "ATP transports chemical energy within cells.",
                 },
             ],
         }
@@ -539,8 +552,8 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
         f"/api/courses/{course_id}/quiz",
         headers=auth1,
         json={
-            "question_count": 2,
-            "question_type": "multiple_choice",
+            "question_count": 3,
+            "question_types": ["multiple_choice", "true_false", "short_answer"],
             "difficulty": "medium",
             "topic_focus": "Mitosis & Cellular Energy",
         },
@@ -549,9 +562,28 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
     quiz_payload = quiz_res.json()["data"]["quiz"]
     quiz_id = quiz_payload["quiz_id"]
     assert quiz_payload["title"] == "Cell Biology Mastery Quiz"
-    assert len(quiz_payload["questions"]) == 2
+    assert len(quiz_payload["questions"]) == 3
     q1 = quiz_payload["questions"][0]
     q2 = quiz_payload["questions"][1]
+    q3 = quiz_payload["questions"][2]
+    assert [q["question_type"] for q in quiz_payload["questions"]] == [
+        "multiple_choice",
+        "true_false",
+        "short_answer",
+    ]
+
+    listed = client.get(f"/api/courses/{course_id}/quizzes", headers=auth1)
+    assert listed.status_code == 200, listed.text
+    assert [row["quiz_id"] for row in listed.json()["data"]] == [quiz_id]
+    assert listed.json()["data"][0]["question_count"] == 3
+
+    fetched = client.get(f"/api/courses/{course_id}/quizzes/{quiz_id}", headers=auth1)
+    assert fetched.status_code == 200, fetched.text
+    assert [q["question_number"] for q in fetched.json()["data"]["questions"]] == [
+        1,
+        2,
+        3,
+    ]
 
     # 6b. Submit Quiz Attempt
     attempt_res = client.post(
@@ -567,6 +599,10 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
                     "question_id": q2["question_id"],
                     "selected_option_index": q2["correct_option_index"],
                 },
+                {
+                    "question_id": q3["question_id"],
+                    "answer_text": "adenosine triphosphate",
+                },
             ],
             "time_spent_seconds": 65,
         },
@@ -574,8 +610,9 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
     assert attempt_res.status_code == 201, attempt_res.text
     attempt_data = attempt_res.json()["data"]
     assert attempt_data["score"] == 1.0
-    assert attempt_data["correct_count"] == 2
-    assert attempt_data["total_questions"] == 2
+    assert attempt_data["correct_count"] == 3
+    assert attempt_data["graded_count"] == 3
+    assert attempt_data["total_questions"] == 3
 
     # 6c. Verify Course Progress
     progress_res = client.get(f"/api/courses/{course_id}/progress", headers=auth1)
@@ -654,7 +691,7 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
             headers=auth2,
             json={
                 "question_count": 2,
-                "question_type": "multiple_choice",
+                "question_types": ["multiple_choice"],
                 "difficulty": "easy",
                 "topic_focus": "Cells",
             },
@@ -670,6 +707,16 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
                     {"question_id": q1["question_id"], "selected_option_index": 0}
                 ]
             },
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(f"/api/courses/{course_id}/quizzes", headers=auth2).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            f"/api/courses/{course_id}/quizzes/{quiz_id}", headers=auth2
         ).status_code
         == 404
     )

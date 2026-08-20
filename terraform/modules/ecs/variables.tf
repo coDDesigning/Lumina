@@ -74,6 +74,18 @@ variable "worker_memory" {
   type = number
 }
 
+variable "worker_min_instances" {
+  type = number
+}
+
+variable "worker_max_instances" {
+  type = number
+}
+
+variable "worker_target_queue_age_seconds" {
+  type = number
+}
+
 variable "migrate_cpu" {
   type = number
 }

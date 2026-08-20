@@ -142,7 +142,7 @@ resource "aws_ecs_service" "worker" {
   name             = "${var.name_prefix}-worker"
   cluster          = aws_ecs_cluster.this.id
   task_definition  = aws_ecs_task_definition.worker.arn
-  desired_count    = 1
+  desired_count    = var.worker_min_instances
   launch_type      = "FARGATE"
   platform_version = "LATEST"
   network_configuration {
@@ -176,6 +176,40 @@ resource "aws_appautoscaling_policy" "api_cpu" {
     }
     target_value       = 70.0
     scale_in_cooldown  = 120
+    scale_out_cooldown = 60
+  }
+}
+
+resource "aws_appautoscaling_target" "worker" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.worker.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = var.worker_min_instances
+  max_capacity       = var.worker_max_instances
+}
+
+resource "aws_appautoscaling_policy" "worker_queue_age" {
+  name               = "${var.name_prefix}-worker-queue-age"
+  service_namespace  = "ecs"
+  resource_id        = aws_appautoscaling_target.worker.resource_id
+  scalable_dimension = "ecs:service:DesiredCount"
+  policy_type        = "TargetTrackingScaling"
+  target_tracking_scaling_policy_configuration {
+    customized_metric_specification {
+      metric_name = "OldestQueuedAgeSeconds"
+      namespace   = "Lumina/Worker"
+      statistic   = "Maximum"
+      dimensions {
+        name  = "Service"
+        value = "worker"
+      }
+      dimensions {
+        name  = "Environment"
+        value = var.environment
+      }
+    }
+    target_value       = var.worker_target_queue_age_seconds
+    scale_in_cooldown  = 300
     scale_out_cooldown = 60
   }
 }

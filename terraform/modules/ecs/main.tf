@@ -121,6 +121,7 @@ locals {
     environment = local.worker_env
     secrets     = local.app_secrets
     command     = ["python", "-m", "workers.document_processor"]
+    stopTimeout = 120
   })
 
   migrate_container = merge(local.container_base, {

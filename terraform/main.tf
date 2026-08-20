@@ -113,6 +113,9 @@ module "ecs" {
   api_max_instances                 = var.api_max_instances
   worker_cpu                        = var.worker_cpu
   worker_memory                     = var.worker_memory
+  worker_min_instances              = var.worker_min_instances
+  worker_max_instances              = var.worker_max_instances
+  worker_target_queue_age_seconds   = var.worker_target_queue_age_seconds
   migrate_cpu                       = var.migrate_cpu
   migrate_memory                    = var.migrate_memory
   tmpfs_size_bytes                  = var.tmpfs_size_bytes

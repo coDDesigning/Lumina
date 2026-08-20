@@ -14,6 +14,8 @@ class ErrorCategory(str, Enum):
     PROVIDER_ERROR = "provider_error"
     INVALID_STRUCTURE = "invalid_structure"
     NO_READY_MATERIAL = "no_ready_material"
+    NO_RELEVANT_MATERIAL = "no_relevant_material"
+    RETRIEVAL_ERROR = "retrieval_error"
     EMPTY_RESPONSE = "empty_response"
     TIMEOUT = "timeout"
     RATE_LIMIT = "rate_limit"

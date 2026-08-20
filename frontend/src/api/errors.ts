@@ -84,6 +84,12 @@ export function describeGenerationError(
     };
   }
 
+  if (described.status === 409) {
+    // The course has material, it just did not match this request. The backend
+    // message already says what to do, so the "add a source" advice would be wrong.
+    return { ...described, retryable: false };
+  }
+
   if (described.status === 404) {
     return {
       ...described,

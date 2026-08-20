@@ -30,6 +30,7 @@ import './pages/pages.css'
 import './pages/workspaces.css'
 
 import { SummaryModal } from './components/study/SummaryModal'
+import { StudyHistoryModal } from './components/study/StudyHistoryModal'
 import { QuizModal } from './components/study/QuizModal'
 import { ProgressDashboard } from './components/study/ProgressDashboard'
 
@@ -80,6 +81,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const [mainPrompt, setMainPrompt] = useState('')
   const [lastPrompt, setLastPrompt] = useState('')
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false)
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
   const [isQuizModalOpen, setIsQuizModalOpen] = useState(false)
   const [uploadErrors, setUploadErrors] = useState<{ fileName: string; message: string }[]>([])
   const [uploadNotices, setUploadNotices] = useState<string[]>([])
@@ -409,6 +411,14 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
                   </button>
                   <button
                     type="button"
+                    className="secondary-button"
+                    style={{ padding: '6px 12px', fontSize: '13px' }}
+                    onClick={() => setIsHistoryModalOpen(true)}
+                  >
+                    🕘 History
+                  </button>
+                  <button
+                    type="button"
                     className="primary-button"
                     style={{ padding: '6px 12px', fontSize: '13px' }}
                     onClick={() => setIsQuizModalOpen(true)}
@@ -490,6 +500,14 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
           topics={workspace.topics}
           readyDocumentCount={readyCount}
           onClose={() => setIsSummaryModalOpen(false)}
+        />
+      ) : null}
+
+      {isHistoryModalOpen ? (
+        <StudyHistoryModal
+          courseId={courseId}
+          courseName={workspace.name}
+          onClose={() => setIsHistoryModalOpen(false)}
         />
       ) : null}
 

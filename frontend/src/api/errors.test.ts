@@ -134,5 +134,20 @@ describe('error description helpers', () => {
         'Course has no ready material. Add a source and wait until it shows Ready.',
       );
     });
+
+    it('leaves a 409 relevance miss with the backend message and no source advice', () => {
+      const described = describeGenerationError(
+        new APIError(409, {
+          detail: 'No course material matched this request. Try a broader topic focus.',
+        }),
+        'Generation failed',
+      );
+
+      expect(described.message).toBe(
+        'No course material matched this request. Try a broader topic focus.',
+      );
+      expect(described.message).not.toContain('Add a source');
+      expect(described.retryable).toBe(false);
+    });
   });
 });

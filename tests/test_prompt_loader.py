@@ -20,8 +20,15 @@ from services.prompt_loader import PromptLoader
 def test_load_valid_study_guide_template() -> None:
     template = PromptLoader.load_template("study_guide", reload=True)
     assert template.name == "study_guide"
-    assert template.version == "1.1.0"
-    assert template.required_variables == ["TEXT", "SUMMARY_FORMAT", "TOPIC_FOCUS"]
+    assert template.version == "1.2.0"
+    assert template.required_variables == [
+        "TEXT",
+        "SUMMARY_FORMAT",
+        "TOPIC_FOCUS",
+        "SUMMARY_LENGTH",
+        "DETAIL_LEVEL",
+        "SUMMARY_MODE",
+    ]
     assert template.output_schema_ref == "StudyGuideResponse"
     assert len(template.style_constraints) > 0
     assert len(template.safety_constraints) > 0
@@ -92,12 +99,18 @@ def test_render_template_substitutes_variables() -> None:
             "TEXT": "Sample Lecture Notes Content",
             "SUMMARY_FORMAT": "Requested summary format: overview.",
             "TOPIC_FOCUS": "Working Memory",
+            "SUMMARY_LENGTH": "Between 200 and 300 words.",
+            "DETAIL_LEVEL": "Requested detail level: standard.",
+            "SUMMARY_MODE": "Requested summary mode: general.",
         },
         reload=False,
     )
     assert "{{TEXT}}" not in rendered
     assert "{{SUMMARY_FORMAT}}" not in rendered
     assert "{{TOPIC_FOCUS}}" not in rendered
+    assert "{{SUMMARY_LENGTH}}" not in rendered
+    assert "{{DETAIL_LEVEL}}" not in rendered
+    assert "{{SUMMARY_MODE}}" not in rendered
     assert "Sample Lecture Notes Content" in rendered
     assert "Requested summary format: overview." in rendered
     assert "Working Memory" in rendered
@@ -106,8 +119,9 @@ def test_render_template_substitutes_variables() -> None:
 def test_render_missing_required_variable_raises_error() -> None:
     with pytest.raises(MissingPromptVariableError) as exc_info:
         PromptLoader.render("study_guide", {})
-    assert "missing required variable(s): SUMMARY_FORMAT, TEXT, TOPIC_FOCUS" in str(
-        exc_info.value
+    assert (
+        "missing required variable(s): DETAIL_LEVEL, SUMMARY_FORMAT, SUMMARY_LENGTH, "
+        "SUMMARY_MODE, TEXT, TOPIC_FOCUS" in str(exc_info.value)
     )
 
 
@@ -119,6 +133,9 @@ def test_render_unexpected_extra_variable_raises_error() -> None:
                 "TEXT": "Valid content",
                 "SUMMARY_FORMAT": "Requested summary format: overview.",
                 "TOPIC_FOCUS": "All Topics",
+                "SUMMARY_LENGTH": "Between 200 and 300 words.",
+                "DETAIL_LEVEL": "Requested detail level: standard.",
+                "SUMMARY_MODE": "Requested summary mode: general.",
                 "EXTRA_VAR": "Unexpected content",
                 "ANOTHER_EXTRA": "Bad",
             },

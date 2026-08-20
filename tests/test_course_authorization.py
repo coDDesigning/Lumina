@@ -83,6 +83,8 @@ def _requests_against_owner_a(context) -> list[tuple[str, str, dict]]:
         ),
         ("DELETE", f"/api/courses/{course_id}", {}),
         ("GET", f"/api/courses/{course_id}/documents", {}),
+        ("GET", f"/api/courses/{course_id}/generated-outputs", {}),
+        ("GET", f"/api/courses/{course_id}/generated-outputs/1", {}),
         (
             "POST",
             f"/api/courses/{course_id}/documents",
@@ -212,6 +214,8 @@ def test_administrator_cannot_write_to_another_owners_course(authz_api):
     writes = [
         entry for entry in _requests_against_owner_a(authz_api) if entry[0] != "GET"
     ]
+    # Unchanged by the generated-output endpoints: both of those are reads, and
+    # the administrator override is deliberately read-only.
     assert len(writes) == 10
     for method, url, kwargs in writes:
         response = authz_api.client.request(
@@ -363,7 +367,7 @@ def test_every_course_route_requires_authentication_in_openapi():
         for method, operation in methods.items()
     ]
 
-    assert len(operations) == 17
+    assert len(operations) == 19
     for method, path, operation in operations:
         assert operation["security"] == [{"OAuth2PasswordBearer": []}], (
             f"{method.upper()} {path} is not documented as authenticated"
@@ -431,7 +435,7 @@ def test_course_scoped_routes_cannot_bypass_the_boundary():
     course_routes = [
         route for route in api_routes(app) if route.path.startswith("/api/courses")
     ]
-    assert len(course_routes) == 17
+    assert len(course_routes) == 19
 
     for route in course_routes:
         names = dependency_names(route.dependant)

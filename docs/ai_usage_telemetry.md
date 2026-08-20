@@ -14,6 +14,8 @@ Lumina implements strict privacy-safe logging controls:
    - `provider_error`
    - `invalid_structure`
    - `no_ready_material`
+   - `no_relevant_material`
+   - `retrieval_error`
    - `empty_response`
    - `timeout`
    - `rate_limit`

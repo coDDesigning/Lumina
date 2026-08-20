@@ -16,7 +16,7 @@ from services.flashcard import FlashcardService
 from services.prompt_generator import PromptGeneratorService
 from services.quiz import QuizService
 from schemas.quiz import QuizDifficulty, QuizQuestionType, QuizRequest
-from schemas.study_guide import SummaryFormat
+from schemas.study_guide import StudyGuideRequest, SummaryFormat
 from services.study_guide import StudyGuideService
 from services.text_generation import GenerationMetadata
 
@@ -118,6 +118,7 @@ class PrivacySafeMockProvider:
 
 def test_privacy_regression_asserts_raw_prompts_and_chunks_are_never_persisted(
     session_factory: sessionmaker[Session],
+    retrieval_env,
 ) -> None:
     """Assert representative raw student prompts, secret tokens, and document chunks
 
@@ -167,6 +168,8 @@ def test_privacy_regression_asserts_raw_prompts_and_chunks_are_never_persisted(
             text=f"Intro to material with {secret_marker_course_chunk} embedded.",
         )
         session.add_all((user, course, doc, chunk))
+        session.flush()
+        retrieval_env.index(session, doc, [chunk])
         session.commit()
 
         user_id = user.id
@@ -179,8 +182,10 @@ def test_privacy_regression_asserts_raw_prompts_and_chunks_are_never_persisted(
         StudyGuideService.generate(
             session,
             course_id,
-            SummaryFormat.COMPREHENSIVE,
-            "All Topics",
+            StudyGuideRequest(
+                summary_format=SummaryFormat.COMPREHENSIVE,
+                topic_focus="All Topics",
+            ),
             provider,
             user_id=user_id,
         )

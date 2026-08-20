@@ -112,15 +112,37 @@ export interface BoundedContext {
   chunks_available: number;
 }
 
+/**
+ * Reporting for material chosen by semantic retrieval.
+ *
+ * `context_truncated` means the character budget dropped a chunk retrieval had
+ * already selected. Retrieval returning a subset of the course is the normal
+ * case rather than a truncation, so `retrieval_narrowed` carries that instead.
+ */
+export interface RetrievedContext extends BoundedContext {
+  retrieval_narrowed: boolean;
+  lowest_similarity: number | null;
+  highest_similarity: number | null;
+}
+
 export type SummaryFormat =
   | 'overview'
   | 'comprehensive'
   | 'key_concepts'
   | 'exam_tips';
 
+export type SummaryLength = 'short' | 'medium' | 'long';
+
+export type DetailLevel = 'basic' | 'standard' | 'detailed';
+
+export type SummaryMode = 'general' | 'exam_focused';
+
 export interface StudyGuideRequest {
   summary_format: SummaryFormat;
   topic_focus: string;
+  summary_length?: SummaryLength;
+  detail_level?: DetailLevel;
+  summary_mode?: SummaryMode;
 }
 
 export interface ImportantTerm {
@@ -171,8 +193,51 @@ export interface StudyGuideResponse {
   confidence_notes: string;
 }
 
-export interface StudyGuideGenerationResult extends BoundedContext {
+export interface StudyGuideGenerationResult extends RetrievedContext {
   study_guide: StudyGuideResponse;
+  generated_output_id: number;
+}
+
+export interface GenerationSettings {
+  version: number;
+  output_type: string;
+  summary_format?: SummaryFormat;
+  topic_focus?: string;
+  summary_length?: SummaryLength;
+  detail_level?: DetailLevel;
+  summary_mode?: SummaryMode;
+  retrieval_limit?: number;
+  retrieval_min_similarity?: number;
+}
+
+export interface GenerationContext {
+  version: number;
+  chunks_ranked: number;
+  chunks_retrieved: number;
+  chunks_used: number;
+  chunks_available: number;
+  lowest_similarity: number | null;
+  highest_similarity: number | null;
+  truncated: boolean;
+}
+
+export interface GeneratedOutputSummary {
+  id: number;
+  course_id: number;
+  output_type: string;
+  user_id: number | null;
+  model_used: string | null;
+  created_at: string;
+  generation_settings: GenerationSettings | null;
+  generation_context: GenerationContext | null;
+}
+
+/**
+ * `content` is deliberately loose: one stored row whose JSON no longer matches
+ * its feature schema must still render rather than break the whole history.
+ */
+export interface GeneratedOutputDetail extends GeneratedOutputSummary {
+  content: Record<string, unknown> | string;
 }
 
 export type QuizQuestionType = 'multiple_choice' | 'true_false';

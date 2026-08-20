@@ -1,12 +1,16 @@
 import pytest
 from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.models import Course, DocumentChunk, UploadedDocument, User
+from schemas.credits import CreditReason
+from services import credits as credits_service
 from services.text_generation import (
     GenerationMetadata,
     TextGenerationConnectionError,
 )
 from services.credits import CreditService
+from tests.conftest import assert_balance_is_derivable, rows, set_balance
 
 
 class StubProvider:
@@ -276,3 +280,99 @@ def test_successful_generation_deducts_credits(
     with authz_api.session_factory() as session:
         user = session.get(User, authz_api.user_a_id)
         assert user.credits == 24.0
+
+
+def test_an_exhausted_account_recovers_after_an_administrator_change(
+    authz_api, monkeypatch: pytest.MonkeyPatch
+):
+    """Zero is not a dead end: an administrator can lift an account off it.
+
+    This is the whole point of the administrative path. Before it existed an
+    account that spent its allowance stayed at 402 until the calendar moved.
+    """
+    _add_material(authz_api.session_factory, authz_api.user_a_id, authz_api.a_course_id)
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 0.0)
+
+    monkeypatch.setattr(
+        "routes.course_qa.get_text_generation_provider",
+        lambda **kwargs: StubProvider(),
+    )
+    question = {"question": "What are algorithms?"}
+    url = f"/api/courses/{authz_api.a_course_id}/qa"
+
+    blocked = authz_api.client.post(
+        url, json=question, headers=authz_api.authorization_a
+    )
+    assert blocked.status_code == 402
+
+    recovered = authz_api.client.post(
+        "/api/admin/users/owner-a@example.com/credits",
+        json={
+            "delta": 10,
+            "reason": "support_compensation",
+            "note": "Support recovery",
+        },
+        headers=authz_api.authorization_admin,
+    )
+    assert recovered.status_code == 200
+    assert recovered.json()["data"]["user"]["credits"] == 10.0
+
+    allowed = authz_api.client.post(
+        url, json=question, headers=authz_api.authorization_a
+    )
+    assert allowed.status_code == 200
+
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 9.0
+        history = rows(session, authz_api.user_a_id)
+        assert [row.reason for row in history[-2:]] == [
+            CreditReason.SUPPORT_COMPENSATION.value,
+            CreditReason.GENERATION_CHARGE.value,
+        ]
+        assert history[-2].delta == 10.0
+        assert history[-2].actor_user_id == authz_api.admin_id
+        assert history[-1].delta == -1.0
+        assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
+def test_an_exhausted_account_recovers_when_the_next_month_grants(
+    authz_api, monkeypatch: pytest.MonkeyPatch
+):
+    """The other way out of zero needs no support action at all.
+
+    The monthly grant is lazy, so it lands on the account's next attempt in a
+    new period rather than waiting for a scheduler to have run.
+    """
+    _add_material(authz_api.session_factory, authz_api.user_a_id, authz_api.a_course_id)
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 0.0)
+
+    monkeypatch.setattr(
+        "routes.course_qa.get_text_generation_provider",
+        lambda **kwargs: StubProvider(),
+    )
+    question = {"question": "What are algorithms?"}
+    url = f"/api/courses/{authz_api.a_course_id}/qa"
+
+    blocked = authz_api.client.post(
+        url, json=question, headers=authz_api.authorization_a
+    )
+    assert blocked.status_code == 402
+
+    monkeypatch.setattr(credits_service, "current_grant_period", lambda: "2099-01")
+
+    allowed = authz_api.client.post(
+        url, json=question, headers=authz_api.authorization_a
+    )
+    assert allowed.status_code == 200
+
+    with authz_api.session_factory() as session:
+        expected = settings.credit_periodic_grant - 1.0
+        assert session.get(User, authz_api.user_a_id).credits == expected
+        history = rows(session, authz_api.user_a_id)
+        assert [row.reason for row in history[-2:]] == [
+            CreditReason.PERIODIC_GRANT.value,
+            CreditReason.GENERATION_CHARGE.value,
+        ]
+        assert history[-2].delta == settings.credit_periodic_grant
+        assert history[-2].grant_period == "2099-01"
+        assert_balance_is_derivable(session, authz_api.user_a_id)

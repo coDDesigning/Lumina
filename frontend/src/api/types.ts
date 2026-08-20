@@ -22,9 +22,15 @@ export type CreditReason =
   | 'generation_charge'
   | 'generation_refund'
   | 'admin_grant'
+  | 'support_compensation'
   | 'admin_adjustment'
   | 'metering_reset'
   | 'migration_reconciliation';
+
+export type AdminCreditReason = Extract<
+  CreditReason,
+  'admin_grant' | 'support_compensation' | 'admin_adjustment'
+>;
 
 export type CreditActorType = 'system' | 'user' | 'admin' | 'migration';
 

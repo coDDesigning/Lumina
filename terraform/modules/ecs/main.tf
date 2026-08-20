@@ -120,6 +120,6 @@ locals {
     name        = "migrate"
     environment = local.common_env
     secrets     = local.app_secrets
-    command     = ["python", "-m", "alembic", "upgrade", "head"]
+    command     = ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check"]
   })
 }

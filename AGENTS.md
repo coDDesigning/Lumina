@@ -88,7 +88,7 @@ npm run build
 
 ## CI Contract
 
-- Current `dev` job names are `Branch and PR policy`, `Repository quality`, `Backend quality and tests`, `PostgreSQL quality`, `Container quality`, and `Frontend quality and build`.
+- Current `dev` job names are `Branch and PR policy`, `Repository quality`, `Backend quality and tests`, `Migration governance`, `PostgreSQL quality`, `Container quality`, and `Frontend quality and build`.
 - Job names are referenced by dormant rulesets. Flag the corresponding ruleset update before renaming one.
 - CI must verify, never modify: no `--fix`, generated changes, or auto-commits. Keep `permissions: contents: read`.
 - Third-party Actions must remain pinned to immutable 40-character commit SHAs.

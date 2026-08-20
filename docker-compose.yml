@@ -62,7 +62,8 @@ services:
       APP_ENV: production
       DEPLOYMENT_MODE: self_hosted
       DATABASE_URL: sqlite:////data/lumina.db
-    command: ["python", "-m", "alembic", "upgrade", "head"]
+    command:
+      ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check"]
     restart: "no"
 
   api:

@@ -210,6 +210,9 @@ export interface StudyGuideGenerationResult extends RetrievedContext {
 export interface GenerationSettings {
   version: number;
   output_type: string;
+  question_count?: number;
+  question_types?: QuizQuestionType[];
+  difficulty?: QuizDifficulty;
   summary_format?: SummaryFormat;
   topic_focus?: string;
   summary_length?: SummaryLength;
@@ -257,33 +260,75 @@ export type QuizQuestionType =
 
 export type QuizDifficulty = 'easy' | 'medium' | 'hard';
 
+/** The question types answered by picking an option rather than writing text. */
+export const OPTION_BASED_QUESTION_TYPES: readonly QuizQuestionType[] = [
+  'multiple_choice',
+  'true_false',
+];
+
+export const isOptionBased = (questionType: QuizQuestionType): boolean =>
+  OPTION_BASED_QUESTION_TYPES.includes(questionType);
+
 export interface QuizRequest {
   question_count: number;
-  question_type: QuizQuestionType;
+  question_types: QuizQuestionType[];
   difficulty: QuizDifficulty;
   topic_focus: string;
   model?: string;
 }
 
+/**
+ * The stored answer document, discriminated by `type`.
+ *
+ * `correct_option_index` on the question stays populated for the two
+ * option-based types, but this is the authoritative answer.
+ */
+export type QuizCorrectAnswer =
+  | { type: 'multiple_choice'; option_index: number }
+  | { type: 'true_false'; value: boolean }
+  | { type: 'short_answer'; text: string; accepted_answers: string[] }
+  | { type: 'open_ended'; reference_answer: string };
+
 export interface QuizQuestionView {
   question_id: number;
   question_number: number;
-  question_type?: QuizQuestionType;
+  question_type: QuizQuestionType;
+  difficulty: QuizDifficulty | null;
   topic: string;
   question: string;
-  options: string[];
-  correct_option_index: number;
+  options: string[] | null;
+  correct_option_index: number | null;
+  correct_answer: QuizCorrectAnswer | null;
   explanation: string;
 }
 
 export interface QuizView {
   quiz_id: number;
+  course_id: number;
   title: string;
+  created_at: string;
+  user_id: number | null;
+  model_used: string | null;
+  generation_settings: GenerationSettings | null;
+  generation_context: GenerationContext | null;
   questions: QuizQuestionView[];
 }
 
-export interface QuizGenerationResult extends BoundedContext {
+export interface QuizSummary {
+  quiz_id: number;
+  course_id: number;
+  title: string;
+  question_count: number;
+  created_at: string;
+  user_id: number | null;
+  model_used: string | null;
+  generation_settings: GenerationSettings | null;
+  generation_context: GenerationContext | null;
+}
+
+export interface QuizGenerationResult extends RetrievedContext {
   quiz: QuizView;
+  generated_output_id: number;
 }
 
 export interface QuizAnswerSubmission {
@@ -298,12 +343,21 @@ export interface QuizAttemptRequest {
   time_spent_seconds?: number | null;
 }
 
+/**
+ * `is_correct` and `score` are both null when the answer could not be graded,
+ * which today means an open-ended answer the provider failed to score. An
+ * ungraded answer is excluded from the attempt score rather than counted wrong.
+ */
 export interface QuizAnswerResult {
   question_id: number;
+  question_type: QuizQuestionType;
   selected_option_index: number | null;
-  text_response?: string | null;
-  correct_option_index: number;
-  is_correct: boolean;
+  text_response: string | null;
+  correct_option_index: number | null;
+  correct_answer: QuizCorrectAnswer | null;
+  is_correct: boolean | null;
+  score: number | null;
+  feedback: string | null;
   time_spent_seconds?: number | null;
   topic?: string | null;
 }
@@ -323,6 +377,7 @@ export interface QuizAttemptResponse {
   quiz_id: number;
   score: number;
   correct_count: number;
+  graded_count: number;
   total_questions: number;
   time_spent_seconds: number | null;
   created_at: string;

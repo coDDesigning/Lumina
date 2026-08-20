@@ -1,11 +1,18 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from schemas.quiz import QuizCorrectAnswer, QuizQuestionType
 
 MAX_TIME_SPENT_SECONDS = 86400
+MAX_ANSWER_TEXT_CHARS = 10000
 MASTERED_THRESHOLD = 80
 NEEDS_REVIEW_THRESHOLD = 60
+
+# An open-ended answer is scored as a fraction, so it needs a cut-off to become
+# the boolean that topic mastery and the correct count are built from.
+OPEN_ENDED_PASS_THRESHOLD = 0.6
 
 
 class MasteryStatus(str, Enum):
@@ -15,9 +22,16 @@ class MasteryStatus(str, Enum):
 
 
 class QuizAnswerSubmission(BaseModel):
+    """One answer, in whichever form the question's type calls for.
+
+    Option-based questions carry ``selected_option_index`` and text-based ones
+    carry ``text_response``. Submitting the wrong one for a question type is
+    rejected rather than silently graded as unanswered.
+    """
+
     question_id: int = Field(ge=1)
     selected_option_index: int | None = Field(default=None, ge=0)
-    text_response: str | None = Field(default=None, max_length=10000)
+    text_response: str | None = Field(default=None, max_length=MAX_ANSWER_TEXT_CHARS)
     time_spent_seconds: int | None = Field(
         default=None,
         ge=0,
@@ -35,11 +49,23 @@ class QuizAttemptRequest(BaseModel):
 
 
 class QuizAnswerResult(BaseModel):
+    """The verdict for one answer.
+
+    ``is_correct`` and ``score`` are both null when the answer could not be
+    graded, which today means an open-ended answer the provider failed to score.
+    An ungraded answer is excluded from the attempt score rather than counted
+    wrong.
+    """
+
     question_id: int
+    question_type: QuizQuestionType
     selected_option_index: int | None = None
     text_response: str | None = None
     correct_option_index: int | None = None
+    correct_answer: QuizCorrectAnswer | None = None
     is_correct: bool | None = None
+    score: float | None = None
+    feedback: str | None = None
     time_spent_seconds: int | None = None
     topic: str | None = None
 
@@ -59,10 +85,30 @@ class QuizAttemptResponse(BaseModel):
     quiz_id: int
     score: float
     correct_count: int
+    graded_count: int
     total_questions: int
     time_spent_seconds: int | None = None
     created_at: datetime
     answers: list[QuizAnswerResult]
+
+
+class OpenEndedVerdict(BaseModel):
+    """One open-ended answer scored by the text-generation provider.
+
+    ``question_number`` refers to the position in the grading request, not to a
+    quiz question index: the request only carries the open-ended answers, so the
+    provider never sees identifiers belonging to the rest of the quiz.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    question_number: int = Field(ge=1)
+    score: float = Field(ge=0.0, le=1.0)
+    feedback: str = ""
+
+
+class OpenEndedGradingResponse(BaseModel):
+    verdicts: list[OpenEndedVerdict] = Field(min_length=1)
 
 
 class TopicMastery(BaseModel):

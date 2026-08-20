@@ -5,6 +5,8 @@ import type {
   QuizAttemptResponse,
   QuizGenerationResult,
   QuizRequest,
+  QuizSummary,
+  QuizView,
 } from './types';
 
 export const quizAPI = {
@@ -19,6 +21,29 @@ export const quizAPI = {
       options,
     );
     return unwrapData(res, 'Quiz generation');
+  },
+
+  list: async (
+    courseId: number,
+    options?: RequestInit,
+  ): Promise<QuizSummary[]> => {
+    const res = await apiClient.get<BaseResponse<QuizSummary[]>>(
+      `/courses/${courseId}/quizzes`,
+      options,
+    );
+    return unwrapData(res, 'Quiz list');
+  },
+
+  get: async (
+    courseId: number,
+    quizId: number,
+    options?: RequestInit,
+  ): Promise<QuizView> => {
+    const res = await apiClient.get<BaseResponse<QuizView>>(
+      `/courses/${courseId}/quizzes/${quizId}`,
+      options,
+    );
+    return unwrapData(res, 'Quiz');
   },
 
   submitAttempt: async (

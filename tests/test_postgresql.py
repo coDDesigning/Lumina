@@ -54,7 +54,7 @@ PAGES_REVISION = "c4e6a8f1b203"
 VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
-HEAD_REVISION = "c8e1f5a9b3d2"
+HEAD_REVISION = "c8d4a1f39e72"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,

@@ -25,6 +25,10 @@ class QuizRequest(BaseModel):
     question_type: QuizQuestionType
     difficulty: QuizDifficulty
     topic_focus: str = Field(min_length=1, max_length=200)
+    model: str | None = Field(
+        default=None,
+        description="Explicit model override, or omit to use preferred/default model",
+    )
 
 
 class GeneratedQuizQuestion(BaseModel):

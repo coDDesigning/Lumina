@@ -774,6 +774,7 @@ class GeneratedOutput(Base):
     # on Course must be named exactly "generated_outputs".
     course: Mapped["Course"] = relationship(back_populates="generated_outputs")
 
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -850,6 +851,7 @@ class ConversationMessage(Base):
     conversation: Mapped["Conversation"] = relationship(
         back_populates="messages",
     )
+
 
 class Quiz(Base):
     """A quiz that belongs to one course."""

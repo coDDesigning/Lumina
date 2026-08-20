@@ -480,6 +480,7 @@ def test_course_qa_provider_error_status_codes(
     )
     assert res.status_code == 429
 
+
 def test_course_qa_creates_conversation_and_persists_messages(
     upload_api,
     monkeypatch,

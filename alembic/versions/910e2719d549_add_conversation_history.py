@@ -81,16 +81,12 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "role IN ('user', 'assistant')",
-            name=op.f(
-                "ck_conversation_messages_conversation_message_role_valid"
-            ),
+            name=op.f("ck_conversation_messages_conversation_message_role_valid"),
         ),
         sa.ForeignKeyConstraint(
             ["conversation_id"],
             ["conversations.id"],
-            name=op.f(
-                "fk_conversation_messages_conversation_id_conversations"
-            ),
+            name=op.f("fk_conversation_messages_conversation_id_conversations"),
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
@@ -116,18 +112,12 @@ def downgrade() -> None:
         "conversation_messages",
         schema=None,
     ) as batch_op:
-        batch_op.drop_index(
-            batch_op.f("ix_conversation_messages_conversation_id")
-        )
+        batch_op.drop_index(batch_op.f("ix_conversation_messages_conversation_id"))
 
     op.drop_table("conversation_messages")
 
     with op.batch_alter_table("conversations", schema=None) as batch_op:
-        batch_op.drop_index(
-            batch_op.f("ix_conversations_user_id")
-        )
-        batch_op.drop_index(
-            batch_op.f("ix_conversations_course_id")
-        )
+        batch_op.drop_index(batch_op.f("ix_conversations_user_id"))
+        batch_op.drop_index(batch_op.f("ix_conversations_course_id"))
 
     op.drop_table("conversations")

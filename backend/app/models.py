@@ -154,6 +154,13 @@ class User(Base):
     courses: Mapped[list["Course"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan", passive_deletes=True
     )
+
+    conversations: Mapped[list["Conversation"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
     uploaded_documents: Mapped[list["UploadedDocument"]] = relationship(
         back_populates="uploader",
         cascade="all, delete-orphan",
@@ -226,6 +233,12 @@ class Course(Base):
     # AI-generated artifacts (summaries and similar) for this course.
     generated_outputs: Mapped[list["GeneratedOutput"]] = relationship(
         back_populates="course", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    conversations: Mapped[list["Conversation"]] = relationship(
+        back_populates="course",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
     # Quizzes belonging to this course.
@@ -760,6 +773,84 @@ class GeneratedOutput(Base):
     # output.course to reach the Course object. The partner attribute
     # on Course must be named exactly "generated_outputs".
     course: Mapped["Course"] = relationship(back_populates="generated_outputs")
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"),
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    user: Mapped["User"] = relationship(
+        back_populates="conversations",
+    )
+
+    course: Mapped["Course"] = relationship(
+        back_populates="conversations",
+    )
+
+    messages: Mapped[list["ConversationMessage"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ConversationMessage.id",
+    )
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('user', 'assistant')",
+            name="conversation_message_role_valid",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        index=True,
+    )
+
+    role: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+    )
+
+    content: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        server_default=func.now(),
+    )
+
+    conversation: Mapped["Conversation"] = relationship(
+        back_populates="messages",
+    )
 
 
 class Quiz(Base):

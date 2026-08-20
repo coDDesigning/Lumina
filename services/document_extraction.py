@@ -11,10 +11,12 @@ from services.document_pipeline import (
 from services.document_pipeline import (
     ExtractedDocument,
     EnrichedPage,
+    ImageUnderstandingProvider,
     PipelineOptions,
     PipelineStage,
     process_document,
 )
+from services.image_understanding import get_image_understanding_provider
 from services.processing_jobs import ChunkData, PageData, VisualData
 from storage.base import Storage, StorageError
 
@@ -53,6 +55,7 @@ def extract_document(
     file_type: str,
     stage_callback: StageCallback | None = None,
     extraction_callback: ExtractionCallback | None = None,
+    image_provider: ImageUnderstandingProvider | None = None,
 ) -> ProcessedDocumentData:
     if storage.provider != storage_provider:
         raise DocumentProcessingError(
@@ -151,6 +154,12 @@ def extract_document(
         if extraction_callback is not None:
             extraction_callback(extracted_pages)
 
+    resolved_image_provider = (
+        image_provider
+        if image_provider is not None
+        else get_image_understanding_provider()
+    )
+
     try:
         result = process_document(
             file_type,
@@ -161,6 +170,7 @@ def extract_document(
             ),
             stage_callback=stage_callback,
             extraction_callback=report_extraction,
+            image_provider=resolved_image_provider,
         )
     except PipelineProcessingError as exc:
         raise DocumentProcessingError(

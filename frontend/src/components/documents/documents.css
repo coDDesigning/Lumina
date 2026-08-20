@@ -59,8 +59,9 @@
 
 .doc-actions {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
   gap: 6px;
   padding-top: 2px;
 }

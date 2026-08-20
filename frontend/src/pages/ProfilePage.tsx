@@ -527,8 +527,8 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
                   {submittingKnowledge
                     ? 'Saving...'
                     : editingItemId !== null
-                    ? 'Update Topic'
-                    : 'Save Topic'}
+                      ? 'Update Topic'
+                      : 'Save Topic'}
                 </button>
               </div>
             </div>

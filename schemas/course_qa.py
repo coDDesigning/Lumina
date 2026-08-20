@@ -1,0 +1,26 @@
+from pydantic import BaseModel, Field
+
+from schemas.generation import BoundedContext
+
+
+class CourseQARequest(BaseModel):
+    question: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="The question about course materials",
+    )
+    conversation_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="Existing conversation to continue, or omit to start a new one",
+    )
+
+
+class CourseQAResponse(BaseModel):
+    answer: str
+
+
+class CourseQAGenerationResult(BoundedContext):
+    answer: str
+    conversation_id: int

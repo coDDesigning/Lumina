@@ -391,6 +391,72 @@ def test_corrupted_pdf_fails_worker_without_partial_content(session_factory, tmp
         assert session.scalar(select(func.count(DocumentChunk.id))) == 0
 
 
+def test_password_protected_pdf_fails_worker_safely(session_factory, tmp_path):
+    pdf = pymupdf.open()
+    page = pdf.new_page()
+    page.insert_text((72, 72), "Protected content")
+    encrypted_bytes = pdf.tobytes(
+        encryption=pymupdf.PDF_ENCRYPT_AES_256,
+        owner_pw="owner-pw",
+        user_pw="user-pw",
+    )
+    pdf.close()
+
+    queued = _queue_document(
+        session_factory,
+        tmp_path,
+        content=encrypted_bytes,
+        file_type="pdf",
+    )
+
+    assert _process_next_job(
+        session_factory=session_factory,
+        storage=queued.storage,
+        worker_id="encrypted-pdf-worker",
+        lease_seconds=60,
+    )
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        job = session.get(ProcessingJob, queued.job_id)
+        assert document is not None
+        assert job is not None
+        assert document.status == "failed"
+        assert job.status == JOB_STATUS_FAILED
+        assert job.last_error_code == "PASSWORD_PROTECTED_PDF"
+        assert job.failed_stage == "validating"
+        assert session.scalar(select(func.count(DocumentPage.id))) == 0
+        assert session.scalar(select(func.count(DocumentChunk.id))) == 0
+
+
+def test_corrupted_text_fails_worker_safely(session_factory, tmp_path):
+    queued = _queue_document(
+        session_factory,
+        tmp_path,
+        content=b"Valid start\x00\xff\xfe\x00\x00not valid text",
+        file_type="txt",
+    )
+
+    assert _process_next_job(
+        session_factory=session_factory,
+        storage=queued.storage,
+        worker_id="corrupt-text-worker",
+        lease_seconds=60,
+    )
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        job = session.get(ProcessingJob, queued.job_id)
+        assert document is not None
+        assert job is not None
+        assert document.status == "failed"
+        assert job.status == JOB_STATUS_FAILED
+        assert job.last_error_code == "CORRUPTED_TEXT"
+        assert job.failed_stage == "validating"
+        assert session.scalar(select(func.count(DocumentPage.id))) == 0
+        assert session.scalar(select(func.count(DocumentChunk.id))) == 0
+
+
 def test_worker_persists_exact_raw_markdown_before_cleaning(session_factory, tmp_path):
     content = b"# Heading  \r\n\r\nParagraph with a hard break.  \r\n"
     queued = _queue_document(

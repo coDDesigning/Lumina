@@ -70,17 +70,23 @@ def load_database_url(
 
     if app_env == APP_ENV_PRODUCTION:
         if backend != "sqlite":
-            raise ValueError(
-                "Production PostgreSQL is not supported until durable shared storage "
-                "and deployment topology are qualified."
-            )
-        database_path = Path(parsed_url.database or "")
-        if not database_path.is_absolute():
-            raise ValueError(
-                "Production SQLite DATABASE_URL must use an absolute path."
-            )
-        if not database_path.parent.is_dir():
-            raise ValueError(
-                "Production SQLite database parent directory must already exist."
-            )
+            # Must match config.STORAGE_BACKEND_S3; kept as a literal to avoid a
+            # circular import for the Alembic environment, which imports this
+            # module directly.
+            if os.getenv("STORAGE_BACKEND", "local") != "s3":
+                raise ValueError(
+                    "Production PostgreSQL requires STORAGE_BACKEND=s3 because "
+                    "a single instance's local disk cannot qualify as shared "
+                    "storage."
+                )
+        if backend == "sqlite":
+            database_path = Path(parsed_url.database or "")
+            if not database_path.is_absolute():
+                raise ValueError(
+                    "Production SQLite DATABASE_URL must use an absolute path."
+                )
+            if not database_path.parent.is_dir():
+                raise ValueError(
+                    "Production SQLite database parent directory must already exist."
+                )
     return database_url

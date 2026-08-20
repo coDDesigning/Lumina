@@ -54,7 +54,7 @@ extra_instructions = """\
 Review only actionable correctness, security, data-integrity, or missing-test problems. Clearly distinguish defects from matters of taste.
 Enforce Lumina's task-branch flow: task branches target dev, and only dev promotes to main.
 For SQLAlchemy changes, check foreign keys, cascades, transaction boundaries, migration safety, and SQLite/PostgreSQL parity.
-After Alembic is introduced, reject schema changes that rely on create_all instead of a reviewed migration.
+Reject schema changes that rely on create_all instead of a reviewed migration.
 For retrieval code, course_id isolation is mandatory. Numerical embeddings belong in the vector store; SQL stores canonical chunk text and citation metadata such as document, page, and chunk identifiers.
 For uploads, check server-generated storage keys, path-traversal prevention, size limits, and cleanup after partial failures.
 Never suggest committing secrets, provider keys, uploaded documents, local databases, or vector-store persistence files.

@@ -28,6 +28,8 @@ from .database_config import (
 )
 
 STORAGE_BACKEND_LOCAL = "local"
+STORAGE_BACKEND_S3 = "s3"
+STORAGE_BACKENDS = (STORAGE_BACKEND_LOCAL, STORAGE_BACKEND_S3)
 
 AI_PROVIDER_GEMINI = "gemini"
 AI_PROVIDER_OLLAMA = "ollama"
@@ -44,6 +46,21 @@ DEFAULT_OLLAMA_EMBEDDING_MODEL = "nomic-embed-text"
 DEFAULT_GEMINI_EMBEDDING_MODEL = "text-embedding-004"
 DEFAULT_EMBEDDING_BATCH_SIZE = 32
 DEFAULT_EMBEDDING_TIMEOUT_SECONDS = 60
+
+IMAGE_PROVIDER_NONE = "none"
+IMAGE_PROVIDER_GEMINI = "gemini"
+IMAGE_PROVIDER_OLLAMA = "ollama"
+RECOGNIZED_IMAGE_PROVIDERS = ("none", "ollama", "openai", "gemini", "claude")
+IMPLEMENTED_IMAGE_PROVIDERS = (
+    IMAGE_PROVIDER_NONE,
+    IMAGE_PROVIDER_GEMINI,
+    IMAGE_PROVIDER_OLLAMA,
+)
+DEFAULT_IMAGE_PROVIDER = IMAGE_PROVIDER_NONE
+DEFAULT_OLLAMA_IMAGE_MODEL = "llama3.2-vision"
+DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash"
+DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS = 30
+DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES = 10 * 1024 * 1024
 
 VECTOR_BACKEND_PGVECTOR = "pgvector"
 VECTOR_BACKEND_CHROMA = "chroma"
@@ -100,6 +117,14 @@ class Settings:
     storage_backend: str
     storage_namespace: str
 
+    # S3-compatible storage connection (s3 backend only)
+    s3_bucket: str | None
+    s3_region: str | None
+    s3_endpoint_url: str | None
+    s3_access_key_id: str | None
+    s3_secret_access_key: str | None
+    s3_force_path_style: bool
+
     # Authentication and initial hosted administrator configuration
     jwt_secret_key: str
     bootstrap_admin_email: str | None
@@ -124,6 +149,13 @@ class Settings:
     embedding_batch_size: int
     embedding_timeout_seconds: int
     vector_backend: str
+
+    # Visual understanding / image provider configuration
+    image_provider: str
+    ollama_image_model: str
+    gemini_image_model: str
+    image_understanding_timeout_seconds: int
+    image_understanding_max_bytes: int
 
     # Maximum accepted document size before content validation
     max_upload_size_bytes: int
@@ -152,6 +184,7 @@ class Settings:
     quiz_material_max_chars: int
     flashcard_material_max_chars: int
     ai_tutor_material_max_chars: int
+    course_qa_material_max_chars: int
 
     @property
     def is_hosted(self) -> bool:
@@ -184,18 +217,14 @@ def load_settings() -> Settings:
         raise ValueError("APP_DEBUG must be false in production.")
 
     mode = load_deployment_mode()
-    if app_env == APP_ENV_PRODUCTION and mode == MODE_HOSTED:
-        raise ValueError(
-            "Hosted production is not supported until durable shared storage "
-            "and deployment topology are qualified."
-        )
+
+    storage_backend = os.getenv("STORAGE_BACKEND", STORAGE_BACKEND_LOCAL).strip()
     database_url = load_database_url(mode, app_env=app_env)
 
-    storage_backend = os.getenv("STORAGE_BACKEND", STORAGE_BACKEND_LOCAL)
-    if storage_backend != STORAGE_BACKEND_LOCAL:
+    if storage_backend not in STORAGE_BACKENDS:
         raise ValueError(
-            f"STORAGE_BACKEND must be '{STORAGE_BACKEND_LOCAL}' because no other "
-            f"storage backend is implemented, got: '{storage_backend}'"
+            f"STORAGE_BACKEND must be one of: {', '.join(STORAGE_BACKENDS)}, "
+            f"got: '{storage_backend}'"
         )
 
     storage_namespace = os.getenv("STORAGE_NAMESPACE", "self-hosted").strip()
@@ -207,6 +236,44 @@ def load_settings() -> Settings:
         raise ValueError(
             "Hosted mode requires STORAGE_NAMESPACE to identify shared storage."
         )
+
+    if app_env == APP_ENV_PRODUCTION and mode == MODE_HOSTED:
+        if storage_backend != STORAGE_BACKEND_S3:
+            raise ValueError(
+                "Hosted production requires STORAGE_BACKEND='s3' because a single "
+                f"instance's local disk cannot qualify as shared storage, got: "
+                f"'{storage_backend}'"
+            )
+
+    s3_bucket = os.getenv("S3_BUCKET", "").strip() or None
+    s3_region = os.getenv("S3_REGION", "").strip() or None
+    s3_endpoint_url = os.getenv("S3_ENDPOINT_URL", "").strip() or None
+    s3_access_key_id = os.getenv("S3_ACCESS_KEY_ID", "").strip() or None
+    s3_secret_access_key = os.getenv("S3_SECRET_ACCESS_KEY", "").strip() or None
+    s3_force_path_style = _boolean_setting("S3_FORCE_PATH_STYLE", default=False)
+    if storage_backend == STORAGE_BACKEND_S3:
+        if not s3_bucket:
+            raise ValueError("S3 storage requires S3_BUCKET to be set.")
+        if s3_endpoint_url is None and s3_region is None:
+            raise ValueError(
+                "S3 storage without S3_ENDPOINT_URL requires S3_REGION "
+                "to target a real AWS region."
+            )
+        if s3_endpoint_url is not None:
+            endpoint_parts = urlsplit(s3_endpoint_url)
+            if (
+                endpoint_parts.scheme not in {"http", "https"}
+                or not endpoint_parts.hostname
+            ):
+                raise ValueError(
+                    "S3_ENDPOINT_URL must be a valid http:// or https:// URL."
+                )
+            s3_endpoint_url = s3_endpoint_url.rstrip("/")
+        if (s3_access_key_id is None) != (s3_secret_access_key is None):
+            raise ValueError(
+                "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set together "
+                "when static credentials are used."
+            )
 
     chroma_persist_directory = os.getenv("CHROMA_PERSIST_DIRECTORY", "./data/chroma")
     upload_directory = os.getenv("UPLOAD_DIRECTORY", "./data/uploads")
@@ -294,14 +361,6 @@ def load_settings() -> Settings:
                     f"{', '.join(IMPLEMENTED_AI_PROVIDERS)}."
                 )
     ai_fallback_providers = ai_fallback_providers_raw
-
-    if app_env == APP_ENV_PRODUCTION:
-        for name, value in (
-            ("UPLOAD_DIRECTORY", upload_directory),
-            ("CHROMA_PERSIST_DIRECTORY", chroma_persist_directory),
-        ):
-            if not Path(value).is_absolute():
-                raise ValueError(f"Production {name} must use an absolute path.")
 
     max_upload_size_bytes = _positive_integer_setting(
         "MAX_UPLOAD_SIZE_BYTES",
@@ -412,6 +471,7 @@ def load_settings() -> Settings:
         "QUIZ_MATERIAL_MAX_CHARS",
         "FLASHCARD_MATERIAL_MAX_CHARS",
         "AI_TUTOR_MATERIAL_MAX_CHARS",
+        "COURSE_QA_MATERIAL_MAX_CHARS",
     ):
         budget = _positive_integer_setting(name, DEFAULT_MATERIAL_MAX_CHARACTERS)
         if budget < document_chunk_size_characters:
@@ -500,6 +560,50 @@ def load_settings() -> Settings:
         maximum=300,
     )
 
+    image_provider = (
+        os.getenv("IMAGE_PROVIDER", DEFAULT_IMAGE_PROVIDER).strip().lower()
+        or DEFAULT_IMAGE_PROVIDER
+    )
+    if image_provider not in RECOGNIZED_IMAGE_PROVIDERS:
+        raise ValueError(
+            f"IMAGE_PROVIDER must be one of: {', '.join(RECOGNIZED_IMAGE_PROVIDERS)}."
+        )
+    if image_provider not in IMPLEMENTED_IMAGE_PROVIDERS:
+        raise ValueError(
+            f"IMAGE_PROVIDER '{image_provider}' is recognized but not "
+            "implemented yet. Implemented providers: "
+            f"{', '.join(IMPLEMENTED_IMAGE_PROVIDERS)}."
+        )
+
+    ollama_image_model = os.getenv(
+        "OLLAMA_IMAGE_MODEL",
+        DEFAULT_OLLAMA_IMAGE_MODEL,
+    ).strip()
+    if not OLLAMA_MODEL_PATTERN.fullmatch(ollama_image_model):
+        raise ValueError(
+            "OLLAMA_IMAGE_MODEL must contain 1-128 characters limited to letters, "
+            "digits, dots, colons, slashes, dashes, or underscores."
+        )
+    gemini_image_model = os.getenv(
+        "GEMINI_IMAGE_MODEL",
+        DEFAULT_GEMINI_IMAGE_MODEL,
+    ).strip()
+    if not gemini_image_model or len(gemini_image_model) > 128:
+        raise ValueError("GEMINI_IMAGE_MODEL must contain 1-128 non-blank characters.")
+
+    image_understanding_timeout_seconds = _bounded_positive_integer_setting(
+        "IMAGE_UNDERSTANDING_TIMEOUT_SECONDS",
+        DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=300,
+    )
+    image_understanding_max_bytes = _bounded_positive_integer_setting(
+        "IMAGE_UNDERSTANDING_MAX_BYTES",
+        DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES,
+        minimum=1024,
+        maximum=50 * 1024 * 1024,
+    )
+
     database_is_postgresql = make_url(database_url).get_backend_name() == "postgresql"
     default_vector_backend = (
         VECTOR_BACKEND_PGVECTOR if database_is_postgresql else VECTOR_BACKEND_CHROMA
@@ -518,6 +622,20 @@ def load_settings() -> Settings:
             "vector extension exists only in PostgreSQL."
         )
 
+    if app_env == APP_ENV_PRODUCTION:
+        if (
+            storage_backend == STORAGE_BACKEND_LOCAL
+            and not Path(upload_directory).is_absolute()
+        ):
+            raise ValueError("Production UPLOAD_DIRECTORY must use an absolute path.")
+        if (
+            vector_backend == VECTOR_BACKEND_CHROMA
+            and not Path(chroma_persist_directory).is_absolute()
+        ):
+            raise ValueError(
+                "Production CHROMA_PERSIST_DIRECTORY must use an absolute path."
+            )
+
     return Settings(
         app_env=app_env,
         app_debug=app_debug,
@@ -527,6 +645,12 @@ def load_settings() -> Settings:
         upload_directory=upload_directory,
         storage_backend=storage_backend,
         storage_namespace=storage_namespace,
+        s3_bucket=s3_bucket,
+        s3_region=s3_region,
+        s3_endpoint_url=s3_endpoint_url,
+        s3_access_key_id=s3_access_key_id,
+        s3_secret_access_key=s3_secret_access_key,
+        s3_force_path_style=s3_force_path_style,
         jwt_secret_key=jwt_secret_key,
         bootstrap_admin_email=bootstrap_admin_email or None,
         bootstrap_admin_token=bootstrap_admin_token or None,
@@ -546,6 +670,11 @@ def load_settings() -> Settings:
         embedding_batch_size=embedding_batch_size,
         embedding_timeout_seconds=embedding_timeout_seconds,
         vector_backend=vector_backend,
+        image_provider=image_provider,
+        ollama_image_model=ollama_image_model,
+        gemini_image_model=gemini_image_model,
+        image_understanding_timeout_seconds=image_understanding_timeout_seconds,
+        image_understanding_max_bytes=image_understanding_max_bytes,
         max_upload_size_bytes=max_upload_size_bytes,
         max_request_size_bytes=max_request_size_bytes,
         max_concurrent_document_validations=max_concurrent_document_validations,
@@ -574,6 +703,7 @@ def load_settings() -> Settings:
         quiz_material_max_chars=material_budgets["QUIZ_MATERIAL_MAX_CHARS"],
         flashcard_material_max_chars=material_budgets["FLASHCARD_MATERIAL_MAX_CHARS"],
         ai_tutor_material_max_chars=material_budgets["AI_TUTOR_MATERIAL_MAX_CHARS"],
+        course_qa_material_max_chars=material_budgets["COURSE_QA_MATERIAL_MAX_CHARS"],
     )
 
 

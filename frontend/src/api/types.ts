@@ -67,7 +67,8 @@ export type ProcessingStage =
   | 'running_ocr'
   | 'understanding_images'
   | 'cleaning_text'
-  | 'chunking';
+  | 'chunking'
+  | 'generating_embeddings';
 
 export interface DocumentResponse {
   id: string;
@@ -270,5 +271,13 @@ export interface ProfileKnowledgeUpdate {
 
 export interface ProfileKnowledgeImport {
   items: ProfileKnowledgeCreate[];
+}
+
+export interface CourseQARequest {
+  question: string;
+}
+
+export interface CourseQAGenerationResult extends BoundedContext {
+  answer: string;
 }
 

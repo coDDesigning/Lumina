@@ -511,6 +511,16 @@ def test_admin_can_manage_email_with_encoded_path_separator(api_context) -> None
     assert banned.json()["data"]["email"] == "foo/bar@example.com"
     assert banned.json()["data"]["is_banned"] is True
 
+    listed = api_context.client.get(
+        "/api/admin/users",
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["success"] is True
+    emails = [u["email"] for u in listed.json()["data"]]
+    assert "admin@example.com" in emails
+    assert "foo/bar@example.com" in emails
+
 
 def test_losing_initial_admin_race_retries_as_normal_user(
     session_factory,

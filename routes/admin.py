@@ -12,6 +12,20 @@ from utils.deps import get_current_admin
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
 
+@router.get("/users", response_model=BaseResponse[list[UserResponse]])
+def list_users(
+    current_admin: Annotated[UserResponse, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Lists all registered users (Admin only)."""
+    users = UserService.list_users(db)
+    return BaseResponse(
+        success=True,
+        message="Users retrieved successfully",
+        data=users,
+    )
+
+
 @router.put("/users/{email:path}/ban", response_model=BaseResponse[UserResponse])
 def ban_user(
     email: str,

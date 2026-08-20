@@ -283,14 +283,19 @@ def test_successful_generation_deducts_credits(
 
 
 def test_an_exhausted_account_recovers_after_an_administrator_change(
-    authz_api, monkeypatch: pytest.MonkeyPatch
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
 ):
     """Zero is not a dead end: an administrator can lift an account off it.
 
     This is the whole point of the administrative path. Before it existed an
     account that spent its allowance stayed at 402 until the calendar moved.
     """
-    _add_material(authz_api.session_factory, authz_api.user_a_id, authz_api.a_course_id)
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
     set_balance(authz_api.session_factory, authz_api.user_a_id, 0.0)
 
     monkeypatch.setattr(
@@ -336,14 +341,19 @@ def test_an_exhausted_account_recovers_after_an_administrator_change(
 
 
 def test_an_exhausted_account_recovers_when_the_next_month_grants(
-    authz_api, monkeypatch: pytest.MonkeyPatch
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
 ):
     """The other way out of zero needs no support action at all.
 
     The monthly grant is lazy, so it lands on the account's next attempt in a
     new period rather than waiting for a scheduler to have run.
     """
-    _add_material(authz_api.session_factory, authz_api.user_a_id, authz_api.a_course_id)
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
     set_balance(authz_api.session_factory, authz_api.user_a_id, 0.0)
 
     monkeypatch.setattr(

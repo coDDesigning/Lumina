@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from schemas.generation import BoundedContext
+from schemas.generation import RetrievedContext
 
 
 class CourseQARequest(BaseModel):
@@ -25,6 +25,6 @@ class CourseQAResponse(BaseModel):
     answer: str
 
 
-class CourseQAGenerationResult(BoundedContext):
+class CourseQAGenerationResult(RetrievedContext):
     answer: str
     conversation_id: int

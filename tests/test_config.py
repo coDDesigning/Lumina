@@ -135,6 +135,7 @@ CONFIGURATION_KEYS = (
     "FLASHCARD_MATERIAL_MAX_CHARS",
     "AI_TUTOR_MATERIAL_MAX_CHARS",
     "COURSE_QA_MATERIAL_MAX_CHARS",
+    "COURSE_QA_MATERIAL_MAX_CHARS",
 )
 
 
@@ -1036,6 +1037,7 @@ def test_material_budgets_are_configurable(
         "QUIZ_MATERIAL_MAX_CHARS": loaded.quiz_material_max_chars,
         "FLASHCARD_MATERIAL_MAX_CHARS": loaded.flashcard_material_max_chars,
         "AI_TUTOR_MATERIAL_MAX_CHARS": loaded.ai_tutor_material_max_chars,
+        "COURSE_QA_MATERIAL_MAX_CHARS": loaded.course_qa_material_max_chars,
     }
 
     assert budgets.pop(name) == 5000

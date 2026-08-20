@@ -33,7 +33,9 @@ GENERATION_SETTINGS_REVISION = "b2f47c8d0915"
 QUIZ_PROGRESS_REVISION = "c8e1f5a9b3d2"
 QUIZ_SCHEMA_REVISION = "c8d4a1f39e72"
 PGVECTOR_HARDENING_REVISION = "f5a7c2d9e104"
-HEAD_REVISION = PGVECTOR_HARDENING_REVISION
+CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
+TYPED_CONVERSATIONS_REVISION = "b9c1d4e7f2a6"
+HEAD_REVISION = TYPED_CONVERSATIONS_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -61,7 +63,9 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: QUIZ_SCHEMA_REVISION,
+        HEAD_REVISION: CREDIT_LEDGER_REVISION,
+        CREDIT_LEDGER_REVISION: PGVECTOR_HARDENING_REVISION,
+        PGVECTOR_HARDENING_REVISION: QUIZ_SCHEMA_REVISION,
         QUIZ_SCHEMA_REVISION: QUIZ_PROGRESS_REVISION,
         QUIZ_PROGRESS_REVISION: GENERATION_SETTINGS_REVISION,
         GENERATION_SETTINGS_REVISION: COURSE_SETTINGS_REVISION,
@@ -242,6 +246,9 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert "document_visuals" in tables
         assert "processing_jobs" in tables
         assert "ai_usage_logs" in tables
+        assert "credit_transactions" in tables
+        assert "conversations" in tables
+        assert "conversation_messages" in tables
 
         roles = connection.execute("SELECT name FROM roles ORDER BY name").fetchall()
         assert roles == [("admin",), ("user",)]
@@ -362,6 +369,18 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert (
             "ck_quiz_questions_correct_option_index_nonnegative"
             in normalized_question_sql
+        )
+
+        conversation_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'conversations'"
+        ).fetchone()
+        assert conversation_sql is not None
+        normalized_conversation_sql = " ".join(conversation_sql[0].lower().split())
+        assert "conversation_type varchar(20) not null" in normalized_conversation_sql
+        assert "ck_conversations_conversation_type_valid" in normalized_conversation_sql
+        assert "conversation_type in ('course_qa', 'ai_tutor')" in (
+            normalized_conversation_sql
         )
 
 
@@ -1488,6 +1507,214 @@ def test_quiz_progress_migration_round_trips(tmp_path: Path) -> None:
     run_alembic(database_path, tmp_path, "upgrade", "head")
 
     with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)
+
+
+def insert_legacy_user(
+    connection: sqlite3.Connection,
+    *,
+    email: str,
+    credits: float | None,
+    role: str = "user",
+) -> int:
+    role_id = connection.execute(
+        "SELECT id FROM roles WHERE name = ?", (role,)
+    ).fetchone()[0]
+    cursor = connection.execute(
+        "INSERT INTO users "
+        "(name, email, password_hash, role_id, credits, is_banned, preferred_model) "
+        "VALUES (?, ?, 'not-a-real-hash', ?, ?, 0, 'gemini:gemini-3.6-flash')",
+        (email.split("@")[0], email, role_id, credits),
+    )
+    return int(cursor.lastrowid)
+
+
+def test_credit_ledger_migration_reconciles_existing_balances(tmp_path: Path) -> None:
+    """Every legacy balance gains one truthful baseline row and nothing more.
+
+    The reconciliation deliberately invents no history: a balance of 37 becomes
+    a single +37 row, not a fabricated grant-and-spend sequence it cannot know
+    happened. An unmetered administrator stays outside the ledger entirely.
+    """
+    database_path = tmp_path / "credit-ledger.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", QUIZ_SCHEMA_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert "credit_transactions" not in database_tables(connection)
+        insert_legacy_user(connection, email="alice@example.com", credits=37.0)
+        insert_legacy_user(connection, email="bob@example.com", credits=0.0)
+        insert_legacy_user(connection, email="carol@example.com", credits=83.0)
+        insert_legacy_user(
+            connection, email="root@example.com", credits=None, role="admin"
+        )
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        assert "credit_transactions" in database_tables(connection)
+
+        reconciled = connection.execute(
+            "SELECT u.email, t.delta, t.balance_after, t.reason, t.actor_type, "
+            "t.grant_period "
+            "FROM credit_transactions t JOIN users u ON u.id = t.user_id "
+            "ORDER BY u.email"
+        ).fetchall()
+        assert reconciled == [
+            (
+                "alice@example.com",
+                37.0,
+                37.0,
+                "migration_reconciliation",
+                "migration",
+                None,
+            ),
+            (
+                "bob@example.com",
+                0.0,
+                0.0,
+                "migration_reconciliation",
+                "migration",
+                None,
+            ),
+            (
+                "carol@example.com",
+                83.0,
+                83.0,
+                "migration_reconciliation",
+                "migration",
+                None,
+            ),
+        ]
+
+        # A metered balance is now derivable; an unmetered one owns no rows.
+        drift = connection.execute(
+            "SELECT u.email, u.credits, "
+            "COALESCE((SELECT SUM(t.delta) FROM credit_transactions t "
+            "WHERE t.user_id = u.id), 0) "
+            "FROM users u"
+        ).fetchall()
+        for email, credits, ledger_total in drift:
+            if credits is None:
+                assert ledger_total == 0, email
+            else:
+                assert credits == ledger_total, email
+
+    run_alembic(database_path, tmp_path, "downgrade", QUIZ_SCHEMA_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert "credit_transactions" not in database_tables(connection)
+        # The ledger is lossy to drop, but no balance is disturbed by dropping it.
+        assert connection.execute(
+            "SELECT email, credits FROM users ORDER BY email"
+        ).fetchall() == [
+            ("alice@example.com", 37.0),
+            ("bob@example.com", 0.0),
+            ("carol@example.com", 83.0),
+            ("root@example.com", None),
+        ]
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        # Re-upgrading rebuilds exactly one baseline per metered user.
+        assert connection.execute(
+            "SELECT COUNT(*) FROM credit_transactions"
+        ).fetchone() == (3,)
+
+
+def test_typed_conversation_migration_backfills_and_enforces_types(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "typed-conversations.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", CREDIT_LEDGER_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        conversation_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(conversations)")
+        }
+        assert "conversation_type" not in conversation_columns
+
+        user_id = insert_legacy_user(
+            connection,
+            email="legacy-conversation@example.com",
+            credits=10.0,
+        )
+        course_id = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Legacy conversation course", user_id),
+        ).lastrowid
+        conversation_id = connection.execute(
+            "INSERT INTO conversations (user_id, course_id) VALUES (?, ?)",
+            (user_id, course_id),
+        ).lastrowid
+        message_id = connection.execute(
+            "INSERT INTO conversation_messages (conversation_id, role, content) "
+            "VALUES (?, 'user', ?)",
+            (conversation_id, "A legacy Course Q&A question"),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = {
+            row[1]: row
+            for row in connection.execute("PRAGMA table_info(conversations)")
+        }
+        assert columns["conversation_type"][3] == 1
+        assert connection.execute(
+            "SELECT conversation_type FROM conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone() == ("course_qa",)
+        assert connection.execute(
+            "SELECT role, content FROM conversation_messages WHERE id = ?",
+            (message_id,),
+        ).fetchone() == ("user", "A legacy Course Q&A question")
+
+        create_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'conversations'"
+        ).fetchone()[0]
+        normalized_sql = " ".join(create_sql.lower().split())
+        assert "ck_conversations_conversation_type_valid" in normalized_sql
+        assert "conversation_type in ('course_qa', 'ai_tutor')" in normalized_sql
+
+        ai_tutor_id = connection.execute(
+            "INSERT INTO conversations (user_id, course_id, conversation_type) "
+            "VALUES (?, ?, 'ai_tutor')",
+            (user_id, course_id),
+        ).lastrowid
+        assert connection.execute(
+            "SELECT conversation_type FROM conversations WHERE id = ?",
+            (ai_tutor_id,),
+        ).fetchone() == ("ai_tutor",)
+        connection.commit()
+
+        for invalid_type in (None, "other"):
+            with pytest.raises(sqlite3.IntegrityError):
+                connection.execute(
+                    "INSERT INTO conversations "
+                    "(user_id, course_id, conversation_type) VALUES (?, ?, ?)",
+                    (user_id, course_id, invalid_type),
+                )
+            connection.rollback()
+
+    run_alembic(database_path, tmp_path, "downgrade", CREDIT_LEDGER_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        assert "conversation_type" not in {
+            row[1] for row in connection.execute("PRAGMA table_info(conversations)")
+        }
+        assert connection.execute(
+            "SELECT role, content FROM conversation_messages WHERE id = ?",
+            (message_id,),
+        ).fetchone() == ("user", "A legacy Course Q&A question")
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT conversation_type FROM conversations ORDER BY id"
+        ).fetchall() == [("course_qa",), ("course_qa",)]
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone() == (HEAD_REVISION,)

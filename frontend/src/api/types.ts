@@ -16,6 +16,45 @@ export interface User {
   preferred_model: string;
 }
 
+export type CreditReason =
+  | 'initial_grant'
+  | 'periodic_grant'
+  | 'generation_charge'
+  | 'generation_refund'
+  | 'admin_grant'
+  | 'support_compensation'
+  | 'admin_adjustment'
+  | 'metering_reset'
+  | 'migration_reconciliation';
+
+export type AdminCreditReason = Extract<
+  CreditReason,
+  'admin_grant' | 'support_compensation' | 'admin_adjustment'
+>;
+
+export type CreditActorType = 'system' | 'user' | 'admin' | 'migration';
+
+export interface CreditTransaction {
+  id: number;
+  delta: number;
+  balance_after: number;
+  reason: LooseUnion<CreditReason>;
+  actor_type: LooseUnion<CreditActorType>;
+  actor_user_id: number | null;
+  actor_label: string | null;
+  source_type: string | null;
+  source_id: number | null;
+  refunds_transaction_id: number | null;
+  grant_period: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface CreditMutation {
+  user: User;
+  transaction: CreditTransaction;
+}
+
 export interface AuthResponse {
   access_token: string;
   token_type: string;
@@ -434,13 +473,41 @@ export interface FlashcardRequest {
   model?: string;
 }
 
+export type ConversationType = 'course_qa' | 'ai_tutor';
+
+export type ConversationRole = 'user' | 'assistant';
+
+export interface ConversationMessage {
+  id: number;
+  role: ConversationRole;
+  content: string;
+  created_at: string;
+}
+
+export interface ConversationSummary {
+  id: number;
+  course_id: number;
+  user_id: number;
+  conversation_type: ConversationType;
+  preview: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[];
+}
+
 export interface CourseQARequest {
   question: string;
+  conversation_id?: number;
   model?: string;
 }
 
-export interface CourseQAGenerationResult extends BoundedContext {
+export interface CourseQAGenerationResult extends RetrievedContext {
   answer: string;
+  conversation_id: number;
 }
 
 export interface PromptGenerationRequest {
@@ -454,11 +521,13 @@ export interface PromptGenerationResponse {
 
 export interface AiTutorRequest {
   question: string;
+  conversation_id?: number;
   model?: string;
 }
 
-export interface AiTutorGenerationResult extends BoundedContext {
+export interface AiTutorGenerationResult extends RetrievedContext {
   answer: string;
+  conversation_id: number;
 }
 
 export interface GeneratedFlashcard {
@@ -497,4 +566,3 @@ export interface CourseSettingsUpdate {
   notifications?: boolean;
   progress_reminders?: boolean;
 }
-

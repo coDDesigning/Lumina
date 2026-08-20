@@ -308,11 +308,52 @@
 }
 
 .chat-header {
-  min-height: 52px;
+  min-height: 60px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 9px;
 }
 
 .chat-header h2 {
-  margin-top: 8px;
+  margin: 4px 0 2px;
+}
+
+.chat-mode-label {
+  color: #7e7585;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chat-tool-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.chat-tool-button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.chat-tool-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.chat-tool-button:disabled,
+.conversation-toolbar button:disabled,
+.prompt-field button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .chat-scroll {
@@ -320,6 +361,48 @@
   flex: 1;
   overflow-y: auto;
   scrollbar-width: thin;
+}
+
+.conversation-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 14px 0 4px;
+  padding: 8px 10px 8px 13px;
+  border: 1px solid #ece5f1;
+  border-radius: 10px;
+  background: #fcfafd;
+}
+
+.conversation-toolbar p {
+  margin: 0;
+  color: #645c6a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.conversation-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #267fa8;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.conversation-toolbar button:hover {
+  background: #e9f4f9;
+}
+
+.conversation-toolbar svg {
+  width: 15px;
+  height: 15px;
 }
 
 .response-copy {
@@ -358,14 +441,105 @@
   text-underline-offset: 3px;
 }
 
-.local-status {
+.workspace-conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin: 0;
+  padding: 18px 8px 10px;
+  list-style: none;
+}
+
+.workspace-message {
+  width: min(84%, 720px);
+  padding: 13px 16px;
+  border: 1px solid #e6dfeb;
+  border-radius: 15px 15px 15px 4px;
+  background: #faf8fc;
+  box-shadow: 0 2px 7px rgba(37, 17, 63, 0.05);
+}
+
+.workspace-message.is-user {
+  align-self: flex-end;
+  border-color: #c9e3ef;
+  border-radius: 15px 15px 4px;
+  background: #edf7fb;
+}
+
+.workspace-message-author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+  color: #716b78;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.workspace-message-author svg {
+  width: 14px;
+  height: 14px;
+  color: #8b5cf6;
+}
+
+.workspace-message.is-user .workspace-message-author svg {
+  color: #268ab7;
+}
+
+.workspace-message > p {
+  margin: 0;
+  color: #3f3945;
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.workspace-message-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 11px;
+  padding-top: 9px;
+  border-top: 1px solid #e9e2ee;
+}
+
+.workspace-message-context span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f0ebf6;
+  color: #706677;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.qa-loading-indicator {
   width: fit-content;
-  margin: 22px 0 5px 32px;
-  padding: 7px 12px;
-  border-radius: 8px;
-  background: #f2f6f8;
-  color: #6b6670;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 12px 8px;
+  padding: 10px 13px;
+  border-radius: 9px;
+  background: #f4f1f7;
+  color: #665f6d;
+}
+
+.qa-loading-indicator p,
+.qa-error-alert p {
+  margin: 0;
   font-size: 13px;
+}
+
+.qa-error-alert {
+  margin: 12px 8px;
+  padding: 11px 13px;
+  border: 1px solid #f1c6c6;
+  border-radius: 9px;
+  background: #fdf3f3;
+  color: #a13e3e;
 }
 
 .main-prompt {
@@ -407,6 +581,14 @@
 
   .response-copy {
     font-size: 14px;
+  }
+
+  .chat-header {
+    flex-direction: column;
+  }
+
+  .chat-tool-actions {
+    justify-content: flex-start;
   }
 
   .main-prompt {
@@ -493,8 +675,9 @@
   }
 
   .workspace-tabs button {
-    width: 33.333%;
-    font-size: 14px;
+    width: 25%;
+    padding-inline: 5px;
+    font-size: 12px;
   }
 
   .chat-panel {
@@ -505,6 +688,24 @@
   .response-copy {
     margin-top: 19px;
     font-size: 14px;
+  }
+
+  .chat-tool-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chat-tool-button {
+    justify-content: center;
+  }
+
+  .conversation-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .workspace-message {
+    width: 94%;
   }
 
   .suggestions {

@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine, inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from backend.app.base import Base
@@ -55,7 +56,8 @@ PAGES_REVISION = "c4e6a8f1b203"
 VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
-HEAD_REVISION = "f5a7c2d9e104"
+CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
+HEAD_REVISION = "b9c1d4e7f2a6"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -176,6 +178,73 @@ def _assert_hardening_preflight_is_atomic() -> None:
                 )
             )
             assert result.rowcount == 1
+    finally:
+        engine.dispose()
+
+
+def _seed_legacy_conversation() -> int:
+    engine = create_database_engine(settings.database_url)
+    try:
+        with engine.begin() as connection:
+            conversation_id = connection.scalar(
+                text(
+                    "INSERT INTO conversations (user_id, course_id) "
+                    "SELECT u.id, c.id FROM users AS u JOIN courses AS c "
+                    "ON c.owner_id = u.id WHERE u.email = 'migration@example.com' "
+                    "AND c.title = 'Active migration course' RETURNING id"
+                )
+            )
+            assert conversation_id is not None
+            result = connection.execute(
+                text(
+                    "INSERT INTO conversation_messages "
+                    "(conversation_id, role, content) "
+                    "VALUES (:conversation_id, 'user', 'Legacy PostgreSQL question')"
+                ),
+                {"conversation_id": conversation_id},
+            )
+            assert result.rowcount == 1
+            return conversation_id
+    finally:
+        engine.dispose()
+
+
+def _assert_typed_conversation_migration(conversation_id: int) -> None:
+    engine = create_database_engine(settings.database_url)
+    try:
+        inspector = inspect(engine)
+        columns = {
+            column["name"]: column for column in inspector.get_columns("conversations")
+        }
+        assert not columns["conversation_type"]["nullable"]
+        checks = {
+            constraint["name"]: constraint["sqltext"]
+            for constraint in inspector.get_check_constraints("conversations")
+        }
+        assert "ck_conversations_conversation_type_valid" in checks
+        assert "course_qa" in checks["ck_conversations_conversation_type_valid"]
+        assert "ai_tutor" in checks["ck_conversations_conversation_type_valid"]
+
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT c.conversation_type, m.role, m.content "
+                    "FROM conversations AS c JOIN conversation_messages AS m "
+                    "ON m.conversation_id = c.id WHERE c.id = :conversation_id"
+                ),
+                {"conversation_id": conversation_id},
+            ).one()
+        assert row == ("course_qa", "user", "Legacy PostgreSQL question")
+
+        for invalid_type in (None, "other"):
+            with pytest.raises(IntegrityError), engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE conversations SET conversation_type = :value "
+                        "WHERE id = :conversation_id"
+                    ),
+                    {"value": invalid_type, "conversation_id": conversation_id},
+                )
     finally:
         engine.dispose()
 
@@ -427,7 +496,10 @@ def postgresql_engine() -> Iterator[Engine]:
     _run_alembic("upgrade", VISUAL_REVISION)
     _run_alembic("upgrade", CHUNK_RANGES_REVISION)
     _assert_hardening_preflight_is_atomic()
+    _run_alembic("upgrade", CREDIT_LEDGER_REVISION)
+    legacy_conversation_id = _seed_legacy_conversation()
     _run_alembic("upgrade", HEAD_REVISION)
+    _assert_typed_conversation_migration(legacy_conversation_id)
     _assert_visual_enrichment_backfill()
     _assert_generated_output_attribution_present()
     _run_alembic("downgrade", HARDENING_REVISION)
@@ -607,6 +679,14 @@ def test_postgresql_schema_readiness_and_role_seeds(
         "ck_quiz_questions_question_index_nonnegative",
         "ck_quiz_questions_correct_option_index_nonnegative",
     }
+    conversation_columns = {
+        column["name"]: column for column in inspector.get_columns("conversations")
+    }
+    assert not conversation_columns["conversation_type"]["nullable"]
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("conversations")
+    } >= {"ck_conversations_conversation_type_valid"}
     page_columns = {
         column["name"]: column for column in inspector.get_columns("document_pages")
     }

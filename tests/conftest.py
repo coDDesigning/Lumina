@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
@@ -11,8 +11,9 @@ from uuid import UUID
 import pytest
 from alembic import command
 from alembic.config import Config
+from chromadb.api.client import SharedSystemClient
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, inspect, select, text
+from sqlalchemy import Engine, func, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.base import Base
@@ -22,6 +23,7 @@ from backend.app.database_engine import create_database_engine
 from backend.app.models import (
     EMBEDDING_DIMENSIONS,
     Course,
+    CreditTransaction,
     DocumentChunk,
     ProcessingJob,
     Role,
@@ -29,6 +31,9 @@ from backend.app.models import (
     User,
 )
 from main import app
+from schemas.credits import CreditReason
+from services import credits as credits_service
+from services.credits import CreditActor, CreditService
 from services import semantic_retrieval as semantic_retrieval_service
 from services.processing_jobs import claim_next_job, fail_job
 from services.vector_store import (
@@ -96,6 +101,96 @@ def _reset_postgresql_contract_data(engine: Engine) -> None:
             Role.__table__.insert(),
             [{"name": "admin"}, {"name": "user"}],
         )
+
+
+def seed_registration_grant(*users: User) -> None:
+    """Give a directly-built fixture user the ledger baseline registration gives.
+
+    Fixtures construct users without going through ``UserService.create_user``,
+    so they would otherwise start with a balance no ledger row explains and be
+    owed the current month's grant on their very first request. Attaching the
+    row registration would have written keeps fixture accounts realistic.
+    """
+    for user in users:
+        grant = credits_service.CreditService.build_initial_grant(user)
+        if grant is not None:
+            user.credit_transactions.append(grant)
+
+
+@pytest.fixture(autouse=True)
+def metered_credits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the suite as a deployment that meters credits.
+
+    CI exercises the backend in self-hosted mode, where credits are exempt by
+    default, but nearly every credit assertion in this suite is about the
+    metered behavior a hosted deployment gets. Making metering the ambient state
+    keeps those tests honest; the exempt path is proven by the tests that turn
+    metering back off explicitly.
+    """
+    monkeypatch.setattr(
+        credits_service,
+        "settings",
+        replace(settings, credit_metering_enabled=True),
+    )
+
+
+def set_credit_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    **overrides: object,
+) -> None:
+    """Point services.credits at a variant policy for one test."""
+    monkeypatch.setattr(
+        credits_service,
+        "settings",
+        replace(settings, credit_metering_enabled=True, **overrides),
+    )
+
+
+def ledger_sum(session: Session, user_id: int) -> float:
+    return (
+        session.scalar(
+            select(func.coalesce(func.sum(CreditTransaction.delta), 0.0)).where(
+                CreditTransaction.user_id == user_id
+            )
+        )
+        or 0.0
+    )
+
+
+def assert_balance_is_derivable(session: Session, user_id: int) -> None:
+    """The invariant: a metered balance equals the sum of its deltas."""
+    user = session.get(User, user_id)
+    assert user is not None
+    if user.credits is None:
+        return
+    assert user.credits == pytest.approx(ledger_sum(session, user_id))
+
+
+def rows(
+    session: Session, user_id: int, reason: CreditReason | None = None
+) -> list[CreditTransaction]:
+    statement = select(CreditTransaction).where(CreditTransaction.user_id == user_id)
+    if reason is not None:
+        statement = statement.where(CreditTransaction.reason == reason.value)
+    return list(session.scalars(statement.order_by(CreditTransaction.id)).all())
+
+
+def set_balance(
+    session_factory: sessionmaker[Session], user_id: int, balance: float
+) -> None:
+    """Move a balance the way a support correction would, ledger included."""
+    with session_factory() as session:
+        user = session.get(User, user_id)
+        delta = balance - (user.credits or 0.0)
+        if delta:
+            CreditService.apply_admin_change(
+                session,
+                user_id,
+                delta,
+                reason=CreditReason.ADMIN_ADJUSTMENT,
+                actor=CreditActor.admin(user_id, "fixture@example.com"),
+                note="Test balance setup",
+            )
 
 
 @pytest.fixture(scope="session")
@@ -285,7 +380,7 @@ class RetrievalContext:
 def retrieval_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> RetrievalContext:
+) -> Iterator[RetrievalContext]:
     """Wire semantic retrieval to a real vector store and a deterministic embedder.
 
     Patching ``services.semantic_retrieval`` is enough because that module
@@ -302,7 +397,12 @@ def retrieval_env(
         semantic_retrieval_service, "get_embedding_provider", lambda: provider
     )
     monkeypatch.setattr(semantic_retrieval_service, "get_vector_store", lambda: store)
-    return RetrievalContext(provider=provider, store=store)
+    try:
+        yield RetrievalContext(provider=provider, store=store)
+    finally:
+        if isinstance(store, ChromaVectorStore):
+            store.close()
+            SharedSystemClient.clear_system_cache()
 
 
 @pytest.fixture
@@ -424,6 +524,7 @@ def upload_api(api_context: ApiContext) -> UploadApiContext:
             owner=user,
             is_deleted=True,
         )
+        seed_registration_grant(user)
         session.add_all([course, other_course, deleted_course])
         session.commit()
         user_id = user.id
@@ -490,6 +591,8 @@ def authz_api(api_context: ApiContext) -> AuthorizationApiContext:
             is_banned=False,
             preferred_model="gemini:gemini-3.6-flash",
         )
+
+        seed_registration_grant(user_a, user_b, administrator)
 
         a_course = Course(
             title="Owner A Active Course",

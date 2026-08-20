@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { adminAPI } from './admin';
 import { MalformedResponseError } from './client';
-import type { User } from './types';
+import type { CreditTransaction, User } from './types';
 
 const MOCK_USERS: User[] = [
   {
@@ -23,6 +23,22 @@ const MOCK_USERS: User[] = [
     preferred_model: 'gemini:gemini-3.6-flash',
   },
 ];
+
+const MOCK_TRANSACTION: CreditTransaction = {
+  id: 9,
+  delta: 20,
+  balance_after: 25,
+  reason: 'admin_grant',
+  actor_type: 'admin',
+  actor_user_id: 1,
+  actor_label: 'admin@example.com',
+  source_type: null,
+  source_id: null,
+  refunds_transaction_id: null,
+  grant_period: null,
+  note: 'Support adjustment',
+  created_at: '2026-08-20T10:00:00Z',
+};
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -94,6 +110,90 @@ describe('adminAPI', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/admin/users/user%40example.com/role?role=admin',
       expect.objectContaining({ method: 'PUT' }),
+    );
+  });
+
+  it('changes credits and returns the new balance with its ledger row', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse({
+        success: true,
+        message: 'ok',
+        data: {
+          user: { ...MOCK_USERS[1], credits: 25 },
+          transaction: MOCK_TRANSACTION,
+        },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await adminAPI.changeCredits(
+      'user@example.com',
+      20,
+      'admin_grant',
+      'Support adjustment',
+    );
+
+    expect(result.user.credits).toBe(25);
+    expect(result.transaction.reason).toBe('admin_grant');
+    expect(result.transaction.actor_label).toBe('admin@example.com');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/users/user%40example.com/credits',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          delta: 20,
+          reason: 'admin_grant',
+          note: 'Support adjustment',
+        }),
+      }),
+    );
+  });
+
+  it('sends a null note when none was supplied', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse({
+        success: true,
+        message: 'ok',
+        data: {
+          user: { ...MOCK_USERS[1], credits: 45 },
+          transaction: { ...MOCK_TRANSACTION, delta: -5, reason: 'admin_adjustment' },
+        },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await adminAPI.changeCredits(
+      'user@example.com',
+      -5,
+      'admin_adjustment',
+    );
+
+    expect(result.transaction.delta).toBe(-5);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/users/user%40example.com/credits',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          delta: -5,
+          reason: 'admin_adjustment',
+          note: null,
+        }),
+      }),
+    );
+  });
+
+  it('reads another user credit history', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ success: true, message: 'ok', data: [MOCK_TRANSACTION] }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const history = await adminAPI.listUserCreditTransactions('user@example.com');
+
+    expect(history).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/users/user%40example.com/credit-transactions?limit=20',
+      expect.objectContaining({ headers: expect.any(Headers) }),
     );
   });
 

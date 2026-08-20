@@ -229,6 +229,33 @@ while `created_at` stays fixed.
 so neither an owner nor an administrator can transfer a workspace through the
 API.
 
+### Course conversations
+
+Course Q&A and AI Tutor persist successful exchanges in the shared
+`conversations` and `conversation_messages` tables. `conversation_type` is
+mandatory and checked as either `course_qa` or `ai_tutor`, so one feature cannot
+continue the other feature's thread. Rows written before Tutor persistence were
+introduced are backfilled as `course_qa` by the migration that adds the type.
+
+Generation continuation scopes a conversation identifier to the current user,
+authorized course, and expected type in one query. Missing, cross-course,
+cross-user, and cross-type identifiers all return `404 Conversation not found`.
+Only a successful provider response appends the user and assistant pair; a
+retrieval or generation failure leaves the thread unchanged.
+
+The read-only history API lists course conversations newest-first and returns
+one detail with chronological messages:
+
+```text
+GET /api/courses/{course_id}/conversations
+GET /api/courses/{course_id}/conversations/{conversation_id}
+```
+
+These endpoints use `require_course_access`, so owners read their own course
+history and administrators retain the standard support read override. The
+detail lookup includes the parent course in the same query, making an identifier
+from another course indistinguishable from a missing conversation.
+
 Unauthorized access never discloses existence. A nonexistent course, a course
 whose purge has not finished, and another owner's course all return `404` with the same
 `Course not found` body, so course identifiers cannot be enumerated. Documents
@@ -427,6 +454,29 @@ recorded ungraded rather than wrong, is excluded from the attempt score's
 denominator, and is skipped by topic mastery. Losing a student's written work
 because a grading model timed out would be a much worse outcome than an unscored
 answer, so a grading failure never fails the attempt.
+
+## Credit ledger
+
+`credit_transactions` makes every credit balance change attributable. For any
+account with a non-null balance, that balance equals the sum of the account's
+deltas; an account with a null balance is unmetered and owns no rows.
+
+The table carries two constraints that enforce behavior rather than describe
+shape. `UNIQUE (user_id, grant_period)` is the idempotency key for the lazy
+monthly grant, so an account receives at most one grant per calendar month
+however many requests race. `UNIQUE (refunds_transaction_id)` makes a charge
+refundable at most once, so a failure handler that runs twice cannot mint
+credit. Both rely on NULL comparing as distinct, which SQLite and PostgreSQL
+agree on, so the many rows carrying neither value never collide.
+
+`user_id` cascades on delete, because a deleted account's ledger has no subject.
+`actor_user_id` uses `SET NULL` instead: deleting an administrator must not erase
+the record of grants they made, so `actor_label` keeps their email as a snapshot.
+
+The ledger is append-only. `services/credits.py` offers no update or delete path,
+and corrections are recorded as new, opposing transactions.
+
+Full policy, reasons, and the migration backfill rule are in `docs/credits.md`.
 
 ## Limits and failure behavior
 

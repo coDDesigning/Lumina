@@ -1,11 +1,16 @@
 import pytest
+from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.models import Course, DocumentChunk, UploadedDocument, User
+from schemas.credits import CreditReason
+from services import credits as credits_service
 from services.text_generation import (
     GenerationMetadata,
     TextGenerationConnectionError,
 )
-from services.user import UserService
+from services.credits import CreditService
+from tests.conftest import assert_balance_is_derivable, rows, set_balance
 
 
 class StubProvider:
@@ -98,14 +103,12 @@ def test_user_initial_credits_and_charge(authz_api):
         user = session.get(User, authz_api.user_a_id)
         assert user.credits == 50.0
 
-        # Charge 1 credit
-        success = UserService.charge_credits(session, user.id, 1.0)
-        assert success is True
+        receipt = CreditService.charge(session, user.id, 1.0, source_type="course_qa")
+        assert receipt is not None
         session.refresh(user)
         assert user.credits == 49.0
 
-        # Refund 1 credit
-        UserService.refund_credits(session, user.id, 1.0)
+        CreditService.refund(session, receipt)
         session.refresh(user)
         assert user.credits == 50.0
 
@@ -115,15 +118,22 @@ def test_admin_has_unlimited_credits(authz_api):
         admin = session.get(User, authz_api.admin_id)
         assert admin.credits is None
 
-        # Charging admin always succeeds without decreasing credits
-        success = UserService.charge_credits(session, admin.id, 1.0)
-        assert success is True
+        receipt = CreditService.charge(session, admin.id, 1.0, source_type="course_qa")
+        assert receipt is not None
+        assert receipt.is_exempt is True
         session.refresh(admin)
         assert admin.credits is None
 
 
-def test_insufficient_credits_returns_402(authz_api, monkeypatch: pytest.MonkeyPatch):
-    _add_material(authz_api.session_factory, authz_api.user_a_id, authz_api.a_course_id)
+def test_insufficient_credits_returns_402(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+):
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
 
     with authz_api.session_factory() as session:
         user = session.get(User, authz_api.user_a_id)
@@ -148,8 +158,15 @@ def test_insufficient_credits_returns_402(authz_api, monkeypatch: pytest.MonkeyP
     assert "credits" in res.json()["detail"].lower()
 
 
-def test_failed_generation_refunds_credits(authz_api, monkeypatch: pytest.MonkeyPatch):
-    _add_material(authz_api.session_factory, authz_api.user_a_id, authz_api.a_course_id)
+def test_failed_generation_refunds_credits(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+):
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
 
     with authz_api.session_factory() as session:
         user = session.get(User, authz_api.user_a_id)
@@ -173,6 +190,55 @@ def test_failed_generation_refunds_credits(authz_api, monkeypatch: pytest.Monkey
     assert res.status_code == 503
 
     # Credits must be refunded back to 10.0
+    with authz_api.session_factory() as session:
+        user = session.get(User, authz_api.user_a_id)
+        assert user.credits == 10.0
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "provider_dependency"),
+    [
+        ("qa", "routes.course_qa.get_text_generation_provider"),
+        ("ai-tutor", "routes.ai_tutor.get_text_generation_provider"),
+    ],
+)
+def test_conversation_persistence_failure_refunds_credits(
+    authz_api,
+    retrieval_env,
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    provider_dependency: str,
+):
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
+    with authz_api.session_factory() as session:
+        user = session.get(User, authz_api.user_a_id)
+        user.credits = 10.0
+        session.commit()
+
+    monkeypatch.setattr(provider_dependency, lambda **kwargs: StubProvider())
+    original_commit = Session.commit
+    commit_count = 0
+
+    def fail_conversation_commit(session: Session) -> None:
+        nonlocal commit_count
+        commit_count += 1
+        if commit_count == 2:
+            raise RuntimeError("Conversation persistence failed")
+        original_commit(session)
+
+    monkeypatch.setattr(Session, "commit", fail_conversation_commit)
+    response = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/{endpoint}",
+        json={"question": "What is sorting?"},
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 500
     with authz_api.session_factory() as session:
         user = session.get(User, authz_api.user_a_id)
         assert user.credits == 10.0
@@ -214,3 +280,109 @@ def test_successful_generation_deducts_credits(
     with authz_api.session_factory() as session:
         user = session.get(User, authz_api.user_a_id)
         assert user.credits == 24.0
+
+
+def test_an_exhausted_account_recovers_after_an_administrator_change(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+):
+    """Zero is not a dead end: an administrator can lift an account off it.
+
+    This is the whole point of the administrative path. Before it existed an
+    account that spent its allowance stayed at 402 until the calendar moved.
+    """
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 0.0)
+
+    monkeypatch.setattr(
+        "routes.course_qa.get_text_generation_provider",
+        lambda **kwargs: StubProvider(),
+    )
+    question = {"question": "What are algorithms?"}
+    url = f"/api/courses/{authz_api.a_course_id}/qa"
+
+    blocked = authz_api.client.post(
+        url, json=question, headers=authz_api.authorization_a
+    )
+    assert blocked.status_code == 402
+
+    recovered = authz_api.client.post(
+        "/api/admin/users/owner-a@example.com/credits",
+        json={
+            "delta": 10,
+            "reason": "support_compensation",
+            "note": "Support recovery",
+        },
+        headers=authz_api.authorization_admin,
+    )
+    assert recovered.status_code == 200
+    assert recovered.json()["data"]["user"]["credits"] == 10.0
+
+    allowed = authz_api.client.post(
+        url, json=question, headers=authz_api.authorization_a
+    )
+    assert allowed.status_code == 200
+
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 9.0
+        history = rows(session, authz_api.user_a_id)
+        assert [row.reason for row in history[-2:]] == [
+            CreditReason.SUPPORT_COMPENSATION.value,
+            CreditReason.GENERATION_CHARGE.value,
+        ]
+        assert history[-2].delta == 10.0
+        assert history[-2].actor_user_id == authz_api.admin_id
+        assert history[-1].delta == -1.0
+        assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
+def test_an_exhausted_account_recovers_when_the_next_month_grants(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+):
+    """The other way out of zero needs no support action at all.
+
+    The monthly grant is lazy, so it lands on the account's next attempt in a
+    new period rather than waiting for a scheduler to have run.
+    """
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 0.0)
+
+    monkeypatch.setattr(
+        "routes.course_qa.get_text_generation_provider",
+        lambda **kwargs: StubProvider(),
+    )
+    question = {"question": "What are algorithms?"}
+    url = f"/api/courses/{authz_api.a_course_id}/qa"
+
+    blocked = authz_api.client.post(
+        url, json=question, headers=authz_api.authorization_a
+    )
+    assert blocked.status_code == 402
+
+    monkeypatch.setattr(credits_service, "current_grant_period", lambda: "2099-01")
+
+    allowed = authz_api.client.post(
+        url, json=question, headers=authz_api.authorization_a
+    )
+    assert allowed.status_code == 200
+
+    with authz_api.session_factory() as session:
+        expected = settings.credit_periodic_grant - 1.0
+        assert session.get(User, authz_api.user_a_id).credits == expected
+        history = rows(session, authz_api.user_a_id)
+        assert [row.reason for row in history[-2:]] == [
+            CreditReason.PERIODIC_GRANT.value,
+            CreditReason.GENERATION_CHARGE.value,
+        ]
+        assert history[-2].delta == settings.credit_periodic_grant
+        assert history[-2].grant_period == "2099-01"
+        assert_balance_is_derivable(session, authz_api.user_a_id)

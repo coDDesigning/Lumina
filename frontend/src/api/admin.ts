@@ -1,5 +1,11 @@
 import { apiClient, unwrapData } from './client';
-import type { BaseResponse, User } from './types';
+import type {
+  AdminCreditReason,
+  BaseResponse,
+  CreditMutation,
+  CreditTransaction,
+  User,
+} from './types';
 
 export const adminAPI = {
   listUsers: async (options?: RequestInit): Promise<User[]> => {
@@ -36,5 +42,28 @@ export const adminAPI = {
       options,
     );
     return unwrapData(res, 'Admin change user role');
+  },
+
+  changeCredits: async (
+    email: string,
+    delta: number,
+    reason: AdminCreditReason,
+    note?: string,
+  ): Promise<CreditMutation> => {
+    const res = await apiClient.post<BaseResponse<CreditMutation>>(
+      `/admin/users/${encodeURIComponent(email)}/credits`,
+      { delta, reason, note: note || null },
+    );
+    return unwrapData(res, 'Admin change credits');
+  },
+
+  listUserCreditTransactions: async (
+    email: string,
+    limit = 20,
+  ): Promise<CreditTransaction[]> => {
+    const res = await apiClient.get<BaseResponse<CreditTransaction[]>>(
+      `/admin/users/${encodeURIComponent(email)}/credit-transactions?limit=${limit}`,
+    );
+    return unwrapData(res, 'Admin user credit transactions');
   },
 };

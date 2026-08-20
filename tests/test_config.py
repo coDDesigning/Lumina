@@ -28,11 +28,16 @@ from backend.app.config import (
     DEFAULT_EMBEDDING_PROVIDER,
     DEFAULT_EMBEDDING_TIMEOUT_SECONDS,
     DEFAULT_GEMINI_EMBEDDING_MODEL,
-    DEFAULT_OLLAMA_EMBEDDING_MODEL,
+    DEFAULT_GEMINI_IMAGE_MODEL,
+    DEFAULT_IMAGE_PROVIDER,
+    DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES,
+    DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS,
     DEFAULT_OCR_DPI,
     DEFAULT_OCR_LANGUAGE,
     DEFAULT_OCR_MIN_TEXT_CHARACTERS,
     DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OLLAMA_EMBEDDING_MODEL,
+    DEFAULT_OLLAMA_IMAGE_MODEL,
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
     DEFAULT_PROCESSING_JOB_LEASE_SECONDS,
@@ -41,9 +46,11 @@ from backend.app.config import (
     DEFAULT_UPLOAD_REQUEST_TIMEOUT_SECONDS,
     IMPLEMENTED_AI_PROVIDERS,
     IMPLEMENTED_EMBEDDING_PROVIDERS,
+    IMPLEMENTED_IMAGE_PROVIDERS,
     MODE_HOSTED,
     MODE_SELF_HOSTED,
     RECOGNIZED_AI_PROVIDERS,
+    RECOGNIZED_IMAGE_PROVIDERS,
     VECTOR_BACKEND_CHROMA,
     VECTOR_BACKEND_PGVECTOR,
     load_settings,
@@ -107,6 +114,11 @@ CONFIGURATION_KEYS = (
     "GEMINI_EMBEDDING_MODEL",
     "EMBEDDING_BATCH_SIZE",
     "EMBEDDING_TIMEOUT_SECONDS",
+    "IMAGE_PROVIDER",
+    "OLLAMA_IMAGE_MODEL",
+    "GEMINI_IMAGE_MODEL",
+    "IMAGE_UNDERSTANDING_TIMEOUT_SECONDS",
+    "IMAGE_UNDERSTANDING_MAX_BYTES",
     "VECTOR_BACKEND",
     "STUDY_GUIDE_MATERIAL_MAX_CHARS",
     "QUIZ_MATERIAL_MAX_CHARS",
@@ -1152,3 +1164,91 @@ def test_chroma_backend_is_allowed_on_postgresql(
     monkeypatch.setenv("VECTOR_BACKEND", VECTOR_BACKEND_CHROMA)
 
     assert load_settings().vector_backend == VECTOR_BACKEND_CHROMA
+
+
+def test_image_understanding_defaults_are_disabled() -> None:
+    loaded = load_settings()
+
+    assert loaded.image_provider == DEFAULT_IMAGE_PROVIDER
+    assert loaded.ollama_image_model == DEFAULT_OLLAMA_IMAGE_MODEL
+    assert loaded.gemini_image_model == DEFAULT_GEMINI_IMAGE_MODEL
+    assert (
+        loaded.image_understanding_timeout_seconds
+        == DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS
+    )
+    assert loaded.image_understanding_max_bytes == DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES
+
+
+def test_image_provider_rejects_unrecognized_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", "unsupported")
+
+    with pytest.raises(ValueError, match="IMAGE_PROVIDER"):
+        load_settings()
+
+
+@pytest.mark.parametrize("provider", ["openai", "claude"])
+def test_recognized_but_unimplemented_image_provider_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", provider)
+
+    with pytest.raises(ValueError, match="not implemented"):
+        load_settings()
+
+
+@pytest.mark.parametrize("provider", IMPLEMENTED_IMAGE_PROVIDERS)
+def test_every_implemented_image_provider_configures(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", provider)
+
+    assert load_settings().image_provider == provider
+
+
+def test_implemented_image_providers_are_recognized() -> None:
+    assert IMPLEMENTED_IMAGE_PROVIDERS == ("none", "gemini", "ollama")
+    assert set(IMPLEMENTED_IMAGE_PROVIDERS) <= set(RECOGNIZED_IMAGE_PROVIDERS)
+
+
+def test_ollama_image_model_rejects_unsafe_characters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "bad vision model!")
+
+    with pytest.raises(ValueError, match="OLLAMA_IMAGE_MODEL"):
+        load_settings()
+
+
+def test_gemini_image_model_must_not_be_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_IMAGE_MODEL", "   ")
+
+    with pytest.raises(ValueError, match="GEMINI_IMAGE_MODEL"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["0", "301", "not-a-number"])
+def test_image_understanding_timeout_seconds_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("IMAGE_UNDERSTANDING_TIMEOUT_SECONDS", value)
+
+    with pytest.raises(ValueError, match="IMAGE_UNDERSTANDING_TIMEOUT_SECONDS"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["0", "1023", str(51 * 1024 * 1024), "not-a-number"])
+def test_image_understanding_max_bytes_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("IMAGE_UNDERSTANDING_MAX_BYTES", value)
+
+    with pytest.raises(ValueError, match="IMAGE_UNDERSTANDING_MAX_BYTES"):
+        load_settings()

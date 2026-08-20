@@ -47,6 +47,21 @@ DEFAULT_GEMINI_EMBEDDING_MODEL = "text-embedding-004"
 DEFAULT_EMBEDDING_BATCH_SIZE = 32
 DEFAULT_EMBEDDING_TIMEOUT_SECONDS = 60
 
+IMAGE_PROVIDER_NONE = "none"
+IMAGE_PROVIDER_GEMINI = "gemini"
+IMAGE_PROVIDER_OLLAMA = "ollama"
+RECOGNIZED_IMAGE_PROVIDERS = ("none", "ollama", "openai", "gemini", "claude")
+IMPLEMENTED_IMAGE_PROVIDERS = (
+    IMAGE_PROVIDER_NONE,
+    IMAGE_PROVIDER_GEMINI,
+    IMAGE_PROVIDER_OLLAMA,
+)
+DEFAULT_IMAGE_PROVIDER = IMAGE_PROVIDER_NONE
+DEFAULT_OLLAMA_IMAGE_MODEL = "llama3.2-vision"
+DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash"
+DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS = 30
+DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES = 10 * 1024 * 1024
+
 VECTOR_BACKEND_PGVECTOR = "pgvector"
 VECTOR_BACKEND_CHROMA = "chroma"
 VECTOR_BACKENDS = (VECTOR_BACKEND_PGVECTOR, VECTOR_BACKEND_CHROMA)
@@ -134,6 +149,13 @@ class Settings:
     embedding_batch_size: int
     embedding_timeout_seconds: int
     vector_backend: str
+
+    # Visual understanding / image provider configuration
+    image_provider: str
+    ollama_image_model: str
+    gemini_image_model: str
+    image_understanding_timeout_seconds: int
+    image_understanding_max_bytes: int
 
     # Maximum accepted document size before content validation
     max_upload_size_bytes: int
@@ -538,6 +560,50 @@ def load_settings() -> Settings:
         maximum=300,
     )
 
+    image_provider = (
+        os.getenv("IMAGE_PROVIDER", DEFAULT_IMAGE_PROVIDER).strip().lower()
+        or DEFAULT_IMAGE_PROVIDER
+    )
+    if image_provider not in RECOGNIZED_IMAGE_PROVIDERS:
+        raise ValueError(
+            f"IMAGE_PROVIDER must be one of: {', '.join(RECOGNIZED_IMAGE_PROVIDERS)}."
+        )
+    if image_provider not in IMPLEMENTED_IMAGE_PROVIDERS:
+        raise ValueError(
+            f"IMAGE_PROVIDER '{image_provider}' is recognized but not "
+            "implemented yet. Implemented providers: "
+            f"{', '.join(IMPLEMENTED_IMAGE_PROVIDERS)}."
+        )
+
+    ollama_image_model = os.getenv(
+        "OLLAMA_IMAGE_MODEL",
+        DEFAULT_OLLAMA_IMAGE_MODEL,
+    ).strip()
+    if not OLLAMA_MODEL_PATTERN.fullmatch(ollama_image_model):
+        raise ValueError(
+            "OLLAMA_IMAGE_MODEL must contain 1-128 characters limited to letters, "
+            "digits, dots, colons, slashes, dashes, or underscores."
+        )
+    gemini_image_model = os.getenv(
+        "GEMINI_IMAGE_MODEL",
+        DEFAULT_GEMINI_IMAGE_MODEL,
+    ).strip()
+    if not gemini_image_model or len(gemini_image_model) > 128:
+        raise ValueError("GEMINI_IMAGE_MODEL must contain 1-128 non-blank characters.")
+
+    image_understanding_timeout_seconds = _bounded_positive_integer_setting(
+        "IMAGE_UNDERSTANDING_TIMEOUT_SECONDS",
+        DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=300,
+    )
+    image_understanding_max_bytes = _bounded_positive_integer_setting(
+        "IMAGE_UNDERSTANDING_MAX_BYTES",
+        DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES,
+        minimum=1024,
+        maximum=50 * 1024 * 1024,
+    )
+
     database_is_postgresql = make_url(database_url).get_backend_name() == "postgresql"
     default_vector_backend = (
         VECTOR_BACKEND_PGVECTOR if database_is_postgresql else VECTOR_BACKEND_CHROMA
@@ -604,6 +670,11 @@ def load_settings() -> Settings:
         embedding_batch_size=embedding_batch_size,
         embedding_timeout_seconds=embedding_timeout_seconds,
         vector_backend=vector_backend,
+        image_provider=image_provider,
+        ollama_image_model=ollama_image_model,
+        gemini_image_model=gemini_image_model,
+        image_understanding_timeout_seconds=image_understanding_timeout_seconds,
+        image_understanding_max_bytes=image_understanding_max_bytes,
         max_upload_size_bytes=max_upload_size_bytes,
         max_request_size_bytes=max_request_size_bytes,
         max_concurrent_document_validations=max_concurrent_document_validations,

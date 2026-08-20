@@ -116,7 +116,8 @@ image (`Dockerfile`) and runs the same three roles:
 | VPC | Public/private subnets, one NAT gateway, route tables |
 | ECR | `lumina` repository (immutable tags, scan on push, keep 20 images) |
 | S3 | Document bucket (versioned, encrypted, TLS-only policy) |
-| RDS | PostgreSQL 16 with pgvector preloaded; `DATABASE_URL` in Secrets Manager |
+| RDS | PostgreSQL 16.8+, pgvector 0.8+, storage autoscaling, Performance Insights |
+| RDS Proxy | TLS-only runtime connection pool; direct RDS access is migrator-only |
 | ECS | Fargate `api` + `worker` services, one-off `migrate` task definition |
 | ALB | HTTPS (ACM) listener, HTTP-to-HTTPS redirect, `/health/ready` target check |
 | Route53 | Optional A alias to the ALB |
@@ -124,17 +125,27 @@ image (`Dockerfile`) and runs the same three roles:
 Apply order matters once, on the first rollout: the ECS tasks read
 `JWT_SECRET_KEY`, `BOOTSTRAP_ADMIN_TOKEN`, and `GEMINI_API_KEY` from SSM
 parameter paths under `/<project>-<environment>/` (see `terraform/README.md`),
-and the `DATABASE_URL` from Secrets Manager. The secrets module (SCRUM-94)
+and the runtime `DATABASE_URL` from Secrets Manager. The secrets module (SCRUM-94)
 creates those parameters, so run the full Terraform apply before the first
 deploy pipeline run. ECS services retry task starts until the parameters
-exist. On the first RDS apply, the `vector` preload in the parameter group
-requires a one-time instance reboot.
+exist. Alembic installs and upgrades the `vector` extension and refuses a
+version older than 0.8.0.
 
 On AWS the application uses IAM roles, not static credentials: the ECS task
 role gets `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject` on the document
 bucket, and `S3_ENDPOINT_URL`/`S3_FORCE_PATH_STYLE` are not set. The worker
-remains a single Fargate task (durable single consumer); the API autoscales
-between `api_min_instances` and `api_max_instances` on CPU.
+autoscales between `worker_min_instances` and `worker_max_instances` on the
+oldest queued-job age; the API autoscales between `api_min_instances` and
+`api_max_instances` on CPU.
+
+Horizontal scaling is qualified only for the AWS hosted topology:
+PostgreSQL `SKIP LOCKED` partitions claims across workers, claim tokens and
+leases fence stale workers, RDS Proxy bounds database connections, and S3 plus
+pgvector provide shared durable state. Scale-in has a 120-second Fargate stop
+timeout; a task killed after that cannot publish through an expired token and
+the next worker recovers its lease. Self-hosted SQLite/local/Chroma remains a
+single-host, single-worker topology. Provider concurrency and upload limits are
+per process, so raising replica maxima multiplies upstream AI/embedding load.
 
 Deployments run through the SCRUM-93 workflow: it builds and pushes the image
 to ECR, registers new task definition revisions, runs the one-off `migrate`
@@ -148,9 +159,11 @@ Runtime secrets are stored in AWS Systems Manager Parameter Store as
 into the ECS task definitions at task start (container `secrets` entries, read
 by the task execution role). The Terraform `secrets` module creates them from
 the `runtime_secrets` map in `terraform.tfvars`; no secret value is committed
-or stored in GitHub. The `DATABASE_URL` with the generated RDS password lives
-in Secrets Manager. The ECS task role authenticates to S3 with an IAM role; no
-static AWS keys exist on the platform side.
+or stored in GitHub. Secrets Manager holds separate TLS URLs for runtime and
+migration: API/worker use RDS Proxy, while the one-shot migrator connects
+directly to RDS. A third credential document is readable only by RDS Proxy.
+The ECS task role authenticates to S3 with an IAM role; no static AWS keys
+exist on the platform side.
 
 The GitHub Actions deploy role uses OIDC federation
 (`github-oidc` Terraform module): the trust policy accepts the `main` branch
@@ -158,6 +171,16 @@ of the repository only, and the role can deploy but cannot read the runtime
 secrets. Set its ARN as the `AWS_DEPLOY_ROLE_ARN` secret and the Terraform
 outputs as variables on the GitHub `production` environment, then the SCRUM-93
 workflow deploys without any stored long-lived credentials.
+
+### AWS observability
+
+Application and worker logs are single-line privacy-safe JSON in CloudWatch
+Logs. Request IDs correlate API events; worker queue and outcome metrics use
+CloudWatch Embedded Metric Format. Terraform provisions the operations
+dashboard, SNS alarm topic, and baseline ALB/ECS/RDS/RDS Proxy/queue alarms.
+Set the optional `alarm_email` Terraform variable and confirm the SNS
+subscription before launch. See `docs/observability.md` for the field contract,
+thresholds, and required staging alarm exercise.
 
 ### AWS deploy pipeline
 

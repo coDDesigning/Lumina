@@ -22,6 +22,10 @@ variable "allocated_storage_gb" {
   type = number
 }
 
+variable "max_allocated_storage_gb" {
+  type = number
+}
+
 variable "multi_az" {
   type = bool
 }

@@ -7,11 +7,12 @@ same image used by `docker-compose.hosted.yml`:
 - VPC with public/private subnets, a single NAT gateway, and route tables;
 - ECR repository with immutable tags, scanning, and lifecycle retention;
 - S3 bucket for uploaded documents (versioned, encrypted, deny-insecure-TLS);
-- RDS PostgreSQL with pgvector preloaded and its `DATABASE_URL` in Secrets
-  Manager;
+- RDS PostgreSQL with pgvector 0.8+, storage autoscaling, and a TLS-only RDS
+  Proxy for API/worker connection pooling;
 - ECS Fargate services `api` (behind an ALB with ACM TLS and autoscaling) and
   `worker`, plus a one-off `migrate` task definition;
 - an optional Route53 alias to the ALB.
+- CloudWatch JSON logs, dashboard, worker EMF metrics, alarms, and an SNS topic.
 
 The initial ECS task definitions read runtime secrets from AWS Systems Manager
 Parameter Store paths under `/<project>-<environment>/` (for example
@@ -41,10 +42,10 @@ terraform plan
 terraform apply
 ```
 
-On the first RDS apply, the `vector` preload requires a one-time instance
-reboot (parameter group applies `pending-reboot`). The ECS services start
-before the SSM parameters exist; they retry automatically, so run the secrets
-step (SCRUM-94) before the first deploy pipeline run.
+The `vector` extension is installed and upgraded by Alembic; it is not a
+`shared_preload_libraries` entry. The ECS services start before the SSM
+parameters exist; they retry automatically, so run the secrets step
+(SCRUM-94) before the first deploy pipeline run.
 
 ## Runtime secret paths
 
@@ -54,8 +55,18 @@ step (SCRUM-94) before the first deploy pipeline run.
 | `/<prefix>/bootstrap-admin-token` | `BOOTSTRAP_ADMIN_TOKEN`, min 32 visible ASCII |
 | `/<prefix>/gemini-api-key` | `GEMINI_API_KEY` for hosted AI and embeddings |
 
-The `DATABASE_URL` is stored in Secrets Manager
-(`<prefix>/database-url`) and is created by the RDS module.
+Database values are stored in three Secrets Manager entries:
+
+- `<prefix>/runtime-database-url` targets RDS Proxy and is injected into API
+  and worker tasks;
+- `<prefix>/database-url` targets RDS directly and is injected only into the
+  one-shot migrator; and
+- `<prefix>/database-credentials` is readable only by RDS Proxy.
+
+Both URLs require TLS. Runtime connection counts are bounded per process by
+`DATABASE_POOL_SIZE` plus `DATABASE_MAX_OVERFLOW`, while the proxy reserves a
+configurable percentage of RDS connections for administrative and migration
+work.
 
 The parameters are created by the secrets module from the `runtime_secrets`
 map. Provide the values in a private `terraform.tfvars` (never committed) and
@@ -100,9 +111,13 @@ deploy.
 
 - The ALB health check targets `GET /health/ready` on the container port, the
   same probe used by Compose.
+- Set `alarm_email` to subscribe an operator to alarm and recovery events; SNS
+  requires the recipient to confirm the subscription.
 - API autoscaling is CPU-based target tracking between `api_min_instances` and
-  `api_max_instances`. The worker stays at a single task: it is a durable
-  single-consumer job processor.
+  `api_max_instances`. Workers scale between `worker_min_instances` and
+  `worker_max_instances` on the maximum oldest queued-job age. PostgreSQL
+  `SKIP LOCKED`, claim tokens, and expiring leases make concurrent claims safe;
+  self-hosted SQLite/Chroma is not horizontally scaled.
 - `terraform destroy` refuses to delete the protected RDS instance and ALB
   until protection is lifted; that is deliberate.
 - The state bucket is configured with `backend "s3" {}` and the concrete

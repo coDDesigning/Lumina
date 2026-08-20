@@ -18,6 +18,12 @@ python -m alembic current --check-heads
 python -m alembic check
 ```
 
+CI also exercises both supported dialects through a disposable migration
+lifecycle: fresh upgrade, head and drift checks, one-revision downgrade and
+re-upgrade, full downgrade to base, and final re-upgrade. Production migrator
+containers run `upgrade head`, `current --check-heads`, and `check`; a service
+never starts after a partial migration or schema drift.
+
 Exactly one deployment-owned process may apply migrations. API and worker
 entrypoints must never migrate or stamp the database. In the supported
 self-hosted container topology, the one-shot `migrate` service completes before
@@ -95,7 +101,9 @@ toward `PROCESSING_JOB_MAX_ATTEMPTS`.
 The API and worker must use the same `DATABASE_URL`, `STORAGE_BACKEND`,
 `STORAGE_NAMESPACE`, and storage contents. The supported self-hosted Compose
 topology runs on one host and shares one named volume. Multiple hosts remain
-unsupported because no qualified durable shared storage topology exists.
+unsupported for self-hosted mode because SQLite/local storage/Chroma are not a
+qualified multi-writer topology. AWS hosted mode uses PostgreSQL, RDS Proxy,
+S3, and pgvector and supports multiple API and worker tasks.
 
 ## PostgreSQL qualification
 
@@ -114,6 +122,15 @@ Alembic revision.
 This qualification covers the hosted production database path. Hosted
 production additionally requires S3-compatible document storage
 (`STORAGE_BACKEND=s3`); see `docs/deployment.md` for the hosted topology.
+
+AWS API and worker tasks use TLS-only RDS Proxy. Each process has an explicit
+SQLAlchemy pool budget (`DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW`, and
+`DATABASE_POOL_RECYCLE_SECONDS`); RDS Proxy then limits database-side
+connections to a configured share of the instance. The migrator bypasses the
+proxy with a separate direct URL so DDL and schema locks never contend with
+runtime pooling. RDS parameters log queries slower than one second, bound idle
+transactions, and set conservative work-memory/autovacuum defaults; tune them
+only from observed production plans and memory pressure.
 
 ## Durable state machine
 
@@ -141,6 +158,13 @@ choosing work; PostgreSQL uses `FOR UPDATE OF processing_jobs SKIP LOCKED`.
 Every running claim receives a unique token and expiring lease. Heartbeat,
 completion, and failure transitions require the current token. A stale worker
 therefore cannot overwrite a reclaimed attempt.
+
+The AWS worker service scales on `OldestQueuedAgeSeconds`. Every claim commits
+before extraction starts, so workers never hold queue locks during OCR,
+embedding, or storage calls. A 120-second task stop timeout allows graceful
+completion; if scale-in kills a longer attempt, lease recovery and claim-token
+fencing make the retry safe. RDS Proxy and the per-process SQLAlchemy pool
+budget must be sized before increasing replica maxima.
 
 Workers recover expired leases periodically, not only at startup. Chunk
 replacement, embedding storage, document completion, and job completion commit
@@ -520,4 +544,3 @@ When assembling context for course-scoped AI features:
    conflicting statements, course material is authoritative.
 4. **Isolation**: A user's profile knowledge is never exposed to or included in another
    user's generation context.
-

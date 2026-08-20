@@ -6,6 +6,7 @@ export type WorkspaceSource = {
 
 export type Workspace = {
   id: string
+  ownerId?: number
   name: string
   semester: string
   examDate: string

@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 from alembic import command
 from alembic.config import Config
+from chromadb.api.client import SharedSystemClient
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -329,7 +330,7 @@ class RetrievalContext:
 def retrieval_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> RetrievalContext:
+) -> Iterator[RetrievalContext]:
     """Wire semantic retrieval to a real vector store and a deterministic embedder.
 
     Patching ``services.semantic_retrieval`` is enough because that module
@@ -346,7 +347,12 @@ def retrieval_env(
         semantic_retrieval_service, "get_embedding_provider", lambda: provider
     )
     monkeypatch.setattr(semantic_retrieval_service, "get_vector_store", lambda: store)
-    return RetrievalContext(provider=provider, store=store)
+    try:
+        yield RetrievalContext(provider=provider, store=store)
+    finally:
+        if isinstance(store, ChromaVectorStore):
+            store.close()
+            SharedSystemClient.clear_system_cache()
 
 
 @pytest.fixture

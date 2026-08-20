@@ -1,15 +1,14 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
 from schemas.ai_tutor import AiTutorGenerationResult, AiTutorRequest
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
-from services.ai_tutor import AiTutorError, AiTutorService
+from services.ai_tutor import AiTutorService
 from services.text_generation import (
-    TextGenerationError,
     get_text_generation_provider,
     resolve_effective_model,
 )
@@ -31,6 +30,7 @@ router = APIRouter(
         401: {"description": "Authentication required"},
         402: {"description": "Insufficient credits"},
         404: {"description": "Course not found"},
+        409: {"description": "Course material is not indexed or did not match"},
         429: {"description": "AI provider rate limited"},
         503: {"description": "AI provider unreachable"},
         504: {"description": "AI provider timed out"},
@@ -57,9 +57,12 @@ def ask_ai_tutor(
             request.question,
             provider,
             user_id=current_user.id,
+            conversation_id=request.conversation_id,
         )
 
-    except (TextGenerationError, AiTutorError, Exception) as exc:
+    except HTTPException:
+        raise
+    except Exception as exc:
         raise ai_generation_http_exception(exc, feature="ai_tutor") from exc
 
     return BaseResponse(
@@ -67,8 +70,12 @@ def ask_ai_tutor(
         message="AI tutor response generated successfully",
         data=AiTutorGenerationResult(
             answer=generation.response.answer,
+            conversation_id=generation.conversation_id,
             context_truncated=generation.material.truncated,
             chunks_used=generation.material.chunks_used,
             chunks_available=generation.material.chunks_available,
+            retrieval_narrowed=generation.material.retrieval_narrowed,
+            lowest_similarity=generation.material.lowest_similarity,
+            highest_similarity=generation.material.highest_similarity,
         ),
     )

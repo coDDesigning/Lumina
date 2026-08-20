@@ -257,8 +257,8 @@ retrieval-backed.
 
 ## What this does not cover
 
-Full feature wiring. Study guide generation reads retrieved material; quiz,
-flashcard, AI tutor, and course Q&A still read whole-corpus material through
-`services/course_material.py`, which selects by chunk order and bounds the
-assembled material to a per-feature character budget. Switching each of those over
-is a product decision, not a plumbing change.
+Full feature wiring. Study guide, quiz, AI tutor, and course Q&A generation read
+retrieved material. Flashcard generation still reads whole-corpus material
+through `services/course_material.py`, which selects by chunk order and bounds
+the assembled material to its feature character budget. Switching that feature
+over is a product decision, not a plumbing change.

@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from backend.app.models import (
     AiUsageLog,
     ChunkEmbedding,
+    Conversation,
+    ConversationMessage,
     Course,
     CreditTransaction,
     DocumentChunk,
@@ -117,6 +119,16 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
             output_type="summary",
             content="Contract summary",
         )
+        conversation = Conversation(
+            user=user,
+            course=course,
+            conversation_type="course_qa",
+        )
+        conversation_message = ConversationMessage(
+            conversation=conversation,
+            role="user",
+            content="Contract conversation message",
+        )
         quiz = Quiz(course=course, title="Contract quiz")
         question = QuizQuestion(
             quiz=quiz,
@@ -166,6 +178,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
                 visual,
                 chunk,
                 generated_output,
+                conversation_message,
                 question,
                 attempt,
                 attempt_answer,
@@ -185,6 +198,8 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         chunk_id = chunk.id
         job_id = job.id
         generated_output_id = generated_output.id
+        conversation_id = conversation.id
+        conversation_message_id = conversation_message.id
         quiz_id = quiz.id
         question_id = question.id
         attempt_id = attempt.id
@@ -210,6 +225,8 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
             session.get(DocumentVisual, visual_id),
             session.get(DocumentChunk, chunk_id),
             session.get(GeneratedOutput, generated_output_id),
+            session.get(Conversation, conversation_id),
+            session.get(ConversationMessage, conversation_message_id),
             session.get(Quiz, quiz_id),
             session.get(QuizAttempt, attempt_id),
             session.get(Progress, progress_id),
@@ -234,6 +251,8 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
         assert session.get(DocumentChunk, chunk_id) is None
         assert session.get(ProcessingJob, job_id) is None
         assert session.get(GeneratedOutput, generated_output_id) is None
+        assert session.get(Conversation, conversation_id) is None
+        assert session.get(ConversationMessage, conversation_message_id) is None
         assert session.get(Quiz, quiz_id) is None
         assert session.get(QuizQuestion, question_id) is None
         assert session.get(QuizAttempt, attempt_id) is None
@@ -281,6 +300,16 @@ def test_unloaded_course_delete_cascades_every_course_branch(
             output_type="summary",
             content="Course contract summary",
         )
+        conversation = Conversation(
+            user=user,
+            course=course,
+            conversation_type="ai_tutor",
+        )
+        conversation_message = ConversationMessage(
+            conversation=conversation,
+            role="assistant",
+            content="Course cascade conversation message",
+        )
         quiz = Quiz(course=course, title="Course contract quiz")
         question = QuizQuestion(
             quiz=quiz,
@@ -314,6 +343,7 @@ def test_unloaded_course_delete_cascades_every_course_branch(
             (
                 document,
                 generated_output,
+                conversation_message,
                 question,
                 attempt,
                 attempt_answer,
@@ -328,6 +358,8 @@ def test_unloaded_course_delete_cascades_every_course_branch(
         user_id = user.id
         course_id = course.id
         generated_output_id = generated_output.id
+        conversation_id = conversation.id
+        conversation_message_id = conversation_message.id
         quiz_id = quiz.id
         question_id = question.id
         attempt_id = attempt.id
@@ -346,6 +378,8 @@ def test_unloaded_course_delete_cascades_every_course_branch(
         assert session.get(UploadedDocument, document_id) is None
         assert session.get(ProcessingJob, job_id) is None
         assert session.get(GeneratedOutput, generated_output_id) is None
+        assert session.get(Conversation, conversation_id) is None
+        assert session.get(ConversationMessage, conversation_message_id) is None
         assert session.get(Quiz, quiz_id) is None
         assert session.get(QuizQuestion, question_id) is None
         assert session.get(QuizAttempt, attempt_id) is None
@@ -354,6 +388,43 @@ def test_unloaded_course_delete_cascades_every_course_branch(
         assert session.get(AiUsageLog, usage_log_id) is None
         assert session.get(User, user_id) is not None
         assert session.get(ProfileKnowledge, knowledge_id) is not None
+
+
+def test_unloaded_conversation_delete_cascades_messages(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Conversation cascade user",
+            email="conversation-cascade@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        course = Course(owner=user, title="Conversation cascade course")
+        conversation = Conversation(
+            user=user,
+            course=course,
+            conversation_type="course_qa",
+        )
+        message = ConversationMessage(
+            conversation=conversation,
+            role="user",
+            content="Delete this with its conversation.",
+        )
+        session.add(message)
+        session.commit()
+        conversation_id = conversation.id
+        message_id = message.id
+
+    with session_factory() as session:
+        session.execute(delete(Conversation).where(Conversation.id == conversation_id))
+        session.commit()
+
+    with session_factory() as session:
+        assert session.get(Conversation, conversation_id) is None
+        assert session.get(ConversationMessage, message_id) is None
 
 
 def test_referenced_role_delete_is_restricted(

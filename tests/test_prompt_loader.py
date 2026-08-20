@@ -252,17 +252,33 @@ def test_ai_tutor_template_regression() -> None:
         "ai_tutor",
         {
             "COURSE_MATERIAL": "Operating Systems Virtual Memory",
+            "CONVERSATION_HISTORY": (
+                "User: What is virtual memory?\n"
+                "Assistant: It maps virtual addresses to physical memory."
+            ),
             "QUESTION": "What is page fault?",
         },
     )
     assert "Operating Systems Virtual Memory" in rendered
+    assert "User: What is virtual memory?" in rendered
+    assert "Assistant: It maps virtual addresses to physical memory." in rendered
     assert "What is page fault?" in rendered
     assert "{{COURSE_MATERIAL}}" not in rendered
+    assert "{{CONVERSATION_HISTORY}}" not in rendered
     assert "{{QUESTION}}" not in rendered
+    assert (
+        "Begin with a concise helpful hint or guiding question before giving the full "
+        "explanation." in rendered
+    )
+    assert "When appropriate, guide the student with a helpful hint" not in rendered
 
     template = PromptLoader.load_template("ai_tutor")
     assert template.output_schema_ref == "AiTutorResponse"
-    assert set(template.required_variables) == {"COURSE_MATERIAL", "QUESTION"}
+    assert template.required_variables == [
+        "COURSE_MATERIAL",
+        "CONVERSATION_HISTORY",
+        "QUESTION",
+    ]
 
 
 def test_prompt_generator_template_regression() -> None:

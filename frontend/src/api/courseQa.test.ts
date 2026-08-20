@@ -7,7 +7,11 @@ const QA_RESULT: CourseQAGenerationResult = {
   context_truncated: false,
   chunks_used: 2,
   chunks_available: 5,
+  retrieval_narrowed: true,
+  lowest_similarity: 0.71,
+  highest_similarity: 0.92,
   answer: 'Mitochondria produce ATP through cellular respiration.',
+  conversation_id: 37,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -30,7 +34,7 @@ describe('courseQaAPI.ask', () => {
     vi.unstubAllGlobals();
   });
 
-  it('posts the question and unwraps the BaseResponse envelope', async () => {
+  it('posts the conversation ID and unwraps retrieval reporting', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       jsonResponse({ success: true, message: 'ok', data: QA_RESULT }),
     );
@@ -38,12 +42,16 @@ describe('courseQaAPI.ask', () => {
 
     const result = await courseQaAPI.ask(12, {
       question: 'What is the function of mitochondria?',
+      conversation_id: 37,
     });
 
     expect(result).toEqual(QA_RESULT);
     expect(result.answer).toBe(
       'Mitochondria produce ATP through cellular respiration.',
     );
+    expect(result.conversation_id).toBe(37);
+    expect(result.retrieval_narrowed).toBe(true);
+    expect(result.highest_similarity).toBe(0.92);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
@@ -51,6 +59,7 @@ describe('courseQaAPI.ask', () => {
     expect(init?.method).toBe('POST');
     expect(JSON.parse(init?.body as string)).toEqual({
       question: 'What is the function of mitochondria?',
+      conversation_id: 37,
     });
     expect(new Headers(init?.headers).get('Authorization')).toBe(
       'Bearer test-token',

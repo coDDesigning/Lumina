@@ -63,26 +63,31 @@ class AiUsageLogger:
             else None
         )
 
+        log_entry = AiUsageLog(
+            user_id=user_id,
+            course_id=course_id,
+            generation_type=gen_type_str,
+            provider=provider,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            latency_ms=latency_ms,
+            success=success,
+            error_category=err_cat_str,
+        )
         try:
-            log_entry = AiUsageLog(
-                user_id=user_id,
-                course_id=course_id,
-                generation_type=gen_type_str,
-                provider=provider,
-                model=model,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                latency_ms=latency_ms,
-                success=success,
-                error_category=err_cat_str,
-            )
-            db.add(log_entry)
-            db.flush()
+            with db.begin_nested():
+                db.add(log_entry)
+                db.flush()
             return log_entry
         except Exception as exc:
             logger.warning(
-                "Failed to write AI usage telemetry log: %s", exc, exc_info=False
+                "Failed to write AI usage telemetry log",
+                extra={
+                    "event": "ai_usage_write_failed",
+                    "exception_type": type(exc).__name__,
+                },
             )
             return None
 

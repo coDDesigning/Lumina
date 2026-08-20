@@ -46,6 +46,7 @@ from services.processing_jobs import (
     enqueue_document_job,
     fail_job,
     heartbeat_job,
+    processing_queue_metrics,
     recover_expired_jobs,
     replace_document_pages,
     update_job_stage,
@@ -208,6 +209,21 @@ def _image_pdf() -> bytes:
     content = pdf.tobytes()
     pdf.close()
     return content
+
+
+def test_processing_queue_metrics_report_backlog_age(session_factory, tmp_path):
+    queued = _queue_document(session_factory, tmp_path)
+
+    with session_factory() as session:
+        metrics = processing_queue_metrics(
+            session,
+            now=queued.available_at + timedelta(seconds=12),
+        )
+
+    assert metrics.queued == 1
+    assert metrics.running == 0
+    assert metrics.failed == 0
+    assert metrics.oldest_queued_age_seconds == 12
 
 
 def _text_pdf(*page_texts: str) -> bytes:

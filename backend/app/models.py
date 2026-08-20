@@ -20,6 +20,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     false,
+    true,
     func,
 )
 from sqlalchemy.engine import Dialect
@@ -257,6 +258,51 @@ class Course(Base):
     ai_usage_logs: Mapped[list["AiUsageLog"]] = relationship(
         back_populates="course", cascade="all, delete-orphan", passive_deletes=True
     )
+
+    settings: Mapped["CourseSettings | None"] = relationship(
+        back_populates="course",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class CourseSettings(Base):
+    __tablename__ = "course_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    study_mode: Mapped[str] = mapped_column(
+        String(50), default="Exam", server_default="Exam"
+    )
+    difficulty: Mapped[str] = mapped_column(
+        String(50), default="Adaptive", server_default="Adaptive"
+    )
+    question_count: Mapped[int] = mapped_column(
+        Integer, default=10, server_default="10"
+    )
+    summary_length: Mapped[str] = mapped_column(
+        String(50), default="Medium", server_default="Medium"
+    )
+    detail_level: Mapped[str] = mapped_column(
+        String(50), default="Balanced", server_default="Balanced"
+    )
+    notifications: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true()
+    )
+    progress_reminders: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    course: Mapped["Course"] = relationship(back_populates="settings")
 
 
 class UploadedDocument(Base):

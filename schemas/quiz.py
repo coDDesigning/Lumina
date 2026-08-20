@@ -12,6 +12,8 @@ TRUE_FALSE_OPTION_COUNT = 2
 class QuizQuestionType(str, Enum):
     MULTIPLE_CHOICE = "multiple_choice"
     TRUE_FALSE = "true_false"
+    SHORT_ANSWER = "short_answer"
+    OPEN_ENDED = "open_ended"
 
 
 class QuizDifficulty(str, Enum):
@@ -57,10 +59,11 @@ class QuizGenerationResponse(BaseModel):
 class QuizQuestionView(BaseModel):
     question_id: int
     question_number: int
+    question_type: QuizQuestionType = QuizQuestionType.MULTIPLE_CHOICE
     topic: str
     question: str
-    options: list[str]
-    correct_option_index: int
+    options: list[str] = Field(default_factory=list)
+    correct_option_index: int | None = None
     explanation: str
 
 

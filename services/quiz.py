@@ -252,9 +252,13 @@ class QuizService:
                 QuizQuestionView(
                     question_id=row.id,
                     question_number=row.question_index + 1,
+                    question_type=getattr(
+                        row, "question_type", QuizQuestionType.MULTIPLE_CHOICE
+                    )
+                    or QuizQuestionType.MULTIPLE_CHOICE,
                     topic=row.topic or "",
                     question=row.question_text,
-                    options=list(row.options),
+                    options=list(row.options) if row.options else [],
                     correct_option_index=row.correct_option_index,
                     explanation=row.explanation or "",
                 )
@@ -281,6 +285,7 @@ class QuizService:
                 QuizQuestion(
                     quiz_id=quiz.id,
                     question_index=question_index,
+                    question_type="multiple_choice",
                     question_text=question.question,
                     options=question.options,
                     correct_option_index=question.correct_option_index,

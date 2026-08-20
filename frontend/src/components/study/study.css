@@ -781,6 +781,104 @@
   margin-bottom: 12px;
 }
 
+/* Generated Output History */
+.study-history-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .study-history-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.study-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.study-history-entry {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid #dcd5e6;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.study-history-entry:hover {
+  border-color: #b79ce6;
+}
+
+.study-history-entry.is-selected {
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
+}
+
+.study-history-entry-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #25113f;
+}
+
+.study-history-entry-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #6b6472;
+}
+
+.study-history-entry-meta svg {
+  width: 13px;
+  height: 13px;
+}
+
+.study-history-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.study-history-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f3eefc;
+  color: #5b3aa8;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.study-history-detail {
+  min-width: 0;
+}
+
+.study-history-raw {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #dcd5e6;
+  border-radius: 10px;
+  background: #faf8fd;
+  color: #514b54;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 /* Flashcard 3D Interactive Deck Styling */
 .flashcard-deck-view {
   display: flex;

@@ -218,10 +218,36 @@ at every layer, so no caller can ask for a cross-course search. Embedding and
 store failures propagate as `EmbeddingError` and `VectorStoreError` subclasses for
 the calling feature to classify.
 
+## Retrieval-backed material
+
+`services/semantic_retrieval.py` ranks; it does not assemble. Turning ranked
+chunks into prompt material is `services/retrieval_material.py`, which
+`load_retrieved_material(db, course_id, *, query, limit, min_similarity,
+max_characters, ...)` owns:
+
+1. Rank the course's chunks against the query, bounded by `limit`.
+2. Discard anything below `min_similarity`. If nothing survives, raise
+   `NoRelevantMaterialError` — **the provider is never called and no row is
+   written**.
+3. Fill the character budget in similarity order, so the budget is never spent on
+   the least relevant material.
+4. Emit the retained chunks in corpus order, so the prompt reads as prose.
+
+The similarity floor lives here rather than in `search`, so neither backend has to
+implement it and the ranking contract stays narrow. The module reads no settings:
+the calling feature supplies every bound, which keeps each remaining migration a
+one-line change.
+
+Embedding and store failures are translated here into `MaterialRetrievalError` and
+its timeout and rate-limit subclasses, which `utils/ai_errors.py` maps to curated
+responses. **There is no fallback to whole-corpus assembly.** A retrieval failure
+fails the request; widening it silently would mean the feature was never really
+retrieval-backed.
+
 ## What this does not cover
 
-Feature wiring. Retrieval is a landed contract with tests, but AI features still
-read course text through `services/course_material.py`, which selects by chunk
-order and bounds the assembled material to a per-feature character budget. That
-module remains the thing retrieval-backed generation will replace; switching the
-features over is a product decision, not a plumbing change.
+Full feature wiring. Study guide generation reads retrieved material; quiz,
+flashcard, AI tutor, and course Q&A still read whole-corpus material through
+`services/course_material.py`, which selects by chunk order and bounds the
+assembled material to a per-feature character budget. Switching each of those over
+is a product decision, not a plumbing change.

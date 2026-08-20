@@ -11,6 +11,7 @@ Proves the primary Lumina student journey end-to-end across:
 8. Course hard deletion and residual cleanup across DB, vector store, and physical storage
 """
 
+import json
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -477,6 +478,9 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
         json={
             "summary_format": "comprehensive",
             "topic_focus": "Mitosis and Cell Division",
+            "summary_length": "long",
+            "detail_level": "detailed",
+            "summary_mode": "exam_focused",
         },
     )
     assert study_guide_res.status_code == 200, study_guide_res.text
@@ -500,6 +504,32 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
             == f"deterministic:{DeterministicTextGenerationProvider.MODEL}"
         )
         assert generated_row.output_type == "study_guide"
+        assert guide_payload["generated_output_id"] == generated_row.id
+
+        stored_settings = json.loads(generated_row.generation_settings)
+        assert stored_settings["summary_length"] == "long"
+        assert stored_settings["detail_level"] == "detailed"
+        assert stored_settings["summary_mode"] == "exam_focused"
+
+        stored_context = json.loads(generated_row.generation_context)
+        assert stored_context["chunks_used"] >= 1
+        assert stored_context["highest_similarity"] > 0.0
+
+    # 5c. The stored guide is readable again without any further generation
+    history_res = client.get(
+        f"/api/courses/{course_id}/generated-outputs", headers=auth1
+    )
+    assert history_res.status_code == 200, history_res.text
+    history = history_res.json()["data"]
+    assert [entry["id"] for entry in history] == [guide_payload["generated_output_id"]]
+
+    detail_res = client.get(
+        f"/api/courses/{course_id}/generated-outputs/"
+        f"{guide_payload['generated_output_id']}",
+        headers=auth1,
+    )
+    assert detail_res.status_code == 200, detail_res.text
+    assert detail_res.json()["data"]["content"] == guide_payload["study_guide"]
 
     # =========================================================================
     # STAGE 6: Quiz Generation, Attempt Submission & Course Progress
@@ -601,6 +631,20 @@ def test_full_mvp_student_journey(journey_env: JourneyContext) -> None:
             f"/api/courses/{course_id}/study-guide",
             headers=auth2,
             json={"summary_format": "overview", "topic_focus": "Mitosis"},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            f"/api/courses/{course_id}/generated-outputs", headers=auth2
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            f"/api/courses/{course_id}/generated-outputs/"
+            f"{guide_payload['generated_output_id']}",
+            headers=auth2,
         ).status_code
         == 404
     )

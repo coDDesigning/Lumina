@@ -4,7 +4,11 @@ import { studyGuideAPI } from './studyGuide';
 import type { StudyGuideGenerationResult } from './types';
 
 const STUDY_GUIDE: StudyGuideGenerationResult = {
+  generated_output_id: 12,
   context_truncated: true,
+  retrieval_narrowed: true,
+  lowest_similarity: 0.41,
+  highest_similarity: 0.88,
   chunks_used: 40,
   chunks_available: 300,
   study_guide: {
@@ -52,10 +56,14 @@ describe('studyGuideAPI.generate', () => {
     const result = await studyGuideAPI.generate(7, {
       summary_format: 'exam_tips',
       topic_focus: 'Working Memory',
+      summary_length: 'long',
+      detail_level: 'detailed',
+      summary_mode: 'exam_focused',
     });
 
     expect(result).toEqual(STUDY_GUIDE);
     expect(result.study_guide.exam_tips.ai_suggestions).toEqual(['Suggestion']);
+    expect(result.generated_output_id).toBe(12);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
@@ -64,6 +72,9 @@ describe('studyGuideAPI.generate', () => {
     expect(JSON.parse(init?.body as string)).toEqual({
       summary_format: 'exam_tips',
       topic_focus: 'Working Memory',
+      summary_length: 'long',
+      detail_level: 'detailed',
+      summary_mode: 'exam_focused',
     });
     expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer test-token');
   });

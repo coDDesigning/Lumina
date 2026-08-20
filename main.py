@@ -22,6 +22,7 @@ from routes import (
     course_settings,
     document,
     flashcard,
+    generated_output,
     profile_knowledge,
     prompt_generator,
     quiz,
@@ -54,6 +55,7 @@ app.include_router(ai_models.router)
 app.include_router(profile_knowledge.router)
 app.include_router(document.router)
 app.include_router(study_guide.router)
+app.include_router(generated_output.router)
 app.include_router(quiz.router)
 app.include_router(flashcard.router)
 app.include_router(prompt_generator.router)

@@ -49,6 +49,14 @@ class UserService:
         )
 
     @staticmethod
+    def list_users(db: Session) -> list[UserResponse]:
+        """Lists all registered users."""
+        users = db.scalars(
+            select(User).options(selectinload(User.role)).order_by(User.id)
+        ).all()
+        return [UserService.to_response(u) for u in users]
+
+    @staticmethod
     def canonicalize_email(email: str) -> str | None:
         try:
             return validate_email(

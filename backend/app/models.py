@@ -269,10 +269,13 @@ class Course(Base):
 
 class CourseSettings(Base):
     __tablename__ = "course_settings"
+    __table_args__ = (
+        UniqueConstraint("course_id", name="uq_course_settings_course_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     course_id: Mapped[int] = mapped_column(
-        ForeignKey("courses.id", ondelete="CASCADE"), unique=True, index=True
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True
     )
     study_mode: Mapped[str] = mapped_column(
         String(50), default="Exam", server_default="Exam"

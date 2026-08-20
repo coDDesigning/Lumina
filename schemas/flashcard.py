@@ -21,5 +21,12 @@ class FlashcardGenerationResponse(BaseModel):
     )
 
 
+class FlashcardRequest(BaseModel):
+    model: str | None = Field(
+        default=None,
+        description="Explicit model override, or omit to use preferred/default model",
+    )
+
+
 class FlashcardGenerationResult(BoundedContext):
     flashcards: FlashcardGenerationResponse

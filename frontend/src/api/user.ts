@@ -1,0 +1,18 @@
+import { apiClient, unwrapData } from './client';
+import type { BaseResponse, User } from './types';
+
+export const userAPI = {
+  updatePreferredModel: async (modelName: string): Promise<User> => {
+    const res = await apiClient.put<BaseResponse<User>>(
+      `/users/me/model?model_name=${encodeURIComponent(modelName)}`,
+    );
+    return unwrapData(res, 'User model update');
+  },
+
+  getCredits: async (): Promise<{ credits: number | null }> => {
+    const res = await apiClient.get<BaseResponse<{ credits: number | null }>>(
+      '/users/me/credits',
+    );
+    return unwrapData(res, 'User credits');
+  },
+};

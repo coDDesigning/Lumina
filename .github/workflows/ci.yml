@@ -444,7 +444,7 @@ jobs:
       COMPOSE_PROJECT_NAME: lumina-ci-${{ github.run_id }}-${{ github.run_attempt }}
       JWT_SECRET_KEY: ci-only-jwt-secret-key-0123456789abcdef
       LUMINA_IMAGE: lumina:ci
-      LUMINA_BACKUP_DIRECTORY: ${{ runner.temp }}/lumina-backups
+      LUMINA_BACKUP_DIRECTORY: /tmp/lumina-backups-${{ github.run_id }}-${{ github.run_attempt }}
       STORAGE_NAMESPACE: container-ci
     steps:
       - name: Check out repository

@@ -105,6 +105,13 @@ unsupported for self-hosted mode because SQLite/local storage/Chroma are not a
 qualified multi-writer topology. AWS hosted mode uses PostgreSQL, RDS Proxy,
 S3, and pgvector and supports multiple API and worker tasks.
 
+File-backed SQLite connections use WAL mode, `synchronous=FULL`, a five-second
+busy timeout, a 1,000-page automatic checkpoint, and a 64 MiB retained-WAL cap
+after successful checkpoints. Long-running readers can delay checkpoints and
+exceed that cap. Do not copy `lumina.db` or its `-wal` file directly. The
+supported online SQLite snapshot and coordinated upload/Chroma procedure is in
+[`self-hosted-backup.md`](self-hosted-backup.md).
+
 ## PostgreSQL qualification
 
 CI runs the relational database contract against PostgreSQL 17.8 from an

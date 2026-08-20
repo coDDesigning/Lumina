@@ -93,6 +93,12 @@ def test_database_that_cannot_create_a_journal_is_not_ready(api_context) -> None
 
     with api_context.session_factory() as session:
         database_path = Path(session.get_bind().url.database)
+        connection = session.connection()
+        connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+        assert (
+            connection.exec_driver_sql("PRAGMA journal_mode=DELETE").scalar()
+            == "delete"
+        )
         session.scalar(select(Role.id).limit(1))
         journal_path = Path(f"{database_path}-journal")
         journal_path.mkdir()

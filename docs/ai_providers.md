@@ -288,3 +288,47 @@ retry, concurrency limiting) does not apply here. Embedding retries are the
 durable processing job's responsibility: a transient failure requeues the whole
 embedding stage rather than retrying inside the provider. See
 `docs/vector_storage.md` for the error codes and their retryability.
+
+## Visual Understanding Providers
+
+Image understanding is a dedicated stage of document processing, separate from
+text generation and embeddings. When enabled, visual regions detected in PDFs (such
+as diagrams, tables, charts, and figures) are cropped, rendered to bounded PNGs,
+and passed to an `ImageUnderstandingProvider` in `services/image_understanding.py`.
+The resulting semantic descriptions are merged into the page's text with labeled
+headers (e.g. `[Diagram]\n...`) and indexed into chunks/embeddings downstream.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `IMAGE_PROVIDER` | `none` | Implemented: `none` (disabled), `ollama`, `gemini`. `openai` and `claude` are recognized and fail at startup. |
+| `OLLAMA_IMAGE_MODEL` | `llama3.2-vision` | Multimodal model used with the shared `OLLAMA_BASE_URL`. |
+| `GEMINI_IMAGE_MODEL` | `gemini-2.5-flash` | Multimodal model used with `GEMINI_API_KEY`. |
+| `IMAGE_UNDERSTANDING_TIMEOUT_SECONDS` | `30` | Per-visual deadline, 1-300 seconds. |
+| `IMAGE_UNDERSTANDING_MAX_BYTES` | `10485760` | Maximum accepted rendered image size (10 MB). |
+
+### Error Semantics and Failure Isolation
+
+Image understanding distinguishes between temporary infrastructure failures and
+per-visual content failures:
+
+- **Temporary provider failures** (`TemporaryVisualServiceError` for rate limits,
+  timeouts, network loss, and 5xx server errors): treated as retryable processing
+  errors (`IMAGE_UNDERSTANDING_FAILED`, retryable=True). The worker halts extraction
+  and safely requeues the job with backoff.
+- **Per-visual non-fatal failures** (`VisualAnalysisError` for unsupported images,
+  safety blocks, or provider rejection): recorded per-visual as `FAILED` with
+  `error_code="VISUAL_ANALYSIS_FAILED"`. The document extraction continues so that
+  other pages and valid text/visuals remain fully processable.
+- **Disabled/Not-Configured**: when `IMAGE_PROVIDER=none`, visual regions are marked
+  explicitly as `NOT_CONFIGURED` without entering the `understanding_images` pipeline
+  stage or pretending visuals were analyzed.
+
+### Privacy Implications and Deployment Modes
+
+- **Self-Hosted (`ollama`)**: Visual regions are rendered and sent to the local
+  Ollama instance over the internal network (`OLLAMA_BASE_URL`). No image bytes or
+  document contents leave the host.
+- **Cloud (`gemini`)**: Visual crops are sent to Google Gemini via the Google GenAI
+  SDK. Only the rendered bounding boxes of detected visual regions (not entire PDF
+  pages or unrelated documents) are transmitted.
+

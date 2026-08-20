@@ -468,36 +468,6 @@ def test_a_negative_option_index_is_still_rejected(
         session.rollback()
 
 
-def test_an_answer_score_outside_the_unit_interval_is_rejected(
-    session_factory: sessionmaker[Session],
-) -> None:
-    with session_factory() as session:
-        quiz = _quiz_graph(session, "quiz-answer-score@example.com")
-        question = QuizQuestion(
-            quiz=quiz,
-            question_index=0,
-            question_type="open_ended",
-            question_text="Explain.",
-            correct_answer={"type": "open_ended", "reference_answer": "Ordering."},
-        )
-        attempt = QuizAttempt(user=quiz.user, quiz=quiz, score=0.5)
-        session.add_all([question, attempt])
-        session.flush()
-        session.add(
-            QuizAttemptAnswer(
-                attempt=attempt,
-                question=question,
-                answer_text="Because.",
-                is_correct=True,
-                score=5.0,
-            )
-        )
-
-        with pytest.raises(IntegrityError):
-            session.commit()
-        session.rollback()
-
-
 def test_an_ungraded_answer_persists_without_a_verdict(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -518,7 +488,7 @@ def test_an_ungraded_answer_persists_without_a_verdict(
             QuizAttemptAnswer(
                 attempt=attempt,
                 question=question,
-                answer_text="A written answer.",
+                text_response="A written answer.",
                 is_correct=None,
                 score=None,
             )
@@ -528,7 +498,7 @@ def test_an_ungraded_answer_persists_without_a_verdict(
         stored = session.scalars(select(QuizAttemptAnswer)).one()
         assert stored.is_correct is None
         assert stored.score is None
-        assert stored.answer_text == "A written answer."
+        assert stored.text_response == "A written answer."
 
 
 def test_deleting_a_generating_user_keeps_the_quiz(

@@ -85,7 +85,7 @@ function describeSubmittedAnswer(
   question: QuizQuestionView,
   answer: QuizAnswerResult,
 ): string {
-  if (answer.answer_text) return answer.answer_text;
+  if (answer.text_response) return answer.text_response;
   if (answer.selected_option_index !== null && question.options) {
     return question.options[answer.selected_option_index] ?? 'Unanswered';
   }
@@ -177,7 +177,7 @@ export function QuizModal({
             }
             return {
               question_id: question.question_id,
-              answer_text: draft.text.trim() || null,
+              text_response: draft.text.trim() || null,
             };
           }),
           time_spent_seconds: elapsed,

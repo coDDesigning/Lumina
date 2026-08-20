@@ -49,7 +49,7 @@ class GradedAnswer:
     question_id: int
     question_type: QuizQuestionType
     selected_option_index: int | None
-    answer_text: str | None
+    text_response: str | None
     correct_option_index: int | None
     correct_answer: QuizCorrectAnswer | None
     is_correct: bool | None
@@ -57,24 +57,36 @@ class GradedAnswer:
     feedback: str | None
 
 
+Verdict = tuple[bool | None, float | None]
+
+# A question with no stored answer key cannot be judged either way. That is a
+# gap in the question, not a wrong answer, so it is recorded ungraded rather
+# than scored zero -- otherwise a student loses marks for a generation-time
+# omission they could not have answered correctly.
+UNGRADABLE: Verdict = (None, None)
+
+
 def _option_verdict(
     question: QuizQuestion, submission: QuizAnswerSubmission | None
-) -> tuple[bool, float]:
+) -> Verdict:
+    if question.correct_option_index is None:
+        return UNGRADABLE
+
     selected = submission.selected_option_index if submission else None
-    is_correct = (
-        selected is not None
-        and question.correct_option_index is not None
-        and selected == question.correct_option_index
-    )
+    is_correct = selected is not None and selected == question.correct_option_index
     return is_correct, 1.0 if is_correct else 0.0
 
 
 def _short_answer_verdict(
     answer: QuizCorrectAnswer | None, submission: QuizAnswerSubmission | None
-) -> tuple[bool, float]:
-    written = (submission.answer_text if submission else None) or ""
-    normalized = normalize_answer_text(written)
-    if not normalized or not isinstance(answer, ShortAnswerAnswer):
+) -> Verdict:
+    if not isinstance(answer, ShortAnswerAnswer):
+        return UNGRADABLE
+
+    normalized = normalize_answer_text(
+        (submission.text_response if submission else None) or ""
+    )
+    if not normalized:
         return False, 0.0
 
     accepted = answer.accepted_answers or [answer.text]
@@ -110,10 +122,12 @@ class QuizGradingService:
             submission = submissions.get(question.id)
             question_type = QuizQuestionType(question.question_type)
             answer = parse_correct_answer(question)
-            written = (submission.answer_text if submission else None) or ""
+            written = (submission.text_response if submission else None) or ""
 
             if question_type is QuizQuestionType.OPEN_ENDED:
-                if written.strip() and isinstance(answer, OpenEndedAnswer):
+                if not isinstance(answer, OpenEndedAnswer):
+                    is_correct, score = UNGRADABLE
+                elif written.strip():
                     pending_open_ended.append(
                         (len(graded), question, written.strip(), answer)
                     )
@@ -132,7 +146,7 @@ class QuizGradingService:
                     selected_option_index=(
                         submission.selected_option_index if submission else None
                     ),
-                    answer_text=written.strip() or None,
+                    text_response=written.strip() or None,
                     correct_option_index=question.correct_option_index,
                     correct_answer=answer,
                     is_correct=is_correct,
@@ -250,7 +264,7 @@ class QuizGradingService:
                 question_id=answer.question_id,
                 question_type=answer.question_type,
                 selected_option_index=answer.selected_option_index,
-                answer_text=answer.answer_text,
+                text_response=answer.text_response,
                 correct_option_index=answer.correct_option_index,
                 correct_answer=answer.correct_answer,
                 is_correct=verdict.score >= OPEN_ENDED_PASS_THRESHOLD,

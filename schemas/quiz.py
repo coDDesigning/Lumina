@@ -310,6 +310,8 @@ class QuizQuestionView(BaseModel):
     difficulty: QuizDifficulty | None = None
     topic: str
     question: str
+    # Null rather than empty for short answer and open ended: those types have no
+    # options at all, which is a different statement from having none left.
     options: list[str] | None = None
     correct_option_index: int | None = None
     correct_answer: QuizCorrectAnswer | None = None

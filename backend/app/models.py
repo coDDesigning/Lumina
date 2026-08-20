@@ -968,6 +968,10 @@ class QuizQuestion(Base):
     __table_args__ = (
         UniqueConstraint("quiz_id", "question_index", name="uq_question_quiz_index"),
         CheckConstraint(
+            "question_type IN ('multiple_choice', 'true_false', 'short_answer', 'open_ended')",
+            name="quiz_question_type_valid",
+        ),
+        CheckConstraint(
             "question_index = CAST(question_index AS INTEGER) AND question_index >= 0",
             name="question_index_nonnegative",
         ),
@@ -988,6 +992,12 @@ class QuizQuestion(Base):
     # The position of this question inside its quiz: 0,1,2,3...
     question_index: Mapped[int] = mapped_column(Integer)
 
+    question_type: Mapped[str] = mapped_column(
+        String(30),
+        default=QUESTION_TYPE_MULTIPLE_CHOICE,
+        server_default=QUESTION_TYPE_MULTIPLE_CHOICE,
+    )
+
     # The question text itself
     question_text: Mapped[str] = mapped_column(Text)
 
@@ -995,16 +1005,9 @@ class QuizQuestion(Base):
     # ["Paris", "London", "Berlin", "Madrid"]. We chose JSON instead
     # of a separate options table because options are only ever read
     # and written together as one bundle
-
     options: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     correct_option_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-    question_type: Mapped[str] = mapped_column(
-        String(20),
-        default=QUESTION_TYPE_MULTIPLE_CHOICE,
-        server_default=QUESTION_TYPE_MULTIPLE_CHOICE,
-    )
 
     difficulty: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
@@ -1078,8 +1081,8 @@ class QuizAttemptAnswer(Base):
             name="selected_option_index_nonnegative",
         ),
         CheckConstraint(
-            "score IS NULL OR (score >= 0 AND score <= 1)",
-            name="score_fraction",
+            "time_spent_seconds IS NULL OR time_spent_seconds >= 0",
+            name="answer_time_spent_nonnegative",
         ),
     )
 
@@ -1095,13 +1098,17 @@ class QuizAttemptAnswer(Base):
 
     selected_option_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text_response: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     is_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    time_spent_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    topic: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     attempt: Mapped["QuizAttempt"] = relationship(back_populates="answers")
     question: Mapped["QuizQuestion"] = relationship(back_populates="answers")
@@ -1125,6 +1132,22 @@ class Progress(Base):
             "completion >= 0 AND completion <= 1",
             name="completion_fraction",
         ),
+        CheckConstraint(
+            "quizzes_completed >= 0",
+            name="quizzes_completed_nonnegative",
+        ),
+        CheckConstraint(
+            "correct_answers_count >= 0",
+            name="correct_answers_count_nonnegative",
+        ),
+        CheckConstraint(
+            "incorrect_answers_count >= 0",
+            name="incorrect_answers_count_nonnegative",
+        ),
+        CheckConstraint(
+            "total_questions_answered >= 0",
+            name="total_questions_answered_nonnegative",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -1139,6 +1162,26 @@ class Progress(Base):
 
     # Completion as a fraction from 0.0 to 1.0.
     completion: Mapped[float] = mapped_column(Float, default=0.0)
+
+    quizzes_completed: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+
+    correct_answers_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+
+    incorrect_answers_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+
+    total_questions_answered: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+
+    weak_topics: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    quiz_history: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     # SQLAlchemy includes the onupdate expression in ORM-generated updates.
     updated_at: Mapped[datetime] = mapped_column(

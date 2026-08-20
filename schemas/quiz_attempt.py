@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from schemas.quiz import QuizCorrectAnswer, QuizQuestionType
 
 MAX_TIME_SPENT_SECONDS = 86400
-MAX_ANSWER_TEXT_CHARS = 5000
+MAX_ANSWER_TEXT_CHARS = 10000
 MASTERED_THRESHOLD = 80
 NEEDS_REVIEW_THRESHOLD = 60
 
@@ -25,13 +25,18 @@ class QuizAnswerSubmission(BaseModel):
     """One answer, in whichever form the question's type calls for.
 
     Option-based questions carry ``selected_option_index`` and text-based ones
-    carry ``answer_text``. Submitting the wrong one for a question type is
+    carry ``text_response``. Submitting the wrong one for a question type is
     rejected rather than silently graded as unanswered.
     """
 
     question_id: int = Field(ge=1)
     selected_option_index: int | None = Field(default=None, ge=0)
-    answer_text: str | None = Field(default=None, max_length=MAX_ANSWER_TEXT_CHARS)
+    text_response: str | None = Field(default=None, max_length=MAX_ANSWER_TEXT_CHARS)
+    time_spent_seconds: int | None = Field(
+        default=None,
+        ge=0,
+        le=MAX_TIME_SPENT_SECONDS,
+    )
 
 
 class QuizAttemptRequest(BaseModel):
@@ -55,12 +60,24 @@ class QuizAnswerResult(BaseModel):
     question_id: int
     question_type: QuizQuestionType
     selected_option_index: int | None = None
-    answer_text: str | None = None
+    text_response: str | None = None
     correct_option_index: int | None = None
     correct_answer: QuizCorrectAnswer | None = None
     is_correct: bool | None = None
     score: float | None = None
     feedback: str | None = None
+    time_spent_seconds: int | None = None
+    topic: str | None = None
+
+
+class QuizHistoryItem(BaseModel):
+    attempt_id: int
+    quiz_id: int
+    score: float
+    correct_count: int
+    total_questions: int
+    time_spent_seconds: int | None = None
+    created_at: datetime
 
 
 class QuizAttemptResponse(BaseModel):
@@ -70,7 +87,7 @@ class QuizAttemptResponse(BaseModel):
     correct_count: int
     graded_count: int
     total_questions: int
-    time_spent_seconds: int | None
+    time_spent_seconds: int | None = None
     created_at: datetime
     answers: list[QuizAnswerResult]
 
@@ -103,6 +120,13 @@ class TopicMastery(BaseModel):
 
 
 class CourseProgressResponse(BaseModel):
-    attempts_count: int
-    average_score: float | None
-    topic_mastery: list[TopicMastery]
+    quizzes_completed: int = 0
+    attempts_count: int = 0
+    average_score: float | None = None
+    correct_count: int = 0
+    incorrect_count: int = 0
+    total_questions_answered: int = 0
+    completion: float = 0.0
+    weak_topics: list[str] = Field(default_factory=list)
+    topic_mastery: list[TopicMastery] = Field(default_factory=list)
+    quiz_history: list[QuizHistoryItem] = Field(default_factory=list)

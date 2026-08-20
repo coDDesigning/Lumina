@@ -1,12 +1,21 @@
+import logging
+import time
+from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Response, status
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.app.config import settings
 from backend.app.database import get_db
+from backend.app.observability import (
+    bind_request_id,
+    configure_logging,
+    normalize_request_id,
+    reset_request_id,
+)
 from backend.app.readiness import ReadinessError, check_readiness
 from backend.app.request_size import (
     MULTIPART_OVERHEAD_BYTES,
@@ -32,11 +41,21 @@ from routes import (
 from storage.base import Storage
 from storage.dependencies import get_storage
 
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    configure_logging(service="api", environment=settings.app_env)
+    yield
+
+
 app = FastAPI(
     title="Lumina API",
     description="Lumina AI Study Platform Backend API",
     version="1.0.0",
     debug=settings.app_debug,
+    lifespan=lifespan,
 )
 app.add_middleware(
     RequestSizeLimitMiddleware,
@@ -66,6 +85,43 @@ app.add_exception_handler(
     document.upload_request_validation_error,
 )
 app.add_exception_handler(StarletteHTTPException, document.upload_http_error)
+
+
+@app.middleware("http")
+async def observe_request(request: Request, call_next):
+    request_id = normalize_request_id(request.headers.get("X-Request-ID"))
+    token = bind_request_id(request_id)
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        logger.error(
+            "HTTP request failed",
+            extra={
+                "event": "http_request_failed",
+                "exception_type": type(exc).__name__,
+                "http_method": request.method,
+                "http_path": request.url.path,
+                "http_status": 500,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+            },
+        )
+        raise
+    else:
+        response.headers["X-Request-ID"] = request_id
+        logger.info(
+            "HTTP request completed",
+            extra={
+                "event": "http_request_completed",
+                "http_method": request.method,
+                "http_path": request.url.path,
+                "http_status": response.status_code,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+            },
+        )
+        return response
+    finally:
+        reset_request_id(token)
 
 
 @app.get("/")

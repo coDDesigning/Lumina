@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -838,6 +839,40 @@ def test_postgresql_claim_skips_locked_job(
         session.commit()
 
 
+def test_postgresql_parallel_workers_claim_every_job_once(
+    postgresql_sessions: sessionmaker[Session],
+) -> None:
+    with postgresql_sessions() as session:
+        user_id, _document_ids, job_ids = _queue_documents(session, count=24)
+
+    def claim(index: int) -> int | None:
+        with postgresql_sessions() as session:
+            claimed = claim_next_job(
+                session,
+                f"parallel-worker-{index}",
+                "local:postgresql-ci",
+                60,
+            )
+            return None if claimed is None else claimed.id
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        claimed_ids = list(executor.map(claim, range(len(job_ids))))
+
+    assert None not in claimed_ids
+    assert len(set(claimed_ids)) == len(job_ids)
+    assert set(claimed_ids) == set(job_ids)
+
+    with postgresql_sessions() as session:
+        statuses = session.scalars(
+            select(ProcessingJob.status).where(ProcessingJob.id.in_(job_ids))
+        ).all()
+        assert statuses == [JOB_STATUS_RUNNING] * len(job_ids)
+        user = session.get(User, user_id)
+        assert user is not None
+        session.delete(user)
+        session.commit()
+
+
 def test_postgresql_raw_page_replacement_is_claim_fenced(
     postgresql_sessions: sessionmaker[Session],
 ) -> None:
@@ -1085,6 +1120,14 @@ def test_postgresql_provisions_pgvector_and_its_index(
     with postgresql_sessions() as session:
         assert session.scalar(
             text("SELECT count(*) FROM pg_extension WHERE extname = 'vector'")
+        )
+        extension_version = session.scalar(
+            text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+        )
+        assert tuple(int(part) for part in extension_version.split(".")[:3]) >= (
+            0,
+            8,
+            0,
         )
 
         column_type = session.scalar(

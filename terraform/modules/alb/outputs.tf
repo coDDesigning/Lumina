@@ -13,3 +13,11 @@ output "dns_name" {
 output "zone_id" {
   value = aws_lb.this.zone_id
 }
+
+output "arn_suffix" {
+  value = aws_lb.this.arn_suffix
+}
+
+output "target_group_arn_suffix" {
+  value = aws_lb_target_group.this.arn_suffix
+}

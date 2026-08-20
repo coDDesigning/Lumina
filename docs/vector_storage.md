@@ -202,7 +202,10 @@ returns the `limit` nearest chunks of exactly that course, ranked best-first as 
 
 - **pgvector** runs `embedding <=> CAST(:query AS vector)` inside a `WHERE
   course_id = :course_id`, so the HNSW index and the course filter stay in one
-  statement. The method refuses to run on a non-PostgreSQL connection.
+  statement. pgvector 0.8+ iterative scan is enabled transaction-locally with
+  strict ordering and a bounded scan budget so nearer vectors in other courses
+  cannot starve the requested course. The method refuses to run on a
+  non-PostgreSQL connection.
 - **Chroma** issues a collection query with `where={"course_id": course_id}` and
   the collection's cosine space; the caller's session is used only for validation.
 

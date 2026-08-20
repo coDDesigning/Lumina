@@ -1,7 +1,7 @@
 """add the auditable credit transaction ledger
 
 Revision ID: d7f3a2c48e15
-Revises: c8d4a1f39e72
+Revises: f5a7c2d9e104
 Create Date: 2026-08-20 18:00:00.000000
 
 Before this revision ``users.credits`` was a bare mutable balance: it reported
@@ -43,7 +43,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d7f3a2c48e15"
-down_revision: str | Sequence[str] | None = "c8d4a1f39e72"
+down_revision: str | Sequence[str] | None = "f5a7c2d9e104"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

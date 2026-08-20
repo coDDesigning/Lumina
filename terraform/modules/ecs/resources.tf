@@ -13,34 +13,6 @@ resource "aws_ecs_cluster" "this" {
   tags = var.tags
 }
 
-resource "aws_security_group" "this" {
-  name_prefix = "${var.name_prefix}-ecs"
-  vpc_id      = var.vpc_id
-  description = "Lumina ECS tasks: receive HTTP from the ALB, egress for outbound calls"
-  tags        = var.tags
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_security_group_rule" "ingress_http" {
-  type                     = "ingress"
-  from_port                = 8000
-  to_port                  = 8000
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.this.id
-  source_security_group_id = var.alb_security_group_id
-}
-
-resource "aws_security_group_rule" "egress_all" {
-  type              = "egress"
-  from_port         = 0
-  to_port           = 0
-  protocol          = "-1"
-  cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.this.id
-}
-
 data "aws_iam_policy_document" "ecs_assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -67,7 +39,8 @@ resource "aws_iam_role" "execution" {
             "ssm:GetParameters",
           ]
           Resource = [
-            var.database_url_secret_arn,
+            var.runtime_database_url_secret_arn,
+            var.migration_database_url_secret_arn,
             "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_base}/*",
           ]
         }
@@ -150,7 +123,7 @@ resource "aws_ecs_service" "api" {
   platform_version = "LATEST"
   network_configuration {
     subnets          = var.private_subnet_ids
-    security_groups  = [aws_security_group.this.id]
+    security_groups  = [var.ecs_security_group_id]
     assign_public_ip = false
   }
   load_balancer {
@@ -169,12 +142,12 @@ resource "aws_ecs_service" "worker" {
   name             = "${var.name_prefix}-worker"
   cluster          = aws_ecs_cluster.this.id
   task_definition  = aws_ecs_task_definition.worker.arn
-  desired_count    = 1
+  desired_count    = var.worker_min_instances
   launch_type      = "FARGATE"
   platform_version = "LATEST"
   network_configuration {
     subnets          = var.private_subnet_ids
-    security_groups  = [aws_security_group.this.id]
+    security_groups  = [var.ecs_security_group_id]
     assign_public_ip = false
   }
   deployment_minimum_healthy_percent = 100
@@ -203,6 +176,40 @@ resource "aws_appautoscaling_policy" "api_cpu" {
     }
     target_value       = 70.0
     scale_in_cooldown  = 120
+    scale_out_cooldown = 60
+  }
+}
+
+resource "aws_appautoscaling_target" "worker" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.worker.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = var.worker_min_instances
+  max_capacity       = var.worker_max_instances
+}
+
+resource "aws_appautoscaling_policy" "worker_queue_age" {
+  name               = "${var.name_prefix}-worker-queue-age"
+  service_namespace  = "ecs"
+  resource_id        = aws_appautoscaling_target.worker.resource_id
+  scalable_dimension = "ecs:service:DesiredCount"
+  policy_type        = "TargetTrackingScaling"
+  target_tracking_scaling_policy_configuration {
+    customized_metric_specification {
+      metric_name = "OldestQueuedAgeSeconds"
+      namespace   = "Lumina/Worker"
+      statistic   = "Maximum"
+      dimensions {
+        name  = "Service"
+        value = "worker"
+      }
+      dimensions {
+        name  = "Environment"
+        value = var.environment
+      }
+    }
+    target_value       = var.worker_target_queue_age_seconds
+    scale_in_cooldown  = 300
     scale_out_cooldown = 60
   }
 }

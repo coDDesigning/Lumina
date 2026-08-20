@@ -18,4 +18,5 @@ class ErrorCategory(str, Enum):
     TIMEOUT = "timeout"
     RATE_LIMIT = "rate_limit"
     AUTHENTICATION_ERROR = "authentication_error"
+    INSUFFICIENT_CREDITS = "insufficient_credits"
     UNKNOWN_ERROR = "unknown_error"

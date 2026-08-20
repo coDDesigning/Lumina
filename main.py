@@ -14,6 +14,7 @@ from backend.app.request_size import (
 )
 from routes import (
     admin,
+    ai_models,
     ai_tutor,
     auth,
     course,
@@ -47,6 +48,7 @@ app.include_router(auth.router)
 app.include_router(course.router)
 app.include_router(admin.router)
 app.include_router(user.router)
+app.include_router(ai_models.router)
 app.include_router(profile_knowledge.router)
 app.include_router(document.router)
 app.include_router(study_guide.router)

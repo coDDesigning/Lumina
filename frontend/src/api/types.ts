@@ -118,9 +118,18 @@ export type SummaryFormat =
   | 'key_concepts'
   | 'exam_tips';
 
+export interface AiModelInfo {
+  id: string;
+  provider: string;
+  model: string;
+  display_name: string;
+  is_default: boolean;
+}
+
 export interface StudyGuideRequest {
   summary_format: SummaryFormat;
   topic_focus: string;
+  model?: string;
 }
 
 export interface ImportantTerm {
@@ -184,6 +193,7 @@ export interface QuizRequest {
   question_type: QuizQuestionType;
   difficulty: QuizDifficulty;
   topic_focus: string;
+  model?: string;
 }
 
 export interface QuizQuestionView {
@@ -273,8 +283,13 @@ export interface ProfileKnowledgeImport {
   items: ProfileKnowledgeCreate[];
 }
 
+export interface FlashcardRequest {
+  model?: string;
+}
+
 export interface CourseQARequest {
   question: string;
+  model?: string;
 }
 
 export interface CourseQAGenerationResult extends BoundedContext {

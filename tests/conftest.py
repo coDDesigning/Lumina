@@ -368,18 +368,18 @@ def authz_api(api_context: ApiContext) -> AuthorizationApiContext:
             email="owner-a@example.com",
             password_hash="not-used-by-these-tests",
             role=user_role,
-            credits=100.0,
+            credits=50.0,
             is_banned=False,
-            preferred_model="gpt-4o-mini",
+            preferred_model="gemini:gemini-3.6-flash",
         )
         user_b = User(
             name="Owner B",
             email="owner-b@example.com",
             password_hash="not-used-by-these-tests",
             role=user_role,
-            credits=100.0,
+            credits=50.0,
             is_banned=False,
-            preferred_model="gpt-4o-mini",
+            preferred_model="gemini:gemini-3.6-flash",
         )
         administrator = User(
             name="Course Administrator",
@@ -388,7 +388,7 @@ def authz_api(api_context: ApiContext) -> AuthorizationApiContext:
             role=admin_role,
             credits=None,
             is_banned=False,
-            preferred_model="gpt-4o-mini",
+            preferred_model="gemini:gemini-3.6-flash",
         )
 
         a_course = Course(

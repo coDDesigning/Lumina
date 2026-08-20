@@ -1,9 +1,17 @@
 import { FormEvent, useEffect, useRef, useState, useCallback } from 'react'
 import {
+  Bot,
   CircleHelp,
   FilePlus2,
+  History,
+  Layers3,
   Menu,
+  MessageCircle,
+  MessageSquarePlus,
   Search,
+  Sparkles,
+  Target,
+  UserRound,
 } from 'lucide-react'
 import { Navigate, Route, Routes, useParams } from 'react-router-dom'
 import WorkspaceNavigation from './components/WorkspaceNavigation'
@@ -25,7 +33,14 @@ import { courseQaAPI } from './api/courseQa'
 import { aiTutorAPI } from './api/aiTutor'
 import { promptGeneratorAPI } from './api/promptGenerator'
 import { describeError, describeUploadError, isAbortError } from './api/errors'
-import type { Course, CourseProgressResponse } from './api/types'
+import type {
+  ConversationDetail,
+  ConversationRole,
+  ConversationType,
+  Course,
+  CourseProgressResponse,
+  RetrievedContext,
+} from './api/types'
 import { useCourseDocuments } from './hooks/useCourseDocuments'
 import { DocumentRow } from './components/documents/DocumentRow'
 import './App.css'
@@ -37,8 +52,22 @@ import { StudyHistoryModal } from './components/study/StudyHistoryModal'
 import { QuizModal } from './components/study/QuizModal'
 import { FlashcardModal } from './components/study/FlashcardModal'
 import { ProgressDashboard } from './components/study/ProgressDashboard'
+import { ConversationHistoryModal } from './components/conversations/ConversationHistoryModal'
 
 type WorkspaceTab = 'Exam' | 'Tutoring' | 'Practice' | 'Analytics'
+
+type WorkspaceChatMessage = {
+  role: ConversationRole
+  content: string
+  context?: RetrievedContext
+}
+
+type WorkspaceConversation = {
+  conversationId: number | null
+  messages: WorkspaceChatMessage[]
+  isLoading: boolean
+  error: string | null
+}
 
 const tabContent: Record<
   Exclude<WorkspaceTab, 'Analytics'>,
@@ -79,13 +108,14 @@ type WorkspacePageProps = {
 }
 
 function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
+  const { user } = useAuth()
   const courseId = Number(workspace.id)
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('Exam')
   const [generatorPrompt, setGeneratorPrompt] = useState('')
   const [mainPrompt, setMainPrompt] = useState('')
-  const [lastPrompt, setLastPrompt] = useState('')
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false)
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
+  const [isConversationHistoryOpen, setIsConversationHistoryOpen] = useState(false)
   const [isQuizModalOpen, setIsQuizModalOpen] = useState(false)
   const [isFlashcardModalOpen, setIsFlashcardModalOpen] = useState(false)
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false)
@@ -97,10 +127,27 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const [isProgressLoading, setIsProgressLoading] = useState(false)
   const [progressError, setProgressError] = useState<string | null>(null)
   const [progressToken, setProgressToken] = useState(0)
-  const [qaResult, setQaResult] = useState<{ question: string; answer: string; truncated?: boolean; isTutor?: boolean } | null>(null)
-  const [isQaLoading, setIsQaLoading] = useState(false)
-  const [qaError, setQaError] = useState<string | null>(null)
+  const [conversations, setConversations] = useState<
+    Record<ConversationType, WorkspaceConversation>
+  >({
+    course_qa: {
+      conversationId: null,
+      messages: [],
+      isLoading: false,
+      error: null,
+    },
+    ai_tutor: {
+      conversationId: null,
+      messages: [],
+      isLoading: false,
+      error: null,
+    },
+  })
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const activeConversationType: ConversationType =
+    activeTab === 'Tutoring' ? 'ai_tutor' : 'course_qa'
+  const activeConversation = conversations[activeConversationType]
 
   const {
     entries,
@@ -199,7 +246,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
     }
   }
 
-  const submitPrompt = (event: FormEvent<HTMLFormElement>) => {
+  const submitPrompt = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const prompt = mainPrompt.trim()
     if (!prompt) return
@@ -222,38 +269,110 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
       return
     }
 
-    setLastPrompt(prompt)
+    const conversationType: ConversationType =
+      activeTab === 'Tutoring' ? 'ai_tutor' : 'course_qa'
+    const conversation = conversations[conversationType]
+    if (conversation.isLoading) return
+
     setMainPrompt('')
-    setIsQaLoading(true)
-    setQaError(null)
+    setConversations((current) => ({
+      ...current,
+      [conversationType]: {
+        ...current[conversationType],
+        isLoading: true,
+        error: null,
+      },
+    }))
 
-    const isTutorMode = activeTab === 'Tutoring'
-    const requestPromise = isTutorMode
-      ? aiTutorAPI.ask(courseId, { question: prompt })
-      : courseQaAPI.ask(courseId, { question: prompt })
+    const request = {
+      question: prompt,
+      ...(conversation.conversationId
+        ? { conversation_id: conversation.conversationId }
+        : {}),
+    }
 
-    requestPromise
-      .then((res) => {
-        setQaResult({
-          question: prompt,
-          answer: res.answer,
-          truncated: res.context_truncated,
-          isTutor: isTutorMode,
-        })
-      })
-      .catch((err: unknown) => {
-        setQaError(
-          describeError(
+    try {
+      const res =
+        conversationType === 'ai_tutor'
+          ? await aiTutorAPI.ask(courseId, request)
+          : await courseQaAPI.ask(courseId, request)
+
+      setConversations((current) => ({
+        ...current,
+        [conversationType]: {
+          ...current[conversationType],
+          conversationId: res.conversation_id,
+          messages: [
+            ...current[conversationType].messages,
+            { role: 'user', content: prompt },
+            {
+              role: 'assistant',
+              content: res.answer,
+              context: {
+                context_truncated: res.context_truncated,
+                chunks_used: res.chunks_used,
+                chunks_available: res.chunks_available,
+                retrieval_narrowed: res.retrieval_narrowed,
+                lowest_similarity: res.lowest_similarity,
+                highest_similarity: res.highest_similarity,
+              },
+            },
+          ],
+        },
+      }))
+    } catch (err) {
+      setMainPrompt(prompt)
+      setConversations((current) => ({
+        ...current,
+        [conversationType]: {
+          ...current[conversationType],
+          error: describeError(
             err,
-            isTutorMode
+            conversationType === 'ai_tutor'
               ? 'Failed to generate tutor explanation from course materials.'
               : 'Failed to generate answer from course materials.',
           ).message,
-        )
-      })
-      .finally(() => {
-        setIsQaLoading(false)
-      })
+        },
+      }))
+    } finally {
+      setConversations((current) => ({
+        ...current,
+        [conversationType]: {
+          ...current[conversationType],
+          isLoading: false,
+        },
+      }))
+    }
+  }
+
+  const startNewConversation = () => {
+    setConversations((current) => ({
+      ...current,
+      [activeConversationType]: {
+        conversationId: null,
+        messages: [],
+        isLoading: false,
+        error: null,
+      },
+    }))
+  }
+
+  const resumeConversation = (conversation: ConversationDetail) => {
+    setConversations((current) => ({
+      ...current,
+      [conversation.conversation_type]: {
+        conversationId: conversation.id,
+        messages: conversation.messages.map(({ role, content }) => ({
+          role,
+          content,
+        })),
+        isLoading: false,
+        error: null,
+      },
+    }))
+    setActiveTab(conversation.conversation_type === 'ai_tutor' ? 'Tutoring' : 'Exam')
+    setIsConversationHistoryOpen(false)
+    setMainPrompt('')
   }
 
   const chooseSuggestion = (suggestion: string) => {
@@ -445,98 +564,150 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
             />
           ) : (
             <section className="panel chat-panel" role="tabpanel">
-              <header className="panel-header chat-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <h2>Chat & Study Tools</h2>
-                <div style={{ display: 'flex', gap: '8px' }}>
+              <header className="panel-header chat-header">
+                <div>
+                  <h2>Chat & Study Tools</h2>
+                  <span className="chat-mode-label">
+                    {activeConversationType === 'ai_tutor' ? 'AI Tutor' : 'Course Q&A'}
+                  </span>
+                </div>
+                <div className="chat-tool-actions">
                   <button
                     type="button"
-                    className="secondary-button"
-                    style={{ padding: '6px 12px', fontSize: '13px' }}
+                    className="secondary-button chat-tool-button"
                     onClick={() => setIsSummaryModalOpen(true)}
                   >
-                    ✨ Summary
+                    <Sparkles aria-hidden="true" />
+                    Summary
                   </button>
                   <button
                     type="button"
-                    className="secondary-button"
-                    style={{ padding: '6px 12px', fontSize: '13px' }}
+                    className="secondary-button chat-tool-button"
                     onClick={() => setIsFlashcardModalOpen(true)}
                   >
-                    🃏 Flashcards
+                    <Layers3 aria-hidden="true" />
+                    Flashcards
                   </button>
                   <button
                     type="button"
-                    className="secondary-button"
-                    style={{ padding: '6px 12px', fontSize: '13px' }}
+                    className="secondary-button chat-tool-button"
                     onClick={() => setIsHistoryModalOpen(true)}
                   >
-                    🕘 History
+                    <History aria-hidden="true" />
+                    Generated history
                   </button>
                   <button
                     type="button"
-                    className="primary-button"
-                    style={{ padding: '6px 12px', fontSize: '13px' }}
+                    className="secondary-button chat-tool-button"
+                    onClick={() => setIsConversationHistoryOpen(true)}
+                    disabled={conversations.course_qa.isLoading || conversations.ai_tutor.isLoading}
+                  >
+                    <MessageCircle aria-hidden="true" />
+                    Conversation history
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-button chat-tool-button"
                     onClick={() => setIsQuizModalOpen(true)}
                   >
-                    🎯 Practice Quiz
+                    <Target aria-hidden="true" />
+                    Practice Quiz
                   </button>
                 </div>
               </header>
 
               <div className="chat-scroll">
-                <p className="response-copy">{tabContent[activeTab].body}</p>
-
-                <div className="suggestions" aria-label="Suggested prompts">
-                  {tabContent[activeTab].suggestions.map((suggestion) => (
-                    <button
-                      type="button"
-                      key={suggestion}
-                      onClick={() => chooseSuggestion(suggestion)}
-                    >
-                      <CircleHelp aria-hidden="true" strokeWidth={2.2} />
-                      <span>{suggestion}</span>
-                    </button>
-                  ))}
+                <div className="conversation-toolbar">
+                  <p>
+                    {activeConversation.conversationId
+                      ? `Conversation ${activeConversation.conversationId}`
+                      : `New ${activeConversationType === 'ai_tutor' ? 'AI Tutor' : 'Course Q&A'} conversation`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={startNewConversation}
+                    disabled={activeConversation.isLoading}
+                  >
+                    <MessageSquarePlus aria-hidden="true" />
+                    New conversation
+                  </button>
                 </div>
 
-                {isQaLoading && (
-                  <div className="qa-loading-indicator" role="status" style={{ padding: '12px', background: 'var(--color-surface, #f5f5f5)', borderRadius: '8px', margin: '12px 0' }}>
-                    <p style={{ margin: 0, fontStyle: 'italic' }}>
-                      {activeTab === 'Tutoring'
-                        ? '🎓 AI Tutor is formulating personalized guidance…'
-                        : '🔍 Searching course materials and generating answer…'}
+                {activeConversation.messages.length === 0 ? (
+                  <>
+                    <p className="response-copy">{tabContent[activeTab].body}</p>
+
+                    <div className="suggestions" aria-label="Suggested prompts">
+                      {tabContent[activeTab].suggestions.map((suggestion) => (
+                        <button
+                          type="button"
+                          key={suggestion}
+                          onClick={() => chooseSuggestion(suggestion)}
+                        >
+                          <CircleHelp aria-hidden="true" strokeWidth={2.2} />
+                          <span>{suggestion}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <ol className="workspace-conversation" aria-live="polite">
+                    {activeConversation.messages.map((message, index) => (
+                      <li
+                        className={`workspace-message is-${message.role}`}
+                        key={`${message.role}-${index}`}
+                      >
+                        <span className="workspace-message-author">
+                          {message.role === 'user' ? (
+                            <UserRound aria-hidden="true" />
+                          ) : (
+                            <Bot aria-hidden="true" />
+                          )}
+                          {message.role === 'user' ? 'You' : 'Lumina'}
+                        </span>
+                        <p>{message.content}</p>
+                        {message.context ? (
+                          <div className="workspace-message-context">
+                            <span>
+                              {message.context.chunks_used} of{' '}
+                              {message.context.chunks_available} course chunks used
+                            </span>
+                            {message.context.retrieval_narrowed ? (
+                              <span>Focused on the most relevant course material</span>
+                            ) : null}
+                            {message.context.context_truncated ? (
+                              <span>Some retrieved context was omitted for length</span>
+                            ) : null}
+                            {message.context.lowest_similarity != null &&
+                            message.context.highest_similarity != null ? (
+                              <span>
+                                Similarity {message.context.lowest_similarity.toFixed(2)} to{' '}
+                                {message.context.highest_similarity.toFixed(2)}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+
+                {activeConversation.isLoading ? (
+                  <div className="qa-loading-indicator" role="status">
+                    <LoadingSpinner size="sm" />
+                    <p>
+                      {activeConversationType === 'ai_tutor'
+                        ? 'AI Tutor is preparing personalized guidance...'
+                        : 'Searching course materials and preparing an answer...'}
                     </p>
                   </div>
-                )}
+                ) : null}
 
-                {qaError && (
-                  <div className="qa-error-alert" role="alert" style={{ padding: '12px', background: 'rgba(239, 68, 68, 0.1)', color: '#dc2626', borderRadius: '8px', margin: '12px 0' }}>
-                    <p style={{ margin: 0 }}>{qaError}</p>
+                {activeConversation.error ? (
+                  <div className="qa-error-alert" role="alert">
+                    <p>{activeConversation.error}</p>
                   </div>
-                )}
-
-                {qaResult && (
-                  <div className="qa-result-card" style={{ padding: '16px', background: 'var(--color-surface, #f8fafc)', border: '1px solid var(--color-border, #e2e8f0)', borderRadius: '8px', margin: '16px 0' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                      <p style={{ fontWeight: 600, margin: 0, color: 'var(--color-text-primary, #0f172a)' }}>Q: {qaResult.question}</p>
-                      {qaResult.isTutor && (
-                        <span style={{ fontSize: '11px', fontWeight: 600, background: '#ede9fe', color: '#7c3aed', padding: '2px 8px', borderRadius: '999px' }}>
-                          🎓 AI Tutor
-                        </span>
-                      )}
-                    </div>
-                    <p style={{ whiteSpace: 'pre-wrap', margin: '0 0 8px 0', lineHeight: 1.6 }}>{qaResult.answer}</p>
-                    {qaResult.truncated && (
-                      <small style={{ color: '#d97706', display: 'block' }}>⚠️ Note: Only a portion of course materials was used due to length.</small>
-                    )}
-                  </div>
-                )}
-
-                {lastPrompt && !qaResult && !isQaLoading && !qaError && (
-                  <p className="local-status" role="status">
-                    Prompt sent: "{lastPrompt}"
-                  </p>
-                )}
+                ) : null}
               </div>
 
               <form className="prompt-field main-prompt" onSubmit={submitPrompt}>
@@ -548,9 +719,18 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
                   id="main-prompt"
                   value={mainPrompt}
                   onChange={(event) => setMainPrompt(event.target.value)}
-                  placeholder="Enter prompt (type 'summary', 'quiz', or 'flashcard' for quick tools)..."
+                  placeholder={
+                    activeConversationType === 'ai_tutor'
+                      ? 'Ask your tutor a follow-up question...'
+                      : 'Ask a question about your course materials...'
+                  }
+                  disabled={activeConversation.isLoading}
                 />
-                <button type="submit" aria-label="Submit prompt">
+                <button
+                  type="submit"
+                  aria-label="Submit prompt"
+                  disabled={activeConversation.isLoading}
+                >
                   <Search aria-hidden="true" />
                 </button>
               </form>
@@ -574,6 +754,16 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
           courseId={courseId}
           courseName={workspace.name}
           onClose={() => setIsHistoryModalOpen(false)}
+        />
+      ) : null}
+
+      {isConversationHistoryOpen ? (
+        <ConversationHistoryModal
+          courseId={courseId}
+          courseName={workspace.name}
+          canResume={workspace.ownerId == null || workspace.ownerId === user?.id}
+          onClose={() => setIsConversationHistoryOpen(false)}
+          onResume={resumeConversation}
         />
       ) : null}
 
@@ -673,6 +863,7 @@ function EditWorkspaceRoute({
 function mapCourseToWorkspace(course: Course, index: number): Workspace {
   return {
     id: course.id.toString(),
+    ownerId: course.owner_id,
     name: course.title,
     semester: course.semester || '',
     examDate: course.exam_date || '',

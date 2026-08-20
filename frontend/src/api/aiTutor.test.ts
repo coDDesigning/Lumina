@@ -7,7 +7,11 @@ const TUTOR_RESULT: AiTutorGenerationResult = {
   context_truncated: false,
   chunks_used: 3,
   chunks_available: 6,
+  retrieval_narrowed: true,
+  lowest_similarity: 0.68,
+  highest_similarity: 0.89,
   answer: 'Great question! Let us break down recursion into base cases and recursive steps.',
+  conversation_id: 84,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -38,11 +42,14 @@ describe('aiTutorAPI.ask', () => {
 
     const result = await aiTutorAPI.ask(42, {
       question: 'Can you teach me recursion step by step?',
+      conversation_id: 84,
       model: 'gemini:gemini-3.6-flash',
     });
 
     expect(result).toEqual(TUTOR_RESULT);
     expect(result.answer).toContain('base cases and recursive steps');
+    expect(result.conversation_id).toBe(84);
+    expect(result.lowest_similarity).toBe(0.68);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
@@ -50,6 +57,7 @@ describe('aiTutorAPI.ask', () => {
     expect(init?.method).toBe('POST');
     expect(JSON.parse(init?.body as string)).toEqual({
       question: 'Can you teach me recursion step by step?',
+      conversation_id: 84,
       model: 'gemini:gemini-3.6-flash',
     });
     expect(new Headers(init?.headers).get('Authorization')).toBe(

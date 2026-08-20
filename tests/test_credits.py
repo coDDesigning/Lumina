@@ -60,7 +60,8 @@ class StubProvider:
         return data
 
 
-def _add_material(session_factory, user_id: int, course_id: int):
+def _add_material(session_factory, user_id: int, course_id: int, retrieval_env=None):
+    """Seed one ready chunk, and index it when the feature reads through retrieval."""
     with session_factory() as session:
         user = session.get(User, user_id)
         course = session.get(Course, course_id)
@@ -78,15 +79,17 @@ def _add_material(session_factory, user_id: int, course_id: int):
         )
         session.add(doc)
         session.flush()
-        session.add(
-            DocumentChunk(
-                document=doc,
-                course=course,
-                chunk_index=0,
-                page_number=None,
-                text="This is course content about sorting and trees.",
-            )
+        chunk = DocumentChunk(
+            document=doc,
+            course=course,
+            chunk_index=0,
+            page_number=None,
+            text="This is course content about sorting and trees.",
         )
+        session.add(chunk)
+        session.flush()
+        if retrieval_env is not None:
+            retrieval_env.index(session, doc, [chunk])
         session.commit()
 
 
@@ -176,9 +179,14 @@ def test_failed_generation_refunds_credits(authz_api, monkeypatch: pytest.Monkey
 
 
 def test_successful_generation_deducts_credits(
-    authz_api, monkeypatch: pytest.MonkeyPatch
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
 ):
-    _add_material(authz_api.session_factory, authz_api.user_a_id, authz_api.a_course_id)
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
 
     with authz_api.session_factory() as session:
         user = session.get(User, authz_api.user_a_id)

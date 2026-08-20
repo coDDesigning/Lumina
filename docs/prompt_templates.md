@@ -18,12 +18,15 @@ All templates are stored under `app/prompts/<task_name>.json` and must adhere to
 ```json
 {
   "name": "study_guide",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Comprehensive university study guide generation based on lecture notes.",
   "required_variables": [
     "TEXT",
     "SUMMARY_FORMAT",
-    "TOPIC_FOCUS"
+    "TOPIC_FOCUS",
+    "SUMMARY_LENGTH",
+    "DETAIL_LEVEL",
+    "SUMMARY_MODE"
   ],
   "optional_variables": [],
   "output_schema_ref": "StudyGuideResponse",
@@ -40,9 +43,28 @@ All templates are stored under `app/prompts/<task_name>.json` and must adhere to
     "temperature": 0.2,
     "response_mime_type": "application/json"
   },
-  "template": "You are an expert university teaching assistant...\n\n{{SUMMARY_FORMAT}}\n\nRequested topic focus: {{TOPIC_FOCUS}}\n\n{{TEXT}}"
+  "template": "You are an expert university teaching assistant...\n\n{{SUMMARY_FORMAT}}\n\n{{DETAIL_LEVEL}}\n\n{{SUMMARY_MODE}}\n\nRequested topic focus: {{TOPIC_FOCUS}}\n\n{{TEXT}}"
 }
 ```
+
+### Variable substitution order
+
+`PromptTemplateModel.render` substitutes variables in the order the caller's
+dictionary supplies them, so a value containing a literal placeholder would be
+rewritten by any later pass. Feature services therefore render free-text and
+document content **last**: by the time `{{TEXT}}` is substituted every other
+placeholder is already consumed, so course material can never forge one.
+
+### Which variables carry user text
+
+In `study_guide`, only `{{TOPIC_FOCUS}}` and `{{TEXT}}` carry user-supplied
+content. `{{SUMMARY_FORMAT}}`, `{{SUMMARY_LENGTH}}`, `{{DETAIL_LEVEL}}`, and
+`{{SUMMARY_MODE}}` are rendered from server-side constant tables keyed by a
+validated enum, so they can never carry an injected instruction. `{{TOPIC_FOCUS}}`
+is rendered inside the guarded generation-request block, whose closing sentence
+tells the model that the emphasis above is a student preference which never
+overrides the general rules, the section requirements, or the output schema.
+
 
 ## Loader & Validation Rules
 

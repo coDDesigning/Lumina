@@ -18,12 +18,34 @@ class InvalidGeneratedStructureError(RuntimeError):
     pass
 
 
+class NoRelevantCourseMaterialError(RuntimeError):
+    """The course has material, but none of it matched the request.
+
+    Deliberately not a ``CourseMaterialUnavailableError``: an empty corpus and a
+    query nothing answers are different states with different remedies.
+    """
+
+
+class RetrievalUnavailableError(RuntimeError):
+    pass
+
+
+class RetrievalTimeoutError(RetrievalUnavailableError):
+    pass
+
+
+class RetrievalRateLimitedError(RetrievalUnavailableError):
+    pass
+
+
 class InsufficientCreditsError(RuntimeError):
     pass
 
 
 class AiErrorCode(str, Enum):
     NO_READY_MATERIAL = "no_ready_material"
+    NO_RELEVANT_MATERIAL = "no_relevant_material"
+    RETRIEVAL_UNAVAILABLE = "retrieval_unavailable"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
     PROVIDER_TIMEOUT = "provider_timeout"
     PROVIDER_RATE_LIMITED = "provider_rate_limited"
@@ -33,9 +55,16 @@ class AiErrorCode(str, Enum):
 
 
 NO_READY_MATERIAL_MESSAGE = "No processed course material is available for this course."
+NO_RELEVANT_MATERIAL_MESSAGE = (
+    "No course material matched this request. Try a broader topic focus."
+)
 
 PUBLIC_MESSAGES: dict[AiErrorCode, str] = {
     AiErrorCode.NO_READY_MATERIAL: NO_READY_MATERIAL_MESSAGE,
+    AiErrorCode.NO_RELEVANT_MATERIAL: NO_RELEVANT_MATERIAL_MESSAGE,
+    AiErrorCode.RETRIEVAL_UNAVAILABLE: (
+        "Course search is temporarily unavailable. Please try again later."
+    ),
     AiErrorCode.PROVIDER_UNAVAILABLE: (
         "The AI service is currently unavailable. Please try again later."
     ),
@@ -58,6 +87,8 @@ PUBLIC_MESSAGES: dict[AiErrorCode, str] = {
 
 STATUS_CODES: dict[AiErrorCode, int] = {
     AiErrorCode.NO_READY_MATERIAL: status.HTTP_400_BAD_REQUEST,
+    AiErrorCode.NO_RELEVANT_MATERIAL: status.HTTP_409_CONFLICT,
+    AiErrorCode.RETRIEVAL_UNAVAILABLE: status.HTTP_503_SERVICE_UNAVAILABLE,
     AiErrorCode.PROVIDER_UNAVAILABLE: status.HTTP_503_SERVICE_UNAVAILABLE,
     AiErrorCode.PROVIDER_TIMEOUT: status.HTTP_504_GATEWAY_TIMEOUT,
     AiErrorCode.PROVIDER_RATE_LIMITED: status.HTTP_429_TOO_MANY_REQUESTS,
@@ -82,10 +113,18 @@ def classify_generation_error(exc: BaseException) -> AiErrorCode:
             return AiErrorCode.INSUFFICIENT_CREDITS
         if isinstance(error, CourseMaterialUnavailableError):
             return AiErrorCode.NO_READY_MATERIAL
+        if isinstance(error, NoRelevantCourseMaterialError):
+            return AiErrorCode.NO_RELEVANT_MATERIAL
         if isinstance(error, InvalidGeneratedStructureError):
             return AiErrorCode.INVALID_GENERATED_STRUCTURE
         if isinstance(error, TextGenerationConnectionError):
             return AiErrorCode.PROVIDER_UNAVAILABLE
+        if isinstance(error, RetrievalTimeoutError):
+            return AiErrorCode.PROVIDER_TIMEOUT
+        if isinstance(error, RetrievalRateLimitedError):
+            return AiErrorCode.PROVIDER_RATE_LIMITED
+        if isinstance(error, RetrievalUnavailableError):
+            return AiErrorCode.RETRIEVAL_UNAVAILABLE
 
         category = getattr(error, "error_category", None)
         if category == ErrorCategory.TIMEOUT.value:

@@ -29,9 +29,16 @@ export function studyGuideToMarkdown(
   );
   lines.push('');
 
+  if (result.retrieval_narrowed) {
+    lines.push(
+      `> Built from the ${result.chunks_used} most relevant of ${result.chunks_available} content sections in this course.`,
+      '',
+    );
+  }
+
   if (result.context_truncated) {
     lines.push(
-      `> Built from ${result.chunks_used} of ${result.chunks_available} content sections, so some material was left out.`,
+      '> The relevant material did not all fit in one request, so the least relevant sections were left out.',
       '',
     );
   }

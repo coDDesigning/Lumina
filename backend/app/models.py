@@ -816,6 +816,10 @@ class GeneratedOutput(Base):
 
     content: Mapped[str] = mapped_column(Text)  # Unlimited length
 
+    generation_settings: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    generation_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )

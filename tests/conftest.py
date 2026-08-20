@@ -20,14 +20,23 @@ from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.database_engine import create_database_engine
 from backend.app.models import (
+    EMBEDDING_DIMENSIONS,
     Course,
+    DocumentChunk,
     ProcessingJob,
     Role,
     UploadedDocument,
     User,
 )
 from main import app
+from services import semantic_retrieval as semantic_retrieval_service
 from services.processing_jobs import claim_next_job, fail_job
+from services.vector_store import (
+    ChromaVectorStore,
+    PgVectorStore,
+    VectorRecord,
+    VectorStore,
+)
 from storage.dependencies import get_storage
 from storage.local import LocalStorage
 from utils.security import create_access_token
@@ -203,6 +212,97 @@ def db_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
     finally:
         session.rollback()
         session.close()
+
+
+EMBEDDING_PROVIDER_NAME = "ollama"
+EMBEDDING_MODEL_NAME = "nomic-embed-text"
+
+
+def directional_vector(seed: float) -> list[float]:
+    """A unit-ish vector whose cosine against ``directional_vector(0.0)`` is 1/sqrt(1+seed**2).
+
+    Tests pick a seed to place a chunk deliberately above or below a similarity
+    floor: seed 0.0 scores 1.00, seed 1.0 scores 0.71, seed 4.0 scores 0.24.
+    """
+    values = [0.0] * EMBEDDING_DIMENSIONS
+    values[0] = 1.0
+    values[1] = seed
+    return values
+
+
+class StubEmbeddingProvider:
+    """Embeds queries to a settable vector and refuses to embed documents."""
+
+    def __init__(self, *, query_vector: list[float] | None = None) -> None:
+        self.query_vector = (
+            query_vector if query_vector is not None else directional_vector(0.0)
+        )
+        self.embed_query_calls: list[str] = []
+
+    def embed_documents(self, texts):
+        raise AssertionError("retrieval must never embed documents")
+
+    def embed_query(self, text: str) -> list[float]:
+        self.embed_query_calls.append(text)
+        return list(self.query_vector)
+
+
+@dataclass
+class RetrievalContext:
+    provider: StubEmbeddingProvider
+    store: VectorStore
+
+    def index(
+        self,
+        session: Session,
+        document: UploadedDocument,
+        chunks: list[DocumentChunk],
+        *,
+        seeds: list[float] | None = None,
+    ) -> None:
+        """Give every chunk a vector so retrieval can find it."""
+        resolved = seeds if seeds is not None else [0.0] * len(chunks)
+        self.store.replace_document_vectors(
+            session,
+            document_id=document.id,
+            course_id=document.course_id,
+            records=[
+                VectorRecord(
+                    chunk_id=chunk.id,
+                    document_id=document.id,
+                    course_id=document.course_id,
+                    chunk_index=chunk.chunk_index,
+                    embedding=directional_vector(seed),
+                )
+                for chunk, seed in zip(chunks, resolved, strict=True)
+            ],
+            embedding_provider=EMBEDDING_PROVIDER_NAME,
+            embedding_model=EMBEDDING_MODEL_NAME,
+        )
+
+
+@pytest.fixture
+def retrieval_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> RetrievalContext:
+    """Wire semantic retrieval to a real vector store and a deterministic embedder.
+
+    Patching ``services.semantic_retrieval`` is enough because that module
+    resolves both factories at call time; every feature reaches the store through
+    it.
+    """
+    store: VectorStore = (
+        PgVectorStore()
+        if settings.is_hosted
+        else ChromaVectorStore(persist_directory=str(tmp_path / "chroma"))
+    )
+    provider = StubEmbeddingProvider()
+    monkeypatch.setattr(
+        semantic_retrieval_service, "get_embedding_provider", lambda: provider
+    )
+    monkeypatch.setattr(semantic_retrieval_service, "get_vector_store", lambda: store)
+    return RetrievalContext(provider=provider, store=store)
 
 
 @pytest.fixture

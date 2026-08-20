@@ -1,19 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  BookOpen,
-  Check,
-  CheckCircle2,
-  Copy,
-  Download,
-  FileText,
-  Lightbulb,
-  Sparkles,
-  X,
-  XCircle,
-} from 'lucide-react';
+import { BookOpen, Check, Copy, Download, Sparkles, X, XCircle } from 'lucide-react';
 import { studyGuideAPI } from '../../api/studyGuide';
 import { describeGenerationError, isAbortError } from '../../api/errors';
-import type { StudyGuideGenerationResult, SummaryFormat } from '../../api/types';
+import type {
+  DetailLevel,
+  StudyGuideGenerationResult,
+  SummaryFormat,
+  SummaryLength,
+  SummaryMode,
+} from '../../api/types';
+import { StudyGuideView } from './StudyGuideView';
 import { studyGuideFileName, studyGuideToMarkdown } from './studyGuideMarkdown';
 import './study.css';
 
@@ -40,6 +36,23 @@ const FORMAT_OPTIONS: { value: SummaryFormat; label: string }[] = [
   { value: 'exam_tips', label: 'High-Yield Exam Cram Sheet' },
 ];
 
+const LENGTH_OPTIONS: { value: SummaryLength; label: string }[] = [
+  { value: 'short', label: 'Short' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'long', label: 'Long' },
+];
+
+const DETAIL_OPTIONS: { value: DetailLevel; label: string }[] = [
+  { value: 'basic', label: 'Basic — essential definitions' },
+  { value: 'standard', label: 'Standard — definitions and reasoning' },
+  { value: 'detailed', label: 'Detailed — mechanisms and examples' },
+];
+
+const MODE_OPTIONS: { value: SummaryMode; label: string }[] = [
+  { value: 'general', label: 'General understanding' },
+  { value: 'exam_focused', label: 'Exam focused' },
+];
+
 export function SummaryModal({
   courseId,
   courseName,
@@ -49,6 +62,9 @@ export function SummaryModal({
 }: SummaryModalProps) {
   const [summaryFormat, setSummaryFormat] = useState<SummaryFormat>('comprehensive');
   const [topicFocus, setTopicFocus] = useState(ALL_TOPICS);
+  const [summaryLength, setSummaryLength] = useState<SummaryLength>('medium');
+  const [detailLevel, setDetailLevel] = useState<DetailLevel>('standard');
+  const [summaryMode, setSummaryMode] = useState<SummaryMode>('general');
   const [state, setState] = useState<SummaryState>({ phase: 'idle' });
   const [elapsed, setElapsed] = useState(0);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -80,7 +96,13 @@ export function SummaryModal({
     try {
       const result = await studyGuideAPI.generate(
         courseId,
-        { summary_format: summaryFormat, topic_focus: topicFocus },
+        {
+          summary_format: summaryFormat,
+          topic_focus: topicFocus,
+          summary_length: summaryLength,
+          detail_level: detailLevel,
+          summary_mode: summaryMode,
+        },
         { signal: controller.signal },
       );
       if (controller.signal.aborted) return;
@@ -97,7 +119,7 @@ export function SummaryModal({
         retryable: described.retryable,
       });
     }
-  }, [courseId, summaryFormat, topicFocus]);
+  }, [courseId, summaryFormat, topicFocus, summaryLength, detailLevel, summaryMode]);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
@@ -223,6 +245,57 @@ export function SummaryModal({
                       ))}
                     </select>
                   </div>
+
+                  <div className="study-field-group">
+                    <label htmlFor="summary-length">Summary Length</label>
+                    <select
+                      id="summary-length"
+                      value={summaryLength}
+                      onChange={(event) =>
+                        setSummaryLength(event.target.value as SummaryLength)
+                      }
+                    >
+                      {LENGTH_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="study-field-group">
+                    <label htmlFor="summary-detail">Detail Level</label>
+                    <select
+                      id="summary-detail"
+                      value={detailLevel}
+                      onChange={(event) =>
+                        setDetailLevel(event.target.value as DetailLevel)
+                      }
+                    >
+                      {DETAIL_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="study-field-group">
+                    <label htmlFor="summary-mode">Summary Mode</label>
+                    <select
+                      id="summary-mode"
+                      value={summaryMode}
+                      onChange={(event) =>
+                        setSummaryMode(event.target.value as SummaryMode)
+                      }
+                    >
+                      {MODE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 {!hasMaterial ? (
@@ -236,151 +309,7 @@ export function SummaryModal({
           ) : null}
 
           {guide && result ? (
-            <div className="summary-container">
-              <div className="summary-meta-badge">
-                <FileText aria-hidden="true" />
-                <span>{guide.difficulty.level}</span> •{' '}
-                <span>{guide.estimated_study_time}</span> •{' '}
-                <span>
-                  {guide.coverage.status} ({guide.coverage.estimated_completeness}%)
-                </span>
-              </div>
-
-              {result.context_truncated ? (
-                <div className="summary-section-card summary-notice" role="note">
-                  <h4>Partial coverage</h4>
-                  <p>
-                    Built from {result.chunks_used} of {result.chunks_available} content
-                    sections, so some material was left out.
-                  </p>
-                </div>
-              ) : null}
-
-              <div className="summary-section-card">
-                <h4>
-                  <BookOpen aria-hidden="true" />
-                  {guide.title}
-                </h4>
-                <div className="summary-body-text">{guide.summary}</div>
-                <p className="summary-hint">{guide.difficulty.reason}</p>
-              </div>
-
-              {guide.learning_objectives.length > 0 ? (
-                <div className="summary-section-card">
-                  <h4>
-                    <Check aria-hidden="true" />
-                    Learning Objectives
-                  </h4>
-                  <ul className="summary-bullet-list">
-                    {guide.learning_objectives.map((objective, index) => (
-                      <li key={index}>{objective}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-
-              {guide.key_points.length > 0 ? (
-                <div className="summary-section-card">
-                  <h4>
-                    <Check aria-hidden="true" />
-                    Key Points
-                  </h4>
-                  <ul className="summary-bullet-list">
-                    {guide.key_points.map((point, index) => (
-                      <li key={index}>{point}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-
-              {guide.important_terms.length > 0 ? (
-                <div className="summary-section-card">
-                  <h4>
-                    <Lightbulb aria-hidden="true" />
-                    Important Terms
-                  </h4>
-                  <div className="definitions-grid">
-                    {guide.important_terms.map((term, index) => (
-                      <div className="definition-item" key={index}>
-                        <strong>{term.term}</strong>
-                        <p>{term.definition}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
-              {guide.common_mistakes.length > 0 ? (
-                <div className="summary-section-card">
-                  <h4>
-                    <XCircle aria-hidden="true" />
-                    Common Mistakes
-                  </h4>
-                  <ul className="summary-mistake-list">
-                    {guide.common_mistakes.map((item, index) => (
-                      <li key={index}>
-                        <span className="mistake-line">
-                          <XCircle aria-hidden="true" />
-                          {item.mistake}
-                        </span>
-                        <span className="correction-line">
-                          <CheckCircle2 aria-hidden="true" />
-                          {item.correction}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-
-              {guide.exam_tips.lecture_based.length > 0 ||
-              guide.exam_tips.ai_suggestions.length > 0 ? (
-                <div className="summary-section-card">
-                  <h4>
-                    <Sparkles aria-hidden="true" />
-                    Exam Tips
-                  </h4>
-                  {guide.exam_tips.lecture_based.length > 0 ? (
-                    <>
-                      <h5>From your lecture material</h5>
-                      <ul className="summary-bullet-list">
-                        {guide.exam_tips.lecture_based.map((tip, index) => (
-                          <li key={index}>{tip}</li>
-                        ))}
-                      </ul>
-                    </>
-                  ) : null}
-                  {guide.exam_tips.ai_suggestions.length > 0 ? (
-                    <>
-                      <h5>AI suggestions</h5>
-                      <ul className="summary-bullet-list">
-                        {guide.exam_tips.ai_suggestions.map((tip, index) => (
-                          <li key={index}>{tip}</li>
-                        ))}
-                      </ul>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {guide.prerequisites.length > 0 ? (
-                <div className="summary-section-card">
-                  <h4>
-                    <BookOpen aria-hidden="true" />
-                    Prerequisites
-                  </h4>
-                  <ul className="summary-bullet-list">
-                    {guide.prerequisites.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-
-              {guide.confidence_notes ? (
-                <p className="summary-hint">{guide.confidence_notes}</p>
-              ) : null}
-            </div>
+            <StudyGuideView guide={guide} context={result} />
           ) : null}
         </div>
 

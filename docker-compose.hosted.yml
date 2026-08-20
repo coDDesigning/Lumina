@@ -108,7 +108,8 @@ services:
 
   migrate:
     <<: *lumina-service
-    command: ["python", "-m", "alembic", "upgrade", "head"]
+    command:
+      ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check"]
     depends_on:
       db:
         condition: service_healthy

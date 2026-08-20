@@ -18,6 +18,12 @@ python -m alembic current --check-heads
 python -m alembic check
 ```
 
+CI also exercises both supported dialects through a disposable migration
+lifecycle: fresh upgrade, head and drift checks, one-revision downgrade and
+re-upgrade, full downgrade to base, and final re-upgrade. Production migrator
+containers run `upgrade head`, `current --check-heads`, and `check`; a service
+never starts after a partial migration or schema drift.
+
 Exactly one deployment-owned process may apply migrations. API and worker
 entrypoints must never migrate or stamp the database. In the supported
 self-hosted container topology, the one-shot `migrate` service completes before
@@ -497,4 +503,3 @@ When assembling context for course-scoped AI features:
    conflicting statements, course material is authoritative.
 4. **Isolation**: A user's profile knowledge is never exposed to or included in another
    user's generation context.
-

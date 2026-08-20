@@ -61,7 +61,6 @@ class UserUpdate(BaseModel):
 
     role: Role | None = None
     is_banned: bool | None = None
-    credits: float | None = None
     preferred_model: str | None = Field(default=None, min_length=1, max_length=100)
 
     @field_validator("preferred_model")

@@ -16,6 +16,39 @@ export interface User {
   preferred_model: string;
 }
 
+export type CreditReason =
+  | 'initial_grant'
+  | 'periodic_grant'
+  | 'generation_charge'
+  | 'generation_refund'
+  | 'admin_grant'
+  | 'admin_adjustment'
+  | 'metering_reset'
+  | 'migration_reconciliation';
+
+export type CreditActorType = 'system' | 'user' | 'admin' | 'migration';
+
+export interface CreditTransaction {
+  id: number;
+  delta: number;
+  balance_after: number;
+  reason: LooseUnion<CreditReason>;
+  actor_type: LooseUnion<CreditActorType>;
+  actor_user_id: number | null;
+  actor_label: string | null;
+  source_type: string | null;
+  source_id: number | null;
+  refunds_transaction_id: number | null;
+  grant_period: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface CreditMutation {
+  user: User;
+  transaction: CreditTransaction;
+}
+
 export interface AuthResponse {
   access_token: string;
   token_type: string;

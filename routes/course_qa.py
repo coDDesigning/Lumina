@@ -46,6 +46,7 @@ def ask_course_question(
             request.question,
             provider,
             user_id=current_user.id,
+            conversation_id=request.conversation_id,
         )
 
     except (TextGenerationError, CourseQAError) as exc:
@@ -56,6 +57,7 @@ def ask_course_question(
         message="Course Q&A answer generated successfully",
         data=CourseQAGenerationResult(
             answer=generation.response.answer,
+            conversation_id=generation.conversation_id,
             context_truncated=generation.material.truncated,
             chunks_used=generation.material.chunks_used,
             chunks_available=generation.material.chunks_available,

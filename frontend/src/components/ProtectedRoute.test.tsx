@@ -18,6 +18,7 @@ describe('ProtectedRoute', () => {
       isAuthenticated: false,
       login: vi.fn(),
       logout: vi.fn(),
+      refreshUser: vi.fn(),
     });
 
     const { container } = render(
@@ -41,6 +42,7 @@ describe('ProtectedRoute', () => {
       isAuthenticated: false,
       login: vi.fn(),
       logout: vi.fn(),
+      refreshUser: vi.fn(),
     });
 
     render(
@@ -73,6 +75,7 @@ describe('ProtectedRoute', () => {
       isAuthenticated: true,
       login: vi.fn(),
       logout: vi.fn(),
+      refreshUser: vi.fn(),
     });
 
     render(

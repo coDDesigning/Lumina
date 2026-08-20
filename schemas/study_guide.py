@@ -16,6 +16,10 @@ class SummaryFormat(str, Enum):
 class StudyGuideRequest(BaseModel):
     summary_format: SummaryFormat
     topic_focus: str = Field(min_length=1, max_length=200)
+    model: str | None = Field(
+        default=None,
+        description="Explicit model override, or omit to use preferred/default model",
+    )
 
 
 class ImportantTerm(BaseModel):

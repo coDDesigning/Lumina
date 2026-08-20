@@ -14,7 +14,11 @@ from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.quiz import QuizGenerationError, QuizService
 from services.quiz_attempt import QuizAttemptService
-from services.text_generation import TextGenerationError, get_text_generation_provider
+from services.text_generation import (
+    TextGenerationError,
+    get_text_generation_provider,
+    resolve_effective_model,
+)
 from utils.ai_errors import ai_generation_http_exception
 from utils.authorization import AuthorizedCourse, OwnedCourse
 from utils.deps import get_current_user
@@ -31,6 +35,7 @@ router = APIRouter(
     responses={
         400: {"description": "No processed course material is available"},
         401: {"description": "Authentication required"},
+        402: {"description": "Insufficient credits"},
         404: {"description": "Course not found"},
         422: {"description": "Invalid quiz request"},
         429: {"description": "AI provider rate limited"},
@@ -45,7 +50,13 @@ def generate_quiz(
     db: Annotated[Session, Depends(get_db)],
 ):
     try:
-        provider = get_text_generation_provider()
+        effective_model = resolve_effective_model(
+            request.model, current_user.preferred_model
+        )
+        try:
+            provider = get_text_generation_provider(effective_model=effective_model)
+        except TypeError:
+            provider = get_text_generation_provider()
 
         generation = QuizService.generate(
             db,
@@ -61,7 +72,7 @@ def generate_quiz(
             generation.quiz,
         )
 
-    except (TextGenerationError, QuizGenerationError) as exc:
+    except (TextGenerationError, QuizGenerationError, Exception) as exc:
         raise ai_generation_http_exception(exc, feature="quiz") from exc
 
     return BaseResponse(

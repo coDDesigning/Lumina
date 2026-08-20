@@ -15,6 +15,10 @@ class CourseQARequest(BaseModel):
         gt=0,
         description="Existing conversation to continue, or omit to start a new one",
     )
+    model: str | None = Field(
+        default=None,
+        description="Explicit model override, or omit to use preferred/default model",
+    )
 
 
 class CourseQAResponse(BaseModel):

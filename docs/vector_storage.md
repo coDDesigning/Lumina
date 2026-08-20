@@ -225,7 +225,9 @@ chunks into prompt material is `services/retrieval_material.py`, which
 `load_retrieved_material(db, course_id, *, query, limit, min_similarity,
 max_characters, ...)` owns:
 
-1. Rank the course's chunks against the query, bounded by `limit`.
+1. Rank the course's chunks against the query, bounded by `limit`. If ranking
+   returns nothing at all, the course holds no vectors, so raise
+   `MaterialNotIndexedError` rather than a relevance miss.
 2. Discard anything below `min_similarity`. If nothing survives, raise
    `NoRelevantMaterialError` — **the provider is never called and no row is
    written**.
@@ -237,6 +239,12 @@ The similarity floor lives here rather than in `search`, so neither backend has 
 implement it and the ranking contract stays narrow. The module reads no settings:
 the calling feature supplies every bound, which keeps each remaining migration a
 one-line change.
+
+An indexing gap and a relevance miss are deliberately different errors. A course
+whose documents are `ready` but never embedded matches nothing no matter what is
+asked of it, so answering it with "try a broader topic focus" sends the student
+after a problem they cannot reach; the fix is `python -m workers.embedding_backfill`
+or reprocessing, and the message says so.
 
 Embedding and store failures are translated here into `MaterialRetrievalError` and
 its timeout and rate-limit subclasses, which `utils/ai_errors.py` maps to curated

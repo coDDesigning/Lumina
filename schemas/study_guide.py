@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from schemas.generation import RetrievedContext
+from schemas.generation import RetrievalGenerationContext, RetrievedContext
 
 
 class SummaryFormat(str, Enum):
@@ -80,31 +80,8 @@ class StudyGuideGenerationSettings(BaseModel):
         )
 
 
-class StudyGuideGenerationContext(BaseModel):
+class StudyGuideGenerationContext(RetrievalGenerationContext):
     """What retrieval actually produced for a stored study guide."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    version: Literal[1] = 1
-    chunks_ranked: int
-    chunks_retrieved: int
-    chunks_used: int
-    chunks_available: int
-    lowest_similarity: float | None = None
-    highest_similarity: float | None = None
-    truncated: bool
-
-    @classmethod
-    def from_material(cls, material) -> "StudyGuideGenerationContext":
-        return cls(
-            chunks_ranked=material.chunks_ranked,
-            chunks_retrieved=material.chunks_retrieved,
-            chunks_used=material.chunks_used,
-            chunks_available=material.chunks_available,
-            lowest_similarity=material.lowest_similarity,
-            highest_similarity=material.highest_similarity,
-            truncated=material.truncated,
-        )
 
 
 class ImportantTerm(BaseModel):

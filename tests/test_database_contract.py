@@ -407,6 +407,139 @@ def test_quiz_question_indexes_are_nonnegative(
         session.rollback()
 
 
+def _quiz_graph(session, email: str) -> Quiz:
+    role = session.scalar(select(Role).where(Role.name == "user"))
+    assert role is not None
+    user = User(
+        name="Quiz owner",
+        email=email,
+        password_hash="not-a-real-hash",
+        role=role,
+    )
+    course = Course(owner=user, title="Quiz course")
+    quiz = Quiz(course=course, user=user, title="Attributed quiz")
+    session.add(quiz)
+    session.commit()
+    return quiz
+
+
+def test_text_questions_may_omit_options_and_option_index(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Short-answer and open-ended questions genuinely have neither."""
+    with session_factory() as session:
+        quiz = _quiz_graph(session, "quiz-text-question@example.com")
+        session.add(
+            QuizQuestion(
+                quiz=quiz,
+                question_index=0,
+                question_type="open_ended",
+                question_text="Why does binary search need sorted input?",
+                correct_answer={"type": "open_ended", "reference_answer": "Ordering."},
+            )
+        )
+        session.commit()
+
+        stored = session.scalars(select(QuizQuestion)).one()
+        assert stored.options is None
+        assert stored.correct_option_index is None
+        assert stored.correct_answer["type"] == "open_ended"
+
+
+def test_a_negative_option_index_is_still_rejected(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Relaxing the constraint to admit NULL must not admit nonsense."""
+    with session_factory() as session:
+        quiz = _quiz_graph(session, "quiz-negative-index@example.com")
+        session.add(
+            QuizQuestion(
+                quiz=quiz,
+                question_index=0,
+                question_type="multiple_choice",
+                question_text="Question?",
+                options=["Yes", "No"],
+                correct_option_index=-1,
+            )
+        )
+
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+
+def test_an_ungraded_answer_persists_without_a_verdict(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A grading outage records the work, not a wrong answer."""
+    with session_factory() as session:
+        quiz = _quiz_graph(session, "quiz-ungraded-answer@example.com")
+        question = QuizQuestion(
+            quiz=quiz,
+            question_index=0,
+            question_type="open_ended",
+            question_text="Explain.",
+            correct_answer={"type": "open_ended", "reference_answer": "Ordering."},
+        )
+        attempt = QuizAttempt(user=quiz.user, quiz=quiz, score=0.0)
+        session.add_all([question, attempt])
+        session.flush()
+        session.add(
+            QuizAttemptAnswer(
+                attempt=attempt,
+                question=question,
+                text_response="A written answer.",
+                is_correct=None,
+                score=None,
+            )
+        )
+        session.commit()
+
+        stored = session.scalars(select(QuizAttemptAnswer)).one()
+        assert stored.is_correct is None
+        assert stored.score is None
+        assert stored.text_response == "A written answer."
+
+
+def test_deleting_a_generating_user_keeps_the_quiz(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A quiz outlives the account that generated it, but not its course."""
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        admin_role = session.scalar(select(Role).where(Role.name == "admin"))
+        assert role is not None and admin_role is not None
+        owner = User(
+            name="Course owner",
+            email="quiz-course-owner@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        generator = User(
+            name="Quiz generator",
+            email="quiz-generator@example.com",
+            password_hash="not-a-real-hash",
+            role=admin_role,
+        )
+        course = Course(owner=owner, title="Shared course")
+        quiz = Quiz(course=course, user=generator, title="Attributed quiz")
+        session.add(quiz)
+        session.commit()
+        quiz_id = quiz.id
+
+        session.delete(generator)
+        session.commit()
+
+        stored = session.get(Quiz, quiz_id)
+        assert stored is not None
+        assert stored.user_id is None
+
+        session.delete(session.get(Course, stored.course_id))
+        session.commit()
+
+        assert session.get(Quiz, quiz_id) is None
+
+
 def test_processing_job_identifiers_and_ownership_are_enforced(
     session_factory: sessionmaker[Session],
 ) -> None:

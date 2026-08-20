@@ -316,6 +316,22 @@
   gap: 10px;
 }
 
+.quiz-answer-input {
+  width: 100%;
+  padding: 14px 18px;
+  border-radius: 10px;
+  border: 1px solid #eee8f4;
+  background: #fff;
+  font: inherit;
+  color: inherit;
+  resize: vertical;
+}
+
+.quiz-answer-input:focus {
+  outline: none;
+  border-color: #7c3aed;
+}
+
 .quiz-option-btn {
   width: 100%;
   text-align: left;
@@ -463,6 +479,10 @@
 
 .review-item.incorrect {
   border-left: 4px solid #ef4444;
+}
+
+.review-item.ungraded {
+  border-left: 4px solid #94a3b8;
 }
 
 .review-header {

@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -8,19 +10,22 @@ from backend.app.models import (
     QuizAttemptAnswer,
     QuizQuestion,
 )
-from schemas.quiz import QuizQuestionType
+from schemas.quiz import OPTION_BASED_QUESTION_TYPES, QuizQuestionType
 from schemas.quiz_attempt import (
     MASTERED_THRESHOLD,
     NEEDS_REVIEW_THRESHOLD,
     CourseProgressResponse,
     MasteryStatus,
     QuizAnswerResult,
+    QuizAnswerSubmission,
     QuizAttemptRequest,
     QuizAttemptResponse,
     QuizHistoryItem,
     TopicMastery,
 )
-from utils.exceptions import BadRequestException, NotFoundException
+from services.quiz import QuizService
+from services.quiz_grading import ProviderFactory, QuizGradingService
+from utils.exceptions import BadRequestException
 
 UNTAGGED_TOPIC = "Untagged"
 
@@ -33,50 +38,42 @@ def _mastery_status(percentage: int) -> MasteryStatus:
     return MasteryStatus.IN_PROGRESS
 
 
-def _is_objective_question(question: QuizQuestion) -> bool:
-    """Return True if question is auto-gradable (multiple choice or true/false)."""
-    q_type = question.question_type or QuizQuestionType.MULTIPLE_CHOICE.value
-    if q_type in (
-        QuizQuestionType.MULTIPLE_CHOICE.value,
-        QuizQuestionType.TRUE_FALSE.value,
-        QuizQuestionType.MULTIPLE_CHOICE,
-        QuizQuestionType.TRUE_FALSE,
-    ):
-        return True
-    return question.correct_option_index is not None and bool(question.options)
+@dataclass(frozen=True)
+class _ProgressAggregate:
+    """Everything both the stored ``Progress`` row and the API read derive from.
+
+    The two used to compute this separately from the same queries. Keeping one
+    derivation is what stops the materialized row and the response it is meant
+    to mirror from drifting apart.
+    """
+
+    attempts_count: int
+    average_score: float | None
+    completion: float
+    correct_count: int
+    incorrect_count: int
+    topic_mastery: list[TopicMastery]
+    weak_topics: list[str]
+    quiz_history: list[QuizHistoryItem]
+
+    @property
+    def total_questions_answered(self) -> int:
+        return self.correct_count + self.incorrect_count
 
 
 class QuizAttemptService:
     @staticmethod
-    def _load_course_quiz(db: Session, course_id: int, quiz_id: int) -> Quiz:
-        quiz = db.scalars(
-            select(Quiz)
-            .where(Quiz.id == quiz_id, Quiz.course_id == course_id)
-            .options(selectinload(Quiz.questions))
-        ).one_or_none()
+    def _validate_submissions(
+        request: QuizAttemptRequest, questions: dict[int, QuizQuestion]
+    ) -> dict[int, QuizAnswerSubmission]:
+        """Match every submitted answer to a question of this quiz and its type.
 
-        if quiz is None:
-            raise NotFoundException("Quiz not found")
+        An answer given in the wrong form for its question type is rejected
+        rather than silently graded as unanswered, so a client bug surfaces as a
+        400 instead of a zero the student cannot explain.
+        """
+        submitted: dict[int, QuizAnswerSubmission] = {}
 
-        return quiz
-
-    @classmethod
-    def record_attempt(
-        cls,
-        db: Session,
-        course_id: int,
-        quiz_id: int,
-        request: QuizAttemptRequest,
-        *,
-        user_id: int,
-    ) -> QuizAttemptResponse:
-        quiz = cls._load_course_quiz(db, course_id, quiz_id)
-        questions = {question.id: question for question in quiz.questions}
-
-        if not questions:
-            raise BadRequestException("This quiz has no questions to answer.")
-
-        submitted: dict[int, dict] = {}
         for answer in request.answers:
             question = questions.get(answer.question_id)
             if question is None:
@@ -87,124 +84,150 @@ class QuizAttemptService:
                 raise BadRequestException(
                     "Each question may only be answered once per attempt."
                 )
+
+            question_type = QuizQuestionType(question.question_type)
             selected = answer.selected_option_index
-            if (
-                selected is not None
-                and question.options is not None
-                and selected >= len(question.options)
-            ):
+            written = answer.text_response
+
+            if question_type in OPTION_BASED_QUESTION_TYPES:
+                if written is not None:
+                    raise BadRequestException(
+                        "A multiple choice or true/false question is answered by "
+                        "selecting an option, not by writing text."
+                    )
+                options = question.options or []
+                if selected is not None and selected >= len(options):
+                    raise BadRequestException(
+                        "One of the submitted answers selects an option that does "
+                        "not exist."
+                    )
+            elif selected is not None:
                 raise BadRequestException(
-                    "One of the submitted answers selects an option that does not exist."
+                    "A short answer or open ended question is answered by writing "
+                    "text, not by selecting an option."
                 )
-            submitted[answer.question_id] = {
-                "selected_option_index": selected,
-                "text_response": answer.text_response,
-                "time_spent_seconds": answer.time_spent_seconds,
-            }
+
+            submitted[answer.question_id] = answer
+
+        return submitted
+
+    @classmethod
+    def record_attempt(
+        cls,
+        db: Session,
+        course_id: int,
+        quiz_id: int,
+        request: QuizAttemptRequest,
+        *,
+        user_id: int,
+        provider_factory: ProviderFactory | None = None,
+    ) -> QuizAttemptResponse:
+        quiz = QuizService.get_course_quiz(db, course_id, quiz_id)
+        questions = {question.id: question for question in quiz.questions}
+
+        if not questions:
+            raise BadRequestException("This quiz has no questions to answer.")
+
+        submitted = cls._validate_submissions(request, questions)
+
+        ordered = sorted(quiz.questions, key=lambda row: (row.question_index, row.id))
+        graded = QuizGradingService.grade(
+            db,
+            questions=ordered,
+            submissions=submitted,
+            provider_factory=provider_factory,
+            user_id=user_id,
+            course_id=course_id,
+        )
+
+        scored = [answer for answer in graded if answer.score is not None]
+        correct_count = sum(1 for answer in graded if answer.is_correct)
+        score = sum(answer.score for answer in scored) / len(scored) if scored else 0.0
 
         attempt = QuizAttempt(
             user_id=user_id,
             quiz_id=quiz.id,
-            score=0.0,
+            score=min(max(score, 0.0), 1.0),
             time_spent_seconds=request.time_spent_seconds,
         )
-        db.add(attempt)
-        db.flush()
 
-        results: list[QuizAnswerResult] = []
-        gradable_correct_count = 0
-        gradable_total_count = 0
+        by_question = {question.id: question for question in ordered}
 
-        for question in sorted(quiz.questions, key=lambda row: row.question_index):
-            sub = submitted.get(question.id)
-            is_gradable = _is_objective_question(question)
-            selected = sub["selected_option_index"] if sub else None
-            text_response = sub["text_response"] if sub else None
-            time_spent = sub["time_spent_seconds"] if sub else None
-            topic = question.topic
+        try:
+            db.add(attempt)
+            db.flush()
 
-            if is_gradable:
-                gradable_total_count += 1
-                is_correct = (
-                    selected is not None
-                    and question.correct_option_index is not None
-                    and selected == question.correct_option_index
+            for answer in graded:
+                submission = submitted.get(answer.question_id)
+                question = by_question[answer.question_id]
+                db.add(
+                    QuizAttemptAnswer(
+                        attempt_id=attempt.id,
+                        quiz_question_id=answer.question_id,
+                        selected_option_index=answer.selected_option_index,
+                        text_response=answer.text_response,
+                        is_correct=answer.is_correct,
+                        score=answer.score,
+                        feedback=answer.feedback,
+                        time_spent_seconds=(
+                            submission.time_spent_seconds if submission else None
+                        ),
+                        # Snapshot the topic so mastery survives the question
+                        # being retagged or its quiz regenerated later.
+                        topic=question.topic,
+                    )
                 )
-                if is_correct:
-                    gradable_correct_count += 1
-                correct_option_idx = question.correct_option_index
-            else:
-                # Written / open-ended questions are stored with explicit ungraded state
-                is_correct = None
-                correct_option_idx = question.correct_option_index
 
-            db.add(
-                QuizAttemptAnswer(
-                    attempt_id=attempt.id,
-                    quiz_question_id=question.id,
-                    selected_option_index=selected,
-                    text_response=text_response,
-                    is_correct=is_correct,
-                    time_spent_seconds=time_spent,
-                    topic=topic,
-                )
+            db.flush()
+            cls._update_course_progress_transactional(
+                db, course_id=course_id, user_id=user_id
             )
-            results.append(
-                QuizAnswerResult(
-                    question_id=question.id,
-                    selected_option_index=selected,
-                    text_response=text_response,
-                    correct_option_index=correct_option_idx,
-                    is_correct=is_correct,
-                    time_spent_seconds=time_spent,
-                    topic=topic,
-                )
-            )
-
-        # Compute attempt score from gradable questions only.
-        # If there are no gradable questions, default score is 0.0.
-        if gradable_total_count > 0:
-            attempt.score = gradable_correct_count / gradable_total_count
-        else:
-            attempt.score = 0.0
-
-        db.flush()
-
-        # Update course progress transactionally
-        cls._update_course_progress_transactional(
-            db,
-            course_id=course_id,
-            user_id=user_id,
-        )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
         db.refresh(attempt)
-        db.commit()
 
         return QuizAttemptResponse(
             attempt_id=attempt.id,
             quiz_id=quiz.id,
             score=attempt.score,
-            correct_count=gradable_correct_count,
-            total_questions=len(quiz.questions),
+            correct_count=correct_count,
+            graded_count=len(scored),
+            total_questions=len(ordered),
             time_spent_seconds=attempt.time_spent_seconds,
             created_at=attempt.created_at,
-            answers=results,
+            answers=[
+                QuizAnswerResult(
+                    question_id=answer.question_id,
+                    question_type=answer.question_type,
+                    selected_option_index=answer.selected_option_index,
+                    text_response=answer.text_response,
+                    correct_option_index=answer.correct_option_index,
+                    correct_answer=answer.correct_answer,
+                    is_correct=answer.is_correct,
+                    score=answer.score,
+                    feedback=answer.feedback,
+                    time_spent_seconds=(
+                        submitted[answer.question_id].time_spent_seconds
+                        if answer.question_id in submitted
+                        else None
+                    ),
+                    topic=by_question[answer.question_id].topic,
+                )
+                for answer in graded
+            ],
         )
 
-    @classmethod
-    def _update_course_progress_transactional(
-        cls,
-        db: Session,
-        *,
-        course_id: int,
-        user_id: int,
-    ) -> Progress:
+    @staticmethod
+    def _aggregate(db: Session, course_id: int, user_id: int) -> _ProgressAggregate:
         attempts = db.scalars(
             select(QuizAttempt)
             .join(Quiz, Quiz.id == QuizAttempt.quiz_id)
             .where(Quiz.course_id == course_id, QuizAttempt.user_id == user_id)
             .options(selectinload(QuizAttempt.answers))
-            .order_by(QuizAttempt.created_at.desc())
+            .order_by(QuizAttempt.created_at.desc(), QuizAttempt.id.desc())
         ).all()
 
         answered = db.execute(
@@ -219,24 +242,27 @@ class QuizAttemptService:
             )
             .join(QuizAttempt, QuizAttempt.id == QuizAttemptAnswer.attempt_id)
             .join(Quiz, Quiz.id == QuizQuestion.quiz_id)
-            .where(Quiz.course_id == course_id, QuizAttempt.user_id == user_id)
+            .where(
+                Quiz.course_id == course_id,
+                QuizAttempt.user_id == user_id,
+                # An answer the grader could not score is not evidence either
+                # way, so it must not move mastery in either direction.
+                QuizAttemptAnswer.is_correct.is_not(None),
+            )
         ).all()
 
         totals: dict[str, list[int]] = {}
         correct_count = 0
         incorrect_count = 0
 
-        for q_topic, is_correct, ans_topic in answered:
-            if is_correct is None:
-                # Ungraded written responses do not skew objective mastery
-                continue
+        for question_topic, is_correct, answer_topic in answered:
             if is_correct:
                 correct_count += 1
             else:
                 incorrect_count += 1
 
-            topic_label = (ans_topic or q_topic or "").strip() or UNTAGGED_TOPIC
-            bucket = totals.setdefault(topic_label, [0, 0])
+            label = (answer_topic or question_topic or "").strip() or UNTAGGED_TOPIC
+            bucket = totals.setdefault(label, [0, 0])
             bucket[0] += 1
             if is_correct:
                 bucket[1] += 1
@@ -245,7 +271,7 @@ class QuizAttemptService:
         weak_topics: list[str] = []
         for label in sorted(totals):
             total, correct = totals[label]
-            percentage = round(correct / total * 100) if total > 0 else 0
+            percentage = round(correct / total * 100) if total else 0
             status = _mastery_status(percentage)
             topic_mastery.append(
                 TopicMastery(
@@ -256,33 +282,53 @@ class QuizAttemptService:
                     status=status,
                 )
             )
-            if status == MasteryStatus.NEEDS_REVIEW:
+            if status is MasteryStatus.NEEDS_REVIEW:
                 weak_topics.append(label)
 
-        quizzes_completed = len(attempts)
+        attempts_count = len(attempts)
         average_score = (
-            sum(att.score for att in attempts) / quizzes_completed
-            if quizzes_completed > 0
+            sum(attempt.score for attempt in attempts) / attempts_count
+            if attempts_count
             else None
         )
         completion = (
             min(1.0, max(0.0, average_score)) if average_score is not None else 0.0
         )
 
-        quiz_history_payload = [
-            {
-                "attempt_id": att.id,
-                "quiz_id": att.quiz_id,
-                "score": att.score,
-                "correct_count": sum(1 for a in att.answers if a.is_correct is True),
-                "total_questions": len(att.answers),
-                "time_spent_seconds": att.time_spent_seconds,
-                "created_at": att.created_at.isoformat()
-                if hasattr(att.created_at, "isoformat")
-                else str(att.created_at),
-            }
-            for att in attempts
-        ]
+        return _ProgressAggregate(
+            attempts_count=attempts_count,
+            average_score=average_score,
+            completion=completion,
+            correct_count=correct_count,
+            incorrect_count=incorrect_count,
+            topic_mastery=topic_mastery,
+            weak_topics=weak_topics,
+            quiz_history=[
+                QuizHistoryItem(
+                    attempt_id=attempt.id,
+                    quiz_id=attempt.quiz_id,
+                    score=attempt.score,
+                    correct_count=sum(
+                        1 for answer in attempt.answers if answer.is_correct is True
+                    ),
+                    total_questions=len(attempt.answers),
+                    time_spent_seconds=attempt.time_spent_seconds,
+                    created_at=attempt.created_at,
+                )
+                for attempt in attempts
+            ],
+        )
+
+    @classmethod
+    def _update_course_progress_transactional(
+        cls, db: Session, *, course_id: int, user_id: int
+    ) -> Progress:
+        """Materialize this user's course progress inside the caller's transaction.
+
+        Recorded from the attempt history rather than incremented, so a replay or
+        a rolled-back attempt can never leave the counters overstating reality.
+        """
+        summary = cls._aggregate(db, course_id, user_id)
 
         progress = db.scalars(
             select(Progress).where(
@@ -292,128 +338,41 @@ class QuizAttemptService:
         ).one_or_none()
 
         if progress is None:
-            progress = Progress(
-                user_id=user_id,
-                course_id=course_id,
-                completion=completion,
-                quizzes_completed=quizzes_completed,
-                correct_answers_count=correct_count,
-                incorrect_answers_count=incorrect_count,
-                total_questions_answered=correct_count + incorrect_count,
-                weak_topics=weak_topics,
-                quiz_history=quiz_history_payload,
-            )
+            progress = Progress(user_id=user_id, course_id=course_id)
             db.add(progress)
-        else:
-            progress.completion = completion
-            progress.quizzes_completed = quizzes_completed
-            progress.correct_answers_count = correct_count
-            progress.incorrect_answers_count = incorrect_count
-            progress.total_questions_answered = correct_count + incorrect_count
-            progress.weak_topics = weak_topics
-            progress.quiz_history = quiz_history_payload
+
+        progress.completion = summary.completion
+        progress.quizzes_completed = summary.attempts_count
+        progress.correct_answers_count = summary.correct_count
+        progress.incorrect_answers_count = summary.incorrect_count
+        progress.total_questions_answered = summary.total_questions_answered
+        progress.weak_topics = summary.weak_topics
+        progress.quiz_history = [
+            item.model_dump(mode="json") for item in summary.quiz_history
+        ]
 
         db.flush()
         return progress
 
-    @staticmethod
+    @classmethod
     def get_course_progress(
+        cls,
         db: Session,
         course_id: int,
         *,
         user_id: int,
     ) -> CourseProgressResponse:
-        attempts = db.scalars(
-            select(QuizAttempt)
-            .join(Quiz, Quiz.id == QuizAttempt.quiz_id)
-            .where(Quiz.course_id == course_id, QuizAttempt.user_id == user_id)
-            .options(selectinload(QuizAttempt.answers))
-            .order_by(QuizAttempt.created_at.desc())
-        ).all()
-
-        answered = db.execute(
-            select(
-                QuizQuestion.topic,
-                QuizAttemptAnswer.is_correct,
-                QuizAttemptAnswer.topic,
-            )
-            .join(
-                QuizAttemptAnswer,
-                QuizAttemptAnswer.quiz_question_id == QuizQuestion.id,
-            )
-            .join(QuizAttempt, QuizAttempt.id == QuizAttemptAnswer.attempt_id)
-            .join(Quiz, Quiz.id == QuizQuestion.quiz_id)
-            .where(Quiz.course_id == course_id, QuizAttempt.user_id == user_id)
-        ).all()
-
-        totals: dict[str, list[int]] = {}
-        correct_count = 0
-        incorrect_count = 0
-
-        for q_topic, is_correct, ans_topic in answered:
-            if is_correct is None:
-                continue
-            if is_correct:
-                correct_count += 1
-            else:
-                incorrect_count += 1
-
-            topic_label = (ans_topic or q_topic or "").strip() or UNTAGGED_TOPIC
-            bucket = totals.setdefault(topic_label, [0, 0])
-            bucket[0] += 1
-            if is_correct:
-                bucket[1] += 1
-
-        topic_mastery: list[TopicMastery] = []
-        weak_topics: list[str] = []
-        for label in sorted(totals):
-            total, correct = totals[label]
-            percentage = round(correct / total * 100) if total > 0 else 0
-            status = _mastery_status(percentage)
-            topic_mastery.append(
-                TopicMastery(
-                    topic=label,
-                    questions_answered=total,
-                    questions_correct=correct,
-                    mastery_percentage=percentage,
-                    status=status,
-                )
-            )
-            if status == MasteryStatus.NEEDS_REVIEW:
-                weak_topics.append(label)
-
-        attempts_count = len(attempts)
-        average_score = (
-            sum(att.score for att in attempts) / attempts_count
-            if attempts_count > 0
-            else None
-        )
-        completion = (
-            min(1.0, max(0.0, average_score)) if average_score is not None else 0.0
-        )
-
-        quiz_history = [
-            QuizHistoryItem(
-                attempt_id=att.id,
-                quiz_id=att.quiz_id,
-                score=att.score,
-                correct_count=sum(1 for a in att.answers if a.is_correct is True),
-                total_questions=len(att.answers),
-                time_spent_seconds=att.time_spent_seconds,
-                created_at=att.created_at,
-            )
-            for att in attempts
-        ]
+        summary = cls._aggregate(db, course_id, user_id)
 
         return CourseProgressResponse(
-            quizzes_completed=attempts_count,
-            attempts_count=attempts_count,
-            average_score=average_score,
-            correct_count=correct_count,
-            incorrect_count=incorrect_count,
-            total_questions_answered=correct_count + incorrect_count,
-            completion=completion,
-            weak_topics=weak_topics,
-            topic_mastery=topic_mastery,
-            quiz_history=quiz_history,
+            quizzes_completed=summary.attempts_count,
+            attempts_count=summary.attempts_count,
+            average_score=summary.average_score,
+            correct_count=summary.correct_count,
+            incorrect_count=summary.incorrect_count,
+            total_questions_answered=summary.total_questions_answered,
+            completion=summary.completion,
+            weak_topics=summary.weak_topics,
+            topic_mastery=summary.topic_mastery,
+            quiz_history=summary.quiz_history,
         )

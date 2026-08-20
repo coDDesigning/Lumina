@@ -89,6 +89,8 @@ DEFAULT_OCR_MIN_TEXT_CHARACTERS = 20
 DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS = 1_200
 DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS = 200
 DEFAULT_MATERIAL_MAX_CHARACTERS = 120_000
+DEFAULT_RETRIEVAL_CHUNK_LIMIT = 24
+DEFAULT_RETRIEVAL_MIN_SIMILARITY = 0.25
 DEFAULT_AI_GENERATION_TIMEOUT_SECONDS = 60
 DEFAULT_AI_GENERATION_MAX_ATTEMPTS = 3
 DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS = 1.0
@@ -180,6 +182,8 @@ class Settings:
     ocr_min_text_characters: int
     document_chunk_size_characters: int
     document_chunk_overlap_characters: int
+    retrieval_chunk_limit: int
+    retrieval_min_similarity: float
     study_guide_material_max_chars: int
     quiz_material_max_chars: int
     flashcard_material_max_chars: int
@@ -465,6 +469,19 @@ def load_settings() -> Settings:
             "DOCUMENT_CHUNK_SIZE_CHARACTERS."
         )
 
+    retrieval_chunk_limit = _bounded_positive_integer_setting(
+        "RETRIEVAL_CHUNK_LIMIT",
+        DEFAULT_RETRIEVAL_CHUNK_LIMIT,
+        minimum=1,
+        maximum=200,
+    )
+    retrieval_min_similarity = _bounded_float_setting(
+        "RETRIEVAL_MIN_SIMILARITY",
+        DEFAULT_RETRIEVAL_MIN_SIMILARITY,
+        minimum=0.0,
+        maximum=1.0,
+    )
+
     material_budgets: dict[str, int] = {}
     for name in (
         "STUDY_GUIDE_MATERIAL_MAX_CHARS",
@@ -697,6 +714,8 @@ def load_settings() -> Settings:
         ocr_min_text_characters=ocr_min_text_characters,
         document_chunk_size_characters=document_chunk_size_characters,
         document_chunk_overlap_characters=document_chunk_overlap_characters,
+        retrieval_chunk_limit=retrieval_chunk_limit,
+        retrieval_min_similarity=retrieval_min_similarity,
         study_guide_material_max_chars=material_budgets[
             "STUDY_GUIDE_MATERIAL_MAX_CHARS"
         ],
@@ -757,6 +776,25 @@ def _positive_float_setting(name: str, default: float) -> float:
         raise ValueError(f"{name} must be a positive finite number.") from exc
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be a positive finite number.")
+    return value
+
+
+def _bounded_float_setting(
+    name: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    raw_value = os.getenv(name, str(default))
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a finite number.") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number.")
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}.")
     return value
 
 

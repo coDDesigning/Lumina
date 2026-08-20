@@ -158,15 +158,30 @@ as Gemini:
 
 ## Course Material Context Budget
 
-Every AI feature reads course text through `services/course_material.py`, which
-bounds one request's material to a configured number of characters:
+Every AI feature bounds one request's material to a configured number of
+characters. Study guide generation reads **retrieved** material through
+`services/retrieval_material.py`; quiz, flashcard, AI tutor, and course Q&A still
+read **whole-corpus** material through `services/course_material.py`:
+
+| Setting | Default | Bounds | Source |
+|---|---|---|---|
+| `STUDY_GUIDE_MATERIAL_MAX_CHARS` | `120000` | study guide generation | retrieval |
+| `QUIZ_MATERIAL_MAX_CHARS` | `120000` | quiz generation | whole corpus |
+| `FLASHCARD_MATERIAL_MAX_CHARS` | `120000` | flashcard generation | whole corpus |
+| `AI_TUTOR_MATERIAL_MAX_CHARS` | `120000` | AI tutor answers | whole corpus |
+| `COURSE_QA_MATERIAL_MAX_CHARS` | `120000` | course Q&A answers | whole corpus |
+
+Retrieval adds two further bounds, applied before the character budget:
 
 | Setting | Default | Bounds |
 |---|---|---|
-| `STUDY_GUIDE_MATERIAL_MAX_CHARS` | `120000` | study guide generation |
-| `QUIZ_MATERIAL_MAX_CHARS` | `120000` | quiz generation |
-| `FLASHCARD_MATERIAL_MAX_CHARS` | `120000` | flashcard generation |
-| `AI_TUTOR_MATERIAL_MAX_CHARS` | `120000` | AI tutor answers |
+| `RETRIEVAL_CHUNK_LIMIT` | `24` | how many of a course's chunks are ranked per request |
+| `RETRIEVAL_MIN_SIMILARITY` | `0.25` | cosine floor (`0.0`-`1.0`) a ranked chunk must clear; `0.0` disables it |
+
+The two knobs are independent by design: the limit bounds relevance and cost, the
+character budget bounds the context window. Nothing cross-validates them, because
+`budget >= DOCUMENT_CHUNK_SIZE_CHARACTERS` already guarantees at least one
+retrieved chunk always fits.
 
 Each budget must be at least `DOCUMENT_CHUNK_SIZE_CHARACTERS`, or startup fails:
 a budget smaller than one stored chunk could never assemble any material at all.
@@ -176,32 +191,51 @@ model's own context window. Lower it for small local models on modest hardware;
 `120000` characters is roughly 30k tokens, which the default `llama3.1` context
 window accommodates but a slower machine may not want to spend.
 
-Selection is deliberately simple: chunks of `ready` documents are taken **whole**,
-ordered by document `created_at`, then document id, then `chunk_index`, then chunk
-id, until the next chunk would exceed the budget. The separators between chunks
-count against the budget, so the assembled string never exceeds it. The same
-course state always produces byte-identical material.
+Whole-corpus selection is deliberately simple: chunks of `ready` documents are
+taken **whole**, ordered by document `created_at`, then document id, then
+`chunk_index`, then chunk id, until the next chunk would exceed the budget. The
+separators between chunks count against the budget, so the assembled string never
+exceeds it. The same course state always produces byte-identical material.
 
-When material is left out, the response reports it rather than implying full
-coverage:
+Retrieval-backed selection uses **two distinct orders**, and the distinction
+matters. Chunks are *selected* against the character budget in similarity order,
+so the budget is never spent on the least relevant material; the retained chunks
+are then *emitted* in the same corpus order the whole-corpus assembler uses, so
+the prompt still reads as coherent prose. Both orders are total, so identical
+course state produces byte-identical material here too.
+
+The response reports coverage rather than implying the whole course was read:
 
 ```json
 {
   "success": true,
   "data": {
     "study_guide": { "...": "strictly validated model output" },
-    "context_truncated": true,
-    "chunks_used": 40,
-    "chunks_available": 3000
+    "generated_output_id": 12,
+    "context_truncated": false,
+    "retrieval_narrowed": true,
+    "chunks_used": 24,
+    "chunks_available": 3000,
+    "lowest_similarity": 0.41,
+    "highest_similarity": 0.88
   }
 }
 ```
 
-`context_truncated` is derived by the application, never by the model. This whole
-module is a placeholder for course-isolated semantic retrieval
-(`services/semantic_retrieval.py`) and is meant to be replaced by it;
-authorization, provider calls, schema validation, and persistence deliberately
-live outside it so that swap stays cheap.
+Both flags are derived by the application, never by the model, and they mean
+different things:
+
+- `retrieval_narrowed` — retrieval selected a subset of the course. This is the
+  normal case for a retrieval-backed feature, not a warning.
+- `context_truncated` — the character budget dropped a chunk that retrieval had
+  already selected. **This is narrower than the pre-retrieval meaning**, which was
+  simply `chunks_used < chunks_available`; under retrieval that inequality holds
+  on nearly every request and would make the flag noise.
+
+`services/course_material.py` remains the whole-corpus path for the four features
+that have not migrated. Authorization, provider calls, schema validation, and
+persistence deliberately live outside both material modules so each remaining
+migration stays a one-line change.
 
 ## Public Error Messages
 
@@ -214,7 +248,9 @@ condition for `ai_usage_logs`:
 
 | `AiErrorCode` | HTTP | Cause |
 |---|---|---|
-| `no_ready_material` | `400` | the course has no processed chunks to send |
+| `no_ready_material` | `400` | the course has no processed chunks at all |
+| `no_relevant_material` | `409` | the course has material, but none matched the request |
+| `retrieval_unavailable` | `503` | semantic retrieval could not answer |
 | `provider_rate_limited` | `429` | provider rate limit or concurrency ceiling |
 | `provider_unavailable` | `503` | the model server could not be reached |
 | `provider_timeout` | `504` | no response within the configured timeout |
@@ -230,6 +266,30 @@ that actually answered — so a fallback generation attributes the fallback, not
 the configured primary. Both columns are nullable only because rows written
 before this migration have no truthful value; they are never backfilled with a
 guess.
+
+`generation_settings` and `generation_context` record how a row was produced, as
+JSON documents carrying a `version` and an `output_type` so other output types can
+share the columns later. Settings hold what the user asked for (summary format,
+topic focus, length, detail level, mode) plus the retrieval knobs in force;
+context holds what retrieval actually produced (chunks ranked, retrieved and used,
+the similarity range, and whether the budget truncated). Both are written strictly
+through their Pydantic models, so a stored document is always well-formed, and
+read back permissively, so a row written by a future schema version still renders
+and can never fail a history read. Both are nullable for exactly the same reason
+as the columns above, and are never backfilled.
+
+### Reading stored outputs
+
+```
+GET /api/courses/{course_id}/generated-outputs             list, newest first, no content
+GET /api/courses/{course_id}/generated-outputs/{output_id} one stored output with its content
+```
+
+Both are reads, so the administrator override applies: an administrator may read
+another owner's history but still cannot generate into their course. An output is
+always looked up scoped to its parent course, so an identifier belonging to a
+different course is indistinguishable from one that does not exist. Reading never
+calls an AI provider.
 
 ## Layer Responsibilities
 

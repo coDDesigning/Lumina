@@ -7,10 +7,23 @@ from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.models import Course, GeneratedOutput
 from schemas.ai_usage import ErrorCategory, GenerationType
-from schemas.study_guide import StudyGuideResponse, SummaryFormat
+from schemas.study_guide import (
+    DetailLevel,
+    StudyGuideRequest,
+    StudyGuideResponse,
+    SummaryFormat,
+    SummaryLength,
+    SummaryMode,
+)
 from services.ai_usage_logger import AiUsageLogger
-from services.course_material import CourseMaterial, load_course_material
 from services.prompt_loader import PromptLoader
+from services.course_material import count_available_chunks
+from services.retrieval_material import (
+    MaterialRetrievalError,
+    NoRelevantMaterialError,
+    RetrievedCourseMaterial,
+    load_retrieved_material,
+)
 from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
@@ -44,6 +57,48 @@ SUMMARY_FORMAT_DIRECTIVES: dict[SummaryFormat, str] = {
     ),
 }
 
+SUMMARY_LENGTH_DIRECTIVES: dict[SummaryLength, str] = {
+    SummaryLength.SHORT: "Between 120 and 180 words.",
+    SummaryLength.MEDIUM: "Between 200 and 300 words.",
+    SummaryLength.LONG: "Between 400 and 600 words.",
+}
+
+DETAIL_LEVEL_DIRECTIVES: dict[DetailLevel, str] = {
+    DetailLevel.BASIC: (
+        "Requested detail level: basic. Explain concepts simply, stay with essential "
+        "definitions, and leave out secondary caveats and edge cases."
+    ),
+    DetailLevel.STANDARD: (
+        "Requested detail level: standard. Balance definitions with the reasoning "
+        "behind them, and include an example where it aids understanding."
+    ),
+    DetailLevel.DETAILED: (
+        "Requested detail level: detailed. Cover mechanisms, relationships between "
+        "concepts, important caveats, and worked examples drawn from the lecture notes."
+    ),
+}
+
+SUMMARY_MODE_DIRECTIVES: dict[SummaryMode, str] = {
+    SummaryMode.GENERAL: (
+        "Requested summary mode: general. Teach and organize the important material as "
+        "a coherent overview of the topic."
+    ),
+    SummaryMode.EXAM_FOCUSED: (
+        "Requested summary mode: exam_focused. Organize the supplied material for exam "
+        "revision, prioritizing definitions, distinctions, formulas, and "
+        "problem-solving approaches. Do not claim any topic is guaranteed to appear on "
+        "an exam."
+    ),
+}
+
+ALL_TOPICS_SENTINEL = "All Topics"
+
+EXAM_FOCUS_QUERY_TERMS = (
+    "exam preparation key definitions formulas worked examples common problems"
+)
+
+RETRIEVAL_QUERY_MAX_CHARS = 500
+
 
 class StudyGuideGenerationError(RuntimeError):
     """Study guide generation failed."""
@@ -52,7 +107,11 @@ class StudyGuideGenerationError(RuntimeError):
 class NoReadyCourseMaterialError(
     StudyGuideGenerationError, CourseMaterialUnavailableError
 ):
-    """No processed course material is available for study guide generation."""
+    """The course has no processed material to generate from at all.
+
+    Distinct from a relevance miss: an empty corpus is fixed by uploading and
+    processing a document, not by broadening the request.
+    """
 
 
 class InvalidStudyGuideStructureError(
@@ -64,7 +123,7 @@ class InvalidStudyGuideStructureError(
 @dataclass(frozen=True)
 class StudyGuideGeneration:
     study_guide: StudyGuideResponse
-    material: CourseMaterial
+    material: RetrievedCourseMaterial
     model_used: str
 
 
@@ -75,29 +134,69 @@ class StudyGuideService:
     )
 
     @staticmethod
-    def get_course_material(db: Session, course_id: int) -> CourseMaterial:
-        return load_course_material(
+    def get_course_material(
+        db: Session, course_id: int, *, query: str
+    ) -> RetrievedCourseMaterial:
+        return load_retrieved_material(
             db,
             course_id,
+            query=query,
+            limit=settings.retrieval_chunk_limit,
+            min_similarity=settings.retrieval_min_similarity,
             max_characters=settings.study_guide_material_max_chars,
         )
 
+    @staticmethod
+    def build_retrieval_query(course: Course | None, options: StudyGuideRequest) -> str:
+        """Turn a generation request into the query retrieval should rank against.
+
+        The sentinel and a blank focus both mean "the whole course": embedding the
+        literal words would rank nothing usefully, and an empty query is not a
+        query at all, so both expand to a description of the course instead.
+        """
+        topic = options.topic_focus.strip()
+        if not topic or topic.casefold() == ALL_TOPICS_SENTINEL.casefold():
+            descriptors = (
+                getattr(course, "title", None),
+                getattr(course, "description", None),
+                getattr(course, "syllabus", None),
+            )
+            topic = ". ".join(
+                " ".join(part.split()) for part in descriptors if part and part.strip()
+            )
+            if not topic:
+                topic = ALL_TOPICS_SENTINEL
+
+        suffix = (
+            EXAM_FOCUS_QUERY_TERMS
+            if options.summary_mode is SummaryMode.EXAM_FOCUSED
+            else ""
+        )
+        # Reserve room before trimming: a syllabus is unbounded text, so appending
+        # the mode terms and trimming afterwards would drop them from exactly the
+        # courses with the most material.
+        budget = RETRIEVAL_QUERY_MAX_CHARS - (len(suffix) + 1 if suffix else 0)
+        topic = topic[:budget].strip()
+
+        return f"{topic} {suffix}".strip() if suffix else topic
+
     @classmethod
-    def build_prompt(
-        cls,
-        course_material: str,
-        summary_format: SummaryFormat,
-        topic_focus: str,
-    ) -> str:
-        directive = SUMMARY_FORMAT_DIRECTIVES[summary_format]
+    def build_prompt(cls, course_material: str, options: StudyGuideRequest) -> str:
+        directive = SUMMARY_FORMAT_DIRECTIVES[options.summary_format]
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {
-                "TEXT": course_material,
                 "SUMMARY_FORMAT": (
-                    f"Requested summary format: {summary_format.value}. {directive}"
+                    f"Requested summary format: {options.summary_format.value}. "
+                    f"{directive}"
                 ),
-                "TOPIC_FOCUS": topic_focus,
+                "SUMMARY_LENGTH": SUMMARY_LENGTH_DIRECTIVES[options.summary_length],
+                "DETAIL_LEVEL": DETAIL_LEVEL_DIRECTIVES[options.detail_level],
+                "SUMMARY_MODE": SUMMARY_MODE_DIRECTIVES[options.summary_mode],
+                "TOPIC_FOCUS": options.topic_focus,
+                # Rendered last so course material can never forge a placeholder
+                # that a later substitution would then fill in.
+                "TEXT": course_material,
             },
         )
 
@@ -106,31 +205,44 @@ class StudyGuideService:
         cls,
         db: Session,
         course_id: int,
-        summary_format: SummaryFormat,
-        topic_focus: str,
+        request: StudyGuideRequest,
         provider: TextGenerationProvider,
+        *,
         user_id: int | None = None,
     ) -> StudyGuideGeneration:
+        course = db.get(Course, course_id)
+
         resolved_user_id = user_id
-        if resolved_user_id is None:
-            course = db.get(Course, course_id)
-            if course is not None:
-                resolved_user_id = course.owner_id
+        if resolved_user_id is None and course is not None:
+            resolved_user_id = course.owner_id
 
-        material = cls.get_course_material(db, course_id)
-
-        if material.is_empty:
+        def log_failure(category: ErrorCategory, **extra) -> None:
             if resolved_user_id:
                 AiUsageLogger.log_failure(
                     db,
                     user_id=resolved_user_id,
                     course_id=course_id,
                     generation_type=GenerationType.STUDY_GUIDE,
-                    error_category=ErrorCategory.NO_READY_MATERIAL,
+                    error_category=category,
+                    **extra,
                 )
+
+        if count_available_chunks(db, course_id) == 0:
+            log_failure(ErrorCategory.NO_READY_MATERIAL)
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
-        prompt = cls.build_prompt(material.text, summary_format, topic_focus)
+        query = cls.build_retrieval_query(course, request)
+
+        try:
+            material = cls.get_course_material(db, course_id, query=query)
+        except NoRelevantMaterialError:
+            log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
+            raise
+        except MaterialRetrievalError:
+            log_failure(ErrorCategory.RETRIEVAL_ERROR)
+            raise
+
+        prompt = cls.build_prompt(material.text, request)
         metadata = None
 
         try:
@@ -139,30 +251,16 @@ class StudyGuideService:
             else:
                 result = provider.generate_json(prompt)
         except TextGenerationError as exc:
-            if resolved_user_id:
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.STUDY_GUIDE,
-                    error_category=getattr(
-                        exc, "error_category", ErrorCategory.PROVIDER_ERROR
-                    ),
-                )
+            log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
             raise StudyGuideGenerationError("Text generation provider failed.") from exc
 
         try:
             validated = StudyGuideResponse.model_validate(result)
         except ValidationError as exc:
-            if resolved_user_id:
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.STUDY_GUIDE,
-                    error_category=ErrorCategory.INVALID_STRUCTURE,
-                    latency_ms=metadata.latency_ms if metadata else None,
-                )
+            log_failure(
+                ErrorCategory.INVALID_STRUCTURE,
+                latency_ms=metadata.latency_ms if metadata else None,
+            )
             raise InvalidStudyGuideStructureError(
                 "Generated study guide has an invalid structure."
             ) from exc
@@ -190,6 +288,8 @@ class StudyGuideService:
         *,
         user_id: int,
         model_used: str,
+        generation_settings: str | None = None,
+        generation_context: str | None = None,
     ) -> GeneratedOutput:
         generated_output = GeneratedOutput(
             course_id=course_id,
@@ -197,6 +297,8 @@ class StudyGuideService:
             model_used=model_used,
             output_type="study_guide",
             content=study_guide.model_dump_json(),
+            generation_settings=generation_settings,
+            generation_context=generation_context,
         )
         db.add(generated_output)
         db.flush()

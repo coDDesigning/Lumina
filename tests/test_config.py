@@ -43,6 +43,8 @@ from backend.app.config import (
     DEFAULT_PROCESSING_JOB_LEASE_SECONDS,
     DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS,
     DEFAULT_PROCESSING_JOB_POLL_SECONDS,
+    DEFAULT_RETRIEVAL_CHUNK_LIMIT,
+    DEFAULT_RETRIEVAL_MIN_SIMILARITY,
     DEFAULT_UPLOAD_REQUEST_TIMEOUT_SECONDS,
     IMPLEMENTED_AI_PROVIDERS,
     IMPLEMENTED_EMBEDDING_PROVIDERS,
@@ -109,6 +111,8 @@ CONFIGURATION_KEYS = (
     "OCR_MIN_TEXT_CHARACTERS",
     "DOCUMENT_CHUNK_SIZE_CHARACTERS",
     "DOCUMENT_CHUNK_OVERLAP_CHARACTERS",
+    "RETRIEVAL_CHUNK_LIMIT",
+    "RETRIEVAL_MIN_SIMILARITY",
     "EMBEDDING_PROVIDER",
     "OLLAMA_EMBEDDING_MODEL",
     "GEMINI_EMBEDDING_MODEL",
@@ -1023,6 +1027,75 @@ def test_env_example_advertises_every_material_budget() -> None:
     env_example = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
 
     for name in MATERIAL_BUDGET_SETTINGS:
+        assert f"{name}=" in env_example, (
+            f"{name} is read by config.py but not documented."
+        )
+
+
+RETRIEVAL_SETTINGS = (
+    "RETRIEVAL_CHUNK_LIMIT",
+    "RETRIEVAL_MIN_SIMILARITY",
+)
+
+
+def test_retrieval_settings_use_documented_defaults() -> None:
+    loaded = load_settings()
+
+    assert loaded.retrieval_chunk_limit == DEFAULT_RETRIEVAL_CHUNK_LIMIT
+    assert loaded.retrieval_min_similarity == DEFAULT_RETRIEVAL_MIN_SIMILARITY
+
+
+def test_retrieval_settings_are_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RETRIEVAL_CHUNK_LIMIT", "8")
+    monkeypatch.setenv("RETRIEVAL_MIN_SIMILARITY", "0.75")
+
+    loaded = load_settings()
+
+    assert loaded.retrieval_chunk_limit == 8
+    assert loaded.retrieval_min_similarity == 0.75
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "201", "not-a-number"])
+def test_retrieval_chunk_limit_rejects_out_of_range_values(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("RETRIEVAL_CHUNK_LIMIT", value)
+
+    with pytest.raises(ValueError, match="RETRIEVAL_CHUNK_LIMIT"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["-0.1", "1.1", "nan", "inf", "not-a-number"])
+def test_retrieval_min_similarity_rejects_out_of_range_values(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("RETRIEVAL_MIN_SIMILARITY", value)
+
+    with pytest.raises(ValueError, match="RETRIEVAL_MIN_SIMILARITY"):
+        load_settings()
+
+
+@pytest.mark.parametrize("value", ["0", "0.0", "1", "1.0"])
+def test_retrieval_min_similarity_accepts_the_inclusive_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    """A floor of zero disables the relevance cut; a floor of one demands an exact match."""
+    monkeypatch.setenv("RETRIEVAL_MIN_SIMILARITY", value)
+
+    loaded = load_settings()
+
+    assert loaded.retrieval_min_similarity == float(value)
+
+
+def test_env_example_advertises_every_retrieval_setting() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
+
+    for name in RETRIEVAL_SETTINGS:
         assert f"{name}=" in env_example, (
             f"{name} is read by config.py but not documented."
         )

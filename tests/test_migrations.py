@@ -28,7 +28,8 @@ QUIZ_ATTEMPT_ANSWERS_REVISION = "d3f8b21a6c40"
 PROFILE_KNOWLEDGE_REVISION = "e4a7b1c90d52"
 CHUNK_EMBEDDINGS_REVISION = "f4b18c7a2e60"
 CONVERSATION_HISTORY_REVISION = "910e2719d549"
-HEAD_REVISION = CONVERSATION_HISTORY_REVISION
+GENERATION_SETTINGS_REVISION = "b2f47c8d0915"
+HEAD_REVISION = GENERATION_SETTINGS_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -56,7 +57,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: CHUNK_EMBEDDINGS_REVISION,
+        HEAD_REVISION: CONVERSATION_HISTORY_REVISION,
+        CONVERSATION_HISTORY_REVISION: CHUNK_EMBEDDINGS_REVISION,
         CHUNK_EMBEDDINGS_REVISION: PROFILE_KNOWLEDGE_REVISION,
         PROFILE_KNOWLEDGE_REVISION: QUIZ_ATTEMPT_ANSWERS_REVISION,
         QUIZ_ATTEMPT_ANSWERS_REVISION: ATTRIBUTION_REVISION,
@@ -1057,6 +1059,112 @@ def test_generated_output_attribution_migration_round_trips(tmp_path: Path) -> N
         assert "model_used" in columns
         assert connection.execute(
             "SELECT user_id, model_used FROM generated_outputs WHERE id = ?",
+            (legacy_id,),
+        ).fetchone() == (None, None)
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)
+
+
+def test_generated_output_settings_migration_round_trips(tmp_path: Path) -> None:
+    """Legacy rows keep unknown generation settings; nothing is invented by the upgrade."""
+    database_path = tmp_path / "generated-output-settings.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", CONVERSATION_HISTORY_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = generated_output_columns(connection)
+        assert "generation_settings" not in columns
+        assert "generation_context" not in columns
+
+        role_id = connection.execute(
+            "SELECT id FROM roles WHERE name = 'user'"
+        ).fetchone()[0]
+        user_id = connection.execute(
+            "INSERT INTO users "
+            "(name, email, password_hash, role_id, is_banned, preferred_model) "
+            "VALUES (?, ?, ?, ?, 0, ?)",
+            ("Settings user", "settings@example.com", "hash", role_id, "model"),
+        ).lastrowid
+        course_id = connection.execute(
+            "INSERT INTO courses "
+            "(title, description, is_deleted, owner_id, created_at) "
+            "VALUES (?, NULL, 0, ?, ?)",
+            ("Settings course", user_id, "2026-01-02 03:04:05"),
+        ).lastrowid
+        legacy_id = connection.execute(
+            "INSERT INTO generated_outputs "
+            "(course_id, user_id, model_used, output_type, content, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                course_id,
+                user_id,
+                "ollama:qwen3:8b",
+                "study_guide",
+                '{"title": "Legacy"}',
+                "2026-01-02 03:04:05",
+            ),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        columns = generated_output_columns(connection)
+        assert "generation_settings" in columns
+        assert "generation_context" in columns
+
+        assert connection.execute(
+            "SELECT generation_settings, generation_context, user_id, model_used "
+            "FROM generated_outputs WHERE id = ?",
+            (legacy_id,),
+        ).fetchone() == (None, None, user_id, "ollama:qwen3:8b")
+
+        # The SQLite table is rebuilt to add the columns, so the indexes and
+        # foreign keys must survive that rebuild.
+        indexes = {
+            row[1] for row in connection.execute("PRAGMA index_list(generated_outputs)")
+        }
+        assert "ix_generated_outputs_course_id" in indexes
+        assert "ix_generated_outputs_user_id" in indexes
+
+        references = {
+            (row[2], row[3], row[6])
+            for row in connection.execute("PRAGMA foreign_key_list(generated_outputs)")
+        }
+        assert ("users", "user_id", "SET NULL") in references
+        assert ("courses", "course_id", "CASCADE") in references
+
+        connection.execute(
+            "UPDATE generated_outputs "
+            "SET generation_settings = ?, generation_context = ? WHERE id = ?",
+            ('{"version": 1}', '{"version": 1}', legacy_id),
+        )
+
+    run_alembic(database_path, tmp_path, "downgrade", CONVERSATION_HISTORY_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = generated_output_columns(connection)
+        assert "generation_settings" not in columns
+        assert "generation_context" not in columns
+        assert connection.execute(
+            "SELECT content, user_id, model_used FROM generated_outputs WHERE id = ?",
+            (legacy_id,),
+        ).fetchone() == ('{"title": "Legacy"}', user_id, "ollama:qwen3:8b")
+
+        references = {
+            (row[2], row[3], row[6])
+            for row in connection.execute("PRAGMA foreign_key_list(generated_outputs)")
+        }
+        assert ("users", "user_id", "SET NULL") in references
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        columns = generated_output_columns(connection)
+        assert "generation_settings" in columns
+        assert "generation_context" in columns
+        assert connection.execute(
+            "SELECT generation_settings, generation_context FROM generated_outputs "
+            "WHERE id = ?",
             (legacy_id,),
         ).fetchone() == (None, None)
         assert connection.execute(

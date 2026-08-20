@@ -26,7 +26,12 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.models import CreditTransaction, User
-from schemas.credits import CreditActorType, CreditReason
+from schemas.credits import (
+    ADMIN_CREDIT_REASONS,
+    POSITIVE_ONLY_ADMIN_REASONS,
+    CreditActorType,
+    CreditReason,
+)
 from utils.exceptions import BadRequestException, NotFoundException
 
 DEFAULT_HISTORY_LIMIT = 50
@@ -76,7 +81,7 @@ def current_grant_period() -> str:
 
 
 class CreditService:
-    """Charge, refund, grant and adjust credits, always with a ledger entry."""
+    """Charge, refund, replenish and administer credits, always with a ledger entry."""
 
     @staticmethod
     def metering_enabled() -> bool:
@@ -181,22 +186,22 @@ class CreditService:
             return
 
         original = db.get(CreditTransaction, receipt.transaction_id)
-        db.execute(
-            update(User)
-            .where(User.id == receipt.user_id, User.credits.is_not(None))
-            .values(credits=User.credits + receipt.amount)
-        )
-        CreditService._record(
-            db,
-            user_id=receipt.user_id,
-            delta=receipt.amount,
-            reason=CreditReason.GENERATION_REFUND,
-            actor=CreditActor.system(),
-            source_type=original.source_type if original else None,
-            source_id=original.source_id if original else None,
-            refunds_transaction_id=receipt.transaction_id,
-        )
         try:
+            db.execute(
+                update(User)
+                .where(User.id == receipt.user_id, User.credits.is_not(None))
+                .values(credits=User.credits + receipt.amount)
+            )
+            CreditService._record(
+                db,
+                user_id=receipt.user_id,
+                delta=receipt.amount,
+                reason=CreditReason.GENERATION_REFUND,
+                actor=CreditActor.system(),
+                source_type=original.source_type if original else None,
+                source_id=original.source_id if original else None,
+                refunds_transaction_id=receipt.transaction_id,
+            )
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -213,19 +218,18 @@ class CreditService:
 
         A balance already at the ceiling is left alone and writes no row, so the
         account becomes eligible again the moment spending drops it back under.
+
+        The write is guarded rather than the commit alone: the duplicate is
+        rejected when the row is flushed, which is before any commit, so a
+        caller that lost the race must see the same quiet skip as one that
+        never started it.
         """
         user = db.get(User, user_id)
         if user is None or not CreditService.is_metered(user) or user.is_banned:
             return
 
         period = current_grant_period()
-        existing = db.scalar(
-            select(CreditTransaction.id).where(
-                CreditTransaction.user_id == user_id,
-                CreditTransaction.grant_period == period,
-            )
-        )
-        if existing is not None:
+        if CreditService._period_grant_id(db, user_id, period) is not None:
             return
 
         headroom = settings.credit_max_balance - (user.credits or 0.0)
@@ -233,79 +237,66 @@ class CreditService:
         if delta <= 0:
             return
 
-        db.execute(
-            update(User)
-            .where(User.id == user_id, User.credits.is_not(None))
-            .values(credits=User.credits + delta)
-        )
-        CreditService._record(
-            db,
-            user_id=user_id,
-            delta=delta,
-            reason=CreditReason.PERIODIC_GRANT,
-            actor=CreditActor.system(),
-            grant_period=period,
-        )
         try:
+            db.execute(
+                update(User)
+                .where(User.id == user_id, User.credits.is_not(None))
+                .values(credits=User.credits + delta)
+            )
+            CreditService._record(
+                db,
+                user_id=user_id,
+                delta=delta,
+                reason=CreditReason.PERIODIC_GRANT,
+                actor=CreditActor.system(),
+                grant_period=period,
+            )
             db.commit()
         except IntegrityError:
             db.rollback()
             db.expire_all()
 
     @staticmethod
-    def grant(
-        db: Session,
-        user_id: int,
-        amount: float,
-        *,
-        actor: "CreditActor",
-        note: str | None = None,
-    ) -> CreditTransaction:
-        """Add credits deliberately. The balance ceiling does not apply."""
-        if amount <= 0:
-            raise BadRequestException("A credit grant must be positive")
-        return CreditService._apply_manual_change(
-            db,
-            user_id,
-            amount,
-            reason=CreditReason.ADMIN_GRANT,
-            actor=actor,
-            note=note,
+    def _period_grant_id(db: Session, user_id: int, period: str) -> int | None:
+        """The id of this account's grant for one period, if it already has one."""
+        return db.scalar(
+            select(CreditTransaction.id).where(
+                CreditTransaction.user_id == user_id,
+                CreditTransaction.grant_period == period,
+            )
         )
 
     @staticmethod
-    def adjust(
-        db: Session,
-        user_id: int,
-        delta: float,
-        *,
-        actor: "CreditActor",
-        note: str | None = None,
-    ) -> CreditTransaction:
-        """Correct a balance in either direction, never below zero."""
-        if delta == 0:
-            raise BadRequestException("A credit adjustment must change the balance")
-        return CreditService._apply_manual_change(
-            db,
-            user_id,
-            delta,
-            reason=CreditReason.ADMIN_ADJUSTMENT,
-            actor=actor,
-            note=note,
-        )
-
-    @staticmethod
-    def _apply_manual_change(
+    def apply_admin_change(
         db: Session,
         user_id: int,
         delta: float,
         *,
         reason: CreditReason,
         actor: "CreditActor",
-        note: str | None,
+        note: str | None = None,
     ) -> CreditTransaction:
+        """Move a balance deliberately, in either direction, never below zero.
+
+        One entry point rather than a grant and an adjust: they differed only by
+        the reason they chose for the caller, and a stated reason is more honest
+        than an inferred one. The balance ceiling does not apply, because a
+        manual change is a decision rather than an allowance.
+
+        The sign rules are checked here as well as at the request boundary. This
+        module is the only writer of ``users.credits``, and a single writer that
+        trusts its callers is not one.
+        """
         if not settings.credit_metering_enabled:
             raise BadRequestException("Credit metering is disabled for this deployment")
+        if reason not in ADMIN_CREDIT_REASONS:
+            raise BadRequestException(
+                "A manual credit change must state an administrative reason"
+            )
+        if delta == 0:
+            raise BadRequestException("A credit adjustment must change the balance")
+        if reason in POSITIVE_ONLY_ADMIN_REASONS and delta < 0:
+            raise BadRequestException(f"The reason {reason.value} may only add credits")
 
         user = db.get(User, user_id)
         if user is None:

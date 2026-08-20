@@ -12,7 +12,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, inspect, select, text
+from sqlalchemy import Engine, func, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.base import Base
@@ -22,6 +22,7 @@ from backend.app.database_engine import create_database_engine
 from backend.app.models import (
     EMBEDDING_DIMENSIONS,
     Course,
+    CreditTransaction,
     DocumentChunk,
     ProcessingJob,
     Role,
@@ -29,7 +30,9 @@ from backend.app.models import (
     User,
 )
 from main import app
+from schemas.credits import CreditReason
 from services import credits as credits_service
+from services.credits import CreditActor, CreditService
 from services import semantic_retrieval as semantic_retrieval_service
 from services.processing_jobs import claim_next_job, fail_job
 from services.vector_store import (
@@ -140,6 +143,53 @@ def set_credit_policy(
         "settings",
         replace(settings, credit_metering_enabled=True, **overrides),
     )
+
+
+def ledger_sum(session: Session, user_id: int) -> float:
+    return (
+        session.scalar(
+            select(func.coalesce(func.sum(CreditTransaction.delta), 0.0)).where(
+                CreditTransaction.user_id == user_id
+            )
+        )
+        or 0.0
+    )
+
+
+def assert_balance_is_derivable(session: Session, user_id: int) -> None:
+    """The invariant: a metered balance equals the sum of its deltas."""
+    user = session.get(User, user_id)
+    assert user is not None
+    if user.credits is None:
+        return
+    assert user.credits == pytest.approx(ledger_sum(session, user_id))
+
+
+def rows(
+    session: Session, user_id: int, reason: CreditReason | None = None
+) -> list[CreditTransaction]:
+    statement = select(CreditTransaction).where(CreditTransaction.user_id == user_id)
+    if reason is not None:
+        statement = statement.where(CreditTransaction.reason == reason.value)
+    return list(session.scalars(statement.order_by(CreditTransaction.id)).all())
+
+
+def set_balance(
+    session_factory: sessionmaker[Session], user_id: int, balance: float
+) -> None:
+    """Move a balance the way a support correction would, ledger included."""
+    with session_factory() as session:
+        user = session.get(User, user_id)
+        delta = balance - (user.credits or 0.0)
+        if delta:
+            CreditService.apply_admin_change(
+                session,
+                user_id,
+                delta,
+                reason=CreditReason.ADMIN_ADJUSTMENT,
+                actor=CreditActor.admin(user_id, "fixture@example.com"),
+                note="Test balance setup",
+            )
 
 
 @pytest.fixture(scope="session")

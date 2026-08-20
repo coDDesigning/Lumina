@@ -19,6 +19,7 @@ from routes import (
     auth,
     course,
     course_qa,
+    course_settings,
     document,
     flashcard,
     generated_output,
@@ -47,6 +48,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(course.router)
+app.include_router(course_settings.router)
 app.include_router(admin.router)
 app.include_router(user.router)
 app.include_router(ai_models.router)

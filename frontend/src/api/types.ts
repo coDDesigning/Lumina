@@ -361,3 +361,58 @@ export interface CourseQAGenerationResult extends BoundedContext {
   answer: string;
 }
 
+export interface PromptGenerationRequest {
+  description: string;
+  model?: string;
+}
+
+export interface PromptGenerationResponse {
+  generated_prompt: string;
+}
+
+export interface AiTutorRequest {
+  question: string;
+  model?: string;
+}
+
+export interface AiTutorGenerationResult extends BoundedContext {
+  answer: string;
+}
+
+export interface GeneratedFlashcard {
+  card_number: number;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+  front: string;
+  back: string;
+}
+
+export interface FlashcardGenerationResponse {
+  deck_title: string;
+  card_count: number;
+  flashcards: GeneratedFlashcard[];
+}
+
+export interface FlashcardGenerationResult extends BoundedContext {
+  flashcards: FlashcardGenerationResponse;
+}
+
+export interface CourseSettings {
+  study_mode: string;
+  difficulty: string;
+  question_count: number;
+  summary_length: string;
+  detail_level: string;
+  notifications: boolean;
+  progress_reminders: boolean;
+}
+
+export interface CourseSettingsUpdate {
+  study_mode?: string;
+  difficulty?: string;
+  question_count?: number;
+  summary_length?: string;
+  detail_level?: string;
+  notifications?: boolean;
+  progress_reminders?: boolean;
+}
+

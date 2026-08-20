@@ -16,6 +16,7 @@ class ErrorCategory(str, Enum):
     INVALID_STRUCTURE = "invalid_structure"
     NO_READY_MATERIAL = "no_ready_material"
     NO_RELEVANT_MATERIAL = "no_relevant_material"
+    MATERIAL_NOT_INDEXED = "material_not_indexed"
     RETRIEVAL_ERROR = "retrieval_error"
     EMPTY_RESPONSE = "empty_response"
     TIMEOUT = "timeout"

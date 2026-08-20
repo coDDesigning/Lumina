@@ -1045,6 +1045,57 @@ def test_generate_endpoint_rejects_material_below_the_similarity_floor(
     assert provider.calls == 0
 
 
+def test_generate_endpoint_separates_an_indexing_gap_from_a_relevance_miss(
+    upload_api, retrieval_env, monkeypatch
+) -> None:
+    """Ready chunks with no vectors must not be reported as a topic miss.
+
+    "Try a broader topic focus" is unactionable advice here: no topic matches a
+    course that was never indexed, so the two states need different answers.
+    """
+    with upload_api.session_factory() as session:
+        course = session.get(Course, upload_api.course_id)
+        document = UploadedDocument(
+            original_file_name="unindexed.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=10,
+            file_hash="7c" + "6" * 62,
+            user_id=course.owner_id,
+            course=course,
+            storage_provider="local:test",
+            storage_key="unindexed.txt",
+            status="ready",
+        )
+        session.add(document)
+        session.flush()
+        session.add(
+            DocumentChunk(
+                document=document,
+                course=course,
+                chunk_index=0,
+                page_number=None,
+                text="Never indexed material",
+            )
+        )
+        session.commit()
+
+    provider = _install_provider(monkeypatch, CountingProvider())
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        json=QUIZ_REQUEST,
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 409
+    assert (
+        response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.MATERIAL_NOT_INDEXED]
+    )
+    assert provider.calls == 0
+    assert _persisted_quizzes(upload_api.session_factory, upload_api.course_id) == []
+
+
 @pytest.mark.parametrize(
     ("error", "status_code", "code"),
     [

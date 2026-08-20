@@ -35,7 +35,12 @@ router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
         401: {"description": "Authentication required"},
         402: {"description": "Insufficient credits"},
         404: {"description": "Course not found"},
-        409: {"description": "No course material matched the request"},
+        409: {
+            "description": (
+                "No course material matched the request, or the course material "
+                "is not searchable yet"
+            )
+        },
         422: {"description": "Invalid study guide request"},
         429: {"description": "AI provider rate limited"},
         503: {"description": "AI provider or course search unreachable"},

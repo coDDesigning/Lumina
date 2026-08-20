@@ -35,7 +35,9 @@ from services.embeddings import (
 from services.semantic_retrieval import RetrievedChunk, retrieve_course_chunks
 from services.vector_store import VectorStore, VectorStoreError
 from utils.ai_errors import (
+    MATERIAL_NOT_INDEXED_MESSAGE,
     NO_RELEVANT_MATERIAL_MESSAGE,
+    CourseMaterialNotIndexedError,
     NoRelevantCourseMaterialError,
     RetrievalRateLimitedError,
     RetrievalTimeoutError,
@@ -53,6 +55,15 @@ class RetrievalMaterialError(RuntimeError):
 
 class NoRelevantMaterialError(RetrievalMaterialError, NoRelevantCourseMaterialError):
     """Nothing in this course cleared the similarity floor for this query."""
+
+
+class MaterialNotIndexedError(RetrievalMaterialError, CourseMaterialNotIndexedError):
+    """This course has ready chunks, but none of them are in the vector store.
+
+    Ranking returning nothing at all is an indexing gap rather than a relevance
+    miss: the query never got the chance to match. Reporting it as a miss is
+    what sends a student off widening a topic that was never the problem.
+    """
 
 
 class MaterialRetrievalError(RetrievalMaterialError, RetrievalUnavailableError):
@@ -168,6 +179,11 @@ def load_retrieved_material(
     ranked = _rank(
         db, course_id, query=query, limit=limit, provider=provider, store=store
     )
+    # Nothing ranked at all means the course holds no vectors: the caller has
+    # already established it has ready chunks, so this is an indexing gap.
+    if not ranked:
+        raise MaterialNotIndexedError(MATERIAL_NOT_INDEXED_MESSAGE)
+
     order = _ready_document_order(db, {chunk.document_id for chunk in ranked})
     survivors = [
         chunk

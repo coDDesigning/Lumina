@@ -6,6 +6,8 @@ from sqlalchemy.exc import OperationalError
 from backend.app import database_engine
 from backend.app.database_engine import (
     SQLITE_BUSY_TIMEOUT_MILLISECONDS,
+    SQLITE_WAL_AUTOCHECKPOINT_PAGES,
+    SQLITE_WAL_JOURNAL_SIZE_LIMIT_BYTES,
     create_database_engine,
     is_sqlite_database,
     normalize_database_url,
@@ -30,9 +32,21 @@ def test_sqlite_engine_creates_parent_and_enables_foreign_keys(
         with engine.connect() as connection:
             foreign_keys = connection.exec_driver_sql("PRAGMA foreign_keys").scalar()
             busy_timeout = connection.exec_driver_sql("PRAGMA busy_timeout").scalar()
+            journal_mode = connection.exec_driver_sql("PRAGMA journal_mode").scalar()
+            synchronous = connection.exec_driver_sql("PRAGMA synchronous").scalar()
+            autocheckpoint = connection.exec_driver_sql(
+                "PRAGMA wal_autocheckpoint"
+            ).scalar()
+            journal_size_limit = connection.exec_driver_sql(
+                "PRAGMA journal_size_limit"
+            ).scalar()
         assert database_path.exists()
         assert foreign_keys == 1
         assert busy_timeout == SQLITE_BUSY_TIMEOUT_MILLISECONDS
+        assert journal_mode == "wal"
+        assert synchronous == 2
+        assert autocheckpoint == SQLITE_WAL_AUTOCHECKPOINT_PAGES
+        assert journal_size_limit == SQLITE_WAL_JOURNAL_SIZE_LIMIT_BYTES
     finally:
         engine.dispose()
 
@@ -154,3 +168,43 @@ def test_postgresql_runtime_pool_options_are_forwarded(monkeypatch) -> None:
     assert captured_options["pool_recycle"] == 600
     assert captured_options["pool_pre_ping"] is True
     assert captured_options["pool_timeout"] == 5
+
+
+def test_wal_allows_a_writer_while_a_reader_holds_a_snapshot(tmp_path: Path) -> None:
+    database_path = tmp_path / "wal-concurrency.db"
+    engine = create_database_engine(f"sqlite:///{database_path.as_posix()}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+            connection.exec_driver_sql("INSERT INTO items DEFAULT VALUES")
+
+        with engine.connect() as reader:
+            reader.exec_driver_sql("BEGIN")
+            try:
+                assert (
+                    reader.exec_driver_sql("SELECT COUNT(*) FROM items").scalar() == 1
+                )
+                with engine.begin() as writer:
+                    writer.exec_driver_sql("INSERT INTO items DEFAULT VALUES")
+            finally:
+                reader.exec_driver_sql("ROLLBACK")
+
+        with engine.connect() as connection:
+            assert (
+                connection.exec_driver_sql("SELECT COUNT(*) FROM items").scalar() == 2
+            )
+    finally:
+        engine.dispose()
+
+
+def test_named_memory_sqlite_does_not_enable_wal() -> None:
+    engine = create_database_engine(
+        "sqlite:///file:lumina-memory?mode=memory&cache=shared&uri=true"
+    )
+    try:
+        with engine.connect() as connection:
+            assert (
+                connection.exec_driver_sql("PRAGMA journal_mode").scalar() == "memory"
+            )
+    finally:
+        engine.dispose()

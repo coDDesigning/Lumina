@@ -280,8 +280,9 @@ set. Verify the intended volume before migration and startup. Never use
 uploaded documents is intended.
 
 This topology is single-host. Do not scale the API or worker across hosts and do
-not move SQLite or uploads to an unqualified network filesystem. Automated
-backup, restore, and rollback qualification are separate release requirements.
+not move SQLite or uploads to an unqualified network filesystem. Use the
+verified backup, fresh-volume restore, and reversible cutover procedure in
+[`self-hosted-backup.md`](self-hosted-backup.md).
 
 ## Production configuration
 

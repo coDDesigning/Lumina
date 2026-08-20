@@ -8,6 +8,9 @@ in [`docs/dependencies.md`](docs/dependencies.md).
 Database migrations, document processing, and worker operation are documented in
 [`docs/database.md`](docs/database.md).
 
+Self-hosted SQLite, upload, and Chroma backup and restore operations are
+documented in [`docs/self-hosted-backup.md`](docs/self-hosted-backup.md).
+
 Supported deployment modes, production configuration, and health probes are
 documented in [`docs/deployment.md`](docs/deployment.md).
 
@@ -25,4 +28,3 @@ documented in [`docs/vector_storage.md`](docs/vector_storage.md).
 
 Frontend testing architecture, mock conventions, and test execution are documented in
 [`docs/frontend_testing.md`](docs/frontend_testing.md).
-

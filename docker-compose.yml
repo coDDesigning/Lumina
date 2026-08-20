@@ -33,7 +33,9 @@ x-lumina-environment: &lumina-environment
   DOCUMENT_CHUNK_OVERLAP_CHARACTERS: ${DOCUMENT_CHUNK_OVERLAP_CHARACTERS:-200}
   VECTOR_BACKEND: ${VECTOR_BACKEND:-chroma}
   EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
   OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
   EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
   EMBEDDING_TIMEOUT_SECONDS: ${EMBEDDING_TIMEOUT_SECONDS:-60}
@@ -53,6 +55,8 @@ x-lumina-service: &lumina-service
     - ALL
   security_opt:
     - no-new-privileges:true
+  extra_hosts:
+    - host.docker.internal:host-gateway
   pids_limit: 256
 
 services:
@@ -111,6 +115,38 @@ services:
     init: true
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-345s}
     restart: unless-stopped
+
+  backup:
+    <<: *lumina-service
+    profiles: ["maintenance"]
+    environment:
+      <<: *lumina-environment
+      JWT_SECRET_KEY: maintenance-does-not-serve-authentication
+      BOOTSTRAP_ADMIN_EMAIL: maintenance@example.com
+      BOOTSTRAP_ADMIN_TOKEN: maintenance-does-not-accept-admin-bootstrap
+      GEMINI_API_KEY: maintenance-does-not-call-ai-providers
+    volumes:
+      - lumina-data:/data
+      - ${LUMINA_BACKUP_DIRECTORY:-./backups}:/backup
+    command:
+      ["python", "-m", "workers.self_hosted_backup", "backup", "/backup/${BACKUP_ARCHIVE_NAME:-lumina-backup.tar.gz}", "--archive-root", "/backup", "--include-chroma-offline"]
+    restart: "no"
+
+  restore:
+    <<: *lumina-service
+    profiles: ["maintenance"]
+    environment:
+      <<: *lumina-environment
+      JWT_SECRET_KEY: maintenance-does-not-serve-authentication
+      BOOTSTRAP_ADMIN_EMAIL: maintenance@example.com
+      BOOTSTRAP_ADMIN_TOKEN: maintenance-does-not-accept-admin-bootstrap
+      GEMINI_API_KEY: maintenance-does-not-call-ai-providers
+    volumes:
+      - lumina-data:/data
+      - ${LUMINA_BACKUP_DIRECTORY:-./backups}:/backup:ro
+    command:
+      ["python", "-m", "workers.self_hosted_backup", "restore", "/backup/${BACKUP_ARCHIVE_NAME:-lumina-backup.tar.gz}", "--archive-root", "/backup"]
+    restart: "no"
 
 volumes:
   lumina-data:

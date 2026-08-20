@@ -8,6 +8,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.engine import URL, Engine, make_url
 
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = 5_000
+SQLITE_WAL_AUTOCHECKPOINT_PAGES = 1_000
+SQLITE_WAL_JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
 
 
 def normalize_database_url(value: str) -> URL:
@@ -50,6 +52,12 @@ def create_database_engine(
                 else SQLITE_BUSY_TIMEOUT_MILLISECONDS / 1000
             )
         sqlite_busy_timeout_milliseconds = int(float(connect_args["timeout"]) * 1000)
+        sqlite_database = url.database or ""
+        sqlite_file_backed = bool(sqlite_database) and not (
+            sqlite_database == ":memory:"
+            or sqlite_database.startswith("file::memory:")
+            or url.query.get("mode") == "memory"
+        )
         engine_options["connect_args"] = connect_args
     elif url.get_backend_name() == "postgresql":
         connect_args = dict(engine_options.pop("connect_args", {}))
@@ -63,7 +71,7 @@ def create_database_engine(
 
     supports_pool_timeout = url.get_backend_name() == "postgresql" or (
         is_sqlite_database(url)
-        and url.database not in (None, "", ":memory:")
+        and sqlite_file_backed
         and "poolclass" not in engine_options
     )
     if apply_runtime_timeouts and supports_pool_timeout:
@@ -77,6 +85,7 @@ def create_database_engine(
             partial(
                 _configure_sqlite_connection,
                 busy_timeout_milliseconds=sqlite_busy_timeout_milliseconds,
+                enable_wal=sqlite_file_backed,
             ),
         )
         event.listen(
@@ -95,10 +104,21 @@ def _configure_sqlite_connection(
     _connection_record: Any,
     *,
     busy_timeout_milliseconds: int,
+    enable_wal: bool,
 ) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute(f"PRAGMA busy_timeout={busy_timeout_milliseconds}")
+    if enable_wal:
+        journal_mode = cursor.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        if str(journal_mode).lower() != "wal":
+            cursor.close()
+            raise RuntimeError("File-backed SQLite requires WAL journal mode.")
+        cursor.execute("PRAGMA synchronous=FULL")
+        cursor.execute(f"PRAGMA wal_autocheckpoint={SQLITE_WAL_AUTOCHECKPOINT_PAGES}")
+        cursor.execute(
+            f"PRAGMA journal_size_limit={SQLITE_WAL_JOURNAL_SIZE_LIMIT_BYTES}"
+        )
     cursor.close()
 
 

@@ -249,7 +249,11 @@ export interface GeneratedOutputDetail extends GeneratedOutputSummary {
   content: Record<string, unknown> | string;
 }
 
-export type QuizQuestionType = 'multiple_choice' | 'true_false';
+export type QuizQuestionType =
+  | 'multiple_choice'
+  | 'true_false'
+  | 'short_answer'
+  | 'open_ended';
 
 export type QuizDifficulty = 'easy' | 'medium' | 'hard';
 
@@ -264,6 +268,7 @@ export interface QuizRequest {
 export interface QuizQuestionView {
   question_id: number;
   question_number: number;
+  question_type?: QuizQuestionType;
   topic: string;
   question: string;
   options: string[];
@@ -283,7 +288,9 @@ export interface QuizGenerationResult extends BoundedContext {
 
 export interface QuizAnswerSubmission {
   question_id: number;
-  selected_option_index: number | null;
+  selected_option_index?: number | null;
+  text_response?: string | null;
+  time_spent_seconds?: number | null;
 }
 
 export interface QuizAttemptRequest {
@@ -294,8 +301,21 @@ export interface QuizAttemptRequest {
 export interface QuizAnswerResult {
   question_id: number;
   selected_option_index: number | null;
+  text_response?: string | null;
   correct_option_index: number;
   is_correct: boolean;
+  time_spent_seconds?: number | null;
+  topic?: string | null;
+}
+
+export interface QuizHistoryItem {
+  attempt_id: number;
+  quiz_id: number;
+  score: number;
+  correct_count: number;
+  total_questions: number;
+  time_spent_seconds?: number | null;
+  created_at: string;
 }
 
 export interface QuizAttemptResponse {
@@ -320,9 +340,16 @@ export interface TopicMastery {
 }
 
 export interface CourseProgressResponse {
+  quizzes_completed?: number;
   attempts_count: number;
   average_score: number | null;
+  correct_count?: number;
+  incorrect_count?: number;
+  total_questions_answered?: number;
+  completion?: number;
+  weak_topics?: string[];
   topic_mastery: TopicMastery[];
+  quiz_history?: QuizHistoryItem[];
 }
 
 export interface ProfileKnowledgeItem {

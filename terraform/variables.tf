@@ -69,6 +69,24 @@ variable "worker_memory" {
   default     = 1024
 }
 
+variable "worker_min_instances" {
+  description = "Minimum document worker tasks. Keep at least one to publish queue metrics."
+  type        = number
+  default     = 1
+}
+
+variable "worker_max_instances" {
+  description = "Maximum document worker tasks under queue-age autoscaling."
+  type        = number
+  default     = 4
+}
+
+variable "worker_target_queue_age_seconds" {
+  description = "Target oldest queued-job age used by worker autoscaling."
+  type        = number
+  default     = 30
+}
+
 variable "migrate_cpu" {
   description = "Fargate CPU units for the one-off migration task."
   type        = number

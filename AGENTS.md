@@ -39,6 +39,7 @@ Operating instructions for coding agents in this repository.
 - The root `Dockerfile` and `docker-compose.yml` are the supported single-host self-hosted container path. They run one-shot migrations before separate API and worker services as UID/GID 10001 on a shared named volume. `docker-compose.hosted.yml` is the hosted topology: pinned pgvector and MinIO services, a one-shot `minio-init` bucket provisioner, and the same migrate/API/worker roles wired to S3 storage and pgvector. Hosted production config requires `STORAGE_BACKEND=s3`; MinIO itself is gated by the API and worker readiness probes because the MinIO image has no shell.
 - AWS runtime database traffic goes through TLS-only RDS Proxy; the one-shot migrator uses a separate direct RDS URL so schema locks and DDL never traverse the runtime pool. Keep both Secrets Manager ARNs wired to the ECS execution role.
 - Production application logs use `backend/app/observability.py`: one privacy-safe JSON event per line with request correlation, plus CloudWatch EMF worker metrics. Do not add raw prompts, uploaded content, credentials, query strings, or arbitrary exception text to logs. See `docs/observability.md`.
+- AWS hosted API and worker tasks may scale horizontally. Worker scaling uses `OldestQueuedAgeSeconds`; PostgreSQL claims must retain `SKIP LOCKED`, short claim transactions, expiring leases, and claim-token fencing. Never qualify multi-host SQLite/local/Chroma. See `docs/deployment.md`.
 
 ## Dependencies
 

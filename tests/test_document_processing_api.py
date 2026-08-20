@@ -305,7 +305,7 @@ def test_hard_delete_cascades_processing_jobs_after_storage_cleanup(upload_api):
         assert job_id is not None
 
     deleted = upload_api.client.delete(
-        f"/api/courses/{upload_api.course_id}?hard_delete=true",
+        f"/api/courses/{upload_api.course_id}",
         headers=upload_api.authorization,
     )
     assert deleted.status_code == 200

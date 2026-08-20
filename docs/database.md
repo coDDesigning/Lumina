@@ -65,6 +65,15 @@ without recovering or claiming a job:
 python -m workers.document_processor --check
 ```
 
+Finish course deletions that a storage or vector-store failure left unfinished.
+It is idempotent, so rerunning it is always safe:
+
+```bash
+python -m workers.course_purge
+python -m workers.course_purge --dry-run
+python -m workers.course_purge --course-id 42
+```
+
 The worker performs this readiness check before entering its processing loop and
 exits nonzero if a dependency is not ready. `--check` and `--once` are mutually
 exclusive; unlike `--check`, `--once` may recover and process durable jobs.
@@ -156,24 +165,25 @@ trust the `course_id` a client sends.
 
 The module exposes three modes. `require_course_access` authorizes reads,
 `require_course_owner` authorizes writes, and `require_course_deletion`
-authorizes deletion of a course that may already be tombstoned, which keeps hard
-deletion retryable after a storage failure. Each loads a course with the policy
+authorizes deletion of a course that may already be tombstoned, which keeps
+deletion retryable after a storage or vector-store failure. Each loads a course with the policy
 applied inside the query and returns the authorized course, so an endpoint never
 repeats the lookup or reuses the untrusted identifier.
 
 Ownership comes from the verified token. `POST /api/courses/` ignores any owner
 supplied in the request body.
 
-| Caller | List | Read course and documents | Write course, documents, generation |
-| --- | --- | --- | --- |
-| Unauthenticated | `401` | `401` | `401` |
-| Owner | own courses | own courses | own courses |
-| Other user | not listed | `404` | `404` |
-| Administrator | all courses | any course | own courses only, else `404` |
+| Caller | List | Read course and documents | Write course, documents, generation | Delete course |
+| --- | --- | --- | --- | --- |
+| Unauthenticated | `401` | `401` | `401` | `401` |
+| Owner | own courses | own courses | own courses | own courses |
+| Other user | not listed | `404` | `404` | `404` |
+| Administrator | all courses | any course | own courses only, else `404` | own courses only, else `404` |
 
 The administrator override is deliberately read-only. Administrators may inspect
 any course for support and administration, but may not modify, delete, upload
-to, retry, or generate material against a course they do not own.
+to, retry, or generate material against a course they do not own. Deleting a
+course therefore needs no administrator involvement and admits none.
 
 ### Course workspace fields
 
@@ -188,8 +198,8 @@ while `created_at` stays fixed.
 so neither an owner nor an administrator can transfer a workspace through the
 API.
 
-Unauthorized access never discloses existence. A nonexistent course, a
-soft-deleted course, and another owner's course all return `404` with the same
+Unauthorized access never discloses existence. A nonexistent course, a course
+whose purge has not finished, and another owner's course all return `404` with the same
 `Course not found` body, so course identifiers cannot be enumerated. Documents
 are additionally scoped to their authorized course, so a document identifier
 from one course cannot be reached through another.
@@ -277,6 +287,43 @@ This architectural separation keeps the API admission path fast and bounded,
 preventing slow or maliciously crafted documents from consuming API worker
 threads or causing denial-of-service.
 
+## Course deletion
+
+Deleting a course is unconditional and permanent. `DELETE /api/courses/{course_id}`
+takes no mode parameter and there is no soft delete: the course row, its
+documents and their stored files, pages, visuals, chunks, vectors, generated
+outputs, quizzes, questions, attempts, progress, processing jobs, and AI usage
+logs are all removed. Profile knowledge belongs to the student rather than the
+course and is never touched, and neither is the account itself.
+
+Only the owner may do it. An administrator may read any course but gets the same
+`404` as any other non-owner when deleting one they do not own.
+
+The order is deliberate and each step is idempotent:
+
+1. Tombstone the course and fence its queued and running jobs, in one committed
+   transaction, so no worker can write new artifacts underneath the deletion.
+2. Delete every stored file.
+3. Delete every vector.
+4. Delete the course row, which cascades the relational graph.
+
+`courses.is_deleted` is that tombstone and means one thing: purge pending. It is
+internal state, not a trash bin — `CourseUpdate` does not carry it, so no client
+can set it. A tombstoned course is already invisible to reads, and its owner can
+still delete it, which is what makes the operation resumable.
+
+A storage or vector-store failure stops before the row is deleted and answers
+`500`. The tombstone and the metadata naming the remaining objects both survive,
+so the same request can safely resume. Repeating a step that already succeeded is
+harmless: a missing file deletes cleanly and an empty vector set is a no-op.
+Deleting vectors before the row, rather than after, is what keeps a failure from
+leaving deleted material semantically searchable.
+
+`python -m workers.course_purge` finishes deletions nobody retried, including
+courses soft-deleted under the older behavior. It reruns this same path against
+every tombstoned course, so it is idempotent, and a course it cannot finish is
+logged and left tombstoned rather than blocking the rest.
+
 ## Limits and failure behavior
 
 Worker behavior is configured through:
@@ -356,8 +403,8 @@ backend.
 ### Lifecycle and deletion semantics
 
 Profile knowledge is user-scoped rather than course-scoped:
-- **Course deletion**: Deleting or hard-deleting a course removes only course-bound
-  documents, chunks, embeddings, and generated outputs. It leaves all `profile_knowledge` rows intact.
+- **Course deletion**: Deleting a course removes only course-bound documents,
+  chunks, embeddings, and generated outputs. It leaves all `profile_knowledge` rows intact.
 - **User deletion**: Deleting a user cascades and permanently removes all associated
   profile knowledge records (`ondelete="CASCADE"`).
 - **Cross-user privacy**: Profile knowledge entries are strictly isolated to the owning

@@ -167,14 +167,38 @@ def test_course_hard_deletion_removes_every_vector_in_the_course(
     db_session.commit()
     assert store.count_course_vectors(db_session, course.id) == 5
 
-    stored_documents = CourseService.prepare_hard_delete(db_session, course.id)
-    for provider, key in stored_documents:
-        assert provider == storage.provider
-        storage.delete(key)
-    CourseService.finalize_hard_delete(db_session, course.id, vector_store=store)
+    CourseService.hard_delete_course(db_session, course.id, storage, vector_store=store)
 
     assert store.count_course_vectors(db_session, course.id) == 0
     assert db_session.get(Course, course.id) is None
+
+
+def test_backfill_skips_a_purge_pending_course(
+    store, session_factory, db_session, tmp_path
+) -> None:
+    """The tombstone filter keeps a backfill from re-embedding a course being purged.
+
+    A purge removes a course's vectors and only then deletes its row. A backfill
+    running in that window must not write them back, or deleted material would
+    stay semantically searchable.
+    """
+    storage = LocalStorage(tmp_path / "uploads", namespace="lifecycle")
+    course, document, _ = _seed(
+        db_session, storage, email="purge-pending-backfill@example.com", chunk_count=3
+    )
+    course.is_deleted = True
+    db_session.commit()
+
+    provider = StubEmbeddingProvider()
+    report = run_backfill(
+        session_factory=session_factory,
+        vector_store=store,
+        embedding_provider=provider,
+    )
+
+    assert report.documents_examined == 0
+    assert provider.embedded == []
+    assert store.count_document_vectors(db_session, document.id) == 0
 
 
 def test_backfill_creates_missing_vectors_once(

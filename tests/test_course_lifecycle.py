@@ -75,13 +75,16 @@ def test_a_student_edits_and_deletes_their_own_workspace(authz_api):
         f"/api/courses/{course_id}", headers=authz_api.authorization_b
     )
     assert deleted.status_code == 200, deleted.text
-    assert deleted.json()["data"]["is_deleted"] is True
+    assert deleted.json()["message"] == "Course permanently deleted"
 
     gone = authz_api.client.get(
         f"/api/courses/{course_id}", headers=authz_api.authorization_b
     )
     assert gone.status_code == 404
     assert gone.json() == {"detail": "Course not found"}
+
+    with authz_api.session_factory() as session:
+        assert session.get(Course, course_id) is None
 
 
 def test_a_student_cannot_edit_or_delete_another_students_workspace(authz_api):

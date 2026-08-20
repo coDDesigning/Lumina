@@ -193,7 +193,7 @@ def test_course_hard_delete_preserves_profile_knowledge(
 
     # Hard delete the course
     del_course_res = client.delete(
-        f"/api/courses/{course_id}?hard_delete=true",
+        f"/api/courses/{course_id}",
         headers=auth_a,
     )
     assert del_course_res.status_code == 200

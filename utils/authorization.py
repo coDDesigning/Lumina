@@ -2,8 +2,8 @@
 
 Course resources are owner-scoped. A request naming a course the caller may not
 use is answered with 404 so existence is never disclosed: a missing course, a
-soft-deleted course, and another owner's course are indistinguishable to anyone
-enumerating identifiers.
+course whose purge has not finished, and another owner's course are
+indistinguishable to anyone enumerating identifiers.
 
 The administrator policy is deliberate rather than emergent. It lives in
 ``can_read_any_course`` and ``can_write_any_course``; changing the policy means
@@ -71,11 +71,11 @@ def writable_course_criteria(user: UserResponse) -> tuple[ColumnElement[bool], .
 def deletable_course_criteria(user: UserResponse) -> tuple[ColumnElement[bool], ...]:
     """Restrict a ``Course`` select to the courses ``user`` may delete.
 
-    Unlike the other modes this one deliberately ignores ``is_deleted``. Hard
-    deletion tombstones the course before it removes stored files, so a storage
-    failure leaves a tombstoned course that its owner must still be able to
-    purge. Soft-delete semantics stay in the service layer, which continues to
-    reject soft-deleting an already deleted course.
+    Unlike the other modes this one deliberately ignores ``is_deleted``.
+    Deletion tombstones the course before it removes stored files and vectors,
+    so a failure in either leaves a tombstoned course that its owner must still
+    be able to purge. That is what makes deletion resumable, and it is why the
+    flag cannot double as a trash bin.
     """
     if can_write_any_course(user):
         return ()

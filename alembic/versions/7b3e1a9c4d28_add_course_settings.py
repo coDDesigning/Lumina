@@ -92,10 +92,24 @@ def upgrade() -> None:
         op.f("ix_course_settings_course_id"),
         "course_settings",
         ["course_id"],
-        unique=True,
+        unique=False,
     )
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column(
+            "preferred_model",
+            existing_type=sa.String(length=100),
+            server_default="gemini:gemini-3.6-flash",
+            existing_nullable=False,
+        )
 
 
 def downgrade() -> None:
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column(
+            "preferred_model",
+            existing_type=sa.String(length=100),
+            server_default="gpt-4o-mini",
+            existing_nullable=False,
+        )
     op.drop_index(op.f("ix_course_settings_course_id"), table_name="course_settings")
     op.drop_table("course_settings")

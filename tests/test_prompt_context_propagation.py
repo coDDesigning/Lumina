@@ -1,5 +1,9 @@
 import pytest
 
+from prompt_neutrality_policy import (
+    assert_no_level_or_discipline_fallback,
+    assert_only_the_supplied_level_directive,
+)
 from backend.app.models import DocumentChunk, UploadedDocument
 from schemas.prompt_context import (
     EducationLevel,
@@ -15,19 +19,6 @@ from services.quiz_grading import QuizGradingService
 from services.study_guide import StudyGuideService
 from schemas.quiz import QuizDifficulty, QuizQuestionType, QuizRequest
 from schemas.study_guide import StudyGuideRequest
-
-BANNED_DEFAULTS = ("computer science", "university", "lecture")
-
-RETAINED_FIELD_NAMES = ("lecture_based",)
-
-
-def assert_neutral(prompt: str, name: str) -> None:
-    lowered = prompt.lower()
-    for field in RETAINED_FIELD_NAMES:
-        lowered = lowered.replace(field, "")
-    for banned in BANNED_DEFAULTS:
-        assert banned not in lowered, (name, banned)
-
 
 HIGH_SCHOOL_CONTEXT = PromptContext(
     education_level=EducationLevel.HIGH_SCHOOL,
@@ -108,7 +99,9 @@ def test_every_generation_prompt_carries_the_shared_context(
 
     for value in expected:
         assert value in prompt, (name, value)
-    assert_neutral(prompt, name)
+    assert_only_the_supplied_level_directive(
+        prompt, context.education_level, f"the {name} prompt"
+    )
     assert "{{" not in prompt
 
 
@@ -117,7 +110,10 @@ def test_no_generation_prompt_defaults_a_learner_to_university(name) -> None:
     prompt = BUILDERS[name](PromptContext())
 
     assert "unspecified" in prompt
-    assert_neutral(prompt, name)
+    assert_no_level_or_discipline_fallback(prompt, f"the {name} prompt")
+    assert_only_the_supplied_level_directive(
+        prompt, EducationLevel.UNSPECIFIED, f"the {name} prompt"
+    )
     assert "{{" not in prompt
 
 
@@ -143,7 +139,9 @@ def test_quiz_grading_prompt_carries_the_shared_context(model_graph) -> None:
 
     for value in HIGH_SCHOOL_EXPECTED:
         assert value in prompt
-    assert_neutral(prompt, "quiz_grading")
+    assert_only_the_supplied_level_directive(
+        prompt, EducationLevel.HIGH_SCHOOL, "the quiz_grading prompt"
+    )
     assert "{{" not in prompt
 
 
@@ -199,7 +197,9 @@ def test_generation_resolves_course_context_end_to_end(db_session, model_graph) 
     prompt = captured[0]
     for value in HIGH_SCHOOL_EXPECTED:
         assert value in prompt
-    assert_neutral(prompt, "flashcard")
+    assert_only_the_supplied_level_directive(
+        prompt, EducationLevel.HIGH_SCHOOL, "the flashcard prompt"
+    )
     assert "{{" not in prompt
 
 
@@ -252,7 +252,7 @@ def test_legacy_course_reaches_the_provider_as_unspecified(
     prompt = captured[0]
     assert "unspecified" in prompt
     assert "Unspecified subject area" in prompt
-    assert_neutral(prompt, "flashcard")
+    assert_no_level_or_discipline_fallback(prompt, "the flashcard prompt")
 
 
 def test_a_template_fault_never_reaches_the_provider(

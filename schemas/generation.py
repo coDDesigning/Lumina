@@ -7,6 +7,8 @@ class BoundedContext(BaseModel):
     context_truncated: bool
     chunks_used: int
     chunks_available: int
+    profile_knowledge_used: bool = False
+    profile_knowledge_items_used: int = 0
 
 
 class RetrievedContext(BoundedContext):
@@ -40,9 +42,18 @@ class RetrievalGenerationContext(BaseModel):
     lowest_similarity: float | None = None
     highest_similarity: float | None = None
     truncated: bool
+    profile_knowledge_used: bool = False
+    profile_knowledge_items_used: int = 0
+    profile_knowledge_characters_used: int = 0
+    profile_knowledge_truncated: bool = False
 
     @classmethod
-    def from_material(cls, material) -> "RetrievalGenerationContext":
+    def from_material(
+        cls,
+        material,
+        profile_knowledge=None,
+    ) -> "RetrievalGenerationContext":
+        profile_used = profile_knowledge is not None and not profile_knowledge.is_empty
         return cls(
             chunks_ranked=material.chunks_ranked,
             chunks_retrieved=material.chunks_retrieved,
@@ -51,4 +62,14 @@ class RetrievalGenerationContext(BaseModel):
             lowest_similarity=material.lowest_similarity,
             highest_similarity=material.highest_similarity,
             truncated=material.truncated,
+            profile_knowledge_used=profile_used,
+            profile_knowledge_items_used=(
+                profile_knowledge.items_used if profile_knowledge else 0
+            ),
+            profile_knowledge_characters_used=(
+                len(profile_knowledge.text) if profile_knowledge else 0
+            ),
+            profile_knowledge_truncated=(
+                profile_knowledge.truncated if profile_knowledge else False
+            ),
         )

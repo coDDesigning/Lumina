@@ -37,6 +37,10 @@ from schemas.quiz import (
 )
 from services.ai_usage_logger import AiUsageLogger
 from services.course_material import count_available_chunks
+from services.profile_knowledge import (
+    ProfileKnowledgeContext,
+    assemble_generation_context,
+)
 from services.prompt_loader import PromptLoader
 from services.retrieval_material import (
     MaterialNotIndexedError,
@@ -51,7 +55,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import CreditService
+from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -178,6 +182,7 @@ class QuizGeneration:
     quiz: QuizGenerationResponse
     material: RetrievedCourseMaterial
     model_used: str
+    profile_knowledge: ProfileKnowledgeContext | None = None
 
 
 def parse_correct_answer(row: QuizQuestion) -> QuizCorrectAnswer | None:
@@ -216,12 +221,18 @@ class QuizService:
         )
 
     @staticmethod
+    def credit_cost(request: QuizRequest) -> float:
+        if QuizQuestionType.OPEN_ENDED in request.question_types:
+            return GENERATION_CREDIT_COSTS["quiz_open_ended"]
+        return GENERATION_CREDIT_COSTS["quiz"]
+
+    @staticmethod
     def build_retrieval_query(course: Course | None, request: QuizRequest) -> str:
         """Turn a generation request into the query retrieval should rank against."""
         return build_retrieval_query(course, request.topic_focus)
 
-    @staticmethod
-    def question_types_directive(request: QuizRequest) -> str:
+    @classmethod
+    def question_types_directive(cls, request: QuizRequest) -> str:
         allowed = ", ".join(
             question_type.value for question_type in request.question_types
         )
@@ -235,8 +246,8 @@ class QuizService:
             f"{directives}"
         )
 
-    @staticmethod
-    def question_schemas(request: QuizRequest) -> str:
+    @classmethod
+    def question_schemas(cls, request: QuizRequest) -> str:
         return "\n\n".join(
             QUESTION_TYPE_SCHEMAS[question_type]
             for question_type in request.question_types
@@ -310,13 +321,24 @@ class QuizService:
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
 
-        prompt = cls.build_prompt(material.text, request)
+        generation_ctx = assemble_generation_context(
+            db,
+            course_id=course_id,
+            user_id=resolved_user_id,
+            course_material=material,
+            include_profile_context=request.include_profile_context,
+        )
+
+        prompt = cls.build_prompt(generation_ctx.combined_text, request)
         metadata = None
 
         receipt = None
         if resolved_user_id:
             receipt = CreditService.charge(
-                db, resolved_user_id, 1.0, source_type="quiz"
+                db,
+                resolved_user_id,
+                cls.credit_cost(request),
+                source_type="quiz",
             )
             if receipt is None:
                 log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
@@ -364,6 +386,7 @@ class QuizService:
             quiz=validated,
             material=material,
             model_used=model_identifier(metadata),
+            profile_knowledge=generation_ctx.profile_knowledge,
         )
 
     @staticmethod

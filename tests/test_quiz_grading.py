@@ -5,6 +5,7 @@ import routes.quiz as quiz_route
 from backend.app.models import Quiz, QuizAttempt, QuizAttemptAnswer, QuizQuestion, User
 from schemas.quiz_attempt import OPEN_ENDED_PASS_THRESHOLD
 from services.text_generation import GenerationMetadata, TextGenerationConnectionError
+from tests.conftest import set_balance
 
 STUB_METADATA = GenerationMetadata(provider="ollama", model="qwen3:8b", latency_ms=5)
 
@@ -451,9 +452,7 @@ def _credits(api, user_id: int) -> float | None:
         return session.get(User, user_id).credits
 
 
-def test_grading_charges_a_credit_only_when_an_open_ended_answer_is_graded(
-    authz_api, monkeypatch
-):
+def test_grading_a_deterministic_attempt_charges_nothing(authz_api, monkeypatch):
     quiz_id, question_ids = _quiz(
         authz_api, authz_api.a_course_id, ["multiple_choice", "short_answer"]
     )
@@ -475,7 +474,8 @@ def test_grading_charges_a_credit_only_when_an_open_ended_answer_is_graded(
     assert _credits(authz_api, authz_api.user_a_id) == before
 
 
-def test_grading_charges_a_credit_for_an_open_ended_answer(authz_api, monkeypatch):
+def test_grading_an_open_ended_answer_charges_nothing(authz_api, monkeypatch):
+    """Open-ended grading is paid for once, when the quiz is generated."""
     quiz_id, question_ids = _quiz(authz_api, authz_api.a_course_id, ["open_ended"])
     _install_provider(
         monkeypatch,
@@ -491,10 +491,32 @@ def test_grading_charges_a_credit_for_an_open_ended_answer(authz_api, monkeypatc
         authz_api.authorization_a,
     )
 
-    assert _credits(authz_api, authz_api.user_a_id) == before - 1.0
+    assert _credits(authz_api, authz_api.user_a_id) == before
 
 
-def test_a_grading_failure_refunds_the_credit(authz_api, monkeypatch):
+def test_an_exhausted_balance_still_grades_open_ended_answers(authz_api, monkeypatch):
+    """Grading is prepaid, so a zero balance can never silently skip it."""
+    quiz_id, question_ids = _quiz(authz_api, authz_api.a_course_id, ["open_ended"])
+    _install_provider(
+        monkeypatch,
+        GradingProvider({"verdicts": [{"question_number": 1, "score": 1.0}]}),
+    )
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 0.0)
+
+    response = _submit(
+        authz_api,
+        authz_api.a_course_id,
+        quiz_id,
+        [{"question_id": question_ids[0], "text_response": "Because it is sorted."}],
+        authz_api.authorization_a,
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["graded_count"] == 1
+    assert _credits(authz_api, authz_api.user_a_id) == 0.0
+
+
+def test_a_grading_failure_leaves_the_balance_untouched(authz_api, monkeypatch):
     quiz_id, question_ids = _quiz(authz_api, authz_api.a_course_id, ["open_ended"])
     _install_provider(
         monkeypatch, GradingProvider(error=TextGenerationConnectionError("offline"))
@@ -578,7 +600,9 @@ def test_a_grader_that_cannot_be_built_leaves_open_ended_ungraded(
     assert stored[1].text_response == "A written answer."
 
 
-def test_a_grader_that_cannot_be_built_charges_no_credit(authz_api, monkeypatch):
+def test_a_grader_that_cannot_be_built_leaves_the_balance_untouched(
+    authz_api, monkeypatch
+):
     quiz_id, question_ids = _quiz(authz_api, authz_api.a_course_id, ["open_ended"])
 
     def explode(**_):

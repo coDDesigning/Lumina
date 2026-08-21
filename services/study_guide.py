@@ -18,6 +18,10 @@ from schemas.study_guide import (
 )
 from services.ai_usage_logger import AiUsageLogger
 from services.generated_output import GeneratedOutputService
+from services.profile_knowledge import (
+    ProfileKnowledgeContext,
+    assemble_generation_context,
+)
 from services.prompt_loader import PromptLoader
 from services.course_material import count_available_chunks
 from services.retrieval_query import build_retrieval_query
@@ -33,7 +37,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import CreditService
+from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -127,6 +131,7 @@ class StudyGuideGeneration:
     study_guide: StudyGuideResponse
     material: RetrievedCourseMaterial
     model_used: str
+    profile_knowledge: ProfileKnowledgeContext | None = None
 
 
 class StudyGuideService:
@@ -232,13 +237,24 @@ class StudyGuideService:
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
 
-        prompt = cls.build_prompt(material.text, request)
+        generation_ctx = assemble_generation_context(
+            db,
+            course_id=course_id,
+            user_id=resolved_user_id,
+            course_material=material,
+            include_profile_context=request.include_profile_context,
+        )
+
+        prompt = cls.build_prompt(generation_ctx.combined_text, request)
         metadata = None
 
         receipt = None
         if resolved_user_id:
             receipt = CreditService.charge(
-                db, resolved_user_id, 1.0, source_type="study_guide"
+                db,
+                resolved_user_id,
+                GENERATION_CREDIT_COSTS["study_guide"],
+                source_type="study_guide",
             )
             if receipt is None:
                 AiUsageLogger.log_failure(
@@ -291,6 +307,7 @@ class StudyGuideService:
             study_guide=validated,
             material=material,
             model_used=model_identifier(metadata),
+            profile_knowledge=generation_ctx.profile_knowledge,
         )
 
     @staticmethod

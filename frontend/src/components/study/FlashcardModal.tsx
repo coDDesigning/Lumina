@@ -11,7 +11,14 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import { describeGenerationError, isAbortError } from '../../api/errors';
+import {
+  describeGenerationError,
+  isAbortError,
+  isInsufficientCredits,
+} from '../../api/errors';
+import { useCredits } from '../../context/CreditContext';
+import CreditBalance from '../credits/CreditBalance';
+import CreditExhaustedNotice from '../credits/CreditExhaustedNotice';
 import { flashcardsAPI } from '../../api/flashcards';
 import type { FlashcardGenerationResult, GeneratedFlashcard } from '../../api/types';
 import './study.css';
@@ -36,6 +43,7 @@ export function FlashcardModal({
   onClose,
 }: FlashcardModalProps) {
   const [state, setState] = useState<FlashcardState>({ phase: 'idle' });
+  const [includeProfileContext, setIncludeProfileContext] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -52,6 +60,9 @@ export function FlashcardModal({
     return () => clearInterval(timer);
   }, [state.phase]);
 
+  const { refresh, canAfford, isMetered } = useCredits();
+  const exhausted = isMetered && !canAfford('flashcard');
+
   const handleGenerate = useCallback(async () => {
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -62,21 +73,29 @@ export function FlashcardModal({
     setCurrentIndex(0);
 
     try {
-      const result = await flashcardsAPI.generate(courseId, {}, {
-        signal: controller.signal,
-      });
+      const result = await flashcardsAPI.generate(
+        courseId,
+        { include_profile_context: includeProfileContext },
+        { signal: controller.signal },
+      );
       setCards(result.flashcards.flashcards);
       setState({ phase: 'success', result });
+      void refresh();
     } catch (err) {
       if (isAbortError(err)) return;
       const parsed = describeGenerationError(err, 'flashcard');
+      if (isInsufficientCredits(parsed)) {
+        await refresh();
+        setState({ phase: 'idle' });
+        return;
+      }
       setState({
         phase: 'error',
         message: parsed.message,
         retryable: parsed.retryable,
       });
     }
-  }, [courseId]);
+  }, [courseId, includeProfileContext, refresh]);
 
   const handleFlip = useCallback(() => {
     setIsFlipped((prev) => !prev);
@@ -169,12 +188,27 @@ export function FlashcardModal({
                 <div style={{ padding: '12px', background: '#fffbeb', color: '#b45309', borderRadius: '8px', marginBottom: '16px' }}>
                   ⚠️ No ready course materials found. Please upload and process documents first.
                 </div>
+              ) : (
+                <div style={{ margin: '16px auto 24px auto', display: 'flex', justifyContent: 'center' }}>
+                  <label className="study-toggle-label" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                    <input
+                      type="checkbox"
+                      checked={includeProfileContext}
+                      onChange={(event) => setIncludeProfileContext(event.target.checked)}
+                    />
+                    <span>Include personal study profile context</span>
+                  </label>
+                </div>
+              )}
+              {exhausted ? (
+                <CreditExhaustedNotice source="flashcard" action="flashcards" />
               ) : null}
+              <CreditBalance source="flashcard" />
               <button
                 type="button"
                 className="study-primary-btn"
                 onClick={handleGenerate}
-                disabled={readyDocumentCount === 0}
+                disabled={readyDocumentCount === 0 || exhausted}
               >
                 <Sparkles aria-hidden="true" />
                 Generate Flashcards

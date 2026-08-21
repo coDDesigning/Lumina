@@ -9,6 +9,8 @@ from services.text_generation import TextGenerationConnectionError
 
 logger = logging.getLogger(__name__)
 
+ERROR_CODE_HEADER = "X-Error-Code"
+
 
 class CourseMaterialUnavailableError(RuntimeError):
     pass
@@ -166,4 +168,8 @@ def ai_generation_http_exception(exc: BaseException, *, feature: str) -> HTTPExc
     else:
         logger.warning("%s generation rejected with %s", feature, code.value)
 
-    return HTTPException(status_code=status_code, detail=PUBLIC_MESSAGES[code])
+    return HTTPException(
+        status_code=status_code,
+        detail=PUBLIC_MESSAGES[code],
+        headers={ERROR_CODE_HEADER: code.value},
+    )

@@ -105,6 +105,49 @@ describe('apiClient HTTP requests', () => {
     expect(result).toEqual({ success: true, message: 'ok', data: { id: 1 } });
   });
 
+  it('reads the stable error code from the X-Error-Code header', async () => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'You do not have enough credits.' }), {
+        status: 402,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Error-Code': 'insufficient_credits',
+        },
+      }),
+    );
+
+    await expect(apiClient.post('/courses/1/quiz', {})).rejects.toMatchObject({
+      status: 402,
+      code: 'insufficient_credits',
+      message: 'You do not have enough credits.',
+    });
+  });
+
+  it('prefers a code carried in the response envelope over the header', async () => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          success: false,
+          message: 'Upload blocked',
+          data: { code: 'UPLOAD_DOCUMENT_DELETION_IN_PROGRESS' },
+        }),
+        {
+          status: 409,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Error-Code': 'something_else',
+          },
+        },
+      ),
+    );
+
+    await expect(apiClient.post('/courses/1/documents', {})).rejects.toMatchObject({
+      code: 'UPLOAD_DOCUMENT_DELETION_IN_PROGRESS',
+    });
+  });
+
   it('performs POST request and stringifies json body', async () => {
     const mockFetch = vi.mocked(global.fetch);
     mockFetch.mockResolvedValueOnce(

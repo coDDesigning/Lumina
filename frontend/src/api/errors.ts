@@ -70,11 +70,24 @@ export function describeDocumentError(error: unknown, fallback: string): Describ
   return described;
 }
 
+export const INSUFFICIENT_CREDITS_CODE = 'insufficient_credits';
+
+/** True when the backend refused this request for want of credits. */
+export function isInsufficientCredits(described: DescribedError): boolean {
+  return described.status === 402 || described.code === INSUFFICIENT_CREDITS_CODE;
+}
+
 export function describeGenerationError(
   error: unknown,
   fallback: string,
 ): DescribedError {
   const described = describeError(error, fallback);
+
+  if (isInsufficientCredits(described)) {
+    // Recovery wording belongs to the credit UI, which knows the balance and
+    // the policy. Retrying without credits would only repeat the refusal.
+    return { ...described, retryable: false };
+  }
 
   if (described.status === 400) {
     return {

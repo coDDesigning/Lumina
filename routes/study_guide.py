@@ -81,7 +81,8 @@ def generate_study_guide(
             model_used=generation.model_used,
             generation_settings=applied_settings.model_dump_json(),
             generation_context=StudyGuideGenerationContext.from_material(
-                generation.material
+                generation.material,
+                profile_knowledge=generation.profile_knowledge,
             ).model_dump_json(),
         )
     except (
@@ -104,5 +105,14 @@ def generate_study_guide(
             retrieval_narrowed=generation.material.retrieval_narrowed,
             lowest_similarity=generation.material.lowest_similarity,
             highest_similarity=generation.material.highest_similarity,
+            profile_knowledge_used=bool(
+                generation.profile_knowledge
+                and not generation.profile_knowledge.is_empty
+            ),
+            profile_knowledge_items_used=(
+                generation.profile_knowledge.items_used
+                if generation.profile_knowledge
+                else 0
+            ),
         ),
     )

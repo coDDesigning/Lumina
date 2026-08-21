@@ -234,6 +234,7 @@ export interface StudyGuideRequest {
   summary_length?: SummaryLength;
   detail_level?: DetailLevel;
   summary_mode?: SummaryMode;
+  use_profile_knowledge?: boolean;
   include_profile_context?: boolean;
   model?: string;
 }
@@ -294,6 +295,7 @@ export interface StudyGuideGenerationResult extends RetrievedContext {
 export interface GenerationSettings {
   version: number;
   output_type: string;
+  use_profile_knowledge?: boolean;
   include_profile_context?: boolean;
   question_count?: number;
   question_types?: QuizQuestionType[];
@@ -363,6 +365,7 @@ export interface QuizRequest {
   question_types: QuizQuestionType[];
   difficulty: QuizDifficulty;
   topic_focus: string;
+  use_profile_knowledge?: boolean;
   include_profile_context?: boolean;
   model?: string;
 }
@@ -521,6 +524,7 @@ export interface ProfileKnowledgeImport {
 }
 
 export interface FlashcardRequest {
+  use_profile_knowledge?: boolean;
   include_profile_context?: boolean;
   model?: string;
 }
@@ -554,6 +558,8 @@ export interface ConversationDetail extends ConversationSummary {
 export interface CourseQARequest {
   question: string;
   conversation_id?: number;
+  use_profile_knowledge?: boolean;
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -574,6 +580,8 @@ export interface PromptGenerationResponse {
 export interface AiTutorRequest {
   question: string;
   conversation_id?: number;
+  use_profile_knowledge?: boolean;
+  include_profile_context?: boolean;
   model?: string;
 }
 

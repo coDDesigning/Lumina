@@ -45,13 +45,13 @@ All templates reside in `app/prompts/<task_name>.json`:
 
 | Template Name | Version | Primary Purpose | Output Schema Ref |
 |---|---|---|---|
-| `study_guide` | `2.1.0` | Comprehensive study guide generation | `StudyGuideResponse` |
-| `quiz` | `3.1.0` | Multi-format quiz generation | `QuizGenerationResponse` |
-| `exam_style_question` | `1.0.0` | Exam-style practice questions (not wired) | `QuizGenerationResponse` |
+| `study_guide` | `2.2.0` | Comprehensive study guide generation | `StudyGuideResponse` |
+| `quiz` | `3.2.0` | Multi-format quiz generation | `QuizGenerationResponse` |
+| `exam_style_question` | `1.1.0` | Exam-style practice questions (not wired) | `QuizGenerationResponse` |
 | `quiz_grading` | `2.0.0` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
-| `flashcard` | `2.0.0` | Active recall flashcard decks | `FlashcardGenerationResponse` |
-| `ai_tutor` | `2.1.0` | Step-by-step interactive tutor guidance | `AiTutorResponse` |
-| `course_qa` | `2.1.0` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |
+| `flashcard` | `2.1.0` | Active recall flashcard decks | `FlashcardGenerationResponse` |
+| `ai_tutor` | `2.2.0` | Step-by-step interactive tutor guidance | `AiTutorResponse` |
+| `course_qa` | `2.2.0` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |
 | `prompt_generator` | `2.0.0` | User request transformation to optimized prompt | `PromptGenerationResponse` |
 | `image_description` | `1.0.0` | Visual descriptions for the retrieval index (wired) | — |
 | `visual_content` | `2.0.0` | Multimodal diagram, chart, table, and figure analysis | `VisualContentDescriptionResponse` |

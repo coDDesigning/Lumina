@@ -350,7 +350,7 @@ def test_flashcard_generation_with_profile_knowledge_opt_in(
         user_id=model_graph.user.id,
         include_profile_context=True,
     )
-    assert "[Supplementary Student Knowledge Profile]" in provider_opt_in.prompt
+    assert "SUPPLEMENTARY PROFILE CONTEXT" in provider_opt_in.prompt
     assert "Cellular Biology Focus" in provider_opt_in.prompt
     assert "Student needs extra practice on ATP synthesis." in provider_opt_in.prompt
     assert generation_opt_in.profile_knowledge is not None
@@ -365,7 +365,7 @@ def test_flashcard_generation_with_profile_knowledge_opt_in(
         user_id=model_graph.user.id,
         include_profile_context=False,
     )
-    assert "[Supplementary Student Knowledge Profile]" not in provider_opt_out.prompt
+    assert "SUPPLEMENTARY PROFILE CONTEXT" not in provider_opt_out.prompt
     assert "Cellular Biology Focus" not in provider_opt_out.prompt
     assert generation_opt_out.profile_knowledge is not None
     assert generation_opt_out.profile_knowledge.is_empty

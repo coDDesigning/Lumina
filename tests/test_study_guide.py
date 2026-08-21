@@ -1569,7 +1569,7 @@ def test_study_guide_generation_with_profile_knowledge_opt_in(
         provider,
         user_id=model_graph.user.id,
     )
-    assert "[Supplementary Student Knowledge Profile]" in provider.prompt
+    assert "SUPPLEMENTARY PROFILE CONTEXT" in provider.prompt
     assert "Quantum Mechanics Experience" in provider.prompt
     assert "Student is familiar with bra-ket notation." in provider.prompt
     assert generation_opt_in.profile_knowledge is not None
@@ -1584,7 +1584,7 @@ def test_study_guide_generation_with_profile_knowledge_opt_in(
         provider,
         user_id=model_graph.user.id,
     )
-    assert "[Supplementary Student Knowledge Profile]" not in provider.prompt
+    assert "SUPPLEMENTARY PROFILE CONTEXT" not in provider.prompt
     assert "Quantum Mechanics Experience" not in provider.prompt
     assert generation_opt_out.profile_knowledge is not None
     assert generation_opt_out.profile_knowledge.is_empty

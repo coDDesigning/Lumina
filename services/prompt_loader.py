@@ -7,7 +7,6 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from schemas.learner_context import EducationLevel, LearnerContext
 from schemas.prompt_template import (
     MissingPromptVariableError,
     PromptTemplateModel,
@@ -25,8 +24,6 @@ __all__ = [
     "PromptTemplateValidationError",
     "MissingPromptVariableError",
     "UnexpectedPromptVariableError",
-    "LearnerContext",
-    "EducationLevel",
 ]
 
 
@@ -95,20 +92,18 @@ class PromptLoader:
         cls,
         name: str,
         variables: dict[str, Any],
-        learner_context: LearnerContext | dict[str, Any] | None = None,
         directory: Path | None = None,
         reload: bool = False,
     ) -> str:
         """Load a prompt template by name, validate variables, and return rendered prompt."""
         template = cls.load_template(name, directory=directory, reload=reload)
-        return template.render(variables, learner_context=learner_context)
+        return template.render(variables)
 
     @classmethod
     def get_render_metadata(
         cls,
         name: str,
         variables: dict[str, Any],
-        learner_context: LearnerContext | dict[str, Any] | None = None,
         directory: Path | None = None,
     ) -> dict[str, Any]:
         """Produce privacy-safe telemetry/observability metadata about prompt rendering.
@@ -117,28 +112,11 @@ class PromptLoader:
         """
         template = cls.load_template(name, directory=directory)
 
-        ctx: LearnerContext | None = None
-        if isinstance(learner_context, LearnerContext):
-            ctx = learner_context
-        elif isinstance(learner_context, dict):
-            ctx = LearnerContext.model_validate(learner_context)
-        elif (
-            "LEARNER_CONTEXT" in template.required_variables
-            or "LEARNER_CONTEXT" in template.optional_variables
-            or "{{LEARNER_CONTEXT}}" in template.template
-        ):
-            ctx = LearnerContext(education_level=EducationLevel.UNSPECIFIED)
-
         return {
             "template_name": template.name,
             "template_version": template.version,
             "output_schema_ref": template.output_schema_ref,
             "applied_variables": sorted(list(variables.keys())),
-            "education_level": (
-                ctx.education_level.value if ctx else EducationLevel.UNSPECIFIED.value
-            ),
-            "learner_context_applied": bool(ctx is not None),
-            "learner_metadata": ctx.to_metadata_dict() if ctx else None,
         }
 
     @classmethod

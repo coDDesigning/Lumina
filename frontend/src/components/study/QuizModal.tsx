@@ -240,6 +240,7 @@ export function QuizModal({
           question_types: setup.questionTypes,
           difficulty: setup.difficulty,
           topic_focus: setup.topic,
+          use_profile_knowledge: setup.includeProfileContext,
           include_profile_context: setup.includeProfileContext,
         },
         { signal: controller.signal },
@@ -461,19 +462,24 @@ export function QuizModal({
                   <span>Enable Exam Countdown Timer (1 min per question)</span>
                 </label>
 
-                <label className="study-toggle-label">
-                  <input
-                    type="checkbox"
-                    checked={setup.includeProfileContext}
-                    onChange={(event) =>
-                      setSetup({
-                        ...setup,
-                        includeProfileContext: event.target.checked,
-                      })
-                    }
-                  />
-                  <span>Include personal study profile context</span>
-                </label>
+                <div className="study-toggle-group">
+                  <label className="study-toggle-label">
+                    <input
+                      type="checkbox"
+                      checked={setup.includeProfileContext}
+                      onChange={(event) =>
+                        setSetup({
+                          ...setup,
+                          includeProfileContext: event.target.checked,
+                        })
+                      }
+                    />
+                    <span>Include personal study profile context</span>
+                  </label>
+                  <p className="study-toggle-caption">
+                    Includes your profile background as supplementary context. Course material remains primary and authoritative.
+                  </p>
+                </div>
 
                 {!hasMaterial ? (
                   <p className="summary-empty-state">

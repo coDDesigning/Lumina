@@ -114,6 +114,7 @@ export function SummaryModal({
           summary_length: summaryLength,
           detail_level: detailLevel,
           summary_mode: summaryMode,
+          use_profile_knowledge: includeProfileContext,
           include_profile_context: includeProfileContext,
         },
         { signal: controller.signal },
@@ -337,14 +338,19 @@ export function SummaryModal({
                   </div>
                 </div>
 
-                <label className="study-toggle-label">
-                  <input
-                    type="checkbox"
-                    checked={includeProfileContext}
-                    onChange={(event) => setIncludeProfileContext(event.target.checked)}
-                  />
-                  <span>Include personal study profile context</span>
-                </label>
+                <div className="study-toggle-group">
+                  <label className="study-toggle-label">
+                    <input
+                      type="checkbox"
+                      checked={includeProfileContext}
+                      onChange={(event) => setIncludeProfileContext(event.target.checked)}
+                    />
+                    <span>Include personal study profile context</span>
+                  </label>
+                  <p className="study-toggle-caption">
+                    Includes your profile background as supplementary context. Course material remains primary and authoritative.
+                  </p>
+                </div>
 
                 {!hasMaterial ? (
                   <p className="summary-empty-state">

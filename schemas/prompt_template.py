@@ -8,7 +8,7 @@ safety and style constraints, and deterministic rendering.
 import re
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from schemas.learner_context import (
     EducationLevel,
@@ -40,7 +40,7 @@ class UnexpectedPromptVariableError(PromptTemplateError):
     """An unexpected variable was provided to the prompt template."""
 
 
-_PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
+_PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 
 
 class PromptTemplateModel(BaseModel):
@@ -93,6 +93,20 @@ class PromptTemplateModel(BaseModel):
         description="Prompt template body containing {{VARIABLE}} placeholders",
     )
 
+    def template_placeholders(self) -> set[str]:
+        return set(_PLACEHOLDER_PATTERN.findall(self.template))
+
+    @model_validator(mode="after")
+    def reject_undeclared_placeholders(self) -> "PromptTemplateModel":
+        declared = set(self.required_variables) | set(self.optional_variables)
+        undeclared = self.template_placeholders() - declared
+        if undeclared:
+            raise ValueError(
+                f"Prompt template '{self.name}' contains undeclared "
+                f"placeholder(s): {', '.join(sorted(undeclared))}"
+            )
+        return self
+
     def validate_variables(self, variables: dict[str, Any]) -> None:
         """Validate that all required variables are present and no unexpected variables exist."""
         provided_keys = set(variables.keys())
@@ -121,7 +135,9 @@ class PromptTemplateModel(BaseModel):
         """Validate variables and render the template by substituting {{VARIABLE}} placeholders.
 
         Automatically resolves LEARNER_CONTEXT if present in template requirements or options.
-        Ensures no unresolved {{...}} placeholders remain in the rendered output.
+        Every placeholder declared in the template body must have a value, checked
+        against the body rather than the rendered output so that a placeholder
+        appearing inside a variable's value stays inert.
         """
         render_vars = dict(variables)
 
@@ -146,6 +162,13 @@ class PromptTemplateModel(BaseModel):
                 render_vars["LEARNER_CONTEXT"] = ctx.render_directive()
 
         self.validate_variables(render_vars)
+
+        unresolved = self.template_placeholders() - set(render_vars)
+        if unresolved:
+            raise MissingPromptVariableError(
+                f"Prompt template '{self.name}' would leave unresolved "
+                f"placeholder(s): {', '.join(sorted(unresolved))}"
+            )
 
         rendered = self.template
         for key, value in render_vars.items():

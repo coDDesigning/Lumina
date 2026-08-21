@@ -41,6 +41,7 @@ vi.mock('../context/AuthContext', () => ({
       is_banned: false,
       credits: null,
       preferred_model: 'gemini:gemini-3.6-flash',
+      education_level: 'unspecified',
     },
     isAuthenticated: true,
     isLoading: false,
@@ -57,6 +58,7 @@ const ADMIN: User = {
   is_banned: false,
   credits: null,
   preferred_model: 'gemini:gemini-3.6-flash',
+  education_level: 'unspecified',
 };
 
 const LEARNER: User = {
@@ -67,6 +69,7 @@ const LEARNER: User = {
   is_banned: false,
   credits: 0,
   preferred_model: 'gemini:gemini-3.6-flash',
+  education_level: 'unspecified',
 };
 
 const TRANSACTION: CreditTransaction = {

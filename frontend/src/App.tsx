@@ -938,6 +938,8 @@ function mapCourseToWorkspace(
     id: course.id.toString(),
     ownerId: course.owner_id,
     name: course.title,
+    subjectArea: course.subject_area || '',
+    educationLevel: course.education_level || 'unspecified',
     semester: course.semester || '',
     examDate: course.exam_date || '',
     topics: course.topics ? course.topics.split(',').map((t) => t.trim()) : [],
@@ -1027,6 +1029,8 @@ function App() {
     try {
       const newCourse = await coursesAPI.create({
         title: draft.name.trim(),
+        subject_area: draft.subjectArea.trim(),
+        education_level: draft.educationLevel,
         syllabus: draft.syllabus.trim(),
         semester: draft.semester.trim(),
         exam_date: draft.examDate,
@@ -1064,6 +1068,8 @@ function App() {
         Number(updatedWorkspace.id),
         {
           title: updatedWorkspace.name.trim(),
+          subject_area: updatedWorkspace.subjectArea.trim(),
+          education_level: updatedWorkspace.educationLevel,
           syllabus: updatedWorkspace.syllabus.trim(),
           semester: updatedWorkspace.semester.trim(),
           exam_date: updatedWorkspace.examDate,

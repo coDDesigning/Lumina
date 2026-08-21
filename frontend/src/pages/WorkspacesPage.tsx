@@ -16,6 +16,10 @@ import { Link, useNavigate } from 'react-router-dom'
 import WorkspaceNavigation from '../components/WorkspaceNavigation'
 import { describeError } from '../api/errors'
 import type { Workspace, WorkspaceDraft } from '../data/workspaces'
+import {
+  EDUCATION_LEVEL_LABELS,
+  type EducationLevel,
+} from '../api/types'
 
 type WorkspacesPageProps = {
   workspaces: Workspace[]
@@ -33,6 +37,8 @@ const deleteWarning =
 
 const emptyDraft: WorkspaceDraft = {
   name: '',
+  subjectArea: '',
+  educationLevel: 'unspecified',
   semester: '',
   examDate: '',
   topics: '',
@@ -408,6 +414,39 @@ function WorkspacesPage({
                   required
                   pattern=".*\S.*"
                   title="Course name cannot be empty"
+                />
+              </label>
+
+              <label className="form-field">
+                <span>
+                  Education level <small>Optional</small>
+                </span>
+                <select
+                  value={draft.educationLevel}
+                  onChange={(event) =>
+                    updateDraft('educationLevel', event.target.value)
+                  }
+                >
+                  {(
+                    Object.keys(EDUCATION_LEVEL_LABELS) as EducationLevel[]
+                  ).map((level) => (
+                    <option key={level} value={level}>
+                      {EDUCATION_LEVEL_LABELS[level]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="form-field">
+                <span>
+                  Subject area <small>Optional</small>
+                </span>
+                <input
+                  value={draft.subjectArea}
+                  onChange={(event) =>
+                    updateDraft('subjectArea', event.target.value)
+                  }
+                  placeholder="e.g. Biology"
                 />
               </label>
 

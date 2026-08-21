@@ -22,6 +22,8 @@ from services.profile_knowledge import (
     ProfileKnowledgeContext,
     assemble_generation_context,
 )
+from schemas.prompt_context import PromptContext
+from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
 from services.course_material import count_available_chunks
 from services.retrieval_query import build_retrieval_query
@@ -84,7 +86,8 @@ DETAIL_LEVEL_DIRECTIVES: dict[DetailLevel, str] = {
     ),
     DetailLevel.DETAILED: (
         "Requested detail level: detailed. Cover mechanisms, relationships between "
-        "concepts, important caveats, and worked examples drawn from the lecture notes."
+        "concepts, important caveats, and worked examples drawn from the course "
+        "material."
     ),
 }
 
@@ -172,11 +175,14 @@ class StudyGuideService:
         course_material: str,
         options: StudyGuideRequest,
         learner_context: Any = None,
+        *,
+        context: PromptContext,
     ) -> str:
         directive = SUMMARY_FORMAT_DIRECTIVES[options.summary_format]
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {
+                **context.as_variables(),
                 "SUMMARY_FORMAT": (
                     f"Requested summary format: {options.summary_format.value}. "
                     f"{directive}"
@@ -245,7 +251,12 @@ class StudyGuideService:
             include_profile_context=request.include_profile_context,
         )
 
-        prompt = cls.build_prompt(generation_ctx.combined_text, request)
+        prompt_context = resolve_prompt_context(
+            db, course=course, user_id=resolved_user_id
+        )
+        prompt = cls.build_prompt(
+            generation_ctx.combined_text, request, context=prompt_context
+        )
         metadata = None
 
         receipt = None

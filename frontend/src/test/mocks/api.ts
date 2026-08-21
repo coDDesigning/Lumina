@@ -16,6 +16,7 @@ export function createMockUser(overrides: Partial<User> = {}): User {
     is_banned: false,
     credits: 100,
     preferred_model: 'gemini-1.5-flash',
+    education_level: 'unspecified',
     ...overrides,
   };
 }
@@ -24,6 +25,8 @@ export function createMockCourse(overrides: Partial<Course> = {}): Course {
   return {
     id: 1,
     title: 'Computer Systems',
+    subject_area: null,
+    education_level: 'unspecified',
     description: 'Introduction to operating systems and architecture',
     owner_id: 1,
     created_at: '2026-08-19T10:00:00Z',

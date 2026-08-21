@@ -12,6 +12,8 @@ from schemas.course_qa import CourseQAResponse
 from services.ai_usage_logger import AiUsageLogger
 from services.conversation import CONVERSATION_NOT_FOUND, ConversationService
 from services.course_material import count_available_chunks
+from schemas.prompt_context import PromptContext
+from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
 from services.retrieval_material import (
     MaterialNotIndexedError,
@@ -84,10 +86,13 @@ class CourseQAService:
         question: str,
         conversation_history: str = "",
         learner_context: Any = None,
+        *,
+        context: PromptContext,
     ) -> str:
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {
+                **context.as_variables(),
                 "COURSE_MATERIAL": course_material,
                 "CONVERSATION_HISTORY": conversation_history,
                 "QUESTION": question,
@@ -155,10 +160,14 @@ class CourseQAService:
 
         conversation_history = ConversationService.format_history(conversation)
 
+        prompt_context = resolve_prompt_context(
+            db, course=course, user_id=resolved_user_id
+        )
         prompt = cls.build_prompt(
             material.text,
             question,
             conversation_history,
+            context=prompt_context,
         )
         metadata = None
 

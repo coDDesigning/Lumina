@@ -48,6 +48,8 @@ const mockWorkspaces: Workspace[] = [
   {
     id: '1',
     name: 'Operating Systems',
+    subjectArea: '',
+    educationLevel: 'unspecified',
     semester: 'Fall 2026',
     examDate: '2026-12-15',
     topics: ['Processes', 'Memory', 'Concurrency'],
@@ -61,6 +63,8 @@ const mockWorkspaces: Workspace[] = [
   {
     id: '2',
     name: 'Algorithms & Data Structures',
+    subjectArea: '',
+    educationLevel: 'unspecified',
     semester: 'Spring 2026',
     examDate: '',
     topics: ['Graphs', 'Dynamic Programming'],
@@ -203,6 +207,8 @@ describe('WorkspacesPage', () => {
     const handleCreate = vi.fn().mockResolvedValue({
       id: '3',
       name: 'Computer Networks',
+      subjectArea: '',
+      educationLevel: 'unspecified',
       semester: 'Fall 2026',
       examDate: '2026-11-20',
       topics: ['TCP/IP', 'DNS'],
@@ -242,7 +248,65 @@ describe('WorkspacesPage', () => {
     expect(handleCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'Computer Networks',
+        subjectArea: '',
+        educationLevel: 'unspecified',
         semester: 'Fall 2026',
+      }),
+    );
+  });
+
+  it('submits the chosen education level and subject area', async () => {
+    const user = userEvent.setup();
+    const handleCreate = vi.fn().mockResolvedValue({
+      id: '4',
+      name: 'AP Biology',
+      subjectArea: 'Biology',
+      educationLevel: 'high_school',
+      semester: '',
+      examDate: '',
+      topics: [],
+      syllabus: '',
+      progress: 0,
+      status: 'In progress',
+      updatedAt: 'Updated just now',
+      accent: 'blue',
+      sources: [],
+    });
+
+    render(
+      <MemoryRouter>
+        <WorkspacesPage
+          workspaces={mockWorkspaces}
+          activeWorkspaceId="1"
+          onCreate={handleCreate}
+          onSelect={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole('button', { name: /Create workspace/i }));
+
+    const modal = screen.getByRole('dialog');
+    await user.type(
+      screen.getByPlaceholderText('e.g. Introduction to Economics'),
+      'AP Biology',
+    );
+    await user.type(screen.getByPlaceholderText('e.g. Biology'), 'Biology');
+    await user.selectOptions(
+      within(modal).getByRole('combobox', { name: /Education level/i }),
+      'high_school',
+    );
+
+    await user.click(
+      within(modal).getByRole('button', { name: 'Create workspace' }),
+    );
+
+    expect(handleCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'AP Biology',
+        subjectArea: 'Biology',
+        educationLevel: 'high_school',
       }),
     );
   });
@@ -348,6 +412,8 @@ describe('WorkspacesPage', () => {
 const deletableWorkspace: Workspace = {
   id: '1',
   name: 'Organic Chemistry',
+  subjectArea: '',
+  educationLevel: 'unspecified',
   semester: 'Fall 2026',
   examDate: '2026-12-01',
   topics: ['Alkanes'],

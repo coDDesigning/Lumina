@@ -41,6 +41,8 @@ from services.profile_knowledge import (
     ProfileKnowledgeContext,
     assemble_generation_context,
 )
+from schemas.prompt_context import PromptContext
+from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
 from services.retrieval_material import (
     MaterialNotIndexedError,
@@ -259,10 +261,13 @@ class QuizService:
         course_material: str,
         request: QuizRequest,
         learner_context: Any = None,
+        *,
+        context: PromptContext,
     ) -> str:
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {
+                **context.as_variables(),
                 "QUESTION_COUNT": str(request.question_count),
                 "QUESTION_TYPES_DIRECTIVE": cls.question_types_directive(request),
                 "QUESTION_SCHEMAS": cls.question_schemas(request),
@@ -329,7 +334,12 @@ class QuizService:
             include_profile_context=request.include_profile_context,
         )
 
-        prompt = cls.build_prompt(generation_ctx.combined_text, request)
+        prompt_context = resolve_prompt_context(
+            db, course=course, user_id=resolved_user_id
+        )
+        prompt = cls.build_prompt(
+            generation_ctx.combined_text, request, context=prompt_context
+        )
         metadata = None
 
         receipt = None

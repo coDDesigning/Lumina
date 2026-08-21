@@ -35,6 +35,15 @@ from utils.ai_errors import (
     AiErrorCode,
 )
 
+from schemas.prompt_context import EducationLevel, MaterialKind, PromptContext
+
+PROMPT_CONTEXT = PromptContext(
+    education_level=EducationLevel.HIGH_SCHOOL,
+    course_title="AP Biology",
+    subject_area="Biology",
+    material_kind=MaterialKind.TEXTBOOK,
+)
+
 
 IRRELEVANT_SEED = 4.0
 
@@ -169,6 +178,7 @@ def test_build_prompt_inserts_material_and_question() -> None:
     prompt = CourseQAService.build_prompt(
         "Photosynthesis converts light energy into chemical energy.",
         "What does photosynthesis do?",
+        context=PROMPT_CONTEXT,
     )
 
     assert "{{COURSE_MATERIAL}}" not in prompt

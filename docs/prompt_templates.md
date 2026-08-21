@@ -255,7 +255,7 @@ The variable is named `REQUESTED_DIFFICULTY` rather than `DIFFICULTY` on purpose
 
 ## Shared learner and course context
 
-Every template declares four shared variables ahead of its feature-specific ones:
+Every course-scoped generation template declares shared variables ahead of its feature-specific ones:
 
 | Variable | Source | Neutral value |
 |---|---|---|
@@ -263,6 +263,7 @@ Every template declares four shared variables ahead of its feature-specific ones
 | `COURSE_TITLE` | `courses.title` | `Unspecified course` |
 | `SUBJECT_AREA` | `courses.subject_area` | `Unspecified subject area` |
 | `MATERIAL_KIND` | aggregate of `uploaded_documents.material_kind` | `unspecified` |
+| `PROFILE_CONTEXT` | `services.profile_knowledge.assemble_generation_context` | `""` (empty string) |
 
 `resolve_prompt_context` in `services/prompt_context.py` is the single resolver; no feature
 service reimplements the fallback rules. Its precedence for the learner's level is **course
@@ -290,6 +291,13 @@ from both, so neither can smuggle a `{{PLACEHOLDER}}` into a later substitution 
 
 Subject area is never inferred from the course title. A `"CS" in title` heuristic is exactly
 the class of guess this architecture exists to remove.
+
+`PROFILE_CONTEXT` provides supplementary, student-owned background context formatted via
+`services/profile_knowledge.py:format_profile_context`. When opted in by the learner, it
+appends clearly labeled background knowledge below the course material. When disabled or empty,
+it resolves to an empty string. The template instructions explicitly affirm that course material
+is primary and authoritative, and profile context must never override or contradict it.
+
 
 ### The prompt_generator exception
 

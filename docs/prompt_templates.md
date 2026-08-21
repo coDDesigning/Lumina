@@ -4,9 +4,9 @@
 
 Lumina uses a versioned, structured, and learner-aware prompt template architecture for every AI prompt it sends. The eleven templates under `app/prompts/` cover study guides, quizzes, exam-style questions, quiz grading, flashcards, AI tutoring, course Q&A, prompt generation, image description, visual content understanding, and OCR cleanup. No prompt text lives outside this directory.
 
-`exam_style_question`, `ocr_cleanup`, and `visual_content` are declared, validated and tested but have no runtime caller yet. `image_description` is the one vision template that is wired, and `services/image_understanding.py` renders it for every extracted visual.
+Every template carries a `status`. Eight are `active` and owned by a feature service. Three — `exam_style_question`, `ocr_cleanup`, and `visual_content` — are **explicitly deferred**: declared, validated, and tested, but refused by `PromptLoader.render` so they cannot reach a provider. See **Deferred templates** below for the decision and the reason behind each one. `image_description` is the one vision template that is wired, and `services/image_understanding.py` renders it for every extracted visual.
 
-The catalog covers every prompt category Design.md §20 names: summary generation (`study_guide`), quiz generation (`quiz`), OCR cleanup (`ocr_cleanup`), image description (`image_description`), written answer evaluation (`quiz_grading`), and exam-style question generation (`exam_style_question`).
+Design.md §20 lists its prompt categories as *examples*, not as a contract. Four of them are wired today: summary generation (`study_guide`), quiz generation (`quiz`), image description (`image_description`), and written answer evaluation (`quiz_grading`). OCR cleanup and exam-style question generation are deferred rather than implemented, because naming a category in a design document is not on its own a reason to add an LLM call to production.
 
 This system provides:
 - **Learner-Context Awareness**: Adapts explanations, terminology, and instructional framing dynamically to the student's profile (e.g. `high_school`, `undergraduate`, `graduate`, or `unspecified`) without compromising factual accuracy.
@@ -43,22 +43,70 @@ schema.
 
 All templates reside in `app/prompts/<task_name>.json`:
 
-| Template Name | Version | Primary Purpose | Output Schema Ref |
-|---|---|---|---|
-| `study_guide` | `2.1.0` | Comprehensive study guide generation | `StudyGuideResponse` |
-| `quiz` | `3.1.0` | Multi-format quiz generation | `QuizGenerationResponse` |
-| `exam_style_question` | `1.0.0` | Exam-style practice questions (not wired) | `QuizGenerationResponse` |
-| `quiz_grading` | `2.0.0` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
-| `flashcard` | `2.0.0` | Active recall flashcard decks | `FlashcardGenerationResponse` |
-| `ai_tutor` | `2.1.0` | Step-by-step interactive tutor guidance | `AiTutorResponse` |
-| `course_qa` | `2.1.0` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |
-| `prompt_generator` | `2.0.0` | User request transformation to optimized prompt | `PromptGenerationResponse` |
-| `image_description` | `1.0.0` | Visual descriptions for the retrieval index (wired) | — |
-| `visual_content` | `2.0.0` | Multimodal diagram, chart, table, and figure analysis | `VisualContentDescriptionResponse` |
-| `ocr_cleanup` | `1.0.0` | AI-assisted OCR text normalization and repair | `OcrCleanupResponse` |
+| Template Name | Version | Status | Owner | Primary Purpose | Output Schema Ref |
+|---|---|---|---|---|---|
+| `study_guide` | `2.1.0` | active | `services/study_guide.py` | Comprehensive study guide generation | `StudyGuideResponse` |
+| `quiz` | `3.1.0` | active | `services/quiz.py` | Multi-format quiz generation | `QuizGenerationResponse` |
+| `exam_style_question` | `1.1.0` | deferred | Exam Mode / Similar Question Generation (not built) | Exam-style practice questions | `QuizGenerationResponse` |
+| `quiz_grading` | `2.0.0` | active | `services/quiz_grading.py` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
+| `flashcard` | `2.0.0` | active | `services/flashcard.py` | Active recall flashcard decks | `FlashcardGenerationResponse` |
+| `ai_tutor` | `2.2.0` | active | `services/ai_tutor.py` | Hint-first tutoring with stepwise guidance | `AiTutorResponse` |
+| `course_qa` | `2.1.0` | active | `services/course_qa.py` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |
+| `prompt_generator` | `2.0.0` | active | `services/prompt_generator.py` | User request transformation to optimized prompt | `PromptGenerationResponse` |
+| `image_description` | `1.0.0` | active | `services/image_understanding.py` | Visual descriptions for the retrieval index | — |
+| `visual_content` | `2.1.0` | deferred | Advanced visual understanding (not built) | Multimodal diagram, chart, table, and figure analysis | `VisualContentDescriptionResponse` |
+| `ocr_cleanup` | `1.1.0` | deferred | none | AI-assisted OCR text normalization and repair | `OcrCleanupResponse` |
 
-`tests/test_prompt_loader.py` pins this table in `EXPECTED_TEMPLATE_VERSIONS`, so editing a
-template's content without bumping its version fails the suite.
+`tests/test_prompt_loader.py` pins this table: `EXPECTED_TEMPLATE_VERSIONS` pins each
+version, `ACTIVE_TEMPLATE_OWNERS` pins each active template to the service that renders it,
+and `test_catalog_documentation_matches_template_status` checks the Status and Owner columns
+above against what the templates and services actually declare. So a version bump, an
+ownership change, or a status change that is not reflected here fails the suite.
+
+Bumping the version when you edit a template body is a convention, not an enforced one: the
+pin compares declared versions, and nothing hashes the template text. Editing a body and
+leaving its version alone still passes. Bump it anyway — `get_render_metadata` reports the
+version into telemetry, so an unbumped edit makes two different prompts indistinguishable in
+the logs.
+
+---
+
+## Deferred templates
+
+A deferred template is one that exists, validates, and renders correctly, but that no
+production feature owns. It declares `"status": "deferred"` and a `deferral_reason`, and
+`PromptLoader.render` raises `PromptTemplateDeferredError` for it unless the caller passes
+`allow_deferred=True` — which only the tests do. So a deferred template cannot reach a
+provider, and `test_no_service_renders_a_deferred_template` fails if any module under
+`services/` so much as names one.
+
+The reverse direction is pinned too: `test_every_active_template_is_rendered_by_a_service`
+fails if an active template has no owning service. A new template must therefore either be
+wired or explicitly deferred — it cannot sit in the catalog unexplained.
+
+**`ocr_cleanup` — deferred, no owner.** Design.md §5.2 specifies deterministic OCR handling:
+a page OCR cannot read marks the document failed or partially failed. It does not call for a
+model to reconstruct what the page probably said. Passing OCR output through an LLM before
+chunking would put non-deterministic, potentially hallucinated text into the retrieval index,
+where every downstream summary and quiz would treat it as source material. Implementing this
+needs a separately scoped feature that defines when semantic restoration is appropriate, what
+grounding it guarantees, whether the original OCR is preserved alongside it, and what it
+costs in credits.
+
+**`exam_style_question` — deferred, owner named but not built.** Live quiz generation is owned
+solely by `quiz`. Exam Mode and Similar Question Generation (Design.md Core Features 3 and 6)
+are real planned features, but they are listed under §23 Future Extensions and have no
+endpoint, request schema, or persistence yet. Wiring a near-duplicate of `quiz` before that
+owner exists would leave two quiz prompts to drift apart — the next question-schema change
+would update one and forget the other.
+
+**`visual_content` — deferred, owner named but not built.** Wired vision is owned by
+`image_description`, which covers Design.md §5.3 Basic Image Understanding. `visual_content`
+is the richer multimodal analysis belonging to §23's advanced visual understanding.
+
+Deferring is a recorded decision, not a backlog note. Reversing one means giving the template
+a real owning feature, flipping `status` to `active`, wiring exactly that feature to it, and
+updating this table — at which point the two catalog tests above start enforcing the new state.
 
 ---
 
@@ -80,7 +128,9 @@ Every prompt template is a validated JSON document adhering to `PromptTemplateMo
 ```json
 {
   "name": "study_guide",
-  "version": "2.0.0",
+  "version": "2.1.0",
+  "status": "active",
+  "owner": "services/study_guide.py",
   "description": "Generates a comprehensive study guide from course material, adapted to the learner's education level.",
   "required_variables": [
     "EDUCATION_LEVEL",
@@ -140,13 +190,19 @@ overrides the general rules, the section requirements, or the output schema.
 
 The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validation at load and render times:
 
-1. **Deterministic Variable Rendering**:
+1. **Deferred-Template Refusal**:
+   - `PromptLoader.render` raises `PromptTemplateDeferredError` for a template whose `status` is `deferred`, unless the caller passes `allow_deferred=True`.
+   - Only rendering is guarded. `load_template` and `load_all` return deferred templates normally, so the catalog stays introspectable for tests and tooling.
+   - `PromptTemplateDeferredError` extends `PromptTemplateError`, so it funnels through `utils/ai_errors.py` to `GENERATION_FAILED` like any other template fault. Reaching it always means a server-side wiring bug, never bad user input.
+   - A template declaring `"status": "deferred"` without a `deferral_reason` fails validation at load time.
+
+2. **Deterministic Variable Rendering**:
    - `PromptLoader.render(name, variables)` substitutes all declared placeholders. There is no implicit context injection: a template's learner and course variables come from `PromptContext.as_variables()` like any other variable.
    - Missing required variables raise `MissingPromptVariableError`.
    - Unexpected variables raise `UnexpectedPromptVariableError`.
    - Document and free-text variables (e.g. `TEXT`, `COURSE_MATERIAL`) are always substituted last to prevent placeholder forging.
 
-2. **Strict Variable Validation**:
+3. **Strict Variable Validation**:
    - Missing required variable $\rightarrow$ Raises `MissingPromptVariableError`.
    - Unexpected/extra variable $\rightarrow$ Raises `UnexpectedPromptVariableError`.
    - Placeholder in the body that no variable declares: raises
@@ -156,7 +212,7 @@ The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validat
      **before** the provider call.
    - All `{{VARIABLE}}` placeholders are substituted deterministically.
 
-3. **Developer Observability & Telemetry**:
+4. **Developer Observability & Telemetry**:
    - `PromptLoader.get_render_metadata(name, variables)` returns telemetry data (`template_name`, `template_version`, `output_schema_ref`, `applied_variables`) **without** exposing raw prompt text or student content.
 
 ---
@@ -172,7 +228,8 @@ The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validat
    - `style_constraints` and `safety_constraints`
    - `template` containing `{{VARIABLE}}` placeholders
 2. Wire the prompt into its feature service using `PromptLoader.render("<task_name>", {**context.as_variables(), ...})`, where `context` comes from `resolve_prompt_context`.
-3. Add unit & regression tests in `tests/test_prompt_loader.py`.
+   If no feature owns it yet, declare `"status": "deferred"` with a `deferral_reason` and add it to `DEFERRED_TEMPLATES` in the tests instead. There is no third option — the catalog tests fail on a template that is neither wired nor deferred.
+3. Add unit & regression tests in `tests/test_prompt_loader.py`, and add a row to the catalog table above.
 
 ### 2. Adding a New Shared Context Variable
 
@@ -190,7 +247,7 @@ The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validat
 
 ## Quiz templates
 
-`quiz` (3.0.0) generates a quiz of a requested size, difficulty, and question-type mix. Its required variables are `TEXT`, `QUESTION_COUNT`, `QUESTION_TYPES_DIRECTIVE`, `QUESTION_SCHEMAS`, `REQUESTED_DIFFICULTY`, `DIFFICULTY_DIRECTIVE`, and `TOPIC_FOCUS`. `QUESTION_SCHEMAS` carries the JSON shape of each allowed question type, so the model is shown only the types the request permits.
+`quiz` (3.1.0) generates a quiz of a requested size, difficulty, and question-type mix. Its required variables are `TEXT`, `QUESTION_COUNT`, `QUESTION_TYPES_DIRECTIVE`, `QUESTION_SCHEMAS`, `REQUESTED_DIFFICULTY`, `DIFFICULTY_DIRECTIVE`, and `TOPIC_FOCUS`. `QUESTION_SCHEMAS` carries the JSON shape of each allowed question type, so the model is shown only the types the request permits.
 
 The variable is named `REQUESTED_DIFFICULTY` rather than `DIFFICULTY` on purpose. Rendering substitutes `{{NAME}}` placeholders in dictionary order, so a variable whose name is a prefix of another one's would make the result depend on that order.
 

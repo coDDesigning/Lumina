@@ -17,7 +17,15 @@ This system provides:
 
 ## Learner Context Model
 
-Learner context is encapsulated in the `LearnerContext` Pydantic model (`schemas/learner_context.py`) and parameterizes prompt rendering:
+Learner context reaches a prompt in one of two ways.
+
+The seven feature templates take the four shared variables described under
+**Shared learner and course context**, resolved from the database by
+`services/prompt_context.py`. That is the path every generation service uses.
+
+`LearnerContext` (`schemas/learner_context.py`) is the second path. It renders the
+`{{LEARNER_CONTEXT}}` directive block for any template that declares it — today
+`visual_content` — and is passed through `PromptLoader.render(..., learner_context=...)`:
 
 ```python
 from schemas.learner_context import EducationLevel, LearnerContext

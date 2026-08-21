@@ -229,8 +229,8 @@ export interface AiModelInfo {
 }
 
 export interface StudyGuideRequest {
-  summary_format: SummaryFormat;
-  topic_focus: string;
+  summary_format?: SummaryFormat;
+  topic_focus?: string;
   summary_length?: SummaryLength;
   detail_level?: DetailLevel;
   summary_mode?: SummaryMode;
@@ -361,10 +361,10 @@ export const isOptionBased = (questionType: QuizQuestionType): boolean =>
   OPTION_BASED_QUESTION_TYPES.includes(questionType);
 
 export interface QuizRequest {
-  question_count: number;
-  question_types: QuizQuestionType[];
-  difficulty: QuizDifficulty;
-  topic_focus: string;
+  question_count?: number;
+  question_types?: QuizQuestionType[];
+  difficulty?: QuizDifficulty;
+  topic_focus?: string;
   use_profile_knowledge?: boolean;
   include_profile_context?: boolean;
   model?: string;

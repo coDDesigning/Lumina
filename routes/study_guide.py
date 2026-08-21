@@ -69,7 +69,7 @@ def generate_study_guide(
             user_id=current_user.id,
         )
         applied_settings = StudyGuideGenerationSettings.from_request(
-            request,
+            generation.effective_request,
             retrieval_limit=settings.retrieval_chunk_limit,
             retrieval_min_similarity=settings.retrieval_min_similarity,
         )

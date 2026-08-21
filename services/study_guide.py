@@ -2,10 +2,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
-from backend.app.models import Course, GeneratedOutput
+from backend.app.models import Course, CourseSettings, GeneratedOutput
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.study_guide import (
     DetailLevel,
@@ -134,6 +135,7 @@ class StudyGuideGeneration:
     study_guide: StudyGuideResponse
     material: RetrievedCourseMaterial
     model_used: str
+    effective_request: StudyGuideRequest
     profile_knowledge: ProfileKnowledgeContext | None = None
 
 
@@ -199,6 +201,71 @@ class StudyGuideService:
         )
 
     @classmethod
+    def resolve_effective_request(
+        cls, db: Session, course_id: int, request: StudyGuideRequest
+    ) -> StudyGuideRequest:
+        settings_row = db.scalar(
+            select(CourseSettings).where(CourseSettings.course_id == course_id)
+        )
+        fields_set = request.model_fields_set
+
+        # 1. Summary format
+        summary_format = request.summary_format
+
+        # 2. Summary length: explicit request > CourseSettings > request.summary_length
+        if "summary_length" in fields_set:
+            summary_length = request.summary_length
+        elif settings_row is not None and settings_row.summary_length:
+            length_raw = settings_row.summary_length.strip().casefold()
+            if length_raw == "short":
+                summary_length = SummaryLength.SHORT
+            elif length_raw == "long":
+                summary_length = SummaryLength.LONG
+            else:
+                summary_length = SummaryLength.MEDIUM
+        else:
+            summary_length = request.summary_length
+
+        # 3. Detail level: explicit request > CourseSettings > request.detail_level
+        if "detail_level" in fields_set:
+            detail_level = request.detail_level
+        elif settings_row is not None and settings_row.detail_level:
+            detail_raw = settings_row.detail_level.strip().casefold()
+            if detail_raw in ("concise", "basic"):
+                detail_level = DetailLevel.BASIC
+            elif detail_raw in ("detailed",):
+                detail_level = DetailLevel.DETAILED
+            else:
+                detail_level = DetailLevel.STANDARD
+        else:
+            detail_level = request.detail_level
+
+        # 4. Summary mode: explicit request > CourseSettings (study_mode) > request.summary_mode
+        if "summary_mode" in fields_set:
+            summary_mode = request.summary_mode
+        elif settings_row is not None and settings_row.study_mode:
+            mode_raw = settings_row.study_mode.strip().casefold()
+            if mode_raw in ("exam", "exam_focused", "exam focused"):
+                summary_mode = SummaryMode.EXAM_FOCUSED
+            else:
+                summary_mode = SummaryMode.GENERAL
+        else:
+            summary_mode = request.summary_mode
+
+        # 5. Topic focus
+        topic_focus = request.topic_focus
+
+        return StudyGuideRequest(
+            summary_format=summary_format,
+            topic_focus=topic_focus,
+            summary_length=summary_length,
+            detail_level=detail_level,
+            summary_mode=summary_mode,
+            use_profile_knowledge=request.use_profile_knowledge,
+            model=request.model,
+        )
+
+    @classmethod
     def generate(
         cls,
         db: Session,
@@ -208,6 +275,7 @@ class StudyGuideService:
         *,
         user_id: int | None = None,
     ) -> StudyGuideGeneration:
+        effective_request = cls.resolve_effective_request(db, course_id, request)
         course = db.get(Course, course_id)
 
         resolved_user_id = user_id
@@ -229,7 +297,7 @@ class StudyGuideService:
             log_failure(ErrorCategory.NO_READY_MATERIAL)
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
-        query = cls.build_retrieval_query(course, request)
+        query = cls.build_retrieval_query(course, effective_request)
 
         try:
             material = cls.get_course_material(db, course_id, query=query)
@@ -248,7 +316,7 @@ class StudyGuideService:
             course_id=course_id,
             user_id=resolved_user_id,
             course_material=material,
-            include_profile_context=request.use_profile_knowledge,
+            include_profile_context=effective_request.use_profile_knowledge,
         )
 
         prompt_context = resolve_prompt_context(
@@ -256,7 +324,7 @@ class StudyGuideService:
         )
         prompt = cls.build_prompt(
             generation_ctx.course_material.text,
-            request,
+            effective_request,
             profile_knowledge=generation_ctx.profile_knowledge,
             context=prompt_context,
         )
@@ -321,6 +389,7 @@ class StudyGuideService:
             study_guide=validated,
             material=material,
             model_used=model_identifier(metadata),
+            effective_request=effective_request,
             profile_knowledge=generation_ctx.profile_knowledge,
         )
 

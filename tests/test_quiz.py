@@ -10,6 +10,7 @@ import services.quiz as quiz_service
 import services.retrieval_material as retrieval_material_service
 from backend.app.models import (
     Course,
+    CourseSettings,
     DocumentChunk,
     GeneratedOutput,
     ProfileKnowledge,
@@ -93,11 +94,13 @@ def _question(number: int, question_type: str, **extra) -> dict[str, object]:
     return base | extra
 
 
-def _payload(*question_types: str, title: str = "Example Quiz") -> dict[str, object]:
+def _payload(
+    *question_types: str, title: str = "Example Quiz", difficulty: str = "medium"
+) -> dict[str, object]:
     return {
         "title": title,
         "questions": [
-            _question(index, question_type)
+            _question(index, question_type, difficulty=difficulty)
             for index, question_type in enumerate(question_types, start=1)
         ],
     }
@@ -1452,3 +1455,184 @@ def test_quiz_generation_with_profile_knowledge_opt_in(
     assert "Special Relativity Knowledge" not in provider.prompt
     assert generation_opt_out.profile_knowledge is not None
     assert generation_opt_out.profile_knowledge.is_empty
+
+
+# ---------------------------------------------------------------------------
+# CourseSettings defaults & overrides
+# ---------------------------------------------------------------------------
+
+
+def test_quiz_defaults_from_course_settings(
+    upload_api, retrieval_env, monkeypatch
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["Course settings quiz test material"],
+            file_hash="7c" + "7" * 62,
+            retrieval_env=retrieval_env,
+        )
+        settings = CourseSettings(
+            course_id=upload_api.course_id,
+            difficulty="Hard",
+            question_count=15,
+        )
+        session.add(settings)
+        session.commit()
+
+    provider = _install_provider(
+        monkeypatch,
+        CountingProvider(result=_payload(*["multiple_choice"] * 15, difficulty="hard")),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        json={"topic_focus": "All Topics"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert provider.calls == 1
+    data = response.json()["data"]
+    assert len(data["quiz"]["questions"]) == 15
+    assert all(q["difficulty"] == "hard" for q in data["quiz"]["questions"])
+
+    quizzes = _persisted_quizzes(upload_api.session_factory, upload_api.course_id)
+    assert len(quizzes) == 1
+    stored_settings = json.loads(quizzes[0].generation_settings)
+    assert stored_settings["question_count"] == 15
+    assert stored_settings["difficulty"] == "hard"
+    assert stored_settings["question_types"] == ["multiple_choice"]
+
+
+def test_quiz_request_overrides_course_settings(
+    upload_api, retrieval_env, monkeypatch
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["Course settings override test material"],
+            file_hash="8c" + "8" * 62,
+            retrieval_env=retrieval_env,
+        )
+        settings = CourseSettings(
+            course_id=upload_api.course_id,
+            difficulty="Hard",
+            question_count=15,
+        )
+        session.add(settings)
+        session.commit()
+
+    provider = _install_provider(
+        monkeypatch,
+        CountingProvider(
+            result=_payload("multiple_choice", "true_false", difficulty="easy")
+        ),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        json={
+            "question_count": 2,
+            "difficulty": "easy",
+            "question_types": ["multiple_choice", "true_false"],
+            "topic_focus": "Specific Topic",
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert provider.calls == 1
+    data = response.json()["data"]
+    assert len(data["quiz"]["questions"]) == 2
+    assert all(q["difficulty"] == "easy" for q in data["quiz"]["questions"])
+
+    quizzes = _persisted_quizzes(upload_api.session_factory, upload_api.course_id)
+    stored_settings = json.loads(quizzes[0].generation_settings)
+    assert stored_settings["question_count"] == 2
+    assert stored_settings["difficulty"] == "easy"
+    assert stored_settings["question_types"] == ["multiple_choice", "true_false"]
+    assert stored_settings["topic_focus"] == "Specific Topic"
+
+
+def test_quiz_defaults_to_system_when_no_course_settings(
+    upload_api, retrieval_env, monkeypatch
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["System default quiz test material"],
+            file_hash="9c" + "9" * 62,
+            retrieval_env=retrieval_env,
+        )
+
+    provider = _install_provider(
+        monkeypatch,
+        CountingProvider(
+            result=_payload(*["multiple_choice"] * 10, difficulty="medium")
+        ),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        json={},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert provider.calls == 1
+    data = response.json()["data"]
+    assert len(data["quiz"]["questions"]) == 10
+
+    quizzes = _persisted_quizzes(upload_api.session_factory, upload_api.course_id)
+    stored_settings = json.loads(quizzes[0].generation_settings)
+    assert stored_settings["question_count"] == 10
+    assert stored_settings["difficulty"] == "medium"
+    assert stored_settings["question_types"] == ["multiple_choice"]
+    assert stored_settings["topic_focus"] == "All Topics"
+
+
+def test_quiz_course_settings_question_count_clamped(
+    upload_api, retrieval_env, monkeypatch
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["Clamped question count test material"],
+            file_hash="ac" + "a" * 62,
+            retrieval_env=retrieval_env,
+        )
+        settings = CourseSettings(
+            course_id=upload_api.course_id,
+            difficulty="Adaptive",
+            question_count=50,
+        )
+        session.add(settings)
+        session.commit()
+
+    provider = _install_provider(
+        monkeypatch,
+        CountingProvider(
+            result=_payload(*["multiple_choice"] * 20, difficulty="medium")
+        ),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        json={},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert provider.calls == 1
+    data = response.json()["data"]
+    assert len(data["quiz"]["questions"]) == 20
+
+    quizzes = _persisted_quizzes(upload_api.session_factory, upload_api.course_id)
+    stored_settings = json.loads(quizzes[0].generation_settings)
+    assert stored_settings["question_count"] == 20
+    assert stored_settings["difficulty"] == "medium"

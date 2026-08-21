@@ -4,7 +4,8 @@
 Covers:
 - Template loading, parsing, and strict metadata validation
 - LearnerContext validation, safe defaults, and directive rendering
-- Education level prompt adaptation (high_school, undergraduate, graduate, unspecified, other)
+- Education level prompt adaptation (high_school, undergraduate, graduate,
+  professional_other, unspecified)
 - Comprehensive regression preventing hardcoded university or domain assumptions
 - Deterministic rendering of all production templates with zero unresolved placeholders
 - Observability and privacy-safe render metadata generation

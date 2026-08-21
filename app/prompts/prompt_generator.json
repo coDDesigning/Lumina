@@ -1,11 +1,13 @@
 {
   "name": "prompt_generator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Transforms a user request into a clear, structured system prompt for AI assistants.",
   "required_variables": [
     "TEXT"
   ],
-  "optional_variables": [],
+  "optional_variables": [
+    "LEARNER_CONTEXT"
+  ],
   "output_schema_ref": "PromptGenerationResponse",
   "style_constraints": [
     "Preserve the user's original intent.",

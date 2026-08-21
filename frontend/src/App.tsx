@@ -74,12 +74,12 @@ const tabContent: Record<
   { body: string; suggestions: string[] }
 > = {
   Exam: {
-    body: `Individuals, when faced with dire situations, often possess the tendency to seek comfort in any form that is accessible to them, even resorting to mental fabrication at times to conjure up the very comfort they had initially sought. This innate pursuit of comfort can manifest as self manipulation, as individuals try to alter their perception of the current conditions in their favor, creating a more optimal situation. This is accomplished by originating a mental barrier in between the cause of an individual's discomfort and the individual themselves with the aim of limiting further exposure and thus, further discomfort. This method is often utilized when individuals alter their perception to avoid the emotional toll that taking proper accountability entails. By reshaping their perception, individuals aim to avoid this emotional toll of undertaking liability, actively favoring comfort over truth. Instead of facing the ethical consequences of their actions, individuals generally opt for the easier route, where they delicately reconstruct their perception of their current situation to minimize their culpability in both their own and everyone's perspective. For instance, people who actively partake in such activities, might be inclined to blame external influences, rather than undertaking necessary liability. An individual who acts negligent towards a responsibility of theirs to such a degree that they pass a certain point, where nothing of significance can be done about aforementioned responsibility, might find placing the blame onto outside circumstances more palatable and comforting. This inclination to shift the blame is fueled by individuals' escapist tendencies which aspire to alleviate the concomitant discomfort that accompanies the process of taking accountability. As a result, self-manipulation expectedly becomes an effective vessel utilized for escapism, as it helps individuals form metaphorical barriers in between themselves and the moral implications of their actions, albeit not offering a remedy of any sorts for the affected party.`,
+    body: `Ask questions about your uploaded course materials, review concepts, or prepare for exams with retrieval-backed answers. Choose a suggestion below or enter a question to start.`,
     suggestions: [
       'Generate summary',
       'Start a quick practice set',
       'Generate multi-choice problems',
-      'Make comparisons with specific sources',
+      'What are the key concepts in these sources?',
     ],
   },
   Tutoring: {
@@ -380,7 +380,12 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
       setIsSummaryModalOpen(true)
       return
     }
-    if (suggestion === 'Start a quick practice set' || suggestion === 'Create true or false questions' || suggestion === 'Generate multi-choice problems') {
+    if (
+      suggestion === 'Start a quick practice set' ||
+      suggestion === 'Create true or false questions' ||
+      suggestion === 'Generate multi-choice problems' ||
+      suggestion === 'Practice my weakest topic'
+    ) {
       setIsQuizModalOpen(true)
       return
     }

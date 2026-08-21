@@ -302,4 +302,24 @@ describe('Workspace conversations', () => {
       'Explain virtual memory.',
     );
   }, 15_000);
+
+  it('sends questions containing summary, quiz, or Turkish keywords directly to chat without unexpected modal redirection', async () => {
+    mockQaAsk.mockResolvedValue(
+      qaResult('Here is a summary of the main points.', 99),
+    );
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+
+    await sendPrompt('Please summarize the key algorithms and quiz me.');
+
+    await waitFor(() =>
+      expect(mockQaAsk).toHaveBeenCalledWith(1, {
+        question: 'Please summarize the key algorithms and quiz me.',
+      }),
+    );
+    expect(
+      await screen.findByText('Here is a summary of the main points.'),
+    ).toBeInTheDocument();
+  }, 15_000);
 });

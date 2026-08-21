@@ -1,6 +1,9 @@
 {
   "name": "exam_style_question",
   "version": "1.1.0",
+  "status": "deferred",
+  "owner": "Exam Mode / Similar Question Generation (Design.md Core Features 3 and 6), listed under section 23 Future Extensions and not yet built",
+  "deferral_reason": "Live quiz generation is owned solely by the quiz template. There is no separate exam-question product flow with its own endpoint, request schema, and persistence to own this category yet, and wiring a near-duplicate of quiz alongside it would let the two drift apart. Deferred until Exam Mode is approved and built.",
   "description": "Generates exam-style practice questions in the assessment style the supplied course material implies, adapted to the learner's education level.",
   "required_variables": [
     "EDUCATION_LEVEL",

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Lumina uses a versioned, structured, and learner-aware prompt template architecture for every AI prompt it sends. The eleven templates under `app/prompts/` cover study guides, quizzes, exam-style questions, quiz grading, flashcards, AI tutoring, course Q&A, prompt generation, image description, visual content understanding, and OCR cleanup. No prompt text lives outside this directory.
+Lumina uses a versioned, structured, and learner-aware prompt template architecture for every AI prompt it sends. The eleven templates under `app/prompts/` cover study guides, quizzes, exam-style questions, quiz grading, flashcards, AI tutoring, course Q&A, prompt generation, image description, visual content understanding, and OCR cleanup. The only model-facing text outside this directory is the small set of composed fragments the templates are built from: the shared blocks in `services/prompt_components.py`, the learner-context directives in `schemas/prompt_context.py`, and the profile-context wrapper in `services/profile_knowledge.py`. Those are scanned for neutrality alongside the templates themselves (see **Prompt neutrality policy**), so a semantic prompt written inline anywhere in production fails CI.
 
 Every template carries a `status`. Eight are `active` and owned by a feature service. Three — `exam_style_question`, `ocr_cleanup`, and `visual_content` — are **explicitly deferred**: declared, validated, and tested, but refused by `PromptLoader.render` so they cannot reach a provider. See **Deferred templates** below for the decision and the reason behind each one. `image_description` is the one vision template that is wired, and `services/image_understanding.py` renders it for every extracted visual.
 
@@ -47,7 +47,7 @@ All templates reside in `app/prompts/<task_name>.json`:
 |---|---|---|---|---|---|
 | `study_guide` | `2.2.0` | active | `services/study_guide.py` | Comprehensive study guide generation | `StudyGuideResponse` |
 | `quiz` | `3.2.0` | active | `services/quiz.py` | Multi-format quiz generation | `QuizGenerationResponse` |
-| `exam_style_question` | `1.1.0` | deferred | Exam Mode / Similar Question Generation (not built) | Exam-style practice questions | `QuizGenerationResponse` |
+| `exam_style_question` | `1.2.0` | deferred | Exam Mode / Similar Question Generation (not built) | Exam-style practice questions | `QuizGenerationResponse` |
 | `quiz_grading` | `2.0.0` | active | `services/quiz_grading.py` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
 | `flashcard` | `2.1.0` | active | `services/flashcard.py` | Active recall flashcard decks | `FlashcardGenerationResponse` |
 | `ai_tutor` | `2.2.0` | active | `services/ai_tutor.py` | Hint-first tutoring with stepwise guidance | `AiTutorResponse` |
@@ -229,7 +229,11 @@ The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validat
    - `template` containing `{{VARIABLE}}` placeholders
 2. Wire the prompt into its feature service using `PromptLoader.render("<task_name>", {**context.as_variables(), ...})`, where `context` comes from `resolve_prompt_context`.
    If no feature owns it yet, declare `"status": "deferred"` with a `deferral_reason` and add it to `DEFERRED_TEMPLATES` in the tests instead. There is no third option — the catalog tests fail on a template that is neither wired nor deferred.
-3. Add unit & regression tests in `tests/test_prompt_loader.py`, and add a row to the catalog table above.
+3. Register a rendering fixture in `TEMPLATE_EXTRA_VARIABLES` in
+   `tests/test_prompt_neutrality.py`, supplying exactly the template's non-shared required
+   variables. This is not optional: the coverage guard fails by name on any template without
+   one, which is how "every production template" stays true.
+4. Add unit & regression tests in `tests/test_prompt_loader.py`, and add a row to the catalog table above.
 
 ### 2. Adding a New Shared Context Variable
 
@@ -239,6 +243,9 @@ The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validat
 3. Declare it in every template that uses it and bump those templates' versions.
 4. Add assertions in `tests/test_prompt_context_propagation.py` that it reaches every prompt
    and that its neutral value stays neutral.
+5. If the variable carries a server-side directive table, extend the directive tests in
+   `tests/test_prompt_neutrality.py` so its neutral value cannot silently resolve to a
+   concrete one (see **Prompt neutrality policy**).
 
 > Declare every variable a service passes in `required_variables` (or `optional_variables`),
 > and declare every `{{PLACEHOLDER}}` that appears in the body. Both directions are enforced
@@ -325,7 +332,99 @@ malformed template would otherwise burn every retry on a fault no retry can fix.
 The study guide's `exam_tips.lecture_based` key is a persisted `generated_output` payload
 field and part of the API the frontend reads. It is deliberately unchanged: the prompt's
 prose and the UI label are material-neutral, and only the stored key still carries the word.
-Renaming it would need a migration of existing outputs, so it is out of scope here.
+Renaming it would need a migration of existing outputs, so it is out of scope here. The
+neutrality scanner needs no exception for it: the rules below match role constructions such
+as `for university students`, not bare words, so an identifier that merely contains
+`lecture` never trips them.
+
+## Prompt neutrality policy
+
+`tests/prompt_neutrality_policy.py` holds the one reviewable definition of what prompt
+neutrality forbids, and `tests/test_prompt_neutrality.py` enforces it. CI runs the whole
+`tests` directory, so a violation blocks the merge.
+
+### What is forbidden
+
+Seven case-insensitive, whitespace-tolerant rules in three families:
+
+| Family | Rejects | Use instead |
+|---|---|---|
+| `level_role`, `level_for`, `level_persona` | `university student`, `for a college learner`, `You are a university tutor` | `EDUCATION_LEVEL` |
+| `discipline_role`, `discipline_for`, `discipline_persona` | `Computer Science teaching assistant`, `for Computer Science students` | `SUBJECT_AREA`, `COURSE_TITLE` |
+| `material_lecture_notes` | `the following lecture notes` | `MATERIAL_KIND` |
+
+The rules match **role and audience constructions**, never bare words. `university` inside a
+list of possible levels is not a violation; `You are a university tutor` is. That
+distinction is what keeps the scanner from banning vocabulary the prompts legitimately need.
+
+### Where it looks
+
+- **Every template**, active and deferred, across every model-facing field: `template`,
+  `system_instruction`, `description`, `style_constraints`, and `safety_constraints`.
+  Templates are discovered through `PromptLoader.load_all()`, so a new file joins the suite
+  automatically.
+- **Every production Python module** under `services/`, `routes/`, `tasks/`, `workers/`,
+  `backend/`, `utils/`, and `schemas/`. This is the guard against someone bypassing the
+  template library and writing a prompt inline. Failures report `path:line`.
+
+### Why supplied context values are exempt
+
+Neutrality is checked on **source**, never on rendered output. A prompt rendered for a real
+Computer Science course legitimately contains the words *Computer Science*, and the
+`EDUCATION_LEVEL` value for an undergraduate literally reads *"Write for an undergraduate
+learner."* Scanning rendered text with the source rules would reject all eight active
+templates.
+
+So the two concerns are split:
+
+| Surface | Question asked |
+|---|---|
+| Template and module source | Does a level, discipline, or material type appear as a fixed assumption? |
+| Rendered output | Did the supplied context substitute in, leaving no unresolved placeholder? |
+| Rendered with an unspecified context | Did anything resolve an unknown level or subject into a concrete one? |
+
+The last row is the most valuable case. `test_unspecified_context_never_falls_back_to_a_level_or_discipline`
+renders every template with a bare `PromptContext()` and requires zero occurrences of
+university, college, undergraduate, graduate, high school, secondary school, or Computer
+Science. `test_a_supplied_computer_science_context_is_allowed` is its counterpart, proving
+the suite is discipline-neutral rather than anti-Computer-Science.
+
+### The directive maps are checked, not exempted
+
+`EDUCATION_LEVEL_DIRECTIVES` and `MATERIAL_KIND_DIRECTIVES` in `schemas/prompt_context.py`
+are production prompt prose, and they must name levels and material kinds — that is their
+job. The inline-source scan therefore blanks their values before applying the generic
+rules, and dedicated tests apply stricter ones in their place:
+
+- No level directive may name another level's vocabulary, and no material directive may name
+  another kind's.
+- The `unspecified` level directive may name **no** academic tier at all, and the
+  `unspecified` material directive may name no kind.
+- No directive of either kind may name a discipline.
+
+`test_the_carve_out_only_covers_declared_directive_values` asserts the blanked text is
+exactly the two maps' values, so nothing else can be smuggled through the gap.
+
+### The scanner is proven to fire
+
+A scanner nobody tests can break and stay green forever. `test_the_scanner_rejects_a_hardcoded_assumption`
+feeds it ten known-bad strings and requires the right rule to catch each. Its counterpart
+`test_the_scanner_accepts_context_driven_wording` feeds it eight legitimate ones, so a
+future contributor cannot resolve a false positive by weakening the policy unnoticed.
+
+### Coverage cannot be escaped
+
+`test_every_template_declares_a_render_fixture` compares the registered fixtures against the
+live catalog in both directions, and additionally requires each fixture to supply *exactly*
+the template's declared non-shared required variables. A new template with no fixture fails
+by name. A template that grows a placeholder nobody registered fails too — the fixture
+builder cannot paper over a typo such as `UNVERSITY_LEVEL`.
+
+### What it deliberately is not
+
+The suite is fully offline and deterministic: it makes no Gemini or Ollama call and judges
+no model output. It checks that the model receives a context-driven prompt, not that the
+answer it returns sounds right for the level.
 
 ## Placeholder guarantees
 

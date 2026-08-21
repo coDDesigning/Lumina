@@ -11,7 +11,14 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import { describeGenerationError, isAbortError } from '../../api/errors';
+import {
+  describeGenerationError,
+  isAbortError,
+  isInsufficientCredits,
+} from '../../api/errors';
+import { useCredits } from '../../context/CreditContext';
+import CreditBalance from '../credits/CreditBalance';
+import CreditExhaustedNotice from '../credits/CreditExhaustedNotice';
 import { flashcardsAPI } from '../../api/flashcards';
 import type { FlashcardGenerationResult, GeneratedFlashcard } from '../../api/types';
 import './study.css';
@@ -53,6 +60,9 @@ export function FlashcardModal({
     return () => clearInterval(timer);
   }, [state.phase]);
 
+  const { refresh, canAfford, isMetered } = useCredits();
+  const exhausted = isMetered && !canAfford('flashcard');
+
   const handleGenerate = useCallback(async () => {
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -70,16 +80,22 @@ export function FlashcardModal({
       );
       setCards(result.flashcards.flashcards);
       setState({ phase: 'success', result });
+      void refresh();
     } catch (err) {
       if (isAbortError(err)) return;
       const parsed = describeGenerationError(err, 'flashcard');
+      if (isInsufficientCredits(parsed)) {
+        await refresh();
+        setState({ phase: 'idle' });
+        return;
+      }
       setState({
         phase: 'error',
         message: parsed.message,
         retryable: parsed.retryable,
       });
     }
-  }, [courseId, includeProfileContext]);
+  }, [courseId, includeProfileContext, refresh]);
 
   const handleFlip = useCallback(() => {
     setIsFlipped((prev) => !prev);
@@ -184,11 +200,15 @@ export function FlashcardModal({
                   </label>
                 </div>
               )}
+              {exhausted ? (
+                <CreditExhaustedNotice source="flashcard" action="flashcards" />
+              ) : null}
+              <CreditBalance source="flashcard" />
               <button
                 type="button"
                 className="study-primary-btn"
                 onClick={handleGenerate}
-                disabled={readyDocumentCount === 0}
+                disabled={readyDocumentCount === 0 || exhausted}
               >
                 <Sparkles aria-hidden="true" />
                 Generate Flashcards

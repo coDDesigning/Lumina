@@ -1,6 +1,7 @@
 import { LayoutGrid, LogOut, Pencil, Settings, Shield, Smile } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import CreditBalance from './credits/CreditBalance'
 
 type WorkspaceNavigationProps = {
   workspaceId?: string
@@ -31,6 +32,8 @@ function WorkspaceNavigation({ workspaceId }: WorkspaceNavigationProps) {
 
   return (
     <nav className="top-actions" aria-label="Workspace controls">
+      <CreditBalance />
+
       {navigationItems.map(({ label, path, icon: Icon }) => (
         <NavLink
           className={({ isActive }) =>

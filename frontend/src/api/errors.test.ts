@@ -6,6 +6,7 @@ import {
   describeGenerationError,
   describeUploadError,
   isAbortError,
+  isInsufficientCredits,
 } from './errors';
 import { MockErrors } from '../test/mocks/api';
 
@@ -25,6 +26,50 @@ describe('error description helpers', () => {
     it('returns false for regular errors', () => {
       expect(isAbortError(new Error('Network error'))).toBe(false);
       expect(isAbortError(null)).toBe(false);
+    });
+  });
+
+  describe('insufficient credits', () => {
+    it('recognises a 402 even when the server sent no error code', () => {
+      const described = describeGenerationError(
+        new APIError(402, { detail: 'You do not have enough credits.' }),
+        'Fallback',
+      );
+      expect(isInsufficientCredits(described)).toBe(true);
+      expect(described.message).toBe('You do not have enough credits.');
+    });
+
+    it('recognises the stable code from the X-Error-Code header', () => {
+      const described = describeGenerationError(
+        new APIError(402, { detail: 'Nope' }, 'insufficient_credits'),
+        'Fallback',
+      );
+      expect(described.code).toBe('insufficient_credits');
+      expect(isInsufficientCredits(described)).toBe(true);
+    });
+
+    it('is never retryable, because retrying cannot create credits', () => {
+      const described = describeGenerationError(
+        new APIError(402, { detail: 'Out of credits' }),
+        'Fallback',
+      );
+      expect(described.retryable).toBe(false);
+    });
+
+    it('does not add the "add a source" advice meant for an empty course', () => {
+      const described = describeGenerationError(
+        new APIError(402, { detail: 'Out of credits' }),
+        'Fallback',
+      );
+      expect(described.message).not.toContain('Add a source');
+    });
+
+    it('leaves other generation failures alone', () => {
+      const described = describeGenerationError(
+        new APIError(409, { detail: 'No material matched.' }),
+        'Fallback',
+      );
+      expect(isInsufficientCredits(described)).toBe(false);
     });
   });
 

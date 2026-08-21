@@ -740,3 +740,13 @@
     transition: transform 150ms ease, box-shadow 150ms ease, background 150ms ease;
   }
 }
+
+.composer-credit-balance {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 4px 8px 4px;
+}
+
+.generator-credit-notice {
+  margin-top: 10px;
+}

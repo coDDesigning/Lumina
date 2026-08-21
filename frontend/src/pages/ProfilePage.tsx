@@ -15,6 +15,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import PageLayout from '../components/PageLayout'
 import { useAuth } from '../context/AuthContext'
+import { useCredits } from '../context/CreditContext'
 import { modelsAPI } from '../api/models'
 import { profileKnowledgeAPI } from '../api/profileKnowledge'
 import { userAPI } from '../api/user'
@@ -31,6 +32,7 @@ type ProfilePageProps = {
 
 function ProfilePage({ workspaceId }: ProfilePageProps) {
   const { user, logout, refreshUser } = useAuth()
+  const { status: creditStatus, refresh: refreshCredits } = useCredits()
   const navigate = useNavigate()
 
   const userInitials = user?.name
@@ -135,12 +137,33 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
   const handleRefreshCredits = async () => {
     setRefreshingCredits(true)
     try {
-      await refreshUser()
-      await loadCreditHistory()
+      await Promise.all([refreshUser(), refreshCredits(), loadCreditHistory()])
     } finally {
       setRefreshingCredits(false)
     }
   }
+
+  // The policy is described by the server so this page cannot drift from what
+  // is actually charged. Costs vary: an open-ended quiz prepays its grading.
+  const creditPolicyText = (() => {
+    if (!creditStatus || creditStatus.credits === null) {
+      return 'This account is not metered, so generations are never charged.'
+    }
+    const costs = Object.values(creditStatus.generation_costs).filter(
+      (cost): cost is number => typeof cost === 'number',
+    )
+    const cheapest = costs.length > 0 ? Math.min(...costs) : 1
+    const dearest = costs.length > 0 ? Math.max(...costs) : 1
+    const priced =
+      cheapest === dearest
+        ? `Each AI generation costs ${cheapest} ${cheapest === 1 ? 'credit' : 'credits'}.`
+        : `An AI generation costs ${cheapest}-${dearest} credits depending on what you ask for.`
+    const grant =
+      creditStatus.monthly_grant !== null && creditStatus.balance_cap !== null
+        ? ` You receive up to ${creditStatus.monthly_grant} more each month, capped at ${creditStatus.balance_cap}.`
+        : ''
+    return `${priced}${grant} Failed generations are refunded.`
+  })()
 
   const handleLogout = () => {
     logout()
@@ -380,9 +403,7 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
                     color: '#64748b',
                   }}
                 >
-                  {user?.credits === null
-                    ? 'This account is not metered, so generations are never charged.'
-                    : 'Each AI generation costs 1 credit. You start with 50 and receive up to 50 more each month, capped at 100. Failed generations are refunded.'}
+                  {creditPolicyText}
                 </p>
               </div>
             </div>

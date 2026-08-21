@@ -40,8 +40,9 @@ otherwise.
 | Do credits expire? | No. |
 | Do unused credits roll over? | Yes, up to the ceiling. |
 | Is there a maximum? | `CREDIT_MAX_BALANCE` (default 100) bounds **automatic granting only**. It never reduces a balance. |
-| What happens at zero? | Generation returns HTTP 402 and no provider is called. Zero is recoverable; see [Recovering an exhausted account](#recovering-an-exhausted-account). |
+| What happens at zero? | A generation is refused with HTTP 402 and no provider is called. Quiz grading is the one exception, because it is prepaid; see [What each operation costs](#what-each-operation-costs). Zero is recoverable; see [Recovering an exhausted account](#recovering-an-exhausted-account). |
 | When is a charge applied? | Before the provider call, after material assembly. |
+| Does every operation cost the same? | No. A quiz containing open-ended questions costs 2 because it prepays its AI grading. |
 | When is a refund issued? | When a charge was taken and the generation then failed. |
 | What does a null balance mean? | The account is not metered. Administrators have always worked this way. |
 
@@ -142,6 +143,37 @@ unbanning should not also require re-granting.
 
 This is account-level credit administration. It confers no authority over
 another owner's course workspace, where administrators remain read-only.
+
+### What each operation costs
+
+`GENERATION_CREDIT_COSTS` in `services/credits.py` is the authoritative table,
+and it is served to clients so no interface has to hardcode a price that the
+server owns.
+
+| Operation | Cost |
+|---|---|
+| Study guide | 1 |
+| Quiz, no open-ended questions | 1 |
+| Quiz containing open-ended questions | 2 |
+| Flashcards | 1 |
+| AI tutor | 1 |
+| Course Q&A | 1 |
+| Prompt generator | 1 |
+
+Open-ended answers are graded by the provider, which costs real money every time
+an attempt is submitted. That grading is **prepaid at generation**, which is why
+such a quiz costs 2 rather than 1.
+
+Charging it at submission instead would mean an exhausted balance could refuse
+the grading of an attempt the student had already sat. Blocking there would
+throw away their work, and the previous behaviour of degrading instead returned
+the attempt with open-ended answers silently ungraded and nothing in the
+response to say why. Prepaying removes the choice: **grading can never be
+skipped for want of credit**, and every later attempt at the same quiz grades
+free.
+
+Consequently `quiz_grading` no longer charges. The reason still exists because
+the ledger is append-only and historical rows carry it.
 
 ### Charging and refunding
 
@@ -290,7 +322,7 @@ direction.
 
 | Endpoint | Who |
 |---|---|
-| `GET /api/users/me/credits` | The account itself. Evaluates the monthly grant first. |
+| `GET /api/users/me/credits` | The account itself. Evaluates the monthly grant first, and returns the policy alongside the balance. |
 | `GET /api/users/me/credit-transactions` | The account itself. Newest first. |
 | `GET /api/admin/users/{email}/credit-transactions` | Administrators, read-only. |
 | `POST /api/admin/users/{email}/credits` | Administrators. The only manual write. |
@@ -298,6 +330,44 @@ direction.
 `users.credits` remains the fast current balance that product surfaces read. The
 ledger is the authority for audit and reconciliation. Summing thousands of rows
 to render a header is not the intent.
+
+`GET /api/users/me/credits` is the endpoint a user interface should read, not
+`GET /api/auth/me`. Both report the balance, but only this one evaluates the
+lazy monthly grant, so a balance taken from the authenticated snapshot can show
+a stale zero on the first of the month and never correct itself.
+
+It answers with the balance and the policy needed to explain it:
+
+```json
+{
+  "credits": 0,
+  "metering_enabled": true,
+  "monthly_grant": 50.0,
+  "balance_cap": 100.0,
+  "next_grant_at": "2026-09-01T00:00:00Z",
+  "generation_costs": { "study_guide": 1.0, "quiz_open_ended": 2.0 }
+}
+```
+
+`credits` is null and every policy field is null when the account is not
+metered, which is how a client knows to show no credit interface at all rather
+than an inert zero. The policy travels with the balance so that an interface can
+name the real recovery route and the real price without encoding either itself.
+
+### Telling a refusal apart from any other failure
+
+Every AI route classifies its failures through `utils/ai_errors.py`, and the
+resulting code is sent as an `X-Error-Code` header beside the human-readable
+`detail`:
+
+```http
+HTTP/1.1 402 Payment Required
+X-Error-Code: insufficient_credits
+```
+
+A client should branch on that code rather than on the status alone: `402` may
+one day cover another payment state, and two distinct retrieval failures already
+share `409`. The header is the stable contract; the prose in `detail` is not.
 
 ## Configuration
 

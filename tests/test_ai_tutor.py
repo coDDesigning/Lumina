@@ -8,6 +8,7 @@ from backend.app.models import (
     ConversationMessage,
     Course,
     DocumentChunk,
+    ProfileKnowledge,
     UploadedDocument,
     User,
 )
@@ -662,3 +663,71 @@ def test_ai_tutor_rejects_nonpositive_conversation_id(upload_api) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_ai_tutor_with_profile_knowledge_opt_in(
+    upload_api,
+    retrieval_env,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        assert user is not None and course is not None
+
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="p" * 64,
+            text="Operating Systems Virtual Memory and Page Tables.",
+            retrieval_env=retrieval_env,
+        )
+        session.add(
+            ProfileKnowledge(
+                user_id=upload_api.user_id,
+                topic="OS Background",
+                detail="Student knows 32-bit paging.",
+            )
+        )
+        session.commit()
+
+    captured_prompts: list[str] = []
+
+    class FakeProvider:
+        def generate_text_with_metadata(self, prompt: str):
+            captured_prompts.append(prompt)
+            return (
+                "Hint: Think about pages.\n\nVirtual memory maps virtual addresses.",
+                GenerationMetadata(provider="ollama", model="llama3"),
+            )
+
+    monkeypatch.setattr(
+        ai_tutor_route,
+        "get_text_generation_provider",
+        lambda: FakeProvider(),
+    )
+
+    # 1. Opt-in True
+    res_opt_in = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "What is paging?", "use_profile_knowledge": True},
+        headers=upload_api.authorization,
+    )
+    assert res_opt_in.status_code == 200
+    assert "SUPPLEMENTARY PROFILE CONTEXT" in captured_prompts[-1]
+    assert "OS Background" in captured_prompts[-1]
+    assert res_opt_in.json()["data"]["profile_knowledge_used"] is True
+    assert res_opt_in.json()["data"]["profile_knowledge_items_used"] == 1
+
+    # 2. Opt-in False (default)
+    res_opt_out = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "What is TLB?"},
+        headers=upload_api.authorization,
+    )
+    assert res_opt_out.status_code == 200
+    assert "SUPPLEMENTARY PROFILE CONTEXT" not in captured_prompts[-1]
+    assert "OS Background" not in captured_prompts[-1]
+    assert res_opt_out.json()["data"]["profile_knowledge_used"] is False
+    assert res_opt_out.json()["data"]["profile_knowledge_items_used"] == 0

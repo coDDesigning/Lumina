@@ -17,7 +17,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+)
 
 from schemas.generation import RetrievalGenerationContext, RetrievedContext
 
@@ -72,14 +79,21 @@ class QuizRequest(BaseModel):
     )
     difficulty: QuizDifficulty
     topic_focus: str = Field(min_length=1, max_length=MAX_TOPIC_CHARS)
-    include_profile_context: bool = Field(
+    use_profile_knowledge: bool = Field(
         default=False,
+        validation_alias=AliasChoices(
+            "use_profile_knowledge", "include_profile_context"
+        ),
         description="Whether to include student profile knowledge context (opt-in)",
     )
     model: str | None = Field(
         default=None,
         description="Explicit model override, or omit to use preferred/default model",
     )
+
+    @property
+    def include_profile_context(self) -> bool:
+        return self.use_profile_knowledge
 
     @field_validator("question_types")
     @classmethod
@@ -274,7 +288,7 @@ class QuizGenerationResponse(BaseModel):
 class QuizGenerationSettings(BaseModel):
     """The options a stored quiz was generated with."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     version: Literal[1] = 1
     output_type: Literal["quiz"] = "quiz"
@@ -282,9 +296,18 @@ class QuizGenerationSettings(BaseModel):
     question_types: list[QuizQuestionType]
     difficulty: QuizDifficulty
     topic_focus: str
-    include_profile_context: bool = False
+    use_profile_knowledge: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "use_profile_knowledge", "include_profile_context"
+        ),
+    )
     retrieval_limit: int
     retrieval_min_similarity: float
+
+    @property
+    def include_profile_context(self) -> bool:
+        return self.use_profile_knowledge
 
     @classmethod
     def from_request(
@@ -299,7 +322,7 @@ class QuizGenerationSettings(BaseModel):
             question_types=list(request.question_types),
             difficulty=request.difficulty,
             topic_focus=request.topic_focus,
-            include_profile_context=request.include_profile_context,
+            use_profile_knowledge=request.use_profile_knowledge,
             retrieval_limit=retrieval_limit,
             retrieval_min_similarity=retrieval_min_similarity,
         )

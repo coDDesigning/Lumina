@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from schemas.generation import BoundedContext
 
@@ -22,8 +22,11 @@ class FlashcardGenerationResponse(BaseModel):
 
 
 class FlashcardRequest(BaseModel):
-    include_profile_context: bool = Field(
+    use_profile_knowledge: bool = Field(
         default=False,
+        validation_alias=AliasChoices(
+            "use_profile_knowledge", "include_profile_context"
+        ),
         description="Whether to include student profile knowledge context (opt-in)",
     )
     model: str | None = Field(
@@ -31,15 +34,28 @@ class FlashcardRequest(BaseModel):
         description="Explicit model override, or omit to use preferred/default model",
     )
 
+    @property
+    def include_profile_context(self) -> bool:
+        return self.use_profile_knowledge
+
 
 class FlashcardGenerationSettings(BaseModel):
     """The options a stored flashcard deck was generated with."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     version: Literal[1] = 1
     output_type: Literal["flashcards"] = "flashcards"
-    include_profile_context: bool = False
+    use_profile_knowledge: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "use_profile_knowledge", "include_profile_context"
+        ),
+    )
+
+    @property
+    def include_profile_context(self) -> bool:
+        return self.use_profile_knowledge
 
     @classmethod
     def from_request(
@@ -47,9 +63,7 @@ class FlashcardGenerationSettings(BaseModel):
         request: FlashcardRequest | None = None,
     ) -> "FlashcardGenerationSettings":
         return cls(
-            include_profile_context=(
-                request.include_profile_context if request else False
-            ),
+            use_profile_knowledge=(request.use_profile_knowledge if request else False),
         )
 
 

@@ -58,6 +58,7 @@ def ask_ai_tutor(
             provider,
             user_id=current_user.id,
             conversation_id=request.conversation_id,
+            use_profile_knowledge=request.use_profile_knowledge,
         )
 
     except HTTPException:
@@ -77,5 +78,14 @@ def ask_ai_tutor(
             retrieval_narrowed=generation.material.retrieval_narrowed,
             lowest_similarity=generation.material.lowest_similarity,
             highest_similarity=generation.material.highest_similarity,
+            profile_knowledge_used=bool(
+                generation.profile_knowledge
+                and not generation.profile_knowledge.is_empty
+            ),
+            profile_knowledge_items_used=(
+                generation.profile_knowledge.items_used
+                if generation.profile_knowledge
+                else 0
+            ),
         ),
     )

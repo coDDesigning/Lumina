@@ -60,7 +60,7 @@ SHARED_PROMPT_VARIABLES = {
 def test_load_valid_study_guide_template() -> None:
     template = PromptLoader.load_template("study_guide", reload=True)
     assert template.name == "study_guide"
-    assert template.version == "2.1.0"
+    assert template.version == "2.2.0"
     assert template.required_variables == [
         "EDUCATION_LEVEL",
         "COURSE_TITLE",
@@ -72,6 +72,7 @@ def test_load_valid_study_guide_template() -> None:
         "SUMMARY_LENGTH",
         "DETAIL_LEVEL",
         "SUMMARY_MODE",
+        "PROFILE_CONTEXT",
     ]
     assert template.required_variables[:4] == [
         "EDUCATION_LEVEL",
@@ -83,6 +84,7 @@ def test_load_valid_study_guide_template() -> None:
     assert len(template.style_constraints) > 0
     assert len(template.safety_constraints) > 0
     assert "{{TEXT}}" in template.template
+    assert "{{PROFILE_CONTEXT}}" in template.template
     assert "{{SUMMARY_FORMAT}}" in template.template
     assert "{{TOPIC_FOCUS}}" in template.template
     assert "{{EDUCATION_LEVEL}}" in template.template
@@ -92,12 +94,12 @@ def test_load_valid_study_guide_template() -> None:
 
 
 EXPECTED_TEMPLATE_VERSIONS = {
-    "study_guide": "2.1.0",
-    "quiz": "3.1.0",
+    "study_guide": "2.2.0",
+    "quiz": "3.2.0",
     "quiz_grading": "2.0.0",
-    "flashcard": "2.0.0",
+    "flashcard": "2.1.0",
     "ai_tutor": "2.2.0",
-    "course_qa": "2.1.0",
+    "course_qa": "2.2.0",
     "prompt_generator": "2.0.0",
     "exam_style_question": "1.1.0",
     "image_description": "1.0.0",
@@ -188,10 +190,12 @@ def test_render_template_substitutes_variables() -> None:
             "SUMMARY_LENGTH": "Between 200 and 300 words.",
             "DETAIL_LEVEL": "Requested detail level: standard.",
             "SUMMARY_MODE": "Requested summary mode: general.",
+            "PROFILE_CONTEXT": "",
         },
         reload=False,
     )
     assert "{{TEXT}}" not in rendered
+    assert "{{PROFILE_CONTEXT}}" not in rendered
     assert "{{SUMMARY_FORMAT}}" not in rendered
     assert "{{TOPIC_FOCUS}}" not in rendered
     assert "{{SUMMARY_LENGTH}}" not in rendered
@@ -209,7 +213,7 @@ def test_render_missing_required_variable_raises_error() -> None:
         PromptLoader.render("study_guide", {})
     assert (
         "missing required variable(s): COURSE_TITLE, DETAIL_LEVEL, "
-        "EDUCATION_LEVEL, MATERIAL_KIND, SUBJECT_AREA, SUMMARY_FORMAT, "
+        "EDUCATION_LEVEL, MATERIAL_KIND, PROFILE_CONTEXT, SUBJECT_AREA, SUMMARY_FORMAT, "
         "SUMMARY_LENGTH, SUMMARY_MODE, TEXT, TOPIC_FOCUS" in str(exc_info.value)
     )
 
@@ -226,6 +230,7 @@ def test_render_unexpected_extra_variable_raises_error() -> None:
                 "SUMMARY_LENGTH": "Between 200 and 300 words.",
                 "DETAIL_LEVEL": "Requested detail level: standard.",
                 "SUMMARY_MODE": "Requested summary mode: general.",
+                "PROFILE_CONTEXT": "",
                 "EXTRA_VAR": "Unexpected content",
                 "ANOTHER_EXTRA": "Bad",
             },
@@ -342,6 +347,7 @@ def test_study_guide_adaptation_across_education_levels(level: EducationLevel) -
             "SUMMARY_LENGTH": "Between 400 and 600 words.",
             "DETAIL_LEVEL": "Requested detail level: detailed.",
             "SUMMARY_MODE": "Requested summary mode: general.",
+            "PROFILE_CONTEXT": "",
         },
     )
     assert "{{" not in rendered
@@ -369,6 +375,7 @@ def test_quiz_adapts_to_the_shared_context() -> None:
             "REQUESTED_DIFFICULTY": "medium",
             "TOPIC_FOCUS": "Newton's First Law",
             "TEXT": "Physics Lecture Notes...",
+            "PROFILE_CONTEXT": "",
         },
     )
     assert "high_school" in rendered
@@ -385,6 +392,7 @@ def test_ai_tutor_adapts_to_the_shared_context() -> None:
             "COURSE_MATERIAL": "Advanced Operating Systems",
             "CONVERSATION_HISTORY": "User: What is RCU?\nAssistant: Read-Copy Update.",
             "QUESTION": "How does grace period detection work in preemptible RCU?",
+            "PROFILE_CONTEXT": "",
         },
     )
     assert "graduate" in rendered
@@ -402,6 +410,7 @@ def test_course_qa_adapts_to_the_shared_context() -> None:
             "COURSE_MATERIAL": "Computer Networks Notes",
             "CONVERSATION_HISTORY": "",
             "QUESTION": "What is the difference between TCP and UDP?",
+            "PROFILE_CONTEXT": "",
         },
     )
     assert "undergraduate" in rendered
@@ -427,10 +436,11 @@ def test_get_render_metadata_returns_safe_telemetry() -> None:
             "SUMMARY_LENGTH": "length",
             "DETAIL_LEVEL": "detail",
             "SUMMARY_MODE": "mode",
+            "PROFILE_CONTEXT": "",
         },
     )
     assert meta["template_name"] == "study_guide"
-    assert meta["template_version"] == "2.1.0"
+    assert meta["template_version"] == "2.2.0"
     assert meta["output_schema_ref"] == "StudyGuideResponse"
     assert "TEXT" in meta["applied_variables"]
 
@@ -503,6 +513,7 @@ SAMPLE_TEMPLATE_INPUTS = {
         "SUMMARY_LENGTH": "Medium",
         "DETAIL_LEVEL": "Standard",
         "SUMMARY_MODE": "General",
+        "PROFILE_CONTEXT": "",
     },
     "quiz": {
         **SHARED_PROMPT_VARIABLES,
@@ -513,6 +524,7 @@ SAMPLE_TEMPLATE_INPUTS = {
         "REQUESTED_DIFFICULTY": "medium",
         "DIFFICULTY_DIRECTIVE": "Difficulty directive",
         "TOPIC_FOCUS": "All Topics",
+        "PROFILE_CONTEXT": "",
     },
     "quiz_grading": {
         **SHARED_PROMPT_VARIABLES,
@@ -522,18 +534,21 @@ SAMPLE_TEMPLATE_INPUTS = {
     "flashcard": {
         **SHARED_PROMPT_VARIABLES,
         "TEXT": "Course material text",
+        "PROFILE_CONTEXT": "",
     },
     "ai_tutor": {
         **SHARED_PROMPT_VARIABLES,
         "COURSE_MATERIAL": "Material",
         "CONVERSATION_HISTORY": "",
         "QUESTION": "Question",
+        "PROFILE_CONTEXT": "",
     },
     "course_qa": {
         **SHARED_PROMPT_VARIABLES,
         "COURSE_MATERIAL": "Material",
         "CONVERSATION_HISTORY": "",
         "QUESTION": "Question",
+        "PROFILE_CONTEXT": "",
     },
     "prompt_generator": {
         **SHARED_PROMPT_VARIABLES,
@@ -559,6 +574,7 @@ SAMPLE_TEMPLATE_INPUTS = {
         "QUESTION_SCHEMAS": '{"question_type": "multiple_choice"}',
         "REQUESTED_DIFFICULTY": "hard",
         "TOPIC_FOCUS": "All Topics",
+        "PROFILE_CONTEXT": "",
     },
 }
 
@@ -572,9 +588,7 @@ def test_no_production_template_assumes_a_level_discipline_or_material() -> None
     assert set(SAMPLE_TEMPLATE_INPUTS) == set(templates)
 
     for name, sample_vars in SAMPLE_TEMPLATE_INPUTS.items():
-        lowered = PromptLoader.render(
-            name, sample_vars, allow_deferred=True
-        ).lower()
+        lowered = PromptLoader.render(name, sample_vars, allow_deferred=True).lower()
         for field in RETAINED_FIELD_NAMES:
             lowered = lowered.replace(field, "")
         for banned in BANNED_PROMPT_DEFAULTS:
@@ -615,6 +629,7 @@ def test_quiz_template_regression() -> None:
             "REQUESTED_DIFFICULTY": "hard",
             "TOPIC_FOCUS": "Eigenvalues",
             "TEXT": "Linear Algebra Lecture",
+            "PROFILE_CONTEXT": "",
         },
     )
     assert "Linear Algebra Lecture" in rendered
@@ -646,6 +661,7 @@ def test_quiz_template_regression() -> None:
         "REQUESTED_DIFFICULTY",
         "DIFFICULTY_DIRECTIVE",
         "TOPIC_FOCUS",
+        "PROFILE_CONTEXT",
     ]
 
 
@@ -678,7 +694,11 @@ def test_quiz_grading_template_regression() -> None:
 def test_flashcard_template_regression() -> None:
     rendered = PromptLoader.render(
         "flashcard",
-        {**SHARED_PROMPT_VARIABLES, "TEXT": "Data Structures Notes"},
+        {
+            **SHARED_PROMPT_VARIABLES,
+            "TEXT": "Data Structures Notes",
+            "PROFILE_CONTEXT": "",
+        },
     )
     assert "Data Structures Notes" in rendered
     assert "{{TEXT}}" not in rendered
@@ -692,6 +712,7 @@ def test_flashcard_template_regression() -> None:
         "SUBJECT_AREA",
         "MATERIAL_KIND",
         "TEXT",
+        "PROFILE_CONTEXT",
     ]
 
 
@@ -706,6 +727,7 @@ def test_ai_tutor_template_regression() -> None:
                 "Assistant: It maps virtual addresses to physical memory."
             ),
             "QUESTION": "What is page fault?",
+            "PROFILE_CONTEXT": "",
         },
     )
     assert "Operating Systems Virtual Memory" in rendered
@@ -735,6 +757,7 @@ def test_ai_tutor_template_regression() -> None:
         "COURSE_MATERIAL",
         "CONVERSATION_HISTORY",
         "QUESTION",
+        "PROFILE_CONTEXT",
     ]
 
 
@@ -844,7 +867,10 @@ def _is_referenced_as_a_string_literal(name: str, source: str) -> bool:
 ACTIVE_TEMPLATE_OWNERS = {
     "study_guide": ("services.study_guide", "StudyGuideService.PROMPT_TEMPLATE_NAME"),
     "quiz": ("services.quiz", "QuizService.PROMPT_TEMPLATE_NAME"),
-    "quiz_grading": ("services.quiz_grading", "QuizGradingService.PROMPT_TEMPLATE_NAME"),
+    "quiz_grading": (
+        "services.quiz_grading",
+        "QuizGradingService.PROMPT_TEMPLATE_NAME",
+    ),
     "flashcard": ("services.flashcard", "FlashcardService.PROMPT_TEMPLATE_NAME"),
     "ai_tutor": ("services.ai_tutor", "AiTutorService.PROMPT_TEMPLATE_NAME"),
     "course_qa": ("services.course_qa", "CourseQAService.PROMPT_TEMPLATE_NAME"),
@@ -1051,6 +1077,7 @@ def test_tutoring_method_is_identical_across_education_levels(
             "COURSE_MATERIAL": "Material",
             "CONVERSATION_HISTORY": "",
             "QUESTION": "How do I solve this?",
+            "PROFILE_CONTEXT": "",
         },
     )
     lowered = rendered.lower()

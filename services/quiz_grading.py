@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from backend.app.models import QuizQuestion
+from backend.app.models import Course, QuizQuestion
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.quiz import (
     OpenEndedAnswer,
@@ -32,6 +32,8 @@ from schemas.quiz_attempt import (
     QuizAnswerSubmission,
 )
 from services.ai_usage_logger import AiUsageLogger
+from schemas.prompt_context import PromptContext
+from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
 from services.quiz import parse_correct_answer
 from services.text_generation import TextGenerationProvider
@@ -166,7 +168,10 @@ class QuizGradingService:
 
     @classmethod
     def build_prompt(
-        cls, pending: list[tuple[int, QuizQuestion, str, OpenEndedAnswer]]
+        cls,
+        pending: list[tuple[int, QuizQuestion, str, OpenEndedAnswer]],
+        *,
+        context: PromptContext,
     ) -> str:
         blocks = []
         for number, (_, question, written, answer) in enumerate(pending, start=1):
@@ -179,6 +184,7 @@ class QuizGradingService:
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {
+                **context.as_variables(),
                 "SUBMISSION_COUNT": str(len(pending)),
                 "SUBMISSIONS": "\n\n---\n\n".join(blocks),
             },
@@ -219,7 +225,9 @@ class QuizGradingService:
             log_failure(ErrorCategory.PROVIDER_ERROR)
             return graded
 
-        prompt = cls.build_prompt(pending)
+        course = db.get(Course, course_id) if course_id is not None else None
+        prompt_context = resolve_prompt_context(db, course=course, user_id=user_id)
+        prompt = cls.build_prompt(pending, context=prompt_context)
         metadata = None
 
         try:

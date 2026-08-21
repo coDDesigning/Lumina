@@ -40,6 +40,8 @@ vi.mock('../context/AuthContext', () => ({
 const mockWorkspace: Workspace = {
   id: '1',
   name: 'Operating Systems',
+  subjectArea: '',
+  educationLevel: 'unspecified',
   semester: 'Fall 2026',
   examDate: '2026-12-15',
   topics: ['Processes', 'Memory'],

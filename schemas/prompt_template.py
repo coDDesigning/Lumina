@@ -1,6 +1,7 @@
+import re
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PromptTemplateError(RuntimeError):
@@ -25,6 +26,9 @@ class MissingPromptVariableError(PromptTemplateError):
 
 class UnexpectedPromptVariableError(PromptTemplateError):
     """An unexpected variable was provided to the prompt template."""
+
+
+_PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 
 
 class PromptTemplateModel(BaseModel):
@@ -77,6 +81,20 @@ class PromptTemplateModel(BaseModel):
         description="Prompt template body containing {{VARIABLE}} placeholders",
     )
 
+    def template_placeholders(self) -> set[str]:
+        return set(_PLACEHOLDER_PATTERN.findall(self.template))
+
+    @model_validator(mode="after")
+    def reject_undeclared_placeholders(self) -> "PromptTemplateModel":
+        declared = set(self.required_variables) | set(self.optional_variables)
+        undeclared = self.template_placeholders() - declared
+        if undeclared:
+            raise ValueError(
+                f"Prompt template '{self.name}' contains undeclared "
+                f"placeholder(s): {', '.join(sorted(undeclared))}"
+            )
+        return self
+
     def validate_variables(self, variables: dict[str, Any]) -> None:
         """Validate that all required variables are present and no unexpected variables exist."""
         provided_keys = set(variables.keys())
@@ -100,6 +118,13 @@ class PromptTemplateModel(BaseModel):
     def render(self, variables: dict[str, Any]) -> str:
         """Validate variables and render the template by substituting {{VARIABLE}} placeholders."""
         self.validate_variables(variables)
+
+        unresolved = self.template_placeholders() - set(variables)
+        if unresolved:
+            raise MissingPromptVariableError(
+                f"Prompt template '{self.name}' would leave unresolved "
+                f"placeholder(s): {', '.join(sorted(unresolved))}"
+            )
 
         rendered = self.template
         for key, value in variables.items():

@@ -9,6 +9,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     HTTPException,
     Request,
     Response,
@@ -32,6 +33,7 @@ from schemas.document import (
     DocumentUploadResponse,
     ProcessingJobResponse,
 )
+from schemas.prompt_context import DocumentMaterialKind
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.document import (
@@ -139,6 +141,9 @@ def upload_document(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[Storage, Depends(get_storage)],
+    material_kind: Annotated[
+        DocumentMaterialKind, Form()
+    ] = DocumentMaterialKind.UNSPECIFIED,
 ) -> DocumentUploadResponse | JSONResponse:
     """Register a new document or return its course-scoped duplicate."""
     try:
@@ -148,6 +153,7 @@ def upload_document(
             upload=document,
             course_id=course.id,
             user_id=current_user.id,
+            material_kind=material_kind.value,
         )
     except DocumentValidationError as exc:
         return _error_response(exc.error_key)

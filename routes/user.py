@@ -7,6 +7,7 @@ from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.models import User
 from schemas.credits import CreditStatusResponse, CreditTransactionResponse
+from schemas.prompt_context import EducationLevel
 from schemas.response import BaseResponse
 from schemas.user import UserResponse, UserUpdate
 from services.credits import (
@@ -37,6 +38,22 @@ def update_preferred_model(
     return BaseResponse(
         success=True,
         message=f"Preferred model changed to {model_name}",
+        data=updated_user,
+    )
+
+
+@router.put("/me/education-level", response_model=BaseResponse[UserResponse])
+def update_education_level(
+    education_level: EducationLevel,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Changes the normalized education level recorded for the user."""
+    update_data = UserUpdate(education_level=education_level)
+    updated_user = UserService.update_user(db, current_user.email, update_data)
+    return BaseResponse(
+        success=True,
+        message=f"Education level changed to {education_level.value}",
         data=updated_user,
     )
 

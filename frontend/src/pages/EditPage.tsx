@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react'
 import { BookOpenCheck, CalendarDays, ListChecks, Pencil } from 'lucide-react'
 import PageLayout from '../components/PageLayout'
 import type { Workspace } from '../data/workspaces'
+import { EDUCATION_LEVEL_LABELS, type EducationLevel } from '../api/types'
 
 type EditPageProps = {
   workspace: Workspace
@@ -11,6 +12,8 @@ type EditPageProps = {
 function getCourseForm(workspace: Workspace) {
   return {
     name: workspace.name,
+    subjectArea: workspace.subjectArea,
+    educationLevel: workspace.educationLevel,
     semester: workspace.semester,
     examDate: workspace.examDate,
     topics: workspace.topics.join(', '),
@@ -33,6 +36,8 @@ function EditPage({ workspace, onSave }: EditPageProps) {
       await onSave({
         ...workspace,
         name: course.name.trim(),
+        subjectArea: course.subjectArea.trim(),
+        educationLevel: course.educationLevel,
         semester: course.semester.trim(),
         examDate: course.examDate,
         topics: course.topics
@@ -85,6 +90,35 @@ function EditPage({ workspace, onSave }: EditPageProps) {
                   onChange={(event) => updateCourse('name', event.target.value)}
                   placeholder="Enter course name"
                   required
+                />
+              </label>
+
+              <label className="form-field">
+                <span>Education level</span>
+                <select
+                  value={course.educationLevel}
+                  onChange={(event) =>
+                    updateCourse('educationLevel', event.target.value)
+                  }
+                >
+                  {(
+                    Object.keys(EDUCATION_LEVEL_LABELS) as EducationLevel[]
+                  ).map((level) => (
+                    <option key={level} value={level}>
+                      {EDUCATION_LEVEL_LABELS[level]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="form-field">
+                <span>Subject area</span>
+                <input
+                  value={course.subjectArea}
+                  onChange={(event) =>
+                    updateCourse('subjectArea', event.target.value)
+                  }
+                  placeholder="e.g. Biology"
                 />
               </label>
 

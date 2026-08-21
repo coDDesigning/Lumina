@@ -35,7 +35,8 @@ QUIZ_SCHEMA_REVISION = "c8d4a1f39e72"
 PGVECTOR_HARDENING_REVISION = "f5a7c2d9e104"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
 TYPED_CONVERSATIONS_REVISION = "b9c1d4e7f2a6"
-HEAD_REVISION = TYPED_CONVERSATIONS_REVISION
+LEARNER_CONTEXT_REVISION = "a3d9e5c17b48"
+HEAD_REVISION = LEARNER_CONTEXT_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -63,7 +64,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: CREDIT_LEDGER_REVISION,
+        HEAD_REVISION: TYPED_CONVERSATIONS_REVISION,
+        TYPED_CONVERSATIONS_REVISION: CREDIT_LEDGER_REVISION,
         CREDIT_LEDGER_REVISION: PGVECTOR_HARDENING_REVISION,
         PGVECTOR_HARDENING_REVISION: QUIZ_SCHEMA_REVISION,
         QUIZ_SCHEMA_REVISION: QUIZ_PROGRESS_REVISION,
@@ -382,6 +384,38 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert "conversation_type in ('course_qa', 'ai_tutor')" in (
             normalized_conversation_sql
         )
+
+        course_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'courses'"
+        ).fetchone()
+        assert course_sql is not None
+        normalized_course_sql = " ".join(course_sql[0].lower().split())
+        assert "subject_area varchar(100)" in normalized_course_sql
+        assert "education_level varchar(20) default 'unspecified' not null" in (
+            normalized_course_sql
+        )
+        assert "ck_courses_education_level_valid" in normalized_course_sql
+
+        user_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+        ).fetchone()
+        assert user_sql is not None
+        normalized_user_sql = " ".join(user_sql[0].lower().split())
+        assert "education_level varchar(20) default 'unspecified' not null" in (
+            normalized_user_sql
+        )
+        assert "ck_users_education_level_valid" in normalized_user_sql
+
+        document_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'uploaded_documents'"
+        ).fetchone()
+        assert document_sql is not None
+        normalized_document_sql = " ".join(document_sql[0].lower().split())
+        assert "material_kind varchar(20) default 'unspecified' not null" in (
+            normalized_document_sql
+        )
+        assert "ck_uploaded_documents_material_kind_valid" in normalized_document_sql
 
 
 def test_production_migration_does_not_create_missing_database_parent(
@@ -1622,6 +1656,107 @@ def test_credit_ledger_migration_reconciles_existing_balances(tmp_path: Path) ->
         assert connection.execute(
             "SELECT COUNT(*) FROM credit_transactions"
         ).fetchone() == (3,)
+
+
+def test_prompt_context_migration_defaults_legacy_rows_and_enforces_vocabularies(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "prompt-context.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", TYPED_CONVERSATIONS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        course_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(courses)")
+        }
+        assert "education_level" not in course_columns
+        assert "subject_area" not in course_columns
+
+        user_id = insert_legacy_user(
+            connection,
+            email="legacy-learner@example.com",
+            credits=10.0,
+        )
+        course_id = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Legacy course without a learner level", user_id),
+        ).lastrowid
+        document_id = "0f9c1a2b3d4e4f5a6b7c8d9e0f1a2b3c"
+        connection.execute(
+            "INSERT INTO uploaded_documents ("
+            "id, original_file_name, file_type, mime_type, file_size, file_hash, "
+            "user_id, course_id, storage_provider, storage_key, status"
+            ") VALUES (?, ?, 'txt', 'text/plain', 11, ?, ?, ?, 'local', ?, 'ready')",
+            (
+                document_id,
+                "legacy.txt",
+                "a" * 64,
+                user_id,
+                course_id,
+                f"courses/{course_id}/docs/legacy.txt",
+            ),
+        )
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT education_level, subject_area FROM courses WHERE id = ?",
+            (course_id,),
+        ).fetchone() == ("unspecified", None)
+        assert connection.execute(
+            "SELECT education_level FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone() == ("unspecified",)
+        assert connection.execute(
+            "SELECT material_kind FROM uploaded_documents WHERE id = ?",
+            (document_id,),
+        ).fetchone() == ("unspecified",)
+
+        connection.execute(
+            "UPDATE courses SET education_level = 'high_school' WHERE id = ?",
+            (course_id,),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE courses SET education_level = 'university' WHERE id = ?",
+                (course_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE users SET education_level = 'college' WHERE id = ?",
+                (user_id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE uploaded_documents SET material_kind = 'mixed' WHERE id = ?",
+                (document_id,),
+            )
+
+    run_alembic(database_path, tmp_path, "downgrade", TYPED_CONVERSATIONS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        course_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(courses)")
+        }
+        assert "education_level" not in course_columns
+        assert "subject_area" not in course_columns
+        document_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(uploaded_documents)")
+        }
+        assert "material_kind" not in document_columns
+        assert connection.execute(
+            "SELECT COUNT(*) FROM uploaded_documents WHERE id = ?",
+            (document_id,),
+        ).fetchone() == (1,)
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT education_level FROM courses WHERE id = ?",
+            (course_id,),
+        ).fetchone() == ("unspecified",)
 
 
 def test_typed_conversation_migration_backfills_and_enforces_types(

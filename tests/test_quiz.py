@@ -12,6 +12,7 @@ from backend.app.models import (
     Course,
     DocumentChunk,
     GeneratedOutput,
+    ProfileKnowledge,
     Quiz,
     QuizQuestion,
     UploadedDocument,
@@ -1337,3 +1338,66 @@ def test_reads_hide_a_tombstoned_course(upload_api) -> None:
     )
 
     assert listing.status_code == 404
+
+
+def test_quiz_generation_with_profile_knowledge_opt_in(
+    db_session, model_graph, retrieval_env
+) -> None:
+    _add_ready_material(
+        db_session,
+        model_graph.course.id,
+        ["Relativity concepts and Lorentz transformation."],
+        file_hash="4" * 64,
+        retrieval_env=retrieval_env,
+    )
+    db_session.add(
+        ProfileKnowledge(
+            user_id=model_graph.user.id,
+            topic="Special Relativity Knowledge",
+            detail="Student has mastered time dilation formulas.",
+        )
+    )
+    db_session.commit()
+
+    provider = CountingProvider(_payload("multiple_choice"))
+
+    # 1. Opt-in True
+    req_opt_in = QuizRequest(
+        question_count=1,
+        question_types=[QuizQuestionType.MULTIPLE_CHOICE],
+        difficulty=QuizDifficulty.MEDIUM,
+        topic_focus="All Topics",
+        include_profile_context=True,
+    )
+    generation_opt_in = QuizService.generate(
+        db_session,
+        model_graph.course.id,
+        req_opt_in,
+        provider,
+        user_id=model_graph.user.id,
+    )
+    assert "[Supplementary Student Knowledge Profile]" in provider.prompt
+    assert "Special Relativity Knowledge" in provider.prompt
+    assert "Student has mastered time dilation formulas." in provider.prompt
+    assert generation_opt_in.profile_knowledge is not None
+    assert generation_opt_in.profile_knowledge.items_used == 1
+
+    # 2. Opt-in False
+    req_opt_out = QuizRequest(
+        question_count=1,
+        question_types=[QuizQuestionType.MULTIPLE_CHOICE],
+        difficulty=QuizDifficulty.MEDIUM,
+        topic_focus="All Topics",
+        include_profile_context=False,
+    )
+    generation_opt_out = QuizService.generate(
+        db_session,
+        model_graph.course.id,
+        req_opt_out,
+        provider,
+        user_id=model_graph.user.id,
+    )
+    assert "[Supplementary Student Knowledge Profile]" not in provider.prompt
+    assert "Special Relativity Knowledge" not in provider.prompt
+    assert generation_opt_out.profile_knowledge is not None
+    assert generation_opt_out.profile_knowledge.is_empty

@@ -70,6 +70,7 @@ describe('ProtectedRoute', () => {
         is_banned: false,
         credits: null,
         preferred_model: 'gemini-1.5-flash',
+        education_level: 'unspecified',
       },
       isLoading: false,
       isAuthenticated: true,

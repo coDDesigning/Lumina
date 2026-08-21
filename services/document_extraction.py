@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from backend.app.config import settings
+from schemas.prompt_context import PromptContext
 from services.document_pipeline import (
     DocumentProcessingError as PipelineProcessingError,
 )
@@ -56,6 +57,7 @@ def extract_document(
     stage_callback: StageCallback | None = None,
     extraction_callback: ExtractionCallback | None = None,
     image_provider: ImageUnderstandingProvider | None = None,
+    prompt_context: PromptContext | None = None,
 ) -> ProcessedDocumentData:
     if storage.provider != storage_provider:
         raise DocumentProcessingError(
@@ -157,7 +159,7 @@ def extract_document(
     resolved_image_provider = (
         image_provider
         if image_provider is not None
-        else get_image_understanding_provider()
+        else get_image_understanding_provider(prompt_context=prompt_context)
     )
 
     try:

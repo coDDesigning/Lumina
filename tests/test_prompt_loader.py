@@ -1,5 +1,6 @@
 import json
 import pytest
+from pydantic import ValidationError
 
 from schemas.prompt_template import (
     MissingPromptVariableError,
@@ -11,6 +12,13 @@ from schemas.prompt_template import (
 )
 from services.prompt_loader import PromptLoader
 
+SHARED_PROMPT_VARIABLES = {
+    "EDUCATION_LEVEL": "high_school. Write for a secondary-school learner.",
+    "COURSE_TITLE": "AP Biology",
+    "SUBJECT_AREA": "Biology",
+    "MATERIAL_KIND": "textbook. The material is textbook content.",
+}
+
 
 # ---------------------------------------------------------------------------
 # Parser and Loader Unit Tests
@@ -20,8 +28,12 @@ from services.prompt_loader import PromptLoader
 def test_load_valid_study_guide_template() -> None:
     template = PromptLoader.load_template("study_guide", reload=True)
     assert template.name == "study_guide"
-    assert template.version == "1.2.0"
+    assert template.version == "2.0.0"
     assert template.required_variables == [
+        "EDUCATION_LEVEL",
+        "COURSE_TITLE",
+        "SUBJECT_AREA",
+        "MATERIAL_KIND",
         "TEXT",
         "SUMMARY_FORMAT",
         "TOPIC_FOCUS",
@@ -42,11 +54,15 @@ def test_load_all_built_in_templates() -> None:
     expected_names = {
         "study_guide",
         "quiz",
+        "quiz_grading",
         "flashcard",
         "ai_tutor",
+        "course_qa",
         "prompt_generator",
+        "image_description",
+        "ocr_cleanup",
     }
-    assert expected_names.issubset(set(templates.keys()))
+    assert set(templates.keys()) == expected_names
     for name, template in templates.items():
         assert template.name == name
         assert template.version
@@ -96,6 +112,7 @@ def test_render_template_substitutes_variables() -> None:
     rendered = PromptLoader.render(
         "study_guide",
         {
+            **SHARED_PROMPT_VARIABLES,
             "TEXT": "Sample Lecture Notes Content",
             "SUMMARY_FORMAT": "Requested summary format: overview.",
             "TOPIC_FOCUS": "Working Memory",
@@ -120,8 +137,9 @@ def test_render_missing_required_variable_raises_error() -> None:
     with pytest.raises(MissingPromptVariableError) as exc_info:
         PromptLoader.render("study_guide", {})
     assert (
-        "missing required variable(s): DETAIL_LEVEL, SUMMARY_FORMAT, SUMMARY_LENGTH, "
-        "SUMMARY_MODE, TEXT, TOPIC_FOCUS" in str(exc_info.value)
+        "missing required variable(s): COURSE_TITLE, DETAIL_LEVEL, "
+        "EDUCATION_LEVEL, MATERIAL_KIND, SUBJECT_AREA, SUMMARY_FORMAT, "
+        "SUMMARY_LENGTH, SUMMARY_MODE, TEXT, TOPIC_FOCUS" in str(exc_info.value)
     )
 
 
@@ -130,6 +148,7 @@ def test_render_unexpected_extra_variable_raises_error() -> None:
         PromptLoader.render(
             "study_guide",
             {
+                **SHARED_PROMPT_VARIABLES,
                 "TEXT": "Valid content",
                 "SUMMARY_FORMAT": "Requested summary format: overview.",
                 "TOPIC_FOCUS": "All Topics",
@@ -154,19 +173,76 @@ def test_custom_template_with_optional_variables() -> None:
         template="Instruction: {{REQUIRED_TEXT}} (Hint: {{OPTIONAL_HINT}})",
     )
 
-    # 1. Provide only required variable
     rendered = custom.render(
         {"REQUIRED_TEXT": "Do something", "OPTIONAL_HINT": "Be quick"}
     )
     assert "Instruction: Do something (Hint: Be quick)" == rendered
 
-    # 2. Extra variable fails
     with pytest.raises(UnexpectedPromptVariableError):
         custom.render({"REQUIRED_TEXT": "Do something", "UNKNOWN": "value"})
 
-    # 3. Missing required variable fails
     with pytest.raises(MissingPromptVariableError):
         custom.render({"OPTIONAL_HINT": "only hint"})
+
+
+def test_omitted_optional_variable_never_reaches_a_rendered_prompt() -> None:
+    custom = PromptTemplateModel(
+        name="custom_task",
+        version="1.0.0",
+        required_variables=["REQUIRED_TEXT"],
+        optional_variables=["OPTIONAL_HINT"],
+        template="Instruction: {{REQUIRED_TEXT}} (Hint: {{OPTIONAL_HINT}})",
+    )
+
+    with pytest.raises(MissingPromptVariableError) as excinfo:
+        custom.render({"REQUIRED_TEXT": "Do something"})
+
+    assert "OPTIONAL_HINT" in str(excinfo.value)
+
+
+def test_template_declaring_an_undeclared_placeholder_fails_to_load() -> None:
+    with pytest.raises(ValidationError):
+        PromptTemplateModel(
+            name="typo_task",
+            version="1.0.0",
+            required_variables=["EDUCATION_LEVEL"],
+            template="Level: {{EDUCATON_LEVEL}}",
+        )
+
+
+def test_declared_variable_absent_from_the_body_is_allowed() -> None:
+    custom = PromptTemplateModel(
+        name="sparse_task",
+        version="1.0.0",
+        required_variables=["USED", "UNUSED"],
+        template="Only {{USED}} appears.",
+    )
+
+    assert custom.render({"USED": "this", "UNUSED": "that"}) == "Only this appears."
+
+
+def test_a_value_substituted_last_can_never_forge_a_placeholder() -> None:
+    custom = PromptTemplateModel(
+        name="forge_task",
+        version="1.0.0",
+        required_variables=["MATERIAL", "SETTING"],
+        template="{{MATERIAL}} then {{SETTING}}",
+    )
+
+    rendered = custom.render({"SETTING": "value", "MATERIAL": "{{SETTING}}"})
+
+    assert rendered == "{{SETTING}} then value"
+
+
+def test_every_built_in_template_renders_without_leaving_a_placeholder() -> None:
+    for name, template in PromptLoader.load_all().items():
+        variables = {
+            variable: f"<{variable.lower()}>"
+            for variable in sorted(template.template_placeholders())
+        }
+        rendered = template.render(variables)
+        for variable in variables:
+            assert f"{{{{{variable}}}}}" not in rendered, name
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +254,7 @@ def test_quiz_template_regression() -> None:
     rendered = PromptLoader.render(
         "quiz",
         {
+            **SHARED_PROMPT_VARIABLES,
             "QUESTION_COUNT": "8",
             "QUESTION_TYPES_DIRECTIVE": "Use only these question types: true_false.",
             "QUESTION_SCHEMAS": '{"question_type": "true_false"}',
@@ -205,6 +282,10 @@ def test_quiz_template_regression() -> None:
     template = PromptLoader.load_template("quiz")
     assert template.output_schema_ref == "QuizGenerationResponse"
     assert template.required_variables == [
+        "EDUCATION_LEVEL",
+        "COURSE_TITLE",
+        "SUBJECT_AREA",
+        "MATERIAL_KIND",
         "TEXT",
         "QUESTION_COUNT",
         "QUESTION_TYPES_DIRECTIVE",
@@ -219,6 +300,7 @@ def test_quiz_grading_template_regression() -> None:
     rendered = PromptLoader.render(
         "quiz_grading",
         {
+            **SHARED_PROMPT_VARIABLES,
             "SUBMISSION_COUNT": "2",
             "SUBMISSIONS": "question_number: 1 Question: Why sorted?",
         },
@@ -230,13 +312,20 @@ def test_quiz_grading_template_regression() -> None:
 
     template = PromptLoader.load_template("quiz_grading")
     assert template.output_schema_ref == "OpenEndedGradingResponse"
-    assert template.required_variables == ["SUBMISSION_COUNT", "SUBMISSIONS"]
+    assert template.required_variables == [
+        "EDUCATION_LEVEL",
+        "COURSE_TITLE",
+        "SUBJECT_AREA",
+        "MATERIAL_KIND",
+        "SUBMISSION_COUNT",
+        "SUBMISSIONS",
+    ]
 
 
 def test_flashcard_template_regression() -> None:
     rendered = PromptLoader.render(
         "flashcard",
-        {"TEXT": "Data Structures Notes"},
+        {**SHARED_PROMPT_VARIABLES, "TEXT": "Data Structures Notes"},
     )
     assert "Data Structures Notes" in rendered
     assert "{{TEXT}}" not in rendered
@@ -244,13 +333,20 @@ def test_flashcard_template_regression() -> None:
 
     template = PromptLoader.load_template("flashcard")
     assert template.output_schema_ref == "FlashcardGenerationResponse"
-    assert template.required_variables == ["TEXT"]
+    assert template.required_variables == [
+        "EDUCATION_LEVEL",
+        "COURSE_TITLE",
+        "SUBJECT_AREA",
+        "MATERIAL_KIND",
+        "TEXT",
+    ]
 
 
 def test_ai_tutor_template_regression() -> None:
     rendered = PromptLoader.render(
         "ai_tutor",
         {
+            **SHARED_PROMPT_VARIABLES,
             "COURSE_MATERIAL": "Operating Systems Virtual Memory",
             "CONVERSATION_HISTORY": (
                 "User: What is virtual memory?\n"
@@ -267,14 +363,22 @@ def test_ai_tutor_template_regression() -> None:
     assert "{{CONVERSATION_HISTORY}}" not in rendered
     assert "{{QUESTION}}" not in rendered
     assert (
-        "Begin with a concise helpful hint or guiding question before giving the full "
+        "Open with a concise hint or guiding question, then give the full "
         "explanation." in rendered
     )
     assert "When appropriate, guide the student with a helpful hint" not in rendered
+    assert "apparent level" not in rendered
+    assert "Adapt the depth and style of your explanation to the education level" in (
+        rendered
+    )
 
     template = PromptLoader.load_template("ai_tutor")
     assert template.output_schema_ref == "AiTutorResponse"
     assert template.required_variables == [
+        "EDUCATION_LEVEL",
+        "COURSE_TITLE",
+        "SUBJECT_AREA",
+        "MATERIAL_KIND",
         "COURSE_MATERIAL",
         "CONVERSATION_HISTORY",
         "QUESTION",
@@ -284,7 +388,10 @@ def test_ai_tutor_template_regression() -> None:
 def test_prompt_generator_template_regression() -> None:
     rendered = PromptLoader.render(
         "prompt_generator",
-        {"TEXT": "Help me write a Python script for web scraping"},
+        {
+            **SHARED_PROMPT_VARIABLES,
+            "TEXT": "Help me write a Python script for web scraping",
+        },
     )
     assert "Help me write a Python script for web scraping" in rendered
     assert "{{TEXT}}" not in rendered
@@ -292,4 +399,10 @@ def test_prompt_generator_template_regression() -> None:
 
     template = PromptLoader.load_template("prompt_generator")
     assert template.output_schema_ref == "PromptGenerationResponse"
-    assert template.required_variables == ["TEXT"]
+    assert template.required_variables == [
+        "EDUCATION_LEVEL",
+        "COURSE_TITLE",
+        "SUBJECT_AREA",
+        "MATERIAL_KIND",
+        "TEXT",
+    ]

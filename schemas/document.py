@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from schemas.prompt_context import DocumentMaterialKind
+
 
 class DocumentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -13,6 +15,7 @@ class DocumentResponse(BaseModel):
     original_file_name: str
     file_type: str
     mime_type: str
+    material_kind: DocumentMaterialKind = DocumentMaterialKind.UNSPECIFIED
     file_size: int
     course_id: int
     status: str

@@ -12,6 +12,7 @@ const MOCK_USERS: User[] = [
     is_banned: false,
     credits: null,
     preferred_model: 'gemini:gemini-3.6-flash',
+    education_level: 'unspecified',
   },
   {
     id: 2,
@@ -21,6 +22,7 @@ const MOCK_USERS: User[] = [
     is_banned: false,
     credits: 50,
     preferred_model: 'gemini:gemini-3.6-flash',
+    education_level: 'unspecified',
   },
 ];
 

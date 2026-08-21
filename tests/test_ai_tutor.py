@@ -25,7 +25,14 @@ from services.retrieval_material import (
 from services.text_generation import GenerationMetadata, TextGenerationError
 from utils.ai_errors import PUBLIC_MESSAGES, AiErrorCode
 
+from schemas.prompt_context import EducationLevel, MaterialKind, PromptContext
 
+PROMPT_CONTEXT = PromptContext(
+    education_level=EducationLevel.HIGH_SCHOOL,
+    course_title="AP Biology",
+    subject_area="Biology",
+    material_kind=MaterialKind.TEXTBOOK,
+)
 IRRELEVANT_SEED = 4.0
 
 
@@ -154,6 +161,7 @@ def test_build_prompt_inserts_course_material_and_question() -> None:
     prompt = AiTutorService.build_prompt(
         "Example lecture material",
         "What is an operating system?",
+        context=PROMPT_CONTEXT,
     )
 
     assert "{{COURSE_MATERIAL}}" not in prompt
@@ -161,10 +169,15 @@ def test_build_prompt_inserts_course_material_and_question() -> None:
     assert "Example lecture material" in prompt
     assert "What is an operating system?" in prompt
     assert (
-        "Begin with a concise helpful hint or guiding question before giving the full "
+        "Open with a concise hint or guiding question, then give the full "
         "explanation." in prompt
     )
     assert "When appropriate, guide the student with a helpful hint" not in prompt
+    assert "apparent level" not in prompt
+    assert "high_school" in prompt
+    assert "AP Biology" in prompt
+    assert "Biology" in prompt
+    assert "textbook" in prompt
 
 
 def test_generate_returns_tutor_response(

@@ -15,6 +15,8 @@ from services.profile_knowledge import (
     ProfileKnowledgeContext,
     assemble_generation_context,
 )
+from schemas.prompt_context import PromptContext
+from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
 from services.text_generation import (
     TextGenerationError,
@@ -72,11 +74,11 @@ class FlashcardService:
         )
 
     @classmethod
-    def build_prompt(
-        cls,
-        course_material: str,
-    ) -> str:
-        return PromptLoader.render(cls.PROMPT_TEMPLATE_NAME, {"TEXT": course_material})
+    def build_prompt(cls, course_material: str, *, context: PromptContext) -> str:
+        return PromptLoader.render(
+            cls.PROMPT_TEMPLATE_NAME,
+            {**context.as_variables(), "TEXT": course_material},
+        )
 
     @classmethod
     def generate(
@@ -88,11 +90,10 @@ class FlashcardService:
         *,
         include_profile_context: bool = False,
     ) -> FlashcardGeneration:
+        course = db.get(Course, course_id)
         resolved_user_id = user_id
-        if resolved_user_id is None:
-            course = db.get(Course, course_id)
-            if course is not None:
-                resolved_user_id = course.owner_id
+        if resolved_user_id is None and course is not None:
+            resolved_user_id = course.owner_id
 
         material = cls.get_course_material(
             db,
@@ -118,7 +119,10 @@ class FlashcardService:
             include_profile_context=include_profile_context,
         )
 
-        prompt = cls.build_prompt(generation_ctx.combined_text)
+        prompt_context = resolve_prompt_context(
+            db, course=course, user_id=resolved_user_id
+        )
+        prompt = cls.build_prompt(generation_ctx.combined_text, context=prompt_context)
         metadata = None
 
         receipt = None

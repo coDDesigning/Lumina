@@ -219,11 +219,24 @@ course therefore needs no administrator involvement and admits none.
 ### Course workspace fields
 
 A course workspace carries `title`, `description`, `semester`, `exam_date`,
-`topics`, `syllabus`, `created_at` and `updated_at`. `syllabus` is nullable free
+`topics`, `syllabus`, `subject_area`, `education_level`, `created_at` and
+`updated_at`. `syllabus` is nullable free
 text for the course outline; it is distinct from `topics`, which holds the
 comma-separated topic labels the study features consume. `updated_at` is
 maintained by the ORM through `onupdate`, so any course modification advances it
 while `created_at` stays fixed.
+
+`education_level` is a `String(20)` constrained by a CHECK to `high_school`,
+`undergraduate`, `graduate`, `professional_other`, or `unspecified`, and it
+defaults to `unspecified` at the database level so a course written before the
+column existed reads back as neutral rather than as a guess. `users` carries the
+same column as a fallback, and `uploaded_documents.material_kind` records what
+kind of material a document is; `mixed` is rejected there because it is only ever
+a resolved aggregate across several documents. These three columns exist to feed
+the shared prompt variables described in `docs/prompt_templates.md`; nothing else
+reads them.
+
+`subject_area` is nullable and is never inferred from the title.
 
 `owner_id` is immutable. It is absent from both the create and update payloads,
 so neither an owner nor an administrator can transfer a workspace through the

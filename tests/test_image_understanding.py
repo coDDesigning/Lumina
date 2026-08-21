@@ -29,9 +29,12 @@ from services.document_pipeline import (
     VisualDescription,
     VisualType,
 )
+from schemas.prompt_context import EducationLevel, MaterialKind, PromptContext
+from schemas.prompt_template import PromptTemplateNotFoundError
 from services.image_understanding import (
     GeminiImageUnderstandingProvider,
     OllamaImageUnderstandingProvider,
+    _render_image_description_prompt,
     configured_image_understanding_identity,
     get_image_understanding_provider,
 )
@@ -331,6 +334,12 @@ def test_ollama_vision_success(monkeypatch) -> None:
     assert captured[0]["model"] == "llama3.2-vision"
     assert captured[0]["images"] == [base64.b64encode(VALID_PNG_BYTES).decode("utf-8")]
     assert captured[0]["stream"] is False
+    prompt = captured[0]["prompt"]
+    assert "{{" not in prompt
+    assert "diagram" in prompt
+    assert "unspecified" in prompt
+    assert "Computer Science" not in prompt
+    assert "university" not in prompt
 
 
 def test_ollama_vision_timeout_is_temporary(monkeypatch) -> None:
@@ -516,6 +525,7 @@ def test_configured_identity_reports_provider_and_model(monkeypatch) -> None:
 def test_extract_document_uses_configured_image_provider(monkeypatch) -> None:
     """Proves extract_document resolves and invokes get_image_understanding_provider."""
     called_factory = False
+    factory_kwargs: dict = {}
 
     class TrackingDisabledProvider:
         enabled = False
@@ -523,9 +533,10 @@ def test_extract_document_uses_configured_image_provider(monkeypatch) -> None:
         def describe_visual(self, *args, **kwargs):
             return None
 
-    def fake_get_provider():
+    def fake_get_provider(**kwargs):
         nonlocal called_factory
         called_factory = True
+        factory_kwargs.update(kwargs)
         return TrackingDisabledProvider()
 
     monkeypatch.setattr(
@@ -547,8 +558,63 @@ def test_extract_document_uses_configured_image_provider(monkeypatch) -> None:
     )
 
     assert called_factory is True
+    assert factory_kwargs == {"prompt_context": None}
     assert len(result.pages) == 1
     assert result.pages[0].text == "Simple course text for extraction."
+
+
+def test_extract_document_binds_the_prompt_context_to_the_provider() -> None:
+    factory_kwargs: dict = {}
+
+    class TrackingDisabledProvider:
+        enabled = False
+
+        def describe_visual(self, *args, **kwargs):
+            return None
+
+    def fake_get_provider(**kwargs):
+        factory_kwargs.update(kwargs)
+        return TrackingDisabledProvider()
+
+    context = PromptContext(
+        education_level=EducationLevel.HIGH_SCHOOL,
+        course_title="AP Biology",
+        subject_area="Biology",
+        material_kind=MaterialKind.TEXTBOOK,
+    )
+
+    txt_content = b"Simple course text for extraction."
+    file_hash = hashlib.sha256(txt_content).hexdigest()
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(
+            "services.document_extraction.get_image_understanding_provider",
+            fake_get_provider,
+        )
+        extract_document(
+            _MockStorage(txt_content),
+            storage_provider="local",
+            storage_key="test-key",
+            expected_hash=file_hash,
+            expected_size=len(txt_content),
+            file_type="txt",
+            prompt_context=context,
+        )
+
+    assert factory_kwargs["prompt_context"] is context
+
+
+def test_a_prompt_context_survives_spawn_pickling() -> None:
+    import pickle
+
+    context = PromptContext(
+        education_level=EducationLevel.GRADUATE,
+        course_title="Advanced Macroeconomics",
+        subject_area="Economics",
+        material_kind=MaterialKind.SLIDES,
+    )
+
+    assert pickle.loads(pickle.dumps(context)) == context
 
 
 def test_extract_document_with_enabled_provider_processes_pdf_visuals() -> None:
@@ -705,3 +771,62 @@ def test_extract_document_visual_analysis_error_is_nonfatal() -> None:
         result.chunks[0].text
         == "Searchable native course text with more than twenty characters."
     )
+
+
+def test_vision_prompt_carries_the_resolved_learner_context(monkeypatch) -> None:
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={"response": "A labelled cell diagram."})
+
+    provider = _ollama_vision_provider(monkeypatch, handler)
+    provider._prompt_context = PromptContext(
+        education_level=EducationLevel.HIGH_SCHOOL,
+        course_title="AP Biology",
+        subject_area="Biology",
+        material_kind=MaterialKind.TEXTBOOK,
+    )
+
+    provider.describe_visual(
+        VALID_PNG_BYTES,
+        page_number=1,
+        visual_index=0,
+        suggested_type=VisualType.DIAGRAM,
+    )
+
+    prompt = captured[0]["prompt"]
+    assert "high_school" in prompt
+    assert "AP Biology" in prompt
+    assert "Biology" in prompt
+    assert "textbook" in prompt
+    assert "{{" not in prompt
+
+
+def test_gemini_and_ollama_send_an_identical_vision_prompt() -> None:
+    context = PromptContext(
+        education_level=EducationLevel.GRADUATE,
+        course_title="Advanced Macroeconomics",
+        subject_area="Economics",
+        material_kind=MaterialKind.SLIDES,
+    )
+
+    rendered = _render_image_description_prompt(context, VisualType.CHART)
+
+    assert "graduate" in rendered
+    assert "Advanced Macroeconomics" in rendered
+    assert "chart" in rendered
+    assert "{{" not in rendered
+
+
+def test_vision_prompt_failure_is_a_per_visual_error(monkeypatch) -> None:
+    def explode(*args, **kwargs):
+        raise PromptTemplateNotFoundError("template missing")
+
+    monkeypatch.setattr(
+        "services.image_understanding.PromptLoader.render",
+        explode,
+    )
+
+    with pytest.raises(VisualAnalysisError):
+        _render_image_description_prompt(PromptContext(), VisualType.DIAGRAM)

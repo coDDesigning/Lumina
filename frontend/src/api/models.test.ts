@@ -29,6 +29,7 @@ const SAMPLE_USER: User = {
   is_banned: false,
   credits: 49.0,
   preferred_model: 'gemini:gemini-3.6-flash',
+  education_level: 'unspecified',
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

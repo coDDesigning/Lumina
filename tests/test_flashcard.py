@@ -20,6 +20,15 @@ from services.flashcard import (
 )
 from services.text_generation import TextGenerationError
 
+from schemas.prompt_context import EducationLevel, MaterialKind, PromptContext
+
+PROMPT_CONTEXT = PromptContext(
+    education_level=EducationLevel.HIGH_SCHOOL,
+    course_title="AP Biology",
+    subject_area="Biology",
+    material_kind=MaterialKind.TEXTBOOK,
+)
+
 
 def _valid_flashcard_payload() -> dict[str, object]:
     return {
@@ -139,7 +148,9 @@ def test_get_course_material_uses_ready_document_chunks(
 
 
 def test_build_prompt_inserts_course_material() -> None:
-    prompt = FlashcardService.build_prompt("Example lecture material")
+    prompt = FlashcardService.build_prompt(
+        "Example lecture material", context=PROMPT_CONTEXT
+    )
 
     assert "{{TEXT}}" not in prompt
     assert "Example lecture material" in prompt

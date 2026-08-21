@@ -20,6 +20,7 @@ from backend.app.models import (
     UploadedDocument,
 )
 from backend.app.repositories.document import DocumentRepository
+from schemas.prompt_context import DocumentMaterialKind
 from services.document_hash import calculate_file_hash
 from services.document_validation import validate_basic_upload
 from services.processing_jobs import (
@@ -72,6 +73,7 @@ class DocumentService:
         upload: UploadFile,
         course_id: int,
         user_id: int,
+        material_kind: str = DocumentMaterialKind.UNSPECIFIED.value,
     ) -> DocumentUploadResult:
         try:
             course_exists = db.scalar(
@@ -206,6 +208,7 @@ class DocumentService:
                 storage_provider=storage.provider,
                 storage_key=storage_key,
                 status="uploaded",
+                material_kind=DocumentMaterialKind(material_kind).value,
             )
             enqueue_document_job(db, document)
             db.refresh(document)

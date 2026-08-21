@@ -549,6 +549,39 @@
   padding: 0 15px 0 18px;
 }
 
+.composer-profile-toggle {
+  width: min(77%, 720px);
+  margin: 10px 0 0 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.composer-profile-toggle .study-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4b4652;
+}
+
+.composer-profile-toggle .study-toggle-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #8b5cf6;
+  cursor: pointer;
+}
+
+.composer-profile-toggle .study-toggle-caption {
+  margin: 0 0 0 24px;
+  font-size: 12px;
+  color: #716a78;
+  line-height: 1.35;
+}
+
+
 .visually-hidden {
   position: absolute !important;
   width: 1px !important;

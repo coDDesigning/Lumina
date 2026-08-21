@@ -410,7 +410,11 @@ NULL` because a quiz outlives the account that generated it; the course cascade
 still removes it with its course.
 
 Generation also writes a `generated_outputs` row of `output_type` `quiz`, so a
-course's generation history is one list regardless of feature.
+course's generation history is one list regardless of feature. Across all generation
+features (`study_guide`, `quiz`, `flashcards`), `GeneratedOutputService.record` is the
+enforced canonical single writer for `generated_outputs` rows. Feature services and routes
+delegate persistence to this entrypoint and never instantiate `GeneratedOutput` models directly.
+
 
 ### Question types
 
@@ -591,3 +595,16 @@ When assembling context for course-scoped AI features:
    conflicting statements, course material is authoritative.
 4. **Isolation**: A user's profile knowledge is never exposed to or included in another
    user's generation context.
+
+### Scope and document upload deferral decision
+
+- **MVP Scope**: In Lumina MVP, profile knowledge operates exclusively through structured
+  text entries (`topic` and `detail`) created and managed by the student. These provide
+  deterministic, low-overhead background context for prompt personalization across courses.
+- **Post-MVP Deferral**: Full profile-level document and file upload (requiring user-scoped
+  file storage, per-user document extraction/OCR pipelines, user-isolated chunking, and
+  cross-course personal semantic vector search) is **explicitly deferred to post-MVP**.
+- **UI and API Boundaries**: Course-scoped documents (`POST /api/courses/{course_id}/documents`)
+  remain the sole file ingestion pipeline in MVP. The user profile UI and API endpoints
+  do not provide or imply document upload capabilities for user profiles.
+

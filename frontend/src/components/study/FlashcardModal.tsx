@@ -75,7 +75,10 @@ export function FlashcardModal({
     try {
       const result = await flashcardsAPI.generate(
         courseId,
-        { include_profile_context: includeProfileContext },
+        {
+          use_profile_knowledge: includeProfileContext,
+          include_profile_context: includeProfileContext,
+        },
         { signal: controller.signal },
       );
       setCards(result.flashcards.flashcards);
@@ -189,7 +192,7 @@ export function FlashcardModal({
                   ⚠️ No ready course materials found. Please upload and process documents first.
                 </div>
               ) : (
-                <div style={{ margin: '16px auto 24px auto', display: 'flex', justifyContent: 'center' }}>
+                <div className="study-toggle-group" style={{ margin: '16px auto 24px auto', maxWidth: '440px', textAlign: 'left' }}>
                   <label className="study-toggle-label" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
                     <input
                       type="checkbox"
@@ -198,6 +201,9 @@ export function FlashcardModal({
                     />
                     <span>Include personal study profile context</span>
                   </label>
+                  <p className="study-toggle-caption" style={{ margin: '4px 0 0 24px' }}>
+                    Includes your profile background as supplementary context. Course material remains primary and authoritative.
+                  </p>
                 </div>
               )}
               {exhausted ? (

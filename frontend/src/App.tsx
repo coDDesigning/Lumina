@@ -135,6 +135,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const [isConversationHistoryOpen, setIsConversationHistoryOpen] = useState(false)
   const [isQuizModalOpen, setIsQuizModalOpen] = useState(false)
   const [isFlashcardModalOpen, setIsFlashcardModalOpen] = useState(false)
+  const [includeProfileContext, setIncludeProfileContext] = useState(false)
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false)
   const [promptGeneratorError, setPromptGeneratorError] = useState<string | null>(null)
   const [uploadErrors, setUploadErrors] = useState<{ fileName: string; message: string }[]>([])
@@ -300,6 +301,8 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
 
     const request = {
       question: prompt,
+      use_profile_knowledge: includeProfileContext,
+      include_profile_context: includeProfileContext,
       ...(conversation.conversationId
         ? { conversation_id: conversation.conversationId }
         : {}),
@@ -758,6 +761,20 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
 
               <div className="composer-credit-balance">
                 <CreditBalance source={conversationSource} />
+              </div>
+
+              <div className="composer-profile-toggle">
+                <label className="study-toggle-label">
+                  <input
+                    type="checkbox"
+                    checked={includeProfileContext}
+                    onChange={(event) => setIncludeProfileContext(event.target.checked)}
+                  />
+                  <span>Include personal study profile context</span>
+                </label>
+                <p className="study-toggle-caption">
+                  Includes your profile background as supplementary context. Course material remains primary and authoritative.
+                </p>
               </div>
 
               <form className="prompt-field main-prompt" onSubmit={submitPrompt}>

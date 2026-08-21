@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.config import settings
-from backend.app.models import Course, Quiz, QuizQuestion
+from backend.app.models import Course, CourseSettings, Quiz, QuizQuestion
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.quiz import (
     MULTIPLE_CHOICE_OPTION_COUNT,
@@ -184,6 +184,7 @@ class QuizGeneration:
     quiz: QuizGenerationResponse
     material: RetrievedCourseMaterial
     model_used: str
+    effective_request: QuizRequest
     profile_knowledge: ProfileKnowledgeContext | None = None
 
 
@@ -282,6 +283,58 @@ class QuizService:
         )
 
     @classmethod
+    def resolve_effective_request(
+        cls, db: Session, course_id: int, request: QuizRequest
+    ) -> QuizRequest:
+        settings_row = db.scalar(
+            select(CourseSettings).where(CourseSettings.course_id == course_id)
+        )
+        fields_set = request.model_fields_set
+
+        # 1. Question count: explicit request > CourseSettings > default 10
+        if "question_count" in fields_set:
+            question_count = request.question_count
+        elif settings_row is not None and settings_row.question_count is not None:
+            question_count = min(max(settings_row.question_count, 1), 20)
+        else:
+            question_count = request.question_count
+
+        # 2. Difficulty: explicit request > CourseSettings > default MEDIUM
+        if "difficulty" in fields_set:
+            difficulty = request.difficulty
+        elif settings_row is not None and settings_row.difficulty:
+            diff_raw = settings_row.difficulty.strip().casefold()
+            if diff_raw == "easy":
+                difficulty = QuizDifficulty.EASY
+            elif diff_raw == "hard":
+                difficulty = QuizDifficulty.HARD
+            else:
+                difficulty = QuizDifficulty.MEDIUM
+        else:
+            difficulty = request.difficulty
+
+        # 3. Question types: explicit request > default [MULTIPLE_CHOICE]
+        if "question_types" in fields_set:
+            question_types = request.question_types
+        else:
+            question_types = request.question_types
+
+        # 4. Topic focus: explicit request > default "All Topics"
+        if "topic_focus" in fields_set:
+            topic_focus = request.topic_focus
+        else:
+            topic_focus = request.topic_focus
+
+        return QuizRequest(
+            question_count=question_count,
+            question_types=question_types,
+            difficulty=difficulty,
+            topic_focus=topic_focus,
+            use_profile_knowledge=request.use_profile_knowledge,
+            model=request.model,
+        )
+
+    @classmethod
     def generate(
         cls,
         db: Session,
@@ -291,6 +344,7 @@ class QuizService:
         *,
         user_id: int | None = None,
     ) -> QuizGeneration:
+        effective_request = cls.resolve_effective_request(db, course_id, request)
         course = db.get(Course, course_id)
 
         resolved_user_id = user_id
@@ -312,7 +366,7 @@ class QuizService:
             log_failure(ErrorCategory.NO_READY_MATERIAL)
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
-        query = cls.build_retrieval_query(course, request)
+        query = cls.build_retrieval_query(course, effective_request)
 
         try:
             material = cls.get_course_material(db, course_id, query=query)
@@ -331,7 +385,7 @@ class QuizService:
             course_id=course_id,
             user_id=resolved_user_id,
             course_material=material,
-            include_profile_context=request.use_profile_knowledge,
+            include_profile_context=effective_request.use_profile_knowledge,
         )
 
         prompt_context = resolve_prompt_context(
@@ -339,7 +393,7 @@ class QuizService:
         )
         prompt = cls.build_prompt(
             generation_ctx.course_material.text,
-            request,
+            effective_request,
             profile_knowledge=generation_ctx.profile_knowledge,
             context=prompt_context,
         )
@@ -350,7 +404,7 @@ class QuizService:
             receipt = CreditService.charge(
                 db,
                 resolved_user_id,
-                cls.credit_cost(request),
+                cls.credit_cost(effective_request),
                 source_type="quiz",
             )
             if receipt is None:
@@ -374,7 +428,7 @@ class QuizService:
 
         try:
             validated = QuizGenerationResponse.model_validate(result)
-            cls.assert_matches_request(validated, request)
+            cls.assert_matches_request(validated, effective_request)
         except (ValidationError, ValueError) as exc:
             if resolved_user_id:
                 CreditService.refund(db, receipt)
@@ -399,6 +453,7 @@ class QuizService:
             quiz=validated,
             material=material,
             model_used=model_identifier(metadata),
+            effective_request=effective_request,
             profile_knowledge=generation_ctx.profile_knowledge,
         )
 

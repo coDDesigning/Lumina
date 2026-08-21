@@ -71,14 +71,28 @@ OPTION_BASED_QUESTION_TYPES = frozenset(
 
 
 class QuizRequest(BaseModel):
-    question_count: int = Field(ge=MIN_QUIZ_QUESTIONS, le=MAX_QUIZ_QUESTIONS)
+    question_count: int = Field(
+        default=10,
+        ge=MIN_QUIZ_QUESTIONS,
+        le=MAX_QUIZ_QUESTIONS,
+        description="The number of questions to generate, or omit to use course settings/default",
+    )
     question_types: list[QuizQuestionType] = Field(
+        default_factory=lambda: [QuizQuestionType.MULTIPLE_CHOICE],
         min_length=1,
         max_length=len(QuizQuestionType),
-        description="The question types the generated quiz may use.",
+        description="The question types the generated quiz may use, or omit to use default",
     )
-    difficulty: QuizDifficulty
-    topic_focus: str = Field(min_length=1, max_length=MAX_TOPIC_CHARS)
+    difficulty: QuizDifficulty = Field(
+        default=QuizDifficulty.MEDIUM,
+        description="The difficulty level, or omit to use course settings/default",
+    )
+    topic_focus: str = Field(
+        default="All Topics",
+        min_length=1,
+        max_length=MAX_TOPIC_CHARS,
+        description="The topic focus, or omit to use 'All Topics'",
+    )
     use_profile_knowledge: bool = Field(
         default=False,
         validation_alias=AliasChoices(
@@ -318,10 +332,18 @@ class QuizGenerationSettings(BaseModel):
         retrieval_min_similarity: float,
     ) -> "QuizGenerationSettings":
         return cls(
-            question_count=request.question_count,
-            question_types=list(request.question_types),
-            difficulty=request.difficulty,
-            topic_focus=request.topic_focus,
+            question_count=request.question_count
+            if request.question_count is not None
+            else 10,
+            question_types=list(request.question_types)
+            if request.question_types
+            else [QuizQuestionType.MULTIPLE_CHOICE],
+            difficulty=request.difficulty
+            if request.difficulty is not None
+            else QuizDifficulty.MEDIUM,
+            topic_focus=request.topic_focus
+            if request.topic_focus is not None
+            else "All Topics",
             use_profile_knowledge=request.use_profile_knowledge,
             retrieval_limit=retrieval_limit,
             retrieval_min_similarity=retrieval_min_similarity,

@@ -11,6 +11,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { quizAPI } from '../../api/quiz';
+import { settingsAPI } from '../../api/settings';
 import {
   describeError,
   describeGenerationError,
@@ -157,6 +158,37 @@ export function QuizModal({
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  useEffect(() => {
+    let active = true;
+    settingsAPI
+      .get(courseId)
+      .then((data) => {
+        if (!active) return;
+        let diff: QuizDifficulty = 'medium';
+        const rawDiff = data.difficulty?.toLowerCase();
+        if (rawDiff === 'easy') diff = 'easy';
+        else if (rawDiff === 'hard') diff = 'hard';
+
+        let count = data.question_count ?? 10;
+        if (count <= 5) count = 5;
+        else if (count <= 10) count = 10;
+        else if (count <= 15) count = 15;
+        else count = 20;
+
+        setSetup((prev) => ({
+          ...prev,
+          difficulty: diff,
+          questionCount: count,
+        }));
+      })
+      .catch(() => {
+        // Keep fallback defaults if settings fetch fails
+      });
+    return () => {
+      active = false;
+    };
+  }, [courseId]);
+
   const questions: QuizQuestionView[] = quiz?.questions ?? [];
 
   const submitAttempt = useCallback(async () => {
@@ -240,6 +272,7 @@ export function QuizModal({
           question_types: setup.questionTypes,
           difficulty: setup.difficulty,
           topic_focus: setup.topic,
+          use_profile_knowledge: setup.includeProfileContext,
           include_profile_context: setup.includeProfileContext,
         },
         { signal: controller.signal },
@@ -461,19 +494,24 @@ export function QuizModal({
                   <span>Enable Exam Countdown Timer (1 min per question)</span>
                 </label>
 
-                <label className="study-toggle-label">
-                  <input
-                    type="checkbox"
-                    checked={setup.includeProfileContext}
-                    onChange={(event) =>
-                      setSetup({
-                        ...setup,
-                        includeProfileContext: event.target.checked,
-                      })
-                    }
-                  />
-                  <span>Include personal study profile context</span>
-                </label>
+                <div className="study-toggle-group">
+                  <label className="study-toggle-label">
+                    <input
+                      type="checkbox"
+                      checked={setup.includeProfileContext}
+                      onChange={(event) =>
+                        setSetup({
+                          ...setup,
+                          includeProfileContext: event.target.checked,
+                        })
+                      }
+                    />
+                    <span>Include personal study profile context</span>
+                  </label>
+                  <p className="study-toggle-caption">
+                    Includes your profile background as supplementary context. Course material remains primary and authoritative.
+                  </p>
+                </div>
 
                 {!hasMaterial ? (
                   <p className="summary-empty-state">

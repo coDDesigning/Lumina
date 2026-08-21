@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, Check, Copy, Download, Sparkles, X, XCircle } from 'lucide-react';
 import { studyGuideAPI } from '../../api/studyGuide';
+import { settingsAPI } from '../../api/settings';
 import {
   describeGenerationError,
   isAbortError,
@@ -82,6 +83,38 @@ export function SummaryModal({
   useEffect(() => () => abortRef.current?.abort(), []);
 
   useEffect(() => {
+    let active = true;
+    settingsAPI
+      .get(courseId)
+      .then((data) => {
+        if (!active) return;
+        let len: SummaryLength = 'medium';
+        const rawLen = data.summary_length?.toLowerCase();
+        if (rawLen === 'short') len = 'short';
+        else if (rawLen === 'long') len = 'long';
+
+        let detail: DetailLevel = 'standard';
+        const rawDetail = data.detail_level?.toLowerCase();
+        if (rawDetail === 'concise' || rawDetail === 'basic') detail = 'basic';
+        else if (rawDetail === 'detailed') detail = 'detailed';
+
+        let mode: SummaryMode = 'general';
+        const rawMode = data.study_mode?.toLowerCase();
+        if (rawMode === 'exam' || rawMode === 'exam_focused') mode = 'exam_focused';
+
+        setSummaryLength(len);
+        setDetailLevel(detail);
+        setSummaryMode(mode);
+      })
+      .catch(() => {
+        // Keep fallback defaults if settings fetch fails
+      });
+    return () => {
+      active = false;
+    };
+  }, [courseId]);
+
+  useEffect(() => {
     if (state.phase !== 'generating') return;
     setElapsed(0);
     const timer = setInterval(() => setElapsed((seconds) => seconds + 1), 1000);
@@ -114,6 +147,7 @@ export function SummaryModal({
           summary_length: summaryLength,
           detail_level: detailLevel,
           summary_mode: summaryMode,
+          use_profile_knowledge: includeProfileContext,
           include_profile_context: includeProfileContext,
         },
         { signal: controller.signal },
@@ -337,14 +371,19 @@ export function SummaryModal({
                   </div>
                 </div>
 
-                <label className="study-toggle-label">
-                  <input
-                    type="checkbox"
-                    checked={includeProfileContext}
-                    onChange={(event) => setIncludeProfileContext(event.target.checked)}
-                  />
-                  <span>Include personal study profile context</span>
-                </label>
+                <div className="study-toggle-group">
+                  <label className="study-toggle-label">
+                    <input
+                      type="checkbox"
+                      checked={includeProfileContext}
+                      onChange={(event) => setIncludeProfileContext(event.target.checked)}
+                    />
+                    <span>Include personal study profile context</span>
+                  </label>
+                  <p className="study-toggle-caption">
+                    Includes your profile background as supplementary context. Course material remains primary and authoritative.
+                  </p>
+                </div>
 
                 {!hasMaterial ? (
                   <p className="summary-empty-state">

@@ -195,7 +195,7 @@ function SettingsPage({ workspaceId }: SettingsPageProps) {
                   <input
                     type="range"
                     min="5"
-                    max="25"
+                    max="20"
                     step="5"
                     value={preferences.questionCount}
                     onChange={(event) =>

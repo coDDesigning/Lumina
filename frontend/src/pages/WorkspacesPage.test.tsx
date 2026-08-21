@@ -232,6 +232,103 @@ describe('WorkspacesPage', () => {
       }),
     );
   });
+
+  it('renders explicit error state with retry action when course list fails', async () => {
+    const user = userEvent.setup();
+    const handleRetry = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <WorkspacesPage
+          workspaces={[]}
+          activeWorkspaceId=""
+          error="Network connection timeout."
+          onRetry={handleRetry}
+          onCreate={vi.fn()}
+          onSelect={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Network connection timeout.');
+    expect(screen.getByText('Failed to load workspaces')).toBeInTheDocument();
+
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    await user.click(retryButton);
+
+    expect(handleRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves user input and displays error when workspace creation fails', async () => {
+    const user = userEvent.setup();
+    const handleCreate = vi.fn().mockRejectedValue(
+      new APIError(400, { detail: 'Course title already exists.' }),
+    );
+
+    render(
+      <MemoryRouter>
+        <WorkspacesPage
+          workspaces={mockWorkspaces}
+          activeWorkspaceId="1"
+          onCreate={handleCreate}
+          onSelect={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole('button', { name: /Create workspace/i }));
+
+    const nameInput = screen.getByPlaceholderText('e.g. Introduction to Economics');
+    const semesterInput = screen.getByPlaceholderText('e.g. Fall 2026');
+
+    await user.type(nameInput, 'Advanced Physics');
+    await user.type(semesterInput, 'Spring 2027');
+
+    const modal = screen.getByRole('dialog');
+    const submitButton = within(modal).getByRole('button', { name: 'Create workspace' });
+    await user.click(submitButton);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Course title already exists.');
+    // Input must be preserved
+    expect(nameInput).toHaveValue('Advanced Physics');
+    expect(semesterInput).toHaveValue('Spring 2027');
+    // Dialog must remain open
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('distinctly renders no activity state when progress is null vs actual 0% progress', () => {
+    const workspacesWithMixedProgress: Workspace[] = [
+      {
+        ...mockWorkspaces[0],
+        id: '10',
+        name: 'Unstudied Course',
+        progress: null,
+      },
+      {
+        ...mockWorkspaces[1],
+        id: '11',
+        name: 'Zero Score Course',
+        progress: 0,
+      },
+    ];
+
+    render(
+      <MemoryRouter>
+        <WorkspacesPage
+          workspaces={workspacesWithMixedProgress}
+          activeWorkspaceId="10"
+          onCreate={vi.fn()}
+          onSelect={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('No quiz activity yet')).toBeInTheDocument();
+    expect(screen.getByText('0%')).toBeInTheDocument();
+  });
 });
 
 const deletableWorkspace: Workspace = {

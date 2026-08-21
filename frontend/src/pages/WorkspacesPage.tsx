@@ -1,11 +1,13 @@
 import { FormEvent, useEffect, useState } from 'react'
 import {
+  AlertCircle,
   ArrowRight,
   BookOpen,
   CalendarDays,
   FileText,
   FolderOpen,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
   X,
@@ -18,6 +20,9 @@ import type { Workspace, WorkspaceDraft } from '../data/workspaces'
 type WorkspacesPageProps = {
   workspaces: Workspace[]
   activeWorkspaceId: string
+  isLoading?: boolean
+  error?: string | null
+  onRetry?: () => void
   onCreate: (draft: WorkspaceDraft) => Promise<Workspace>
   onSelect: (workspaceId: string) => void
   onDelete: (workspaceId: string) => Promise<void>
@@ -48,6 +53,9 @@ function formatExamDate(date: string) {
 function WorkspacesPage({
   workspaces,
   activeWorkspaceId,
+  isLoading = false,
+  error = null,
+  onRetry,
   onCreate,
   onSelect,
   onDelete,
@@ -55,6 +63,7 @@ function WorkspacesPage({
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [isCreating, setIsCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [draft, setDraft] = useState(emptyDraft)
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -97,9 +106,9 @@ function WorkspacesPage({
     setDeletingId(workspaceId)
     try {
       await onDelete(workspaceId)
-    } catch (error) {
+    } catch (err) {
       const described = describeError(
-        error,
+        err,
         'The course could not be deleted. Try again.'
       )
       setDeleteError({ id: workspaceId, message: described.message })
@@ -108,15 +117,25 @@ function WorkspacesPage({
     }
   }
 
+  const handleOpenCreate = () => {
+    setCreateError(null)
+    setIsCreating(true)
+  }
+
   const createWorkspace = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    setCreateError(null)
     try {
       const workspace = await onCreate({ ...draft, name: draft.name.trim() })
       setDraft(emptyDraft)
       setIsCreating(false)
       navigate(`/workspaces/${workspace.id}`)
-    } catch (error) {
-      console.error("Error creating workspace", error)
+    } catch (err) {
+      const described = describeError(
+        err,
+        'Failed to create workspace. Please try again.'
+      )
+      setCreateError(described.message)
     }
   }
 
@@ -137,7 +156,7 @@ function WorkspacesPage({
           <button
             className="create-workspace-button"
             type="button"
-            onClick={() => setIsCreating(true)}
+            onClick={handleOpenCreate}
           >
             <Plus aria-hidden="true" />
             Create workspace
@@ -161,7 +180,59 @@ function WorkspacesPage({
           </p>
         </div>
 
-        {filteredWorkspaces.length > 0 ? (
+        {error ? (
+          <div
+            className="workspace-error-state"
+            role="alert"
+            style={{
+              textAlign: 'center',
+              padding: '48px 16px',
+              background: '#fef2f2',
+              border: '1px solid #fecaca',
+              borderRadius: '12px',
+              margin: '24px 0',
+            }}
+          >
+            <AlertCircle
+              aria-hidden="true"
+              style={{
+                width: '36px',
+                height: '36px',
+                color: '#ef4444',
+                margin: '0 auto 12px',
+              }}
+            />
+            <h2 style={{ fontSize: '18px', color: '#991b1b', margin: '0 0 8px' }}>
+              Failed to load workspaces
+            </h2>
+            <p style={{ color: '#7f1d1d', margin: '0 0 16px', fontSize: '14px' }}>
+              {error}
+            </p>
+            {onRetry && (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={onRetry}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  margin: '0 auto',
+                }}
+              >
+                <RefreshCw style={{ width: '14px', height: '14px' }} />
+                Retry
+              </button>
+            )}
+          </div>
+        ) : isLoading ? (
+          <div
+            className="workspace-loading-state"
+            style={{ textAlign: 'center', padding: '48px 16px', color: '#64748b' }}
+          >
+            <p>Loading workspaces...</p>
+          </div>
+        ) : filteredWorkspaces.length > 0 ? (
           <div className="workspace-card-grid">
             {filteredWorkspaces.map((workspace) => (
               <div className="workspace-card-shell" key={workspace.id}>
@@ -200,10 +271,18 @@ function WorkspacesPage({
 
                     <div className="workspace-progress">
                       <span>
-                        <strong>{workspace.progress}%</strong> course progress
+                        {workspace.progress !== null ? (
+                          <>
+                            <strong>{workspace.progress}%</strong> course progress
+                          </>
+                        ) : (
+                          <span style={{ color: '#94a3b8' }}>
+                            No quiz activity yet
+                          </span>
+                        )}
                       </span>
                       <span className="progress-track" aria-hidden="true">
-                        <span style={{ width: `${workspace.progress}%` }} />
+                        <span style={{ width: `${workspace.progress ?? 0}%` }} />
                       </span>
                     </div>
 
@@ -298,6 +377,23 @@ function WorkspacesPage({
                 <X aria-hidden="true" />
               </button>
             </header>
+
+            {createError && (
+              <div
+                role="alert"
+                style={{
+                  margin: '16px 24px 0',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  color: '#991b1b',
+                  fontSize: '13px',
+                }}
+              >
+                {createError}
+              </div>
+            )}
 
             <form onSubmit={createWorkspace}>
               <label className="form-field field-span-two">

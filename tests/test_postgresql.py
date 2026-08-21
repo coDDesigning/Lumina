@@ -57,7 +57,7 @@ VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
-HEAD_REVISION = "b9c1d4e7f2a6"
+HEAD_REVISION = "a3d9e5c17b48"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -656,6 +656,16 @@ def test_postgresql_schema_readiness_and_role_seeds(
     assert {index["name"] for index in inspector.get_indexes("uploaded_documents")} >= {
         "uq_uploaded_documents_storage_provider_storage_key"
     }
+    assert {
+        constraint["name"] for constraint in inspector.get_check_constraints("courses")
+    } >= {"ck_courses_education_level_valid"}
+    assert {
+        constraint["name"] for constraint in inspector.get_check_constraints("users")
+    } >= {"ck_users_education_level_valid"}
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("uploaded_documents")
+    } >= {"ck_uploaded_documents_material_kind_valid"}
     assert {
         constraint["name"]
         for constraint in inspector.get_check_constraints("document_chunks")

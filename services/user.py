@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 from backend.app.config import settings
 from backend.app.models import Role as RoleModel
 from backend.app.models import User
+from schemas.prompt_context import EducationLevel
 from schemas.user import Role, UserCreate, UserResponse, UserUpdate
 from services.credits import CreditService
 from services.text_generation import get_available_models
@@ -28,6 +29,7 @@ class UserService:
             is_banned=user.is_banned,
             credits=CreditService.reported_balance(user),
             preferred_model=user.preferred_model,
+            education_level=user.education_level,
         )
 
     @staticmethod
@@ -196,6 +198,10 @@ class UserService:
             elif previous_role == Role.ADMIN and user.credits is None:
                 user.credits = settings.credit_initial_grant
                 remetered = True
+
+        education_level = update_dict.get("education_level")
+        if education_level is not None:
+            update_dict["education_level"] = EducationLevel(education_level).value
 
         pref_model = update_dict.get("preferred_model")
         if pref_model is not None:

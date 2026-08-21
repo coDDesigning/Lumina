@@ -19,6 +19,8 @@ from backend.app.config import (
     IMAGE_PROVIDER_NONE,
     settings,
 )
+from schemas.prompt_context import PromptContext
+from schemas.prompt_template import PromptTemplateError
 from services.document_pipeline import (
     DisabledImageUnderstandingProvider,
     ImageUnderstandingProvider,
@@ -28,6 +30,8 @@ from services.document_pipeline import (
     VisualType,
     _MAX_VISUAL_DESCRIPTION_CHARACTERS,
 )
+
+from services.prompt_loader import PromptLoader
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,26 @@ def _clean_description_text(raw_text: str | None) -> str | None:
     return cleaned or None
 
 
+_IMAGE_DESCRIPTION_TEMPLATE = "image_description"
+
+
+def _render_image_description_prompt(
+    prompt_context: PromptContext, suggested_type: VisualType
+) -> str:
+    try:
+        return PromptLoader.render(
+            _IMAGE_DESCRIPTION_TEMPLATE,
+            {
+                **prompt_context.as_variables(),
+                "SUGGESTED_TYPE": suggested_type.value,
+            },
+        )
+    except PromptTemplateError as exc:
+        raise VisualAnalysisError(
+            "The image description prompt template could not be rendered."
+        ) from exc
+
+
 class GeminiImageUnderstandingProvider:
     """Cloud-hosted visual analysis using Google Gemini multimodal models."""
 
@@ -78,6 +102,7 @@ class GeminiImageUnderstandingProvider:
         timeout_seconds: int | None = None,
         max_bytes: int | None = None,
         client: object | None = None,
+        prompt_context: PromptContext | None = None,
     ) -> None:
         key = api_key or settings.gemini_api_key
         if client is None and not key:
@@ -95,6 +120,7 @@ class GeminiImageUnderstandingProvider:
             if max_bytes is not None
             else settings.image_understanding_max_bytes
         )
+        self._prompt_context = prompt_context or PromptContext()
         if client is not None:
             self._client = client
         else:
@@ -142,12 +168,7 @@ class GeminiImageUnderstandingProvider:
         suggested_type: VisualType,
     ) -> VisualDescription | None:
         _validate_image_bytes(visual_png, self._max_bytes)
-        prompt = (
-            f"Describe this visual region (detected type: {suggested_type.value}) clearly and "
-            "concisely for document indexing and retrieval. Detail key information, structure, "
-            "text labels, data points, equations, or diagrams. Keep the description under "
-            "1500 characters and do not include conversational filler."
-        )
+        prompt = _render_image_description_prompt(self._prompt_context, suggested_type)
         try:
             part = types.Part.from_bytes(data=visual_png, mime_type="image/png")
             response = self._client.models.generate_content(
@@ -185,6 +206,7 @@ class OllamaImageUnderstandingProvider:
         timeout_seconds: int | None = None,
         max_bytes: int | None = None,
         client: httpx.Client | None = None,
+        prompt_context: PromptContext | None = None,
     ) -> None:
         self._base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self._model = model or settings.ollama_image_model
@@ -198,6 +220,7 @@ class OllamaImageUnderstandingProvider:
             if max_bytes is not None
             else settings.image_understanding_max_bytes
         )
+        self._prompt_context = prompt_context or PromptContext()
         self._client = client or _get_shared_http_client()
 
     def describe_visual(
@@ -210,12 +233,7 @@ class OllamaImageUnderstandingProvider:
     ) -> VisualDescription | None:
         _validate_image_bytes(visual_png, self._max_bytes)
         b64_image = base64.b64encode(visual_png).decode("utf-8")
-        prompt = (
-            f"Describe this visual region (detected type: {suggested_type.value}) clearly and "
-            "concisely for document indexing and retrieval. Detail key information, structure, "
-            "text labels, data points, equations, or diagrams. Keep the description under "
-            "1500 characters and do not include conversational filler."
-        )
+        prompt = _render_image_description_prompt(self._prompt_context, suggested_type)
         payload = {
             "model": self._model,
             "prompt": prompt,
@@ -279,15 +297,17 @@ def configured_image_understanding_identity() -> tuple[str, str | None]:
     return IMAGE_PROVIDER_NONE, None
 
 
-def get_image_understanding_provider() -> ImageUnderstandingProvider:
+def get_image_understanding_provider(
+    *, prompt_context: PromptContext | None = None
+) -> ImageUnderstandingProvider:
     """Construct the configured ImageUnderstandingProvider instance."""
     provider_name = settings.image_provider
     if provider_name in (IMAGE_PROVIDER_NONE, "disabled", ""):
         return DisabledImageUnderstandingProvider()
     if provider_name == AI_PROVIDER_GEMINI:
-        return GeminiImageUnderstandingProvider()
+        return GeminiImageUnderstandingProvider(prompt_context=prompt_context)
     if provider_name == AI_PROVIDER_OLLAMA:
-        return OllamaImageUnderstandingProvider()
+        return OllamaImageUnderstandingProvider(prompt_context=prompt_context)
     raise ValueError(
         f"Image understanding provider '{provider_name}' is not implemented."
     )

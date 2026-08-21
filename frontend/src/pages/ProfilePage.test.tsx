@@ -34,6 +34,7 @@ vi.mock('../context/AuthContext', () => ({
       is_banned: false,
       credits: 42,
       preferred_model: 'gemini-1.5-flash',
+      education_level: 'unspecified',
     },
     isAuthenticated: true,
     isLoading: false,
@@ -142,6 +143,7 @@ describe('ProfilePage', () => {
       is_banned: false,
       credits: 42,
       preferred_model: 'gpt-4o-mini',
+      education_level: 'unspecified',
     })
 
     renderProfilePage()

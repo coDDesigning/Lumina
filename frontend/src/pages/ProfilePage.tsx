@@ -19,6 +19,7 @@ import { useCredits } from '../context/CreditContext'
 import { modelsAPI } from '../api/models'
 import { profileKnowledgeAPI } from '../api/profileKnowledge'
 import { userAPI } from '../api/user'
+import { EDUCATION_LEVEL_LABELS, type EducationLevel } from '../api/types'
 import { formatDelta, transactionLabel } from '../api/creditLabels'
 import type {
   AiModelInfo,
@@ -49,6 +50,12 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
   const [models, setModels] = useState<AiModelInfo[]>([])
   const [loadingModels, setLoadingModels] = useState(true)
   const [selectedModel, setSelectedModel] = useState(user?.preferred_model || '')
+  const [educationLevel, setEducationLevel] = useState<EducationLevel>(
+    user?.education_level || 'unspecified',
+  )
+  const [educationSaving, setEducationSaving] = useState(false)
+  const [educationError, setEducationError] = useState<string | null>(null)
+  const [educationSuccess, setEducationSuccess] = useState<string | null>(null)
   const [modelSaving, setModelSaving] = useState(false)
   const [modelSuccess, setModelSuccess] = useState<string | null>(null)
   const [modelError, setModelError] = useState<string | null>(null)
@@ -99,9 +106,18 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
     if (user?.preferred_model) {
       setSelectedModel(user.preferred_model)
     }
+    if (user?.education_level) {
+      setEducationLevel(user.education_level)
+    }
     fetchModels()
     fetchKnowledge()
-  }, [user?.id, user?.preferred_model, fetchModels, fetchKnowledge])
+  }, [
+    user?.id,
+    user?.preferred_model,
+    user?.education_level,
+    fetchModels,
+    fetchKnowledge,
+  ])
 
   const handleModelChange = async (newModel: string) => {
     setSelectedModel(newModel)
@@ -118,6 +134,26 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
       )
     } finally {
       setModelSaving(false)
+    }
+  }
+
+  const handleEducationLevelChange = async (level: EducationLevel) => {
+    setEducationLevel(level)
+    setEducationSaving(true)
+    setEducationSuccess(null)
+    setEducationError(null)
+    try {
+      await userAPI.updateEducationLevel(level)
+      await refreshUser()
+      setEducationSuccess(
+        `Education level updated to ${EDUCATION_LEVEL_LABELS[level]}`,
+      )
+    } catch (err: unknown) {
+      setEducationError(
+        err instanceof Error ? err.message : 'Failed to update education level',
+      )
+    } finally {
+      setEducationSaving(false)
     }
   }
 
@@ -492,6 +528,36 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
                 </ul>
               </div>
             )}
+
+            <label className="form-field">
+              <span>Education level</span>
+              <select
+                value={educationLevel}
+                onChange={(e) =>
+                  handleEducationLevelChange(e.target.value as EducationLevel)
+                }
+                disabled={educationSaving}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  fontSize: '14px',
+                }}
+              >
+                {(
+                  Object.keys(EDUCATION_LEVEL_LABELS) as EducationLevel[]
+                ).map((level) => (
+                  <option key={level} value={level}>
+                    {EDUCATION_LEVEL_LABELS[level]}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {educationSuccess && <div role="status">{educationSuccess}</div>}
+            {educationError && <div role="alert">{educationError}</div>}
 
             <label className="form-field">
               <span>Preferred AI Model</span>

@@ -9,6 +9,8 @@ from pydantic import (
     model_validator,
 )
 
+from schemas.prompt_context import EducationLevel
+
 
 class Role(str, Enum):
     """Defines available user roles in the system."""
@@ -52,6 +54,7 @@ class UserResponse(UserBase):
     is_banned: bool
     credits: float | None
     preferred_model: str
+    education_level: EducationLevel = EducationLevel.UNSPECIFIED
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -62,6 +65,7 @@ class UserUpdate(BaseModel):
     role: Role | None = None
     is_banned: bool | None = None
     preferred_model: str | None = Field(default=None, min_length=1, max_length=100)
+    education_level: EducationLevel | None = None
 
     @field_validator("preferred_model")
     @classmethod
@@ -72,7 +76,12 @@ class UserUpdate(BaseModel):
 
     @model_validator(mode="after")
     def reject_null_for_required_columns(self) -> "UserUpdate":
-        required_columns = {"role", "is_banned", "preferred_model"}
+        required_columns = {
+            "role",
+            "is_banned",
+            "preferred_model",
+            "education_level",
+        }
         explicitly_null = required_columns & self.model_fields_set
         if any(getattr(self, field) is None for field in explicitly_null):
             raise ValueError("Required user fields cannot be null")

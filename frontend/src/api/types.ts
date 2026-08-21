@@ -14,6 +14,7 @@ export interface User {
   is_banned: boolean;
   credits: number | null;
   preferred_model: string;
+  education_level: EducationLevel;
 }
 
 export type CreditReason =
@@ -80,9 +81,26 @@ export interface AuthResponse {
   token_type: string;
 }
 
+export type EducationLevel =
+  | 'high_school'
+  | 'undergraduate'
+  | 'graduate'
+  | 'professional_other'
+  | 'unspecified';
+
+export const EDUCATION_LEVEL_LABELS: Record<EducationLevel, string> = {
+  high_school: 'High school',
+  undergraduate: 'Undergraduate',
+  graduate: 'Graduate',
+  professional_other: 'Professional / other',
+  unspecified: 'Not specified',
+};
+
 export interface Course {
   id: number;
   title: string;
+  subject_area: string | null;
+  education_level: EducationLevel;
   description: string | null;
   owner_id: number;
   created_at: string;
@@ -95,6 +113,8 @@ export interface Course {
 
 export interface CourseCreate {
   title: string;
+  subject_area?: string;
+  education_level?: EducationLevel;
   description?: string;
   semester?: string;
   exam_date?: string;
@@ -104,6 +124,8 @@ export interface CourseCreate {
 
 export interface CourseUpdate {
   title?: string;
+  subject_area?: string;
+  education_level?: EducationLevel;
   description?: string;
   semester?: string;
   exam_date?: string;

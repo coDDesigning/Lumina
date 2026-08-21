@@ -6,20 +6,13 @@ prerequisite assumptions, and instructional framing to the student's profile
 without lowering factual accuracy or fabricating curriculum details.
 """
 
-from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from schemas.prompt_context import EducationLevel
 
-class EducationLevel(str, Enum):
-    """Normalized education level for learner-aware prompt adaptation."""
-
-    HIGH_SCHOOL = "high_school"
-    UNDERGRADUATE = "undergraduate"
-    GRADUATE = "graduate"
-    UNSPECIFIED = "unspecified"
-    OTHER = "other"
+__all__ = ["EducationLevel", "EDUCATION_LEVEL_DIRECTIVES", "LearnerContext"]
 
 
 EDUCATION_LEVEL_DIRECTIVES: dict[EducationLevel, str] = {
@@ -46,7 +39,7 @@ EDUCATION_LEVEL_DIRECTIVES: dict[EducationLevel, str] = {
         "- Provide clear, accessible, and academically sound explanations.\n"
         "- Ground all explanations directly in the provided material without assuming a specific academic tier or prerequisite background."
     ),
-    EducationLevel.OTHER: (
+    EducationLevel.PROFESSIONAL_OTHER: (
         "Learner Profile: General Learner\n"
         "- Provide clear, accessible, and academically sound explanations.\n"
         "- Ground all explanations directly in the provided material without assuming a specific academic tier or prerequisite background."

@@ -12,6 +12,20 @@ import { APIError } from '../api/client';
 import type { Workspace } from '../data/workspaces';
 import WorkspacesPage from './WorkspacesPage';
 
+// These suites are not about credits; an unmetered account renders no credit UI.
+vi.mock('../context/CreditContext', () => ({
+  useCredits: () => ({
+    status: null,
+    isLoading: false,
+    error: null,
+    refresh: vi.fn(),
+    isMetered: false,
+    costOf: () => null,
+    canAfford: () => true,
+  }),
+}))
+
+
 vi.mock('../context/AuthContext', () => ({
   useAuth: () => ({
     user: {

@@ -7,6 +7,20 @@ import { adminAPI } from '../api/admin';
 import type { CreditTransaction, User } from '../api/types';
 import AdminPage from './AdminPage';
 
+// These suites are not about credits; an unmetered account renders no credit UI.
+vi.mock('../context/CreditContext', () => ({
+  useCredits: () => ({
+    status: null,
+    isLoading: false,
+    error: null,
+    refresh: vi.fn(),
+    isMetered: false,
+    costOf: () => null,
+    canAfford: () => true,
+  }),
+}))
+
+
 vi.mock('../api/admin', () => ({
   adminAPI: {
     listUsers: vi.fn(),

@@ -32,7 +32,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import CreditService
+from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -231,7 +231,10 @@ class StudyGuideService:
         receipt = None
         if resolved_user_id:
             receipt = CreditService.charge(
-                db, resolved_user_id, 1.0, source_type="study_guide"
+                db,
+                resolved_user_id,
+                GENERATION_CREDIT_COSTS["study_guide"],
+                source_type="study_guide",
             )
             if receipt is None:
                 AiUsageLogger.log_failure(

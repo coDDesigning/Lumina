@@ -12,7 +12,7 @@ export type Workspace = {
   examDate: string
   topics: string[]
   syllabus: string
-  progress: number
+  progress: number | null
   status: string
   updatedAt: string
   accent: 'blue' | 'violet' | 'rose' | 'amber'

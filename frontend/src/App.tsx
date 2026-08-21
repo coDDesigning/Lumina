@@ -847,59 +847,108 @@ function EditWorkspaceRoute({
   return <EditPage key={workspace.id} workspace={workspace} onSave={onSave} />
 }
 
-function mapCourseToWorkspace(course: Course, index: number): Workspace {
+function mapCourseToWorkspace(
+  course: Course,
+  index: number,
+  progressData?: CourseProgressResponse | null,
+): Workspace {
+  let progress: number | null = null
+  let status = 'Not started'
+
+  if (progressData) {
+    if (progressData.average_score != null) {
+      progress = Math.round(
+        progressData.average_score <= 1
+          ? progressData.average_score * 100
+          : progressData.average_score,
+      )
+    } else if (progressData.completion != null && progressData.attempts_count > 0) {
+      progress = Math.round(progressData.completion)
+    }
+
+    if (progressData.attempts_count > 0) {
+      status = (progress ?? 0) >= 80 ? 'Mastered' : 'In progress'
+    }
+  }
+
   return {
     id: course.id.toString(),
     ownerId: course.owner_id,
     name: course.title,
     semester: course.semester || '',
     examDate: course.exam_date || '',
-    topics: course.topics ? course.topics.split(',').map(t => t.trim()) : [],
+    topics: course.topics ? course.topics.split(',').map((t) => t.trim()) : [],
     syllabus: course.syllabus || '',
-    progress: 0,
-    status: 'In progress',
+    progress,
+    status,
     updatedAt: new Date(course.updated_at).toLocaleDateString(),
     accent: workspaceAccents[index % workspaceAccents.length],
     sources: [],
-  };
+  }
 }
 
 function App() {
   const { isAuthenticated } = useAuth()
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(true)
-  
+  const [workspacesError, setWorkspacesError] = useState<string | null>(null)
+
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(
-    () => localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) ?? ''
+    () => localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) ?? '',
   )
 
-  const fetchWorkspaces = useCallback(async () => {
-    if (!isAuthenticated) {
-      setIsLoadingWorkspaces(false);
-      return;
-    }
-    setIsLoadingWorkspaces(true);
-    try {
-      const courses = await coursesAPI.list();
-      const mappedWorkspaces = courses.map((course, index) => mapCourseToWorkspace(course, index));
-      setWorkspaces(mappedWorkspaces);
-      
-      setActiveWorkspaceId((current) => {
-        if (mappedWorkspaces.length > 0 && !current) {
-          return mappedWorkspaces[0].id;
+  const fetchWorkspaces = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!isAuthenticated) {
+        setIsLoadingWorkspaces(false)
+        setWorkspacesError(null)
+        return
+      }
+      setIsLoadingWorkspaces(true)
+      setWorkspacesError(null)
+      try {
+        const courses = await coursesAPI.list({ signal })
+        const progressResults = await Promise.allSettled(
+          courses.map((course) => progressAPI.get(course.id, { signal })),
+        )
+        const mappedWorkspaces = courses.map((course, index) => {
+          const progResult = progressResults[index]
+          const progData =
+            progResult?.status === 'fulfilled' ? progResult.value : null
+          return mapCourseToWorkspace(course, index, progData)
+        })
+        setWorkspaces(mappedWorkspaces)
+
+        setActiveWorkspaceId((current) => {
+          if (mappedWorkspaces.length > 0 && !current) {
+            return mappedWorkspaces[0].id
+          }
+          return current
+        })
+      } catch (error: unknown) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          // Abort/unmount behavior is intentionally NOT shown as an error
+          return
         }
-        return current;
-      });
-    } catch (error) {
-      console.error("Failed to load workspaces", error);
-    } finally {
-      setIsLoadingWorkspaces(false);
-    }
-  }, [isAuthenticated]);
+        const described = describeError(
+          error,
+          'Failed to load workspaces. Please try again.',
+        )
+        setWorkspacesError(described.message)
+      } finally {
+        setIsLoadingWorkspaces(false)
+      }
+    },
+    [isAuthenticated],
+  )
 
   useEffect(() => {
-    fetchWorkspaces();
-  }, [fetchWorkspaces]);
+    const controller = new AbortController()
+    fetchWorkspaces(controller.signal)
+    return () => {
+      controller.abort()
+    }
+  }, [fetchWorkspaces])
 
   useEffect(() => {
     if (activeWorkspaceId) {
@@ -919,22 +968,22 @@ function App() {
         semester: draft.semester.trim(),
         exam_date: draft.examDate,
         topics: draft.topics,
-      });
-      
-      const newWorkspace = mapCourseToWorkspace(newCourse, workspaces.length);
-      setWorkspaces(current => [newWorkspace, ...current]);
-      setActiveWorkspaceId(newWorkspace.id);
-      return newWorkspace;
+      })
+
+      const newWorkspace = mapCourseToWorkspace(newCourse, workspaces.length)
+      setWorkspaces((current) => [newWorkspace, ...current])
+      setActiveWorkspaceId(newWorkspace.id)
+      return newWorkspace
     } catch (error) {
-      console.error("Failed to create workspace", error);
-      throw error;
+      console.error('Failed to create workspace', error)
+      throw error
     }
   }
 
   const deleteWorkspace = async (workspaceId: string) => {
     await coursesAPI.delete(Number(workspaceId))
     const remaining = workspaces.filter(
-      workspace => workspace.id !== workspaceId
+      (workspace) => workspace.id !== workspaceId,
     )
     setWorkspaces(remaining)
 
@@ -948,39 +997,52 @@ function App() {
 
   const updateWorkspace = async (updatedWorkspace: Workspace) => {
     try {
-      const updatedCourse = await coursesAPI.update(Number(updatedWorkspace.id), {
-        title: updatedWorkspace.name.trim(),
-        syllabus: updatedWorkspace.syllabus.trim(),
-        semester: updatedWorkspace.semester.trim(),
-        exam_date: updatedWorkspace.examDate,
-        topics: updatedWorkspace.topics.join(', '),
-      });
-      
-      const updatedMappedWorkspace = mapCourseToWorkspace(updatedCourse, workspaces.findIndex(w => w.id === updatedWorkspace.id));
-      setWorkspaces(current =>
-        current.map(workspace =>
-          workspace.id === updatedWorkspace.id ? updatedMappedWorkspace : workspace
-        )
-      );
+      const updatedCourse = await coursesAPI.update(
+        Number(updatedWorkspace.id),
+        {
+          title: updatedWorkspace.name.trim(),
+          syllabus: updatedWorkspace.syllabus.trim(),
+          semester: updatedWorkspace.semester.trim(),
+          exam_date: updatedWorkspace.examDate,
+          topics: updatedWorkspace.topics.join(', '),
+        },
+      )
+
+      const updatedMappedWorkspace = mapCourseToWorkspace(
+        updatedCourse,
+        workspaces.findIndex((w) => w.id === updatedWorkspace.id),
+      )
+      setWorkspaces((current) =>
+        current.map((workspace) =>
+          workspace.id === updatedWorkspace.id
+            ? updatedMappedWorkspace
+            : workspace,
+        ),
+      )
     } catch (error) {
-      console.error("Failed to update workspace", error);
+      console.error('Failed to update workspace', error)
     }
   }
 
-  const updateWorkspaceProgress = useCallback((workspaceId: string, progress: number) => {
-    setWorkspaces((current) => {
-      const target = current.find((w) => w.id === workspaceId);
-      if (!target || target.progress === progress) return current;
-      return current.map((w) => (w.id === workspaceId ? { ...w, progress } : w));
-    });
-  }, []);
+  const updateWorkspaceProgress = useCallback(
+    (workspaceId: string, progress: number) => {
+      setWorkspaces((current) => {
+        const target = current.find((w) => w.id === workspaceId)
+        if (!target || target.progress === progress) return current
+        return current.map((w) =>
+          w.id === workspaceId ? { ...w, progress } : w,
+        )
+      })
+    },
+    [],
+  )
 
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
-      
+
       <Route element={<ProtectedRoute />}>
         <Route
           path="/dashboard"
@@ -988,6 +1050,9 @@ function App() {
             <WorkspacesPage
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
+              isLoading={isLoadingWorkspaces}
+              error={workspacesError}
+              onRetry={() => fetchWorkspaces()}
               onCreate={createWorkspace}
               onSelect={selectWorkspace}
               onDelete={deleteWorkspace}

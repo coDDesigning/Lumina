@@ -217,4 +217,15 @@ describe('ProfilePage', () => {
     })
     expect(screen.getByText('Knowledge topic removed.')).toBeInTheDocument()
   })
+
+  it('confirms profile knowledge is structured-only and contains no file or document upload controls', async () => {
+    renderProfilePage()
+
+    expect(await screen.findByText('Profile Knowledge & Learning Background')).toBeInTheDocument()
+    expect(screen.queryByLabelText(/upload/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/upload document/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/drag and drop/i)).not.toBeInTheDocument()
+    const fileInputs = document.querySelectorAll('input[type="file"]')
+    expect(fileInputs.length).toBe(0)
+  })
 })

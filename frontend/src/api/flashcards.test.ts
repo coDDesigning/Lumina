@@ -55,6 +55,7 @@ describe('flashcardsAPI.generate', () => {
 
     const result = await flashcardsAPI.generate(10, {
       model: 'gemini:gemini-3.6-flash',
+      include_profile_context: true,
     });
 
     expect(result).toEqual(FLASHCARD_RESULT);
@@ -67,6 +68,7 @@ describe('flashcardsAPI.generate', () => {
     expect(init?.method).toBe('POST');
     expect(JSON.parse(init?.body as string)).toEqual({
       model: 'gemini:gemini-3.6-flash',
+      include_profile_context: true,
     });
   });
 

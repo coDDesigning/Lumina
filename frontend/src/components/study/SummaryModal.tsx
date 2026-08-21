@@ -65,6 +65,7 @@ export function SummaryModal({
   const [summaryLength, setSummaryLength] = useState<SummaryLength>('medium');
   const [detailLevel, setDetailLevel] = useState<DetailLevel>('standard');
   const [summaryMode, setSummaryMode] = useState<SummaryMode>('general');
+  const [includeProfileContext, setIncludeProfileContext] = useState(false);
   const [state, setState] = useState<SummaryState>({ phase: 'idle' });
   const [elapsed, setElapsed] = useState(0);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -102,6 +103,7 @@ export function SummaryModal({
           summary_length: summaryLength,
           detail_level: detailLevel,
           summary_mode: summaryMode,
+          include_profile_context: includeProfileContext,
         },
         { signal: controller.signal },
       );
@@ -119,7 +121,15 @@ export function SummaryModal({
         retryable: described.retryable,
       });
     }
-  }, [courseId, summaryFormat, topicFocus, summaryLength, detailLevel, summaryMode]);
+  }, [
+    courseId,
+    detailLevel,
+    includeProfileContext,
+    summaryFormat,
+    summaryLength,
+    summaryMode,
+    topicFocus,
+  ]);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
@@ -297,6 +307,15 @@ export function SummaryModal({
                     </select>
                   </div>
                 </div>
+
+                <label className="study-toggle-label">
+                  <input
+                    type="checkbox"
+                    checked={includeProfileContext}
+                    onChange={(event) => setIncludeProfileContext(event.target.checked)}
+                  />
+                  <span>Include personal study profile context</span>
+                </label>
 
                 {!hasMaterial ? (
                   <p className="summary-empty-state">

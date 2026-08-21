@@ -85,7 +85,7 @@ def generate_quiz(
         )
 
         applied_settings = QuizGenerationSettings.from_request(
-            request,
+            generation.effective_request,
             retrieval_limit=settings.retrieval_chunk_limit,
             retrieval_min_similarity=settings.retrieval_min_similarity,
         ).model_dump_json()

@@ -11,6 +11,12 @@ from schemas.conversation import ConversationType
 from services.ai_usage_logger import AiUsageLogger
 from services.conversation import CONVERSATION_NOT_FOUND, ConversationService
 from services.course_material import count_available_chunks
+from services.profile_knowledge import (
+    DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
+    ProfileKnowledgeContext,
+    format_profile_context,
+    load_profile_knowledge,
+)
 from schemas.prompt_context import PromptContext
 from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
@@ -50,6 +56,7 @@ class AiTutorGeneration:
     material: RetrievedCourseMaterial
     model_used: str
     conversation_id: int
+    profile_knowledge: ProfileKnowledgeContext | None = None
 
 
 class AiTutorService:
@@ -85,6 +92,7 @@ class AiTutorService:
         question: str,
         conversation_history: str = "",
         *,
+        profile_knowledge: ProfileKnowledgeContext | None = None,
         context: PromptContext,
     ) -> str:
         return PromptLoader.render(
@@ -94,6 +102,7 @@ class AiTutorService:
                 "COURSE_MATERIAL": course_material,
                 "CONVERSATION_HISTORY": conversation_history,
                 "QUESTION": question,
+                "PROFILE_CONTEXT": format_profile_context(profile_knowledge),
             },
         )
 
@@ -106,7 +115,13 @@ class AiTutorService:
         provider: TextGenerationProvider,
         user_id: int | None = None,
         conversation_id: int | None = None,
+        *,
+        include_profile_context: bool = False,
+        use_profile_knowledge: bool | None = None,
     ) -> AiTutorGeneration:
+        if use_profile_knowledge is not None:
+            include_profile_context = use_profile_knowledge
+
         course = db.get(Course, course_id)
         resolved_user_id = user_id
         if resolved_user_id is None and course is not None:
@@ -155,6 +170,18 @@ class AiTutorService:
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
 
+        profile_context = (
+            load_profile_knowledge(
+                db,
+                resolved_user_id,
+                max_characters=DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
+            )
+            if resolved_user_id is not None and include_profile_context
+            else ProfileKnowledgeContext(
+                text="", items_used=0, items_available=0, truncated=False
+            )
+        )
+
         prompt_context = resolve_prompt_context(
             db, course=course, user_id=resolved_user_id
         )
@@ -162,6 +189,7 @@ class AiTutorService:
             material.text,
             question,
             ConversationService.format_history(conversation),
+            profile_knowledge=profile_context,
             context=prompt_context,
         )
         metadata = None
@@ -227,4 +255,5 @@ class AiTutorService:
             material=material,
             model_used=model_identifier(metadata),
             conversation_id=conversation.id,
+            profile_knowledge=profile_context,
         )

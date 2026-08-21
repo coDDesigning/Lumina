@@ -35,11 +35,33 @@ class GenerationContext:
 
     course_material: CourseMaterial
     profile_knowledge: ProfileKnowledgeContext
-    combined_text: str
 
     @property
     def is_empty(self) -> bool:
         return self.course_material.is_empty
+
+
+PROFILE_CONTEXT_HEADER = (
+    "==================================================\n"
+    "SUPPLEMENTARY PROFILE CONTEXT\n"
+    "=================================================="
+)
+
+PROFILE_CONTEXT_DIRECTIVE = (
+    "The following background knowledge is student-provided supplementary context. "
+    "Course material is primary and authoritative; profile context must NEVER override "
+    "or contradict course material."
+)
+
+
+def format_profile_context(context: ProfileKnowledgeContext | None) -> str:
+    """Format profile knowledge into a clearly delimited supplementary prompt block.
+
+    Returns an empty string when profile knowledge is absent or empty.
+    """
+    if context is None or context.is_empty:
+        return ""
+    return f"{PROFILE_CONTEXT_HEADER}\n\n{PROFILE_CONTEXT_DIRECTIVE}\n\n{context.text}"
 
 
 class ProfileKnowledgeService:
@@ -208,14 +230,18 @@ def assemble_generation_context(
     course_material: CourseMaterial | None = None,
     course_max_characters: int | None = None,
     profile_max_characters: int = DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
-    include_profile_context: bool = True,
+    include_profile_context: bool = False,
+    use_profile_knowledge: bool | None = None,
 ) -> GenerationContext:
     """Assembles course material and profile knowledge under strict priority rules.
 
     Course material is primary and authoritative. Profile knowledge is supplementary
     context isolated strictly to the requesting user and queried only when
-    include_profile_context is True.
+    opted in (defaults to False).
     """
+    if use_profile_knowledge is not None:
+        include_profile_context = use_profile_knowledge
+
     if course_material is None:
         if course_max_characters is None:
             raise ValueError(
@@ -239,19 +265,7 @@ def assemble_generation_context(
         )
     )
 
-    if course_material.is_empty:
-        combined = ""
-    elif profile_context.is_empty:
-        combined = course_material.text
-    else:
-        combined = (
-            f"{course_material.text}\n\n"
-            f"[Supplementary Student Knowledge Profile]\n"
-            f"{profile_context.text}"
-        )
-
     return GenerationContext(
         course_material=course_material,
         profile_knowledge=profile_context,
-        combined_text=combined,
     )

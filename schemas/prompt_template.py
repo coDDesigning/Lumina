@@ -111,8 +111,7 @@ class PromptTemplateModel(BaseModel):
     def require_a_reason_for_deferral(self) -> "PromptTemplateModel":
         if self.status == "deferred" and not (self.deferral_reason or "").strip():
             raise ValueError(
-                f"Deferred prompt template '{self.name}' must record a "
-                "deferral_reason"
+                f"Deferred prompt template '{self.name}' must record a deferral_reason"
             )
         return self
 

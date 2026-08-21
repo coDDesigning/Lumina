@@ -14,6 +14,7 @@ from services.generated_output import GeneratedOutputService
 from services.profile_knowledge import (
     ProfileKnowledgeContext,
     assemble_generation_context,
+    format_profile_context,
 )
 from schemas.prompt_context import PromptContext
 from services.prompt_context import resolve_prompt_context
@@ -78,11 +79,16 @@ class FlashcardService:
         cls,
         course_material: str,
         *,
+        profile_knowledge: ProfileKnowledgeContext | None = None,
         context: PromptContext,
     ) -> str:
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
-            {**context.as_variables(), "TEXT": course_material},
+            {
+                **context.as_variables(),
+                "TEXT": course_material,
+                "PROFILE_CONTEXT": format_profile_context(profile_knowledge),
+            },
         )
 
     @classmethod
@@ -94,7 +100,11 @@ class FlashcardService:
         user_id: int | None = None,
         *,
         include_profile_context: bool = False,
+        use_profile_knowledge: bool | None = None,
     ) -> FlashcardGeneration:
+        if use_profile_knowledge is not None:
+            include_profile_context = use_profile_knowledge
+
         course = db.get(Course, course_id)
         resolved_user_id = user_id
         if resolved_user_id is None and course is not None:
@@ -127,7 +137,11 @@ class FlashcardService:
         prompt_context = resolve_prompt_context(
             db, course=course, user_id=resolved_user_id
         )
-        prompt = cls.build_prompt(generation_ctx.combined_text, context=prompt_context)
+        prompt = cls.build_prompt(
+            generation_ctx.course_material.text,
+            profile_knowledge=generation_ctx.profile_knowledge,
+            context=prompt_context,
+        )
         metadata = None
 
         receipt = None

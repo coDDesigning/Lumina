@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from schemas.generation import RetrievedContext
 
@@ -15,10 +15,21 @@ class CourseQARequest(BaseModel):
         gt=0,
         description="Existing conversation to continue, or omit to start a new one",
     )
+    use_profile_knowledge: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "use_profile_knowledge", "include_profile_context"
+        ),
+        description="Whether to include student profile knowledge context (opt-in)",
+    )
     model: str | None = Field(
         default=None,
         description="Explicit model override, or omit to use preferred/default model",
     )
+
+    @property
+    def include_profile_context(self) -> bool:
+        return self.use_profile_knowledge
 
 
 class CourseQAResponse(BaseModel):

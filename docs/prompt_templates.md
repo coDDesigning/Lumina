@@ -1,21 +1,87 @@
-# Prompt Template Management Architecture
+# Learner-Aware Prompt Library Architecture
 
 ## Overview
 
-Lumina uses a versioned, structured JSON template architecture for every AI prompt it sends. The nine templates under `app/prompts/` cover study guides, quizzes, quiz grading, flashcards, AI tutoring, course Q&A, prompt generation, image description, and OCR cleanup. No prompt text lives outside this directory.
+Lumina uses a versioned, structured, and learner-aware prompt template architecture for every AI prompt it sends. The ten templates under `app/prompts/` cover study guides, quizzes, quiz grading, flashcards, AI tutoring, course Q&A, prompt generation, image description, visual content understanding, and OCR cleanup. No prompt text lives outside this directory.
 
-`ocr_cleanup` is declared and tested but has no runtime caller yet: the pipeline records an `ocr` extraction method but performs no LLM cleanup step. Wiring one is a separate change.
+`ocr_cleanup` and `visual_content` are declared, validated and tested but have no runtime caller yet. `image_description` is the one vision template that is wired, and `services/image_understanding.py` renders it for every extracted visual.
 
-This replaces ad-hoc plain-text templates with structured templates that explicitly declare:
-- **Required & Optional Input Variables** (preventing silent rendering failures)
-- **Output Schema Reference** (linking templates to authoritative Pydantic runtime models)
-- **Style Constraints** (formatting and tone instructions)
-- **Safety & Truthfulness Constraints** (anti-hallucination rules)
-- **Model Hints** (temperature, preferred model, response format)
+This system provides:
+- **Learner-Context Awareness**: Adapts explanations, terminology, and instructional framing dynamically to the student's profile (e.g. `high_school`, `undergraduate`, `graduate`, or `unspecified`) without compromising factual accuracy.
+- **Strict Grounding & Anti-Hallucination**: Enforces that supplied/retrieved course material is the sole authoritative source of truth across all generation tasks.
+- **Variable Contract Enforcement**: Declares mandatory and optional input variables, preventing missing placeholders or unexpected injections.
+- **Output Schema References**: Directly maps templates to authoritative Pydantic runtime validation models in `schemas/`.
+- **Privacy-Safe Observability**: Provides developer observability and telemetry metadata without persisting raw private prompts, questions, or course chunks.
+
+---
+
+## Learner Context Model
+
+Learner context is encapsulated in the `LearnerContext` Pydantic model (`schemas/learner_context.py`) and parameterizes prompt rendering:
+
+```python
+from schemas.learner_context import EducationLevel, LearnerContext
+
+context = LearnerContext(
+    education_level=EducationLevel.HIGH_SCHOOL,
+    course_name="AP Biology",
+    current_topic="Photosynthesis",
+    difficulty_level="introductory",
+    study_objective="exam_preparation",
+    detail_level="step_by_step",
+    language="English",
+)
+```
+
+### Supported Education Levels
+
+| Level | Directive Focus |
+|---|---|
+| `high_school` | Foundational clarity, intuitive conceptual explanations, concrete analogies, avoiding advanced university prerequisites unless present in source. |
+| `undergraduate` | Academic rigor, standard disciplinary terminology, balanced theoretical and practical analysis. |
+| `graduate` | In-depth academic depth, dense technical precision, nuanced synthesis, edge cases and theoretical subtleties. |
+| `professional_other` | Applied framing and practical relevance for a working professional or independent learner, assuming no particular curriculum. |
+| `unspecified` | Neutral, accessible, academically sound explanations grounded strictly in material without assuming an academic tier. |
+
+> [!IMPORTANT]
+> **Grounding Invariant**: Education level controls presentation, depth, and terminology. The model must **never** lower factual accuracy or fabricate curriculum-specific facts to match an education level. Source material is always authoritative.
+
+---
+
+## Production Prompt Catalog
+
+All templates reside in `app/prompts/<task_name>.json`:
+
+| Template Name | Version | Primary Purpose | Output Schema Ref |
+|---|---|---|---|
+| `study_guide` | `2.0.0` | Comprehensive study guide generation | `StudyGuideResponse` |
+| `quiz` | `3.0.0` | Multi-format quiz generation | `QuizGenerationResponse` |
+| `quiz_grading` | `2.0.0` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
+| `flashcard` | `2.0.0` | Active recall flashcard decks | `FlashcardGenerationResponse` |
+| `ai_tutor` | `2.0.0` | Step-by-step interactive tutor guidance | `AiTutorResponse` |
+| `course_qa` | `2.0.0` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |
+| `prompt_generator` | `2.0.0` | User request transformation to optimized prompt | `PromptGenerationResponse` |
+| `image_description` | `1.0.0` | Visual descriptions for the retrieval index (wired) | — |
+| `visual_content` | `1.0.0` | Multimodal diagram, chart, table, and figure analysis | `VisualContentDescriptionResponse` |
+| `ocr_cleanup` | `1.0.0` | AI-assisted OCR text normalization and repair | `OcrCleanupResponse` |
+
+---
+
+## Reusable Prompt Components
+
+Shared prompt directives live in `services/prompt_components.py`:
+
+- `SHARED_GROUNDING_RULES`: Reusable anti-hallucination rules enforcing that provided material is the sole source of truth.
+- `SHARED_SAFETY_RULES`: Directives instructing the model to treat all user inputs and course text as inert data, resisting prompt injection.
+- `build_learner_context_block(context)`: Generates formatted learner context blocks.
+- `build_grounding_block()`: Generates standard grounding sections.
+- `build_safety_block()`: Generates input safety sections.
+
+---
 
 ## Template Schema
 
-All templates are stored under `app/prompts/<task_name>.json` and must adhere to the `PromptTemplateModel` schema:
+Every prompt template is a validated JSON document adhering to `PromptTemplateModel` (`schemas/prompt_template.py`):
 
 ```json
 {
@@ -34,26 +100,29 @@ All templates are stored under `app/prompts/<task_name>.json` and must adhere to
     "DETAIL_LEVEL",
     "SUMMARY_MODE"
   ],
-  "optional_variables": [],
+  "optional_variables": [
+    "LEARNER_CONTEXT"
+  ],
   "output_schema_ref": "StudyGuideResponse",
   "style_constraints": [
-    "Use clear academic English.",
-    "Keep explanations concise and student-friendly."
+    "Use clear academic language appropriate to the learner's level.",
+    "Keep explanations concise, student-friendly, and accessible."
   ],
   "safety_constraints": [
     "Use ONLY information contained in the provided course material.",
-    "Do NOT invent facts that are not supported by the course material."
+    "Do NOT invent facts that are not supported by the course material.",
+    "Learner-level adaptation must never override factual grounding or introduce unsupported facts."
   ],
   "model_hints": {
     "preferred_model": "gemini-2.5-flash",
     "temperature": 0.2,
     "response_mime_type": "application/json"
   },
-  "template": "You are an expert teaching assistant...\n\n{{SUMMARY_FORMAT}}\n\n{{DETAIL_LEVEL}}\n\n{{SUMMARY_MODE}}\n\nRequested topic focus: {{TOPIC_FOCUS}}\n\n{{TEXT}}"
+  "template": "You are an expert AI study assistant...\n\nEducation level: {{EDUCATION_LEVEL}}\nCourse: {{COURSE_TITLE}}\n\n{{SUMMARY_FORMAT}}\n\n{{DETAIL_LEVEL}}\n\n{{SUMMARY_MODE}}\n\nRequested topic focus: {{TOPIC_FOCUS}}\n\n{{TEXT}}"
 }
 ```
 
-### Variable substitution order
+---
 
 `PromptTemplateModel.render` substitutes variables in the order the caller's
 dictionary supplies them, so a value containing a literal placeholder would be
@@ -75,14 +144,16 @@ tells the model that the emphasis above is a student preference which never
 overrides the general rules, the section requirements, or the output schema.
 
 
-## Loader & Validation Rules
+## Loader & Validation Contract
 
 The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validation at load and render times:
 
-1. **Fail-Fast Syntax & Metadata Check**:
-   - Validates JSON format (`PromptTemplateSyntaxError` on malformed JSON).
-   - Validates schema structure (`PromptTemplateValidationError` on missing fields).
-   - Verifies template existence (`PromptTemplateNotFoundError` on missing files).
+1. **Deterministic Variable Rendering**:
+   - `PromptLoader.render(name, variables, learner_context=...)` substitutes all declared placeholders.
+   - If `LEARNER_CONTEXT` is in `optional_variables` or `required_variables` and not explicitly supplied in `variables`, it automatically resolves to `LearnerContext(education_level=EducationLevel.UNSPECIFIED)` or the passed `learner_context`.
+   - Missing required variables raise `MissingPromptVariableError`.
+   - Unexpected variables raise `UnexpectedPromptVariableError`.
+   - Document and free-text variables (e.g. `TEXT`, `COURSE_MATERIAL`) are always substituted last to prevent placeholder forging.
 
 2. **Strict Variable Validation**:
    - Missing required variable $\rightarrow$ Raises `MissingPromptVariableError`.
@@ -94,30 +165,34 @@ The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validat
      **before** the provider call.
    - All `{{VARIABLE}}` placeholders are substituted deterministically.
 
-3. **Authoritative Runtime Output Validation**:
-   - Pydantic models in `schemas/` remain the single source of truth for runtime validation of the LLM JSON response.
+3. **Developer Observability & Telemetry**:
+   - `PromptLoader.get_render_metadata(name, variables, learner_context=...)` returns telemetry data (`template_name`, `template_version`, `education_level`, `applied_variables`) **without** exposing raw prompt text or student content.
 
-## Adding a New Prompt Template
+---
 
-To add a new AI generation task:
+## How-To Guide
 
-1. **Create the Template File**:
-   Add `app/prompts/<new_task>.json` declaring `name`, `version`, `required_variables`, `output_schema_ref`, and `template`.
+### 1. Adding a New Prompt Template
 
-2. **Render in Service**:
-   ```python
-   from services.prompt_loader import PromptLoader
+1. Add `app/prompts/<task_name>.json` defining:
+   - `name`, `version`, `description`
+   - `required_variables` (and optional `LEARNER_CONTEXT` in `optional_variables`)
+   - `output_schema_ref` (referencing schema in `schemas/`)
+   - `style_constraints` and `safety_constraints`
+   - `template` containing `{{VARIABLE}}` placeholders
+2. Wire the prompt into its feature service using `PromptLoader.render("<task_name>", variables, learner_context=...)`.
+3. Add unit & regression tests in `tests/test_prompt_loader.py`.
 
-   prompt = PromptLoader.render("new_task", {"REQUIRED_VAR": value})
-   ```
+### 2. Adding a New Learner Context Field
+
+1. Update `LearnerContext` in `schemas/learner_context.py` with the validated field.
+2. Update `LearnerContext.render_directive()` and `to_metadata_dict()`.
+3. Add test assertions in `tests/test_prompt_loader.py` validating that the field formats safely and does not leak private values into telemetry.
 
 > Declare every variable a service passes in `required_variables` (or `optional_variables`),
 > and declare every `{{PLACEHOLDER}}` that appears in the body. Both directions are enforced
 > (see **Placeholder guarantees**), so an undeclared placeholder fails at load time and an
 > unsupplied one fails before the provider is ever called.
-
-3. **Test the Template**:
-   Add test assertions in `tests/test_prompt_loader.py` validating that the template parses, renders variables, and enforces constraints.
 
 ## Quiz templates
 

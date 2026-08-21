@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -74,10 +75,17 @@ class FlashcardService:
         )
 
     @classmethod
-    def build_prompt(cls, course_material: str, *, context: PromptContext) -> str:
+    def build_prompt(
+        cls,
+        course_material: str,
+        learner_context: Any = None,
+        *,
+        context: PromptContext,
+    ) -> str:
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {**context.as_variables(), "TEXT": course_material},
+            learner_context=learner_context,
         )
 
     @classmethod

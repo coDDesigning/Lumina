@@ -11,6 +11,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { quizAPI } from '../../api/quiz';
+import { settingsAPI } from '../../api/settings';
 import {
   describeError,
   describeGenerationError,
@@ -156,6 +157,37 @@ export function QuizModal({
   const startedAtRef = useRef<number>(0);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    let active = true;
+    settingsAPI
+      .get(courseId)
+      .then((data) => {
+        if (!active) return;
+        let diff: QuizDifficulty = 'medium';
+        const rawDiff = data.difficulty?.toLowerCase();
+        if (rawDiff === 'easy') diff = 'easy';
+        else if (rawDiff === 'hard') diff = 'hard';
+
+        let count = data.question_count ?? 10;
+        if (count <= 5) count = 5;
+        else if (count <= 10) count = 10;
+        else if (count <= 15) count = 15;
+        else count = 20;
+
+        setSetup((prev) => ({
+          ...prev,
+          difficulty: diff,
+          questionCount: count,
+        }));
+      })
+      .catch(() => {
+        // Keep fallback defaults if settings fetch fails
+      });
+    return () => {
+      active = false;
+    };
+  }, [courseId]);
 
   const questions: QuizQuestionView[] = quiz?.questions ?? [];
 

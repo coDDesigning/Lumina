@@ -43,6 +43,7 @@ export function FlashcardModal({
   onClose,
 }: FlashcardModalProps) {
   const [state, setState] = useState<FlashcardState>({ phase: 'idle' });
+  const [includeProfileContext, setIncludeProfileContext] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -72,9 +73,11 @@ export function FlashcardModal({
     setCurrentIndex(0);
 
     try {
-      const result = await flashcardsAPI.generate(courseId, {}, {
-        signal: controller.signal,
-      });
+      const result = await flashcardsAPI.generate(
+        courseId,
+        { include_profile_context: includeProfileContext },
+        { signal: controller.signal },
+      );
       setCards(result.flashcards.flashcards);
       setState({ phase: 'success', result });
       void refresh();
@@ -92,7 +95,7 @@ export function FlashcardModal({
         retryable: parsed.retryable,
       });
     }
-  }, [courseId, refresh]);
+  }, [courseId, includeProfileContext, refresh]);
 
   const handleFlip = useCallback(() => {
     setIsFlipped((prev) => !prev);
@@ -185,7 +188,18 @@ export function FlashcardModal({
                 <div style={{ padding: '12px', background: '#fffbeb', color: '#b45309', borderRadius: '8px', marginBottom: '16px' }}>
                   ⚠️ No ready course materials found. Please upload and process documents first.
                 </div>
-              ) : null}
+              ) : (
+                <div style={{ margin: '16px auto 24px auto', display: 'flex', justifyContent: 'center' }}>
+                  <label className="study-toggle-label" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                    <input
+                      type="checkbox"
+                      checked={includeProfileContext}
+                      onChange={(event) => setIncludeProfileContext(event.target.checked)}
+                    />
+                    <span>Include personal study profile context</span>
+                  </label>
+                </div>
+              )}
               {exhausted ? (
                 <CreditExhaustedNotice source="flashcard" action="flashcards" />
               ) : null}

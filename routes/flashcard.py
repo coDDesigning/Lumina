@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
-from schemas.flashcard import FlashcardGenerationResult, FlashcardRequest
+from schemas.flashcard import (
+    FlashcardGenerationContext,
+    FlashcardGenerationResult,
+    FlashcardGenerationSettings,
+    FlashcardRequest,
+)
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.flashcard import FlashcardGenerationError, FlashcardService
@@ -52,19 +57,33 @@ def generate_flashcards(
         except TypeError:
             provider = get_text_generation_provider()
 
+        include_profile = (
+            request.include_profile_context if request is not None else False
+        )
         generation = FlashcardService.generate(
             db,
             course.id,
             provider,
             user_id=current_user.id,
+            include_profile_context=include_profile,
         )
 
-        FlashcardService.save_generated_flashcards(
+        applied_settings = FlashcardGenerationSettings.from_request(
+            request
+        ).model_dump_json()
+        applied_context = FlashcardGenerationContext.from_material(
+            generation.material,
+            profile_knowledge=generation.profile_knowledge,
+        ).model_dump_json()
+
+        persisted = FlashcardService.save_generated_flashcards(
             db,
             course.id,
             generation.flashcards,
             user_id=current_user.id,
             model_used=generation.model_used,
+            generation_settings=applied_settings,
+            generation_context=applied_context,
         )
 
     except (TextGenerationError, FlashcardGenerationError, Exception) as exc:
@@ -75,8 +94,18 @@ def generate_flashcards(
         message="Flashcards generated successfully",
         data=FlashcardGenerationResult(
             flashcards=generation.flashcards,
+            generated_output_id=persisted.id,
             context_truncated=generation.material.truncated,
             chunks_used=generation.material.chunks_used,
             chunks_available=generation.material.chunks_available,
+            profile_knowledge_used=bool(
+                generation.profile_knowledge
+                and not generation.profile_knowledge.is_empty
+            ),
+            profile_knowledge_items_used=(
+                generation.profile_knowledge.items_used
+                if generation.profile_knowledge
+                else 0
+            ),
         ),
     )

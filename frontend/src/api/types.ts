@@ -169,6 +169,8 @@ export interface BoundedContext {
   context_truncated: boolean;
   chunks_used: number;
   chunks_available: number;
+  profile_knowledge_used?: boolean;
+  profile_knowledge_items_used?: number;
 }
 
 /**
@@ -210,6 +212,7 @@ export interface StudyGuideRequest {
   summary_length?: SummaryLength;
   detail_level?: DetailLevel;
   summary_mode?: SummaryMode;
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -269,6 +272,7 @@ export interface StudyGuideGenerationResult extends RetrievedContext {
 export interface GenerationSettings {
   version: number;
   output_type: string;
+  include_profile_context?: boolean;
   question_count?: number;
   question_types?: QuizQuestionType[];
   difficulty?: QuizDifficulty;
@@ -283,13 +287,17 @@ export interface GenerationSettings {
 
 export interface GenerationContext {
   version: number;
-  chunks_ranked: number;
-  chunks_retrieved: number;
+  chunks_ranked?: number;
+  chunks_retrieved?: number;
   chunks_used: number;
   chunks_available: number;
-  lowest_similarity: number | null;
-  highest_similarity: number | null;
+  lowest_similarity?: number | null;
+  highest_similarity?: number | null;
   truncated: boolean;
+  profile_knowledge_used?: boolean;
+  profile_knowledge_items_used?: number;
+  profile_knowledge_characters_used?: number;
+  profile_knowledge_truncated?: boolean;
 }
 
 export interface GeneratedOutputSummary {
@@ -333,6 +341,7 @@ export interface QuizRequest {
   question_types: QuizQuestionType[];
   difficulty: QuizDifficulty;
   topic_focus: string;
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -490,6 +499,7 @@ export interface ProfileKnowledgeImport {
 }
 
 export interface FlashcardRequest {
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -565,6 +575,7 @@ export interface FlashcardGenerationResponse {
 
 export interface FlashcardGenerationResult extends BoundedContext {
   flashcards: FlashcardGenerationResponse;
+  generated_output_id?: number | null;
 }
 
 export interface CourseSettings {

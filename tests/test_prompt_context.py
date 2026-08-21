@@ -5,6 +5,8 @@ from pydantic import ValidationError
 
 from backend.app.models import UploadedDocument
 from schemas.prompt_context import (
+    MAX_COURSE_TITLE_CHARS,
+    MAX_SUBJECT_AREA_CHARS,
     UNSPECIFIED_COURSE_TITLE,
     UNSPECIFIED_SUBJECT_AREA,
     EducationLevel,
@@ -216,3 +218,36 @@ def test_course_title_cannot_carry_a_placeholder_into_a_prompt(
     variables = context.as_variables()
     assert "{{" not in variables["COURSE_TITLE"]
     assert "{{" not in variables["SUBJECT_AREA"]
+
+
+@pytest.mark.parametrize("field", ["course_title", "subject_area"])
+def test_prompt_context_rejects_nul_in_learner_supplied_text(field: str) -> None:
+    with pytest.raises(ValidationError):
+        PromptContext(**{field: "Unsafe\x00label"})
+
+
+@pytest.mark.parametrize(
+    ("field", "limit"),
+    [
+        ("course_title", MAX_COURSE_TITLE_CHARS),
+        ("subject_area", MAX_SUBJECT_AREA_CHARS),
+    ],
+)
+def test_prompt_context_caps_learner_supplied_text(field: str, limit: int) -> None:
+    assert PromptContext(**{field: "a" * limit})
+
+    with pytest.raises(ValidationError):
+        PromptContext(**{field: "a" * (limit + 1)})
+
+
+def test_resolver_truncates_and_strips_learner_supplied_text(
+    model_graph, db_session
+) -> None:
+    model_graph.course.title = "T" * (MAX_COURSE_TITLE_CHARS + 50)
+    model_graph.course.subject_area = "S" * (MAX_SUBJECT_AREA_CHARS + 50)
+    db_session.commit()
+
+    context = resolve_prompt_context(db_session, course=model_graph.course)
+
+    assert len(context.course_title) == MAX_COURSE_TITLE_CHARS
+    assert len(context.subject_area) == MAX_SUBJECT_AREA_CHARS

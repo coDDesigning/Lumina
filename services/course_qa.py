@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -85,7 +84,6 @@ class CourseQAService:
         course_material: str,
         question: str,
         conversation_history: str = "",
-        learner_context: Any = None,
         *,
         context: PromptContext,
     ) -> str:
@@ -97,7 +95,6 @@ class CourseQAService:
                 "CONVERSATION_HISTORY": conversation_history,
                 "QUESTION": question,
             },
-            learner_context=learner_context,
         )
 
     @classmethod

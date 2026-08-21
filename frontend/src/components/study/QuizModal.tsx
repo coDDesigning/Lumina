@@ -46,6 +46,7 @@ interface QuizSetup {
   difficulty: QuizDifficulty;
   topic: string;
   hasTimer: boolean;
+  includeProfileContext: boolean;
 }
 
 /** One in-progress answer, in whichever form its question type calls for. */
@@ -142,6 +143,7 @@ export function QuizModal({
     difficulty: 'medium',
     topic: ALL_TOPICS,
     hasTimer: true,
+    includeProfileContext: false,
   });
 
   const [quiz, setQuiz] = useState<QuizView | null>(null);
@@ -238,6 +240,7 @@ export function QuizModal({
           question_types: setup.questionTypes,
           difficulty: setup.difficulty,
           topic_focus: setup.topic,
+          include_profile_context: setup.includeProfileContext,
         },
         { signal: controller.signal },
       );
@@ -456,6 +459,20 @@ export function QuizModal({
                     }
                   />
                   <span>Enable Exam Countdown Timer (1 min per question)</span>
+                </label>
+
+                <label className="study-toggle-label">
+                  <input
+                    type="checkbox"
+                    checked={setup.includeProfileContext}
+                    onChange={(event) =>
+                      setSetup({
+                        ...setup,
+                        includeProfileContext: event.target.checked,
+                      })
+                    }
+                  />
+                  <span>Include personal study profile context</span>
                 </label>
 
                 {!hasMaterial ? (

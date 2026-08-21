@@ -72,6 +72,10 @@ class QuizRequest(BaseModel):
     )
     difficulty: QuizDifficulty
     topic_focus: str = Field(min_length=1, max_length=MAX_TOPIC_CHARS)
+    include_profile_context: bool = Field(
+        default=False,
+        description="Whether to include student profile knowledge context (opt-in)",
+    )
     model: str | None = Field(
         default=None,
         description="Explicit model override, or omit to use preferred/default model",
@@ -278,6 +282,7 @@ class QuizGenerationSettings(BaseModel):
     question_types: list[QuizQuestionType]
     difficulty: QuizDifficulty
     topic_focus: str
+    include_profile_context: bool = False
     retrieval_limit: int
     retrieval_min_similarity: float
 
@@ -294,6 +299,7 @@ class QuizGenerationSettings(BaseModel):
             question_types=list(request.question_types),
             difficulty=request.difficulty,
             topic_focus=request.topic_focus,
+            include_profile_context=request.include_profile_context,
             retrieval_limit=retrieval_limit,
             retrieval_min_similarity=retrieval_min_similarity,
         )

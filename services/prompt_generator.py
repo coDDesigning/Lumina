@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -29,12 +30,17 @@ class PromptGeneratorService:
 
     @classmethod
     def build_prompt(
-        cls, description: str, *, context: PromptContext | None = None
+        cls,
+        description: str,
+        learner_context: Any = None,
+        *,
+        context: PromptContext | None = None,
     ) -> str:
         resolved = context or PromptContext()
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {**resolved.as_variables(), "TEXT": description},
+            learner_context=learner_context,
         )
 
     @classmethod

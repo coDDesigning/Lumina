@@ -15,6 +15,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import func, select
@@ -259,6 +260,7 @@ class QuizService:
         cls,
         course_material: str,
         request: QuizRequest,
+        learner_context: Any = None,
         *,
         context: PromptContext,
     ) -> str:
@@ -276,6 +278,7 @@ class QuizService:
                 # that a later substitution would then fill in.
                 "TEXT": course_material,
             },
+            learner_context=learner_context,
         )
 
     @classmethod

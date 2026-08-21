@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -173,6 +174,7 @@ class StudyGuideService:
         cls,
         course_material: str,
         options: StudyGuideRequest,
+        learner_context: Any = None,
         *,
         context: PromptContext,
     ) -> str:
@@ -193,6 +195,7 @@ class StudyGuideService:
                 # that a later substitution would then fill in.
                 "TEXT": course_material,
             },
+            learner_context=learner_context,
         )
 
     @classmethod

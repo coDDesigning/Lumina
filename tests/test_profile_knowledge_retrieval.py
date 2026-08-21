@@ -201,3 +201,52 @@ def test_retrieval_cross_user_isolation(authz_api) -> None:
         )
         assert "User B Topic" in context_b.combined_text
         assert "User A Topic" not in context_b.combined_text
+
+
+def test_assemble_generation_context_opt_in_flag(authz_api) -> None:
+    factory = authz_api.session_factory
+    user_id = authz_api.user_a_id
+    course_id = authz_api.a_course_id
+    course_text = "Course content about optics."
+
+    with factory() as session:
+        _seed_document_with_chunk(session, course_id, user_id, course_text)
+        session.add(
+            ProfileKnowledge(
+                user_id=user_id,
+                topic="Optics Mastery",
+                detail="Student already understands lenses.",
+            )
+        )
+        session.commit()
+
+    with factory() as session:
+        # When include_profile_context=False, profile knowledge is omitted
+        ctx_disabled = assemble_generation_context(
+            session,
+            course_id=course_id,
+            user_id=user_id,
+            course_max_characters=1000,
+            include_profile_context=False,
+        )
+        assert "Optics Mastery" not in ctx_disabled.combined_text
+        assert (
+            "[Supplementary Student Knowledge Profile]"
+            not in ctx_disabled.combined_text
+        )
+        assert ctx_disabled.combined_text == course_text
+        assert ctx_disabled.profile_knowledge.is_empty
+        assert ctx_disabled.profile_knowledge.items_used == 0
+
+        # When include_profile_context=True, profile knowledge is included
+        ctx_enabled = assemble_generation_context(
+            session,
+            course_id=course_id,
+            user_id=user_id,
+            course_max_characters=1000,
+            include_profile_context=True,
+        )
+        assert "Optics Mastery" in ctx_enabled.combined_text
+        assert "[Supplementary Student Knowledge Profile]" in ctx_enabled.combined_text
+        assert not ctx_enabled.profile_knowledge.is_empty
+        assert ctx_enabled.profile_knowledge.items_used == 1

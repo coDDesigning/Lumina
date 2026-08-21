@@ -11,8 +11,17 @@ import {
   XCircle,
 } from 'lucide-react';
 import { quizAPI } from '../../api/quiz';
-import { describeError, describeGenerationError, isAbortError } from '../../api/errors';
+import {
+  describeError,
+  describeGenerationError,
+  isAbortError,
+  isInsufficientCredits,
+} from '../../api/errors';
+import { useCredits } from '../../context/CreditContext';
+import CreditBalance from '../credits/CreditBalance';
+import CreditExhaustedNotice from '../credits/CreditExhaustedNotice';
 import type {
+  CreditSource,
   QuizAnswerResult,
   QuizAttemptResponse,
   QuizDifficulty,
@@ -37,6 +46,7 @@ interface QuizSetup {
   difficulty: QuizDifficulty;
   topic: string;
   hasTimer: boolean;
+  includeProfileContext: boolean;
 }
 
 /** One in-progress answer, in whichever form its question type calls for. */
@@ -133,6 +143,7 @@ export function QuizModal({
     difficulty: 'medium',
     topic: ALL_TOPICS,
     hasTimer: true,
+    includeProfileContext: false,
   });
 
   const [quiz, setQuiz] = useState<QuizView | null>(null);
@@ -207,6 +218,13 @@ export function QuizModal({
     return () => clearTimeout(timer);
   }, [step, setup.hasTimer, timeLeft, submitAttempt]);
 
+  const { refresh, canAfford, costOf, isMetered } = useCredits();
+  const quizSource: CreditSource = setup.questionTypes.includes('open_ended')
+    ? 'quiz_open_ended'
+    : 'quiz';
+  const exhausted = isMetered && !canAfford(quizSource);
+  const quizCost = isMetered ? costOf(quizSource) : null;
+
   const startQuiz = useCallback(async () => {
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -222,6 +240,7 @@ export function QuizModal({
           question_types: setup.questionTypes,
           difficulty: setup.difficulty,
           topic_focus: setup.topic,
+          include_profile_context: setup.includeProfileContext,
         },
         { signal: controller.signal },
       );
@@ -234,14 +253,24 @@ export function QuizModal({
       setTimeLeft(generated.quiz.questions.length * SECONDS_PER_QUESTION);
       startedAtRef.current = Date.now();
       setStep('solving');
+      void refresh();
     } catch (error) {
       if (controller.signal.aborted || isAbortError(error)) return;
-      setErrorMessage(
-        describeGenerationError(error, 'The quiz could not be generated.').message,
+      const described = describeGenerationError(
+        error,
+        'The quiz could not be generated.',
       );
+      if (isInsufficientCredits(described)) {
+        // Back to setup rather than a dead error screen: the balance is now
+        // correct and the exhaustion notice there explains what to do next.
+        await refresh();
+        setStep('config');
+        return;
+      }
+      setErrorMessage(described.message);
       setStep('error');
     }
-  }, [courseId, setup]);
+  }, [courseId, setup, refresh]);
 
   const resetToConfig = () => {
     abortRef.current?.abort();
@@ -311,6 +340,12 @@ export function QuizModal({
             </div>
           ) : null}
 
+          {step === 'config' && exhausted ? (
+            <div className="summary-container">
+              <CreditExhaustedNotice source={quizSource} action="a quiz" />
+            </div>
+          ) : null}
+
           {step === 'config' ? (
             <div className="summary-container">
               <div className="summary-section-card">
@@ -318,6 +353,13 @@ export function QuizModal({
                   <HelpCircle aria-hidden="true" />
                   Configure Your Quiz Session
                 </h4>
+                {quizCost !== null ? (
+                  <p className="credit-inline">
+                    {quizSource === 'quiz_open_ended'
+                      ? `Open-ended questions are graded by AI, so this quiz costs ${quizCost} credits and grading every attempt is included.`
+                      : `This quiz costs ${quizCost} ${quizCost === 1 ? 'credit' : 'credits'}.`}
+                  </p>
+                ) : null}
                 <p className="summary-hint">
                   Lumina generates high-yield questions derived directly from your
                   processed course material.
@@ -417,6 +459,20 @@ export function QuizModal({
                     }
                   />
                   <span>Enable Exam Countdown Timer (1 min per question)</span>
+                </label>
+
+                <label className="study-toggle-label">
+                  <input
+                    type="checkbox"
+                    checked={setup.includeProfileContext}
+                    onChange={(event) =>
+                      setSetup({
+                        ...setup,
+                        includeProfileContext: event.target.checked,
+                      })
+                    }
+                  />
+                  <span>Include personal study profile context</span>
                 </label>
 
                 {!hasMaterial ? (
@@ -651,11 +707,12 @@ export function QuizModal({
               <button className="secondary-button" type="button" onClick={onClose}>
                 Cancel
               </button>
+              <CreditBalance source={quizSource} />
               <button
                 className="primary-button"
                 type="button"
                 onClick={startQuiz}
-                disabled={!hasMaterial}
+                disabled={!hasMaterial || exhausted}
               >
                 <Play aria-hidden="true" />
                 Start Quiz

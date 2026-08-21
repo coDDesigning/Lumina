@@ -10,7 +10,13 @@ import services.retrieval_material as retrieval_material_service
 import services.retrieval_query as retrieval_query
 import services.study_guide as study_guide_service
 import services.text_generation as text_generation
-from backend.app.models import Course, DocumentChunk, GeneratedOutput, UploadedDocument
+from backend.app.models import (
+    Course,
+    DocumentChunk,
+    GeneratedOutput,
+    ProfileKnowledge,
+    UploadedDocument,
+)
 from schemas.ai_usage import ErrorCategory
 from schemas.study_guide import (
     DetailLevel,
@@ -1508,3 +1514,53 @@ def test_ollama_output_that_is_a_valid_study_guide_persists(
     assert generated_output.id is not None
     assert generated_output.user_id == model_graph.user.id
     assert generated_output.model_used == "ollama:qwen3:8b"
+
+
+def test_study_guide_generation_with_profile_knowledge_opt_in(
+    db_session, model_graph, retrieval_env
+) -> None:
+    _seed_model_graph_material(
+        db_session,
+        model_graph,
+        ["Quantum entanglement and Bell inequalities."],
+        file_hash="3" * 64,
+        retrieval_env=retrieval_env,
+    )
+    db_session.add(
+        ProfileKnowledge(
+            user_id=model_graph.user.id,
+            topic="Quantum Mechanics Experience",
+            detail="Student is familiar with bra-ket notation.",
+        )
+    )
+    db_session.commit()
+
+    provider = CountingProvider()
+    # 1. Opt-in True: profile knowledge included in prompt and returned in profile_knowledge
+    req_with_profile = _request(include_profile_context=True)
+    generation_opt_in = StudyGuideService.generate(
+        db_session,
+        model_graph.course.id,
+        req_with_profile,
+        provider,
+        user_id=model_graph.user.id,
+    )
+    assert "[Supplementary Student Knowledge Profile]" in provider.prompt
+    assert "Quantum Mechanics Experience" in provider.prompt
+    assert "Student is familiar with bra-ket notation." in provider.prompt
+    assert generation_opt_in.profile_knowledge is not None
+    assert generation_opt_in.profile_knowledge.items_used == 1
+
+    # 2. Opt-in False (default): profile knowledge omitted
+    req_without_profile = _request(include_profile_context=False)
+    generation_opt_out = StudyGuideService.generate(
+        db_session,
+        model_graph.course.id,
+        req_without_profile,
+        provider,
+        user_id=model_graph.user.id,
+    )
+    assert "[Supplementary Student Knowledge Profile]" not in provider.prompt
+    assert "Quantum Mechanics Experience" not in provider.prompt
+    assert generation_opt_out.profile_knowledge is not None
+    assert generation_opt_out.profile_knowledge.is_empty

@@ -32,9 +32,19 @@ import { progressAPI } from './api/progress'
 import { courseQaAPI } from './api/courseQa'
 import { aiTutorAPI } from './api/aiTutor'
 import { promptGeneratorAPI } from './api/promptGenerator'
-import { describeError, describeUploadError, isAbortError } from './api/errors'
+import {
+  describeError,
+  describeGenerationError,
+  describeUploadError,
+  isAbortError,
+  isInsufficientCredits,
+} from './api/errors'
+import { useCredits } from './context/CreditContext'
+import CreditBalance from './components/credits/CreditBalance'
+import CreditExhaustedNotice from './components/credits/CreditExhaustedNotice'
 import type {
   ConversationDetail,
+  CreditSource,
   ConversationRole,
   ConversationType,
   Course,
@@ -74,12 +84,12 @@ const tabContent: Record<
   { body: string; suggestions: string[] }
 > = {
   Exam: {
-    body: `Individuals, when faced with dire situations, often possess the tendency to seek comfort in any form that is accessible to them, even resorting to mental fabrication at times to conjure up the very comfort they had initially sought. This innate pursuit of comfort can manifest as self manipulation, as individuals try to alter their perception of the current conditions in their favor, creating a more optimal situation. This is accomplished by originating a mental barrier in between the cause of an individual's discomfort and the individual themselves with the aim of limiting further exposure and thus, further discomfort. This method is often utilized when individuals alter their perception to avoid the emotional toll that taking proper accountability entails. By reshaping their perception, individuals aim to avoid this emotional toll of undertaking liability, actively favoring comfort over truth. Instead of facing the ethical consequences of their actions, individuals generally opt for the easier route, where they delicately reconstruct their perception of their current situation to minimize their culpability in both their own and everyone's perspective. For instance, people who actively partake in such activities, might be inclined to blame external influences, rather than undertaking necessary liability. An individual who acts negligent towards a responsibility of theirs to such a degree that they pass a certain point, where nothing of significance can be done about aforementioned responsibility, might find placing the blame onto outside circumstances more palatable and comforting. This inclination to shift the blame is fueled by individuals' escapist tendencies which aspire to alleviate the concomitant discomfort that accompanies the process of taking accountability. As a result, self-manipulation expectedly becomes an effective vessel utilized for escapism, as it helps individuals form metaphorical barriers in between themselves and the moral implications of their actions, albeit not offering a remedy of any sorts for the affected party.`,
+    body: `Ask questions about your uploaded course materials, review concepts, or prepare for exams with retrieval-backed answers. Choose a suggestion below or enter a question to start.`,
     suggestions: [
       'Generate summary',
       'Start a quick practice set',
       'Generate multi-choice problems',
-      'Make comparisons with specific sources',
+      'What are the key concepts in these sources?',
     ],
   },
   Tutoring: {
@@ -109,6 +119,13 @@ type WorkspacePageProps = {
 
 function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const { user } = useAuth()
+  const {
+    refresh: refreshCredits,
+    canAfford: canAffordCredits,
+    isMetered: creditsMetered,
+  } = useCredits()
+  const promptGeneratorExhausted =
+    creditsMetered && !canAffordCredits('prompt_generator')
   const courseId = Number(workspace.id)
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('Exam')
   const [generatorPrompt, setGeneratorPrompt] = useState('')
@@ -148,6 +165,9 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const activeConversationType: ConversationType =
     activeTab === 'Tutoring' ? 'ai_tutor' : 'course_qa'
   const activeConversation = conversations[activeConversationType]
+  const conversationSource: CreditSource = activeConversationType
+  const conversationExhausted =
+    creditsMetered && !canAffordCredits(conversationSource)
 
   const {
     entries,
@@ -229,6 +249,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
     event.preventDefault()
     const request = generatorPrompt.trim()
     if (!request || isGeneratingPrompt) return
+    if (promptGeneratorExhausted) return
 
     setIsGeneratingPrompt(true)
     setPromptGeneratorError(null)
@@ -237,10 +258,18 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
       const res = await promptGeneratorAPI.generate({ description: request })
       setMainPrompt(res.generated_prompt)
       setGeneratorPrompt('')
+      void refreshCredits()
     } catch (err) {
-      setPromptGeneratorError(
-        describeError(err, 'Failed to generate prompt. Please try again.').message,
+      const described = describeGenerationError(
+        err,
+        'Failed to generate prompt. Please try again.',
       )
+      if (isInsufficientCredits(described)) {
+        await refreshCredits()
+        setPromptGeneratorError(null)
+      } else {
+        setPromptGeneratorError(described.message)
+      }
     } finally {
       setIsGeneratingPrompt(false)
     }
@@ -251,28 +280,13 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
     const prompt = mainPrompt.trim()
     if (!prompt) return
 
-    if (prompt.toLowerCase().includes('summary') || prompt.toLowerCase().includes('özet')) {
-      setIsSummaryModalOpen(true)
-      setMainPrompt('')
-      return
-    }
-
-    if (prompt.toLowerCase().includes('quiz') || prompt.toLowerCase().includes('test') || prompt.toLowerCase().includes('practice')) {
-      setIsQuizModalOpen(true)
-      setMainPrompt('')
-      return
-    }
-
-    if (prompt.toLowerCase().includes('flashcard') || prompt.toLowerCase().includes('kart')) {
-      setIsFlashcardModalOpen(true)
-      setMainPrompt('')
-      return
-    }
-
     const conversationType: ConversationType =
       activeTab === 'Tutoring' ? 'ai_tutor' : 'course_qa'
     const conversation = conversations[conversationType]
     if (conversation.isLoading) return
+    // Guarded here rather than only on the button, so an implicit submit from
+    // the Enter key cannot get past an empty balance either.
+    if (conversationExhausted) return
 
     setMainPrompt('')
     setConversations((current) => ({
@@ -320,20 +334,29 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
           ],
         },
       }))
+      void refreshCredits()
     } catch (err) {
       setMainPrompt(prompt)
-      setConversations((current) => ({
-        ...current,
-        [conversationType]: {
-          ...current[conversationType],
-          error: describeError(
-            err,
-            conversationType === 'ai_tutor'
-              ? 'Failed to generate tutor explanation from course materials.'
-              : 'Failed to generate answer from course materials.',
-          ).message,
-        },
-      }))
+      const described = describeGenerationError(
+        err,
+        conversationType === 'ai_tutor'
+          ? 'Failed to generate tutor explanation from course materials.'
+          : 'Failed to generate answer from course materials.',
+      )
+      if (isInsufficientCredits(described)) {
+        // The exhaustion notice below the composer carries the recovery route,
+        // so a duplicate inline error would only repeat it. Earlier messages in
+        // the conversation stay exactly where they are.
+        await refreshCredits()
+      } else {
+        setConversations((current) => ({
+          ...current,
+          [conversationType]: {
+            ...current[conversationType],
+            error: described.message,
+          },
+        }))
+      }
     } finally {
       setConversations((current) => ({
         ...current,
@@ -380,7 +403,12 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
       setIsSummaryModalOpen(true)
       return
     }
-    if (suggestion === 'Start a quick practice set' || suggestion === 'Create true or false questions' || suggestion === 'Generate multi-choice problems') {
+    if (
+      suggestion === 'Start a quick practice set' ||
+      suggestion === 'Create true or false questions' ||
+      suggestion === 'Generate multi-choice problems' ||
+      suggestion === 'Practice my weakest topic'
+    ) {
       setIsQuizModalOpen(true)
       return
     }
@@ -507,7 +535,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
             <button
               type="submit"
               aria-label="Generate prompt"
-              disabled={isGeneratingPrompt}
+              disabled={isGeneratingPrompt || promptGeneratorExhausted}
             >
               {isGeneratingPrompt ? (
                 <LoadingSpinner size="sm" />
@@ -516,6 +544,13 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
               )}
             </button>
           </form>
+          {promptGeneratorExhausted ? (
+            <CreditExhaustedNotice
+              source="prompt_generator"
+              action="a prompt"
+              className="generator-credit-notice"
+            />
+          ) : null}
           {promptGeneratorError && (
             <p
               style={{
@@ -708,6 +743,21 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
                     <p>{activeConversation.error}</p>
                   </div>
                 ) : null}
+
+                {conversationExhausted ? (
+                  <CreditExhaustedNotice
+                    source={conversationSource}
+                    action={
+                      conversationSource === 'ai_tutor'
+                        ? 'a tutor explanation'
+                        : 'an answer'
+                    }
+                  />
+                ) : null}
+              </div>
+
+              <div className="composer-credit-balance">
+                <CreditBalance source={conversationSource} />
               </div>
 
               <form className="prompt-field main-prompt" onSubmit={submitPrompt}>
@@ -729,7 +779,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
                 <button
                   type="submit"
                   aria-label="Submit prompt"
-                  disabled={activeConversation.isLoading}
+                  disabled={activeConversation.isLoading || conversationExhausted}
                 >
                   <Search aria-hidden="true" />
                 </button>
@@ -860,59 +910,108 @@ function EditWorkspaceRoute({
   return <EditPage key={workspace.id} workspace={workspace} onSave={onSave} />
 }
 
-function mapCourseToWorkspace(course: Course, index: number): Workspace {
+function mapCourseToWorkspace(
+  course: Course,
+  index: number,
+  progressData?: CourseProgressResponse | null,
+): Workspace {
+  let progress: number | null = null
+  let status = 'Not started'
+
+  if (progressData) {
+    if (progressData.average_score != null) {
+      progress = Math.round(
+        progressData.average_score <= 1
+          ? progressData.average_score * 100
+          : progressData.average_score,
+      )
+    } else if (progressData.completion != null && progressData.attempts_count > 0) {
+      progress = Math.round(progressData.completion)
+    }
+
+    if (progressData.attempts_count > 0) {
+      status = (progress ?? 0) >= 80 ? 'Mastered' : 'In progress'
+    }
+  }
+
   return {
     id: course.id.toString(),
     ownerId: course.owner_id,
     name: course.title,
     semester: course.semester || '',
     examDate: course.exam_date || '',
-    topics: course.topics ? course.topics.split(',').map(t => t.trim()) : [],
+    topics: course.topics ? course.topics.split(',').map((t) => t.trim()) : [],
     syllabus: course.syllabus || '',
-    progress: 0,
-    status: 'In progress',
+    progress,
+    status,
     updatedAt: new Date(course.updated_at).toLocaleDateString(),
     accent: workspaceAccents[index % workspaceAccents.length],
     sources: [],
-  };
+  }
 }
 
 function App() {
   const { isAuthenticated } = useAuth()
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(true)
-  
+  const [workspacesError, setWorkspacesError] = useState<string | null>(null)
+
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(
-    () => localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) ?? ''
+    () => localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) ?? '',
   )
 
-  const fetchWorkspaces = useCallback(async () => {
-    if (!isAuthenticated) {
-      setIsLoadingWorkspaces(false);
-      return;
-    }
-    setIsLoadingWorkspaces(true);
-    try {
-      const courses = await coursesAPI.list();
-      const mappedWorkspaces = courses.map((course, index) => mapCourseToWorkspace(course, index));
-      setWorkspaces(mappedWorkspaces);
-      
-      setActiveWorkspaceId((current) => {
-        if (mappedWorkspaces.length > 0 && !current) {
-          return mappedWorkspaces[0].id;
+  const fetchWorkspaces = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!isAuthenticated) {
+        setIsLoadingWorkspaces(false)
+        setWorkspacesError(null)
+        return
+      }
+      setIsLoadingWorkspaces(true)
+      setWorkspacesError(null)
+      try {
+        const courses = await coursesAPI.list({ signal })
+        const progressResults = await Promise.allSettled(
+          courses.map((course) => progressAPI.get(course.id, { signal })),
+        )
+        const mappedWorkspaces = courses.map((course, index) => {
+          const progResult = progressResults[index]
+          const progData =
+            progResult?.status === 'fulfilled' ? progResult.value : null
+          return mapCourseToWorkspace(course, index, progData)
+        })
+        setWorkspaces(mappedWorkspaces)
+
+        setActiveWorkspaceId((current) => {
+          if (mappedWorkspaces.length > 0 && !current) {
+            return mappedWorkspaces[0].id
+          }
+          return current
+        })
+      } catch (error: unknown) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          // Abort/unmount behavior is intentionally NOT shown as an error
+          return
         }
-        return current;
-      });
-    } catch (error) {
-      console.error("Failed to load workspaces", error);
-    } finally {
-      setIsLoadingWorkspaces(false);
-    }
-  }, [isAuthenticated]);
+        const described = describeError(
+          error,
+          'Failed to load workspaces. Please try again.',
+        )
+        setWorkspacesError(described.message)
+      } finally {
+        setIsLoadingWorkspaces(false)
+      }
+    },
+    [isAuthenticated],
+  )
 
   useEffect(() => {
-    fetchWorkspaces();
-  }, [fetchWorkspaces]);
+    const controller = new AbortController()
+    fetchWorkspaces(controller.signal)
+    return () => {
+      controller.abort()
+    }
+  }, [fetchWorkspaces])
 
   useEffect(() => {
     if (activeWorkspaceId) {
@@ -932,22 +1031,22 @@ function App() {
         semester: draft.semester.trim(),
         exam_date: draft.examDate,
         topics: draft.topics,
-      });
-      
-      const newWorkspace = mapCourseToWorkspace(newCourse, workspaces.length);
-      setWorkspaces(current => [newWorkspace, ...current]);
-      setActiveWorkspaceId(newWorkspace.id);
-      return newWorkspace;
+      })
+
+      const newWorkspace = mapCourseToWorkspace(newCourse, workspaces.length)
+      setWorkspaces((current) => [newWorkspace, ...current])
+      setActiveWorkspaceId(newWorkspace.id)
+      return newWorkspace
     } catch (error) {
-      console.error("Failed to create workspace", error);
-      throw error;
+      console.error('Failed to create workspace', error)
+      throw error
     }
   }
 
   const deleteWorkspace = async (workspaceId: string) => {
     await coursesAPI.delete(Number(workspaceId))
     const remaining = workspaces.filter(
-      workspace => workspace.id !== workspaceId
+      (workspace) => workspace.id !== workspaceId,
     )
     setWorkspaces(remaining)
 
@@ -961,39 +1060,52 @@ function App() {
 
   const updateWorkspace = async (updatedWorkspace: Workspace) => {
     try {
-      const updatedCourse = await coursesAPI.update(Number(updatedWorkspace.id), {
-        title: updatedWorkspace.name.trim(),
-        syllabus: updatedWorkspace.syllabus.trim(),
-        semester: updatedWorkspace.semester.trim(),
-        exam_date: updatedWorkspace.examDate,
-        topics: updatedWorkspace.topics.join(', '),
-      });
-      
-      const updatedMappedWorkspace = mapCourseToWorkspace(updatedCourse, workspaces.findIndex(w => w.id === updatedWorkspace.id));
-      setWorkspaces(current =>
-        current.map(workspace =>
-          workspace.id === updatedWorkspace.id ? updatedMappedWorkspace : workspace
-        )
-      );
+      const updatedCourse = await coursesAPI.update(
+        Number(updatedWorkspace.id),
+        {
+          title: updatedWorkspace.name.trim(),
+          syllabus: updatedWorkspace.syllabus.trim(),
+          semester: updatedWorkspace.semester.trim(),
+          exam_date: updatedWorkspace.examDate,
+          topics: updatedWorkspace.topics.join(', '),
+        },
+      )
+
+      const updatedMappedWorkspace = mapCourseToWorkspace(
+        updatedCourse,
+        workspaces.findIndex((w) => w.id === updatedWorkspace.id),
+      )
+      setWorkspaces((current) =>
+        current.map((workspace) =>
+          workspace.id === updatedWorkspace.id
+            ? updatedMappedWorkspace
+            : workspace,
+        ),
+      )
     } catch (error) {
-      console.error("Failed to update workspace", error);
+      console.error('Failed to update workspace', error)
     }
   }
 
-  const updateWorkspaceProgress = useCallback((workspaceId: string, progress: number) => {
-    setWorkspaces((current) => {
-      const target = current.find((w) => w.id === workspaceId);
-      if (!target || target.progress === progress) return current;
-      return current.map((w) => (w.id === workspaceId ? { ...w, progress } : w));
-    });
-  }, []);
+  const updateWorkspaceProgress = useCallback(
+    (workspaceId: string, progress: number) => {
+      setWorkspaces((current) => {
+        const target = current.find((w) => w.id === workspaceId)
+        if (!target || target.progress === progress) return current
+        return current.map((w) =>
+          w.id === workspaceId ? { ...w, progress } : w,
+        )
+      })
+    },
+    [],
+  )
 
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
-      
+
       <Route element={<ProtectedRoute />}>
         <Route
           path="/dashboard"
@@ -1001,6 +1113,9 @@ function App() {
             <WorkspacesPage
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
+              isLoading={isLoadingWorkspaces}
+              error={workspacesError}
+              onRetry={() => fetchWorkspaces()}
               onCreate={createWorkspace}
               onSelect={selectWorkspace}
               onDelete={deleteWorkspace}

@@ -90,7 +90,8 @@ def generate_quiz(
             retrieval_min_similarity=settings.retrieval_min_similarity,
         ).model_dump_json()
         applied_context = QuizGenerationContext.from_material(
-            generation.material
+            generation.material,
+            profile_knowledge=generation.profile_knowledge,
         ).model_dump_json()
 
         quiz = QuizService.save_generated_quiz(
@@ -136,6 +137,15 @@ def generate_quiz(
             retrieval_narrowed=generation.material.retrieval_narrowed,
             lowest_similarity=generation.material.lowest_similarity,
             highest_similarity=generation.material.highest_similarity,
+            profile_knowledge_used=bool(
+                generation.profile_knowledge
+                and not generation.profile_knowledge.is_empty
+            ),
+            profile_knowledge_items_used=(
+                generation.profile_knowledge.items_used
+                if generation.profile_knowledge
+                else 0
+            ),
         ),
     )
 

@@ -98,3 +98,14 @@ class CreditMutationResponse(BaseModel):
 
     user: UserResponse
     transaction: CreditTransactionResponse
+
+
+class CreditStatusResponse(BaseModel):
+    """The balance plus the policy a client needs to explain and recover it."""
+
+    credits: float | None = None
+    metering_enabled: bool
+    monthly_grant: float | None = None
+    balance_cap: float | None = None
+    next_grant_at: datetime | None = None
+    generation_costs: dict[str, float] = Field(default_factory=dict)

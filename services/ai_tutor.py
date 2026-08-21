@@ -26,7 +26,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import CreditService
+from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -163,7 +163,10 @@ class AiTutorService:
         receipt = None
         if resolved_user_id:
             receipt = CreditService.charge(
-                db, resolved_user_id, 1.0, source_type="ai_tutor"
+                db,
+                resolved_user_id,
+                GENERATION_CREDIT_COSTS["ai_tutor"],
+                source_type="ai_tutor",
             )
             if receipt is None:
                 log_failure(ErrorCategory.INSUFFICIENT_CREDITS)

@@ -11,13 +11,18 @@ from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.flashcard import FlashcardGenerationResponse
 from services.ai_usage_logger import AiUsageLogger
 from services.course_material import CourseMaterial, load_course_material
+from services.generated_output import GeneratedOutputService
+from services.profile_knowledge import (
+    ProfileKnowledgeContext,
+    assemble_generation_context,
+)
 from services.prompt_loader import PromptLoader
 from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import CreditService
+from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -47,6 +52,7 @@ class FlashcardGeneration:
     flashcards: FlashcardGenerationResponse
     material: CourseMaterial
     model_used: str
+    profile_knowledge: ProfileKnowledgeContext | None = None
 
 
 class FlashcardService:
@@ -85,6 +91,8 @@ class FlashcardService:
         course_id: int,
         provider: TextGenerationProvider,
         user_id: int | None = None,
+        *,
+        include_profile_context: bool = False,
     ) -> FlashcardGeneration:
         resolved_user_id = user_id
         if resolved_user_id is None:
@@ -108,13 +116,24 @@ class FlashcardService:
                 )
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
-        prompt = cls.build_prompt(material.text)
+        generation_ctx = assemble_generation_context(
+            db,
+            course_id=course_id,
+            user_id=resolved_user_id,
+            course_material=material,
+            include_profile_context=include_profile_context,
+        )
+
+        prompt = cls.build_prompt(generation_ctx.combined_text)
         metadata = None
 
         receipt = None
         if resolved_user_id:
             receipt = CreditService.charge(
-                db, resolved_user_id, 1.0, source_type="flashcard"
+                db,
+                resolved_user_id,
+                GENERATION_CREDIT_COSTS["flashcard"],
+                source_type="flashcard",
             )
             if receipt is None:
                 AiUsageLogger.log_failure(
@@ -179,6 +198,7 @@ class FlashcardService:
             flashcards=validated,
             material=material,
             model_used=model_identifier(metadata),
+            profile_knowledge=generation_ctx.profile_knowledge,
         )
 
     @staticmethod
@@ -189,18 +209,16 @@ class FlashcardService:
         *,
         user_id: int,
         model_used: str,
+        generation_settings: str | None = None,
+        generation_context: str | None = None,
     ) -> GeneratedOutput:
-        generated_output = GeneratedOutput(
+        return GeneratedOutputService.record(
+            db,
             course_id=course_id,
             user_id=user_id,
-            model_used=model_used,
             output_type="flashcards",
             content=flashcards.model_dump_json(),
+            model_used=model_used,
+            generation_settings=generation_settings,
+            generation_context=generation_context,
         )
-
-        db.add(generated_output)
-        db.flush()
-        db.refresh(generated_output)
-        db.commit()
-
-        return generated_output

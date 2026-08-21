@@ -36,6 +36,10 @@ class StudyGuideRequest(BaseModel):
     summary_length: SummaryLength = SummaryLength.MEDIUM
     detail_level: DetailLevel = DetailLevel.STANDARD
     summary_mode: SummaryMode = SummaryMode.GENERAL
+    include_profile_context: bool = Field(
+        default=False,
+        description="Whether to include student profile knowledge context (opt-in)",
+    )
     model: str | None = Field(
         default=None,
         description="Explicit model override, or omit to use preferred/default model",
@@ -58,6 +62,7 @@ class StudyGuideGenerationSettings(BaseModel):
     summary_length: SummaryLength
     detail_level: DetailLevel
     summary_mode: SummaryMode
+    include_profile_context: bool = False
     retrieval_limit: int
     retrieval_min_similarity: float
 
@@ -75,6 +80,7 @@ class StudyGuideGenerationSettings(BaseModel):
             summary_length=request.summary_length,
             detail_level=request.detail_level,
             summary_mode=request.summary_mode,
+            include_profile_context=request.include_profile_context,
             retrieval_limit=retrieval_limit,
             retrieval_min_similarity=retrieval_min_similarity,
         )

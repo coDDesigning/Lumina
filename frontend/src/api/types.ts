@@ -55,6 +55,26 @@ export interface CreditMutation {
   transaction: CreditTransaction;
 }
 
+/** The credit-charging features, keyed as the backend names them. */
+export type CreditSource =
+  | 'study_guide'
+  | 'quiz'
+  | 'quiz_open_ended'
+  | 'flashcard'
+  | 'ai_tutor'
+  | 'course_qa'
+  | 'prompt_generator';
+
+export interface CreditStatus {
+  /** null means this account is not metered, so no credit UI applies. */
+  credits: number | null;
+  metering_enabled: boolean;
+  monthly_grant: number | null;
+  balance_cap: number | null;
+  next_grant_at: string | null;
+  generation_costs: Partial<Record<LooseUnion<CreditSource>, number>>;
+}
+
 export interface AuthResponse {
   access_token: string;
   token_type: string;
@@ -149,6 +169,8 @@ export interface BoundedContext {
   context_truncated: boolean;
   chunks_used: number;
   chunks_available: number;
+  profile_knowledge_used?: boolean;
+  profile_knowledge_items_used?: number;
 }
 
 /**
@@ -190,6 +212,7 @@ export interface StudyGuideRequest {
   summary_length?: SummaryLength;
   detail_level?: DetailLevel;
   summary_mode?: SummaryMode;
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -249,6 +272,7 @@ export interface StudyGuideGenerationResult extends RetrievedContext {
 export interface GenerationSettings {
   version: number;
   output_type: string;
+  include_profile_context?: boolean;
   question_count?: number;
   question_types?: QuizQuestionType[];
   difficulty?: QuizDifficulty;
@@ -263,13 +287,17 @@ export interface GenerationSettings {
 
 export interface GenerationContext {
   version: number;
-  chunks_ranked: number;
-  chunks_retrieved: number;
+  chunks_ranked?: number;
+  chunks_retrieved?: number;
   chunks_used: number;
   chunks_available: number;
-  lowest_similarity: number | null;
-  highest_similarity: number | null;
+  lowest_similarity?: number | null;
+  highest_similarity?: number | null;
   truncated: boolean;
+  profile_knowledge_used?: boolean;
+  profile_knowledge_items_used?: number;
+  profile_knowledge_characters_used?: number;
+  profile_knowledge_truncated?: boolean;
 }
 
 export interface GeneratedOutputSummary {
@@ -313,6 +341,7 @@ export interface QuizRequest {
   question_types: QuizQuestionType[];
   difficulty: QuizDifficulty;
   topic_focus: string;
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -470,6 +499,7 @@ export interface ProfileKnowledgeImport {
 }
 
 export interface FlashcardRequest {
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -545,6 +575,7 @@ export interface FlashcardGenerationResponse {
 
 export interface FlashcardGenerationResult extends BoundedContext {
   flashcards: FlashcardGenerationResponse;
+  generated_output_id?: number | null;
 }
 
 export interface CourseSettings {

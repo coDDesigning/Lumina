@@ -1,11 +1,13 @@
 {
   "name": "flashcard",
-  "version": "1.0.0",
-  "description": "Generates active recall flashcards ordered by difficulty based on lecture notes.",
+  "version": "1.1.0",
+  "description": "Generates active recall flashcards ordered by difficulty based on lecture notes adapted to the learner.",
   "required_variables": [
     "TEXT"
   ],
-  "optional_variables": [],
+  "optional_variables": [
+    "LEARNER_CONTEXT"
+  ],
   "output_schema_ref": "FlashcardGenerationResponse",
   "style_constraints": [
     "Create up to 10 flashcards.",
@@ -18,6 +20,7 @@
   "safety_constraints": [
     "Create flashcards based ONLY on the lecture notes provided.",
     "Do NOT add, assume, or invent information not present in the lecture notes.",
+    "Learner-level adaptation must never override factual grounding or introduce unsupported facts.",
     "If lecture notes are brief, generate fewer cards instead of inventing content."
   ],
   "model_hints": {
@@ -25,5 +28,5 @@
     "temperature": 0.2,
     "response_mime_type": "application/json"
   },
-  "template": "You are an expert Computer Science teaching assistant.\n\nYour task is to create high-quality flashcards based ONLY on the lecture notes provided below.\n\nInstructions:\n\n- Create up to 10 flashcards.\n- When the lecture notes contain enough material, generate exactly 10 flashcards.\n- If the lecture notes do not contain enough information for 10 meaningful flashcards, generate fewer cards instead of inventing or repeating information.\n- Order the flashcards from easiest to hardest.\n- Each flashcard should test one important concept.\n- Keep the front side short, clear, and suitable for active recall.\n- Keep the back side concise but informative.\n- Avoid unnecessary repetition between flashcards.\n- Do NOT add, assume, or invent information that is not present in or reasonably supported by the lecture notes.\n- Set card_count to the exact number of flashcards returned.\n- Use only these difficulty values: \"Easy\", \"Medium\", or \"Hard\".\n\nIMPORTANT:\nReturn ONLY valid raw JSON.\nDo NOT include explanations before or after the JSON.\nDo NOT wrap the JSON in Markdown.\nDo NOT use JSON code fences.\n\nUse exactly this JSON structure:\n\n{\n  \"deck_title\": \"string\",\n  \"card_count\": 10,\n  \"flashcards\": [\n    {\n      \"card_number\": 1,\n      \"difficulty\": \"Easy\",\n      \"front\": \"string\",\n      \"back\": \"string\"\n    }\n  ]\n}\n\nLecture Notes:\n\n{{TEXT}}"
+  "template": "You are an expert AI study assistant.\n\nYour task is to create high-quality flashcards based ONLY on the lecture notes provided below.\n\n==================================================\nLEARNER CONTEXT\n==================================================\n\n{{LEARNER_CONTEXT}}\n\n==================================================\nINSTRUCTIONS\n==================================================\n\n- Create up to 10 flashcards.\n- When the lecture notes contain enough material, generate exactly 10 flashcards.\n- If the lecture notes do not contain enough information for 10 meaningful flashcards, generate fewer cards instead of inventing or repeating information.\n- Adapt card phrasing, terminology, and explanations to the learner context while grounding all content strictly in the lecture notes.\n- Order the flashcards from easiest to hardest.\n- Each flashcard should test one important concept.\n- Keep the front side short, clear, and suitable for active recall.\n- Keep the back side concise but informative.\n- Avoid unnecessary repetition between flashcards.\n- Do NOT add, assume, or invent information that is not present in or reasonably supported by the lecture notes.\n- Set card_count to the exact number of flashcards returned.\n- Use only these difficulty values: \"Easy\", \"Medium\", or \"Hard\".\n\nIMPORTANT:\nReturn ONLY valid raw JSON.\nDo NOT include explanations before or after the JSON.\nDo NOT wrap the JSON in Markdown.\nDo NOT use JSON code fences.\n\nUse exactly this JSON structure:\n\n{\n  \"deck_title\": \"string\",\n  \"card_count\": 10,\n  \"flashcards\": [\n    {\n      \"card_number\": 1,\n      \"difficulty\": \"Easy\",\n      \"front\": \"string\",\n      \"back\": \"string\"\n    }\n  ]\n}\n\nLecture Notes:\n\n{{TEXT}}"
 }

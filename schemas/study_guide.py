@@ -91,11 +91,21 @@ class StudyGuideGenerationSettings(BaseModel):
         retrieval_min_similarity: float,
     ) -> "StudyGuideGenerationSettings":
         return cls(
-            summary_format=request.summary_format,
-            topic_focus=request.topic_focus,
-            summary_length=request.summary_length,
-            detail_level=request.detail_level,
-            summary_mode=request.summary_mode,
+            summary_format=request.summary_format
+            if request.summary_format is not None
+            else SummaryFormat.COMPREHENSIVE,
+            topic_focus=request.topic_focus
+            if request.topic_focus is not None
+            else "All Topics",
+            summary_length=request.summary_length
+            if request.summary_length is not None
+            else SummaryLength.MEDIUM,
+            detail_level=request.detail_level
+            if request.detail_level is not None
+            else DetailLevel.STANDARD,
+            summary_mode=request.summary_mode
+            if request.summary_mode is not None
+            else SummaryMode.GENERAL,
             use_profile_knowledge=request.use_profile_knowledge,
             retrieval_limit=retrieval_limit,
             retrieval_min_similarity=retrieval_min_similarity,

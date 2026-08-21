@@ -7,8 +7,10 @@ import type {
   GeneratedOutputSummary,
   RetrievedContext,
   StudyGuideResponse,
+  FlashcardGenerationResponse,
 } from '../../api/types';
 import { StudyGuideView } from './StudyGuideView';
+import { FlashcardView } from './FlashcardView';
 import './study.css';
 
 interface StudyHistoryModalProps {
@@ -78,6 +80,23 @@ function isRenderableStudyGuide(content: unknown): content is StudyGuideResponse
   );
 }
 
+function isRenderableFlashcards(content: unknown): content is FlashcardGenerationResponse {
+  if (typeof content !== 'object' || content === null) return false;
+  const candidate = content as Record<string, unknown>;
+  
+  return (
+    typeof candidate.deck_title === 'string' &&
+    typeof candidate.card_count === 'number' &&
+    Array.isArray(candidate.flashcards) &&
+    (candidate.flashcards.length === 0 || (
+      typeof candidate.flashcards[0] === 'object' &&
+      candidate.flashcards[0] !== null &&
+      'front' in candidate.flashcards[0] &&
+      'back' in candidate.flashcards[0]
+    ))
+  );
+}
+
 /**
  * Renders the stored content when it is a study guide we can still display, and
  * falls back to the raw document otherwise so one unreadable row never breaks
@@ -85,6 +104,10 @@ function isRenderableStudyGuide(content: unknown): content is StudyGuideResponse
  */
 function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
   const { content } = output;
+
+  if (output.output_type === 'flashcards' && isRenderableFlashcards(content)) {
+    return <FlashcardView initialCards={content.flashcards} />;
+  }
 
   if (output.output_type !== 'study_guide' || !isRenderableStudyGuide(content)) {
     return (

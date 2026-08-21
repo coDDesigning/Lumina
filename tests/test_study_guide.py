@@ -12,6 +12,7 @@ import services.study_guide as study_guide_service
 import services.text_generation as text_generation
 from backend.app.models import (
     Course,
+    CourseSettings,
     DocumentChunk,
     GeneratedOutput,
     ProfileKnowledge,
@@ -1588,3 +1589,130 @@ def test_study_guide_generation_with_profile_knowledge_opt_in(
     assert "Quantum Mechanics Experience" not in provider.prompt
     assert generation_opt_out.profile_knowledge is not None
     assert generation_opt_out.profile_knowledge.is_empty
+
+
+# ---------------------------------------------------------------------------
+# CourseSettings defaults & overrides
+# ---------------------------------------------------------------------------
+
+
+def test_study_guide_defaults_from_course_settings(
+    upload_api, retrieval_env, monkeypatch
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["Course settings study guide test material"],
+            file_hash="7d" + "7" * 62,
+            retrieval_env=retrieval_env,
+        )
+        settings = CourseSettings(
+            course_id=upload_api.course_id,
+            summary_length="Long",
+            detail_level="Detailed",
+            study_mode="Exam",
+        )
+        session.add(settings)
+        session.commit()
+
+    provider = _install_provider(monkeypatch, CountingProvider())
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/study-guide",
+        json={"summary_format": "comprehensive", "topic_focus": "All Topics"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert "Between 400 and 600 words." in provider.prompt
+    assert "Requested detail level: detailed." in provider.prompt
+    assert "Requested summary mode: exam_focused." in provider.prompt
+
+    persisted = _persisted_outputs(upload_api.session_factory, upload_api.course_id)
+    assert len(persisted) == 1
+    stored = json.loads(persisted[0].generation_settings)
+    assert stored["summary_length"] == "long"
+    assert stored["detail_level"] == "detailed"
+    assert stored["summary_mode"] == "exam_focused"
+
+
+def test_study_guide_request_overrides_course_settings(
+    upload_api, retrieval_env, monkeypatch
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["Course settings override test material"],
+            file_hash="8d" + "8" * 62,
+            retrieval_env=retrieval_env,
+        )
+        settings = CourseSettings(
+            course_id=upload_api.course_id,
+            summary_length="Long",
+            detail_level="Detailed",
+            study_mode="Exam",
+        )
+        session.add(settings)
+        session.commit()
+
+    provider = _install_provider(monkeypatch, CountingProvider())
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/study-guide",
+        json={
+            "summary_format": "overview",
+            "topic_focus": "Specific Topic",
+            "summary_length": "short",
+            "detail_level": "basic",
+            "summary_mode": "general",
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert "Between 120 and 180 words." in provider.prompt
+    assert "Requested detail level: basic." in provider.prompt
+    assert "Requested summary mode: general." in provider.prompt
+
+    persisted = _persisted_outputs(upload_api.session_factory, upload_api.course_id)
+    stored = json.loads(persisted[0].generation_settings)
+    assert stored["summary_format"] == "overview"
+    assert stored["topic_focus"] == "Specific Topic"
+    assert stored["summary_length"] == "short"
+    assert stored["detail_level"] == "basic"
+    assert stored["summary_mode"] == "general"
+
+
+def test_study_guide_defaults_to_system_when_no_course_settings(
+    upload_api, retrieval_env, monkeypatch
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["System defaults test material"],
+            file_hash="9d" + "9" * 62,
+            retrieval_env=retrieval_env,
+        )
+
+    provider = _install_provider(monkeypatch, CountingProvider())
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/study-guide",
+        json={"summary_format": "comprehensive", "topic_focus": "All Topics"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert "Between 200 and 300 words." in provider.prompt
+    assert "Requested detail level: standard." in provider.prompt
+    assert "Requested summary mode: general." in provider.prompt
+
+    persisted = _persisted_outputs(upload_api.session_factory, upload_api.course_id)
+    stored = json.loads(persisted[0].generation_settings)
+    assert stored["summary_format"] == "comprehensive"
+    assert stored["summary_length"] == "medium"
+    assert stored["detail_level"] == "standard"
+    assert stored["summary_mode"] == "general"

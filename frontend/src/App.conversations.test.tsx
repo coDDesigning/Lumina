@@ -164,6 +164,8 @@ describe('Workspace conversations', () => {
     ).toBeInTheDocument();
     expect(mockQaAsk).toHaveBeenNthCalledWith(1, 1, {
       question: 'What is virtual memory?',
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
 
     await sendPrompt('How does paging relate?');
@@ -173,6 +175,8 @@ describe('Workspace conversations', () => {
     expect(mockQaAsk).toHaveBeenNthCalledWith(2, 1, {
       question: 'How does paging relate?',
       conversation_id: 31,
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
 
     await userEvent.click(
@@ -184,6 +188,8 @@ describe('Workspace conversations', () => {
     await screen.findByText('A page fault loads a missing page.');
     expect(mockQaAsk).toHaveBeenNthCalledWith(3, 1, {
       question: 'Why does a page fault happen?',
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
   }, 15_000);
 
@@ -211,6 +217,8 @@ describe('Workspace conversations', () => {
     await screen.findByText('Picture a process as a container for threads.');
     expect(mockTutorAsk).toHaveBeenCalledWith(1, {
       question: 'Teach me the process model.',
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
 
     await sendPrompt('How do threads fit into that model?');
@@ -218,6 +226,8 @@ describe('Workspace conversations', () => {
     expect(mockTutorAsk).toHaveBeenNthCalledWith(2, 1, {
       question: 'How do threads fit into that model?',
       conversation_id: 72,
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
 
     await userEvent.click(screen.getByRole('tab', { name: 'Exam' }));
@@ -231,6 +241,8 @@ describe('Workspace conversations', () => {
     expect(mockQaAsk).toHaveBeenNthCalledWith(2, 1, {
       question: 'What do threads share?',
       conversation_id: 41,
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
   }, 15_000);
 
@@ -298,6 +310,8 @@ describe('Workspace conversations', () => {
       expect(mockTutorAsk).toHaveBeenCalledWith(1, {
         question: 'How does round robin work?',
         conversation_id: 88,
+        use_profile_knowledge: false,
+        include_profile_context: false,
       }),
     );
   }, 15_000);
@@ -330,10 +344,48 @@ describe('Workspace conversations', () => {
     await waitFor(() =>
       expect(mockQaAsk).toHaveBeenCalledWith(1, {
         question: 'Please summarize the key algorithms and quiz me.',
+        use_profile_knowledge: false,
+        include_profile_context: false,
       }),
     );
     expect(
       await screen.findByText('Here is a summary of the main points.'),
     ).toBeInTheDocument();
   }, 15_000);
+
+  it('toggles profile context opt-in and sends use_profile_knowledge: true when enabled', async () => {
+    mockQaAsk.mockResolvedValue(
+      qaResult('Here is a personalized explanation.', 101),
+    );
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+
+    const toggle = screen.getByRole('checkbox', {
+      name: /include personal study profile context/i,
+    });
+    expect(toggle).not.toBeChecked();
+    expect(
+      screen.getByText(
+        /Includes your profile background as supplementary context\. Course material remains primary and authoritative\./i,
+      ),
+    ).toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(toggle).toBeChecked();
+
+    await sendPrompt('Explain deadlock conditions.');
+
+    await waitFor(() =>
+      expect(mockQaAsk).toHaveBeenCalledWith(1, {
+        question: 'Explain deadlock conditions.',
+        use_profile_knowledge: true,
+        include_profile_context: true,
+      }),
+    );
+    expect(
+      await screen.findByText('Here is a personalized explanation.'),
+    ).toBeInTheDocument();
+  }, 15_000);
 });
+

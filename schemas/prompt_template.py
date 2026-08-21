@@ -6,7 +6,7 @@ constraints, and deterministic rendering.
 """
 
 import re
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -35,6 +35,10 @@ class UnexpectedPromptVariableError(PromptTemplateError):
     """An unexpected variable was provided to the prompt template."""
 
 
+class PromptTemplateDeferredError(PromptTemplateError):
+    """A deferred prompt template was rendered for production use."""
+
+
 _PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 
 
@@ -50,6 +54,18 @@ class PromptTemplateModel(BaseModel):
     version: str = Field(
         ...,
         description="Semantic version of the template (e.g. '1.0.0')",
+    )
+    status: Literal["active", "deferred"] = Field(
+        default="active",
+        description="Whether the template is wired into production or explicitly deferred",
+    )
+    owner: str | None = Field(
+        default=None,
+        description="Feature that owns the template, or that would own a deferred one",
+    )
+    deferral_reason: str | None = Field(
+        default=None,
+        description="Why a deferred template is not wired into production behavior",
     )
     description: str | None = Field(
         default=None,
@@ -90,6 +106,14 @@ class PromptTemplateModel(BaseModel):
 
     def template_placeholders(self) -> set[str]:
         return set(_PLACEHOLDER_PATTERN.findall(self.template))
+
+    @model_validator(mode="after")
+    def require_a_reason_for_deferral(self) -> "PromptTemplateModel":
+        if self.status == "deferred" and not (self.deferral_reason or "").strip():
+            raise ValueError(
+                f"Deferred prompt template '{self.name}' must record a deferral_reason"
+            )
+        return self
 
     @model_validator(mode="after")
     def reject_undeclared_placeholders(self) -> "PromptTemplateModel":

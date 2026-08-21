@@ -1,6 +1,9 @@
 {
   "name": "ocr_cleanup",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "status": "deferred",
+  "owner": null,
+  "deferral_reason": "No production feature owns an LLM-based OCR repair step. Design.md section 5.2 specifies deterministic handling: a page that OCR cannot read marks the document failed or partially failed, rather than having a model reconstruct what it probably said. Rendering OCR output through a model before chunking would put non-deterministic, potentially hallucinated text into the retrieval index. Implementing this needs a separately scoped feature defining when semantic restoration is appropriate, its grounding guarantees, how the original OCR is preserved, and its credit cost.",
   "description": "Cleans, repairs, and normalizes raw OCR text extractions while strictly preserving factual content and terminology.",
   "required_variables": [
     "EDUCATION_LEVEL",

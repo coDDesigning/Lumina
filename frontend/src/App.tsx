@@ -251,24 +251,6 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
     const prompt = mainPrompt.trim()
     if (!prompt) return
 
-    if (prompt.toLowerCase().includes('summary') || prompt.toLowerCase().includes('özet')) {
-      setIsSummaryModalOpen(true)
-      setMainPrompt('')
-      return
-    }
-
-    if (prompt.toLowerCase().includes('quiz') || prompt.toLowerCase().includes('test') || prompt.toLowerCase().includes('practice')) {
-      setIsQuizModalOpen(true)
-      setMainPrompt('')
-      return
-    }
-
-    if (prompt.toLowerCase().includes('flashcard') || prompt.toLowerCase().includes('kart')) {
-      setIsFlashcardModalOpen(true)
-      setMainPrompt('')
-      return
-    }
-
     const conversationType: ConversationType =
       activeTab === 'Tutoring' ? 'ai_tutor' : 'course_qa'
     const conversation = conversations[conversationType]

@@ -1,3 +1,5 @@
+import json
+
 import routes.flashcard as flashcard_route
 from sqlalchemy import select
 
@@ -307,11 +309,24 @@ def test_save_generated_flashcards_persists_output(
 
     assert persisted is not None
     assert persisted.course_id == model_graph.course.id
+    assert persisted.user_id == model_graph.user.id
+    assert persisted.model_used == flashcards.model_used
     assert persisted.output_type == "flashcards"
     assert '"deck_title":"Example Flashcards"' in persisted.content
     assert '"card_count":10' in persisted.content
     assert persisted.generation_settings is not None
     assert persisted.generation_context is not None
+
+    settings_dict = json.loads(persisted.generation_settings)
+    assert settings_dict["version"] == 1
+    assert settings_dict["output_type"] == "flashcards"
+    assert settings_dict["use_profile_knowledge"] is False
+
+    context_dict = json.loads(persisted.generation_context)
+    assert context_dict["version"] == 1
+    assert context_dict["chunks_used"] == 1
+    assert context_dict["chunks_available"] == 1
+    assert context_dict["truncated"] is False
 
 
 def test_flashcard_generation_with_profile_knowledge_opt_in(
@@ -440,3 +455,21 @@ def test_generate_flashcards_endpoint_returns_generated_flashcards(
     assert "generated_output_id" in payload["data"]
     assert payload["data"]["generated_output_id"] is not None
     assert payload["data"]["profile_knowledge_used"] is False
+
+    output_id = payload["data"]["generated_output_id"]
+    detail_res = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/generated-outputs/{output_id}",
+        headers=upload_api.authorization,
+    )
+    assert detail_res.status_code == 200
+    detail = detail_res.json()["data"]
+    assert detail["id"] == output_id
+    assert detail["output_type"] == "flashcards"
+    assert detail["user_id"] == upload_api.user_id
+    assert detail["generation_settings"]["version"] == 1
+    assert detail["generation_settings"]["output_type"] == "flashcards"
+    assert detail["generation_settings"]["use_profile_knowledge"] is True
+    assert detail["generation_context"]["version"] == 1
+    assert detail["generation_context"]["chunks_used"] == 1
+    assert detail["generation_context"]["chunks_available"] == 1
+    assert detail["content"]["deck_title"] == "Example Flashcards"

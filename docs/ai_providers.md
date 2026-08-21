@@ -273,6 +273,8 @@ condition for `ai_usage_logs`:
 
 ## Generated Output Attribution
 
+`GeneratedOutputService.record` is the single canonical writer for `generated_outputs` rows across all generation features (`study_guide`, `quiz`, `flashcards`). Feature services and routes persist through this entrypoint and never construct `GeneratedOutput` models directly.
+
 Rows in `generated_outputs` record `user_id` (the authenticated requester, never
 a client-supplied value and never inferred from course ownership) and
 `model_used` in `provider:model` form, taken from the metadata of the provider
@@ -280,6 +282,7 @@ that actually answered — so a fallback generation attributes the fallback, not
 the configured primary. Both columns are nullable only because rows written
 before this migration have no truthful value; they are never backfilled with a
 guess.
+
 
 `generation_settings` and `generation_context` record how a row was produced, as
 JSON documents carrying a `version` and an `output_type` so other output types can

@@ -410,7 +410,11 @@ NULL` because a quiz outlives the account that generated it; the course cascade
 still removes it with its course.
 
 Generation also writes a `generated_outputs` row of `output_type` `quiz`, so a
-course's generation history is one list regardless of feature.
+course's generation history is one list regardless of feature. Across all generation
+features (`study_guide`, `quiz`, `flashcards`), `GeneratedOutputService.record` is the
+enforced canonical single writer for `generated_outputs` rows. Feature services and routes
+delegate persistence to this entrypoint and never instantiate `GeneratedOutput` models directly.
+
 
 ### Question types
 

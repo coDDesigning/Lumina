@@ -377,3 +377,79 @@ def test_reading_a_generated_output_does_not_change_stored_rows(upload_api) -> N
 
     assert len(rows) == 1
     assert rows[0].generation_settings == json.dumps(GENERATION_SETTINGS)
+
+
+def _find_generated_output_constructor_calls(source_text: str) -> list[int]:
+    import ast
+
+    tree = ast.parse(source_text)
+    line_numbers = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id == "GeneratedOutput":
+                line_numbers.append(node.lineno)
+            elif isinstance(func, ast.Attribute) and func.attr == "GeneratedOutput":
+                line_numbers.append(node.lineno)
+    return line_numbers
+
+
+def test_generated_output_model_constructed_only_in_canonical_service() -> None:
+    """GeneratedOutput must only be constructed in services.generated_output.
+
+    Feature services must persist generations through GeneratedOutputService.record,
+    never by instantiating the SQLAlchemy model directly.
+    """
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    production_dirs = [
+        "backend",
+        "routes",
+        "schemas",
+        "services",
+        "storage",
+        "utils",
+        "workers",
+    ]
+
+    py_files = list(repo_root.glob("*.py"))
+    for directory in production_dirs:
+        py_files.extend((repo_root / directory).rglob("*.py"))
+
+    canonical_file = (repo_root / "services" / "generated_output.py").resolve()
+
+    violations = {}
+    for py_file in py_files:
+        resolved = py_file.resolve()
+        source = py_file.read_text(encoding="utf-8")
+        calls = _find_generated_output_constructor_calls(source)
+        if resolved == canonical_file:
+            assert len(calls) >= 1, "Canonical service must construct GeneratedOutput"
+        elif calls:
+            violations[str(py_file.relative_to(repo_root))] = calls
+
+    assert not violations, (
+        f"GeneratedOutput constructor called outside canonical writer: {violations}"
+    )
+
+
+def test_single_writer_invariant_fails_on_direct_feature_constructor() -> None:
+    """Verifies that direct GeneratedOutput construction is detected as a violation."""
+    import inspect
+
+    feature_source = inspect.cleandoc(
+        """
+        from backend.app.models import GeneratedOutput
+
+        def fake_persist(db, course_id, user_id):
+            return GeneratedOutput(
+                course_id=course_id,
+                user_id=user_id,
+                output_type="custom",
+            )
+        """
+    )
+    calls = _find_generated_output_constructor_calls(feature_source)
+    assert len(calls) == 1
+    assert calls[0] == 4

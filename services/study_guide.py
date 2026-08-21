@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -161,7 +162,12 @@ class StudyGuideService:
         )
 
     @classmethod
-    def build_prompt(cls, course_material: str, options: StudyGuideRequest) -> str:
+    def build_prompt(
+        cls,
+        course_material: str,
+        options: StudyGuideRequest,
+        learner_context: Any = None,
+    ) -> str:
         directive = SUMMARY_FORMAT_DIRECTIVES[options.summary_format]
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
@@ -178,6 +184,7 @@ class StudyGuideService:
                 # that a later substitution would then fill in.
                 "TEXT": course_material,
             },
+            learner_context=learner_context,
         )
 
     @classmethod

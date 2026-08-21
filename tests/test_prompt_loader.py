@@ -5,7 +5,7 @@ Covers:
 - Template loading, parsing, and strict metadata validation
 - Education level prompt adaptation (high_school, undergraduate, graduate,
   professional_other, unspecified)
-- Comprehensive regression preventing hardcoded university or domain assumptions
+- Deterministic rendering of every production template with sample inputs
 - Deterministic rendering of all production templates with zero unresolved placeholders
 - Observability and privacy-safe render metadata generation
 """
@@ -101,7 +101,7 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "ai_tutor": "2.2.0",
     "course_qa": "2.2.0",
     "prompt_generator": "2.0.0",
-    "exam_style_question": "1.1.0",
+    "exam_style_question": "1.2.0",
     "image_description": "1.0.0",
     "visual_content": "2.1.0",
     "ocr_cleanup": "1.1.0",
@@ -449,34 +449,9 @@ def test_get_render_metadata_returns_safe_telemetry() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Strict Anti-Assumption & Anti-Hallucination Regression Tests
+# Grounding & Anti-Hallucination Regression Tests
+# Prompt neutrality lives in tests/test_prompt_neutrality.py
 # ---------------------------------------------------------------------------
-
-
-def test_no_production_prompt_contains_hardcoded_university_assumptions() -> None:
-    """Strict regression test ensuring no template hardcodes university assumptions."""
-    templates = PromptLoader.load_all()
-    forbidden_phrases = [
-        "university assistant",
-        "university student",
-        "university students",
-        "university teaching assistant",
-        "university instructor",
-        "average university student",
-        "Computer Science teaching assistant",
-    ]
-
-    for name, template in templates.items():
-        template_text = template.template.lower()
-        description = (template.description or "").lower()
-
-        for phrase in forbidden_phrases:
-            assert phrase.lower() not in template_text, (
-                f"Template '{name}' contains forbidden hardcoded phrase: '{phrase}'"
-            )
-            assert phrase.lower() not in description, (
-                f"Template description for '{name}' contains forbidden phrase: '{phrase}'"
-            )
 
 
 def test_all_grounded_prompts_state_source_material_authority() -> None:
@@ -577,22 +552,6 @@ SAMPLE_TEMPLATE_INPUTS = {
         "PROFILE_CONTEXT": "",
     },
 }
-
-
-BANNED_PROMPT_DEFAULTS = ("computer science", "university", "lecture")
-RETAINED_FIELD_NAMES = ("lecture_based",)
-
-
-def test_no_production_template_assumes_a_level_discipline_or_material() -> None:
-    templates = PromptLoader.load_all()
-    assert set(SAMPLE_TEMPLATE_INPUTS) == set(templates)
-
-    for name, sample_vars in SAMPLE_TEMPLATE_INPUTS.items():
-        lowered = PromptLoader.render(name, sample_vars, allow_deferred=True).lower()
-        for field in RETAINED_FIELD_NAMES:
-            lowered = lowered.replace(field, "")
-        for banned in BANNED_PROMPT_DEFAULTS:
-            assert banned not in lowered, (name, banned)
 
 
 def test_all_production_templates_render_without_unresolved_placeholders() -> None:

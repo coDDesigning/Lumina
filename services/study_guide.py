@@ -20,6 +20,7 @@ from services.generated_output import GeneratedOutputService
 from services.profile_knowledge import (
     ProfileKnowledgeContext,
     assemble_generation_context,
+    format_profile_context,
 )
 from schemas.prompt_context import PromptContext
 from services.prompt_context import resolve_prompt_context
@@ -174,6 +175,7 @@ class StudyGuideService:
         course_material: str,
         options: StudyGuideRequest,
         *,
+        profile_knowledge: ProfileKnowledgeContext | None = None,
         context: PromptContext,
     ) -> str:
         directive = SUMMARY_FORMAT_DIRECTIVES[options.summary_format]
@@ -189,9 +191,10 @@ class StudyGuideService:
                 "DETAIL_LEVEL": DETAIL_LEVEL_DIRECTIVES[options.detail_level],
                 "SUMMARY_MODE": SUMMARY_MODE_DIRECTIVES[options.summary_mode],
                 "TOPIC_FOCUS": options.topic_focus,
-                # Rendered last so course material can never forge a placeholder
+                # Rendered last so course material and profile context can never forge a placeholder
                 # that a later substitution would then fill in.
                 "TEXT": course_material,
+                "PROFILE_CONTEXT": format_profile_context(profile_knowledge),
             },
         )
 
@@ -245,14 +248,17 @@ class StudyGuideService:
             course_id=course_id,
             user_id=resolved_user_id,
             course_material=material,
-            include_profile_context=request.include_profile_context,
+            include_profile_context=request.use_profile_knowledge,
         )
 
         prompt_context = resolve_prompt_context(
             db, course=course, user_id=resolved_user_id
         )
         prompt = cls.build_prompt(
-            generation_ctx.combined_text, request, context=prompt_context
+            generation_ctx.course_material.text,
+            request,
+            profile_knowledge=generation_ctx.profile_knowledge,
+            context=prompt_context,
         )
         metadata = None
 

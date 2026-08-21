@@ -39,6 +39,7 @@ from services.course_material import count_available_chunks
 from services.profile_knowledge import (
     ProfileKnowledgeContext,
     assemble_generation_context,
+    format_profile_context,
 )
 from schemas.prompt_context import PromptContext
 from services.prompt_context import resolve_prompt_context
@@ -260,6 +261,7 @@ class QuizService:
         course_material: str,
         request: QuizRequest,
         *,
+        profile_knowledge: ProfileKnowledgeContext | None = None,
         context: PromptContext,
     ) -> str:
         return PromptLoader.render(
@@ -272,9 +274,10 @@ class QuizService:
                 "DIFFICULTY_DIRECTIVE": DIFFICULTY_DIRECTIVES[request.difficulty],
                 "REQUESTED_DIFFICULTY": request.difficulty.value,
                 "TOPIC_FOCUS": request.topic_focus,
-                # Rendered last so course material can never forge a placeholder
+                # Rendered last so course material and profile context can never forge a placeholder
                 # that a later substitution would then fill in.
                 "TEXT": course_material,
+                "PROFILE_CONTEXT": format_profile_context(profile_knowledge),
             },
         )
 
@@ -328,14 +331,17 @@ class QuizService:
             course_id=course_id,
             user_id=resolved_user_id,
             course_material=material,
-            include_profile_context=request.include_profile_context,
+            include_profile_context=request.use_profile_knowledge,
         )
 
         prompt_context = resolve_prompt_context(
             db, course=course, user_id=resolved_user_id
         )
         prompt = cls.build_prompt(
-            generation_ctx.combined_text, request, context=prompt_context
+            generation_ctx.course_material.text,
+            request,
+            profile_knowledge=generation_ctx.profile_knowledge,
+            context=prompt_context,
         )
         metadata = None
 

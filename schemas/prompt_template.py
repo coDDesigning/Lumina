@@ -1,6 +1,19 @@
+# schemas/prompt_template.py
+"""Structured, versioned definition of AI task prompt templates.
+
+Manages prompt templates with variable validation, learner context adaptation,
+safety and style constraints, and deterministic rendering.
+"""
+
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from schemas.learner_context import (
+    EducationLevel,
+    LearnerContext,
+)
 
 
 class PromptTemplateError(RuntimeError):
@@ -25,6 +38,9 @@ class MissingPromptVariableError(PromptTemplateError):
 
 class UnexpectedPromptVariableError(PromptTemplateError):
     """An unexpected variable was provided to the prompt template."""
+
+
+_PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 
 
 class PromptTemplateModel(BaseModel):
@@ -97,12 +113,42 @@ class PromptTemplateModel(BaseModel):
                 f"{', '.join(sorted(unexpected))}"
             )
 
-    def render(self, variables: dict[str, Any]) -> str:
-        """Validate variables and render the template by substituting {{VARIABLE}} placeholders."""
-        self.validate_variables(variables)
+    def render(
+        self,
+        variables: dict[str, Any],
+        learner_context: LearnerContext | dict[str, Any] | None = None,
+    ) -> str:
+        """Validate variables and render the template by substituting {{VARIABLE}} placeholders.
+
+        Automatically resolves LEARNER_CONTEXT if present in template requirements or options.
+        Ensures no unresolved {{...}} placeholders remain in the rendered output.
+        """
+        render_vars = dict(variables)
+
+        # Automatically resolve LEARNER_CONTEXT if the template declares or contains it
+        if "LEARNER_CONTEXT" not in render_vars:
+            template_declares_lc = (
+                "LEARNER_CONTEXT" in self.required_variables
+                or "LEARNER_CONTEXT" in self.optional_variables
+                or "{{LEARNER_CONTEXT}}" in self.template
+            )
+            if template_declares_lc:
+                if isinstance(learner_context, LearnerContext):
+                    ctx = learner_context
+                elif isinstance(learner_context, dict):
+                    ctx = LearnerContext.model_validate(learner_context)
+                elif learner_context is None:
+                    ctx = LearnerContext(education_level=EducationLevel.UNSPECIFIED)
+                else:
+                    raise ValueError(
+                        f"Expected LearnerContext, dict, or None, got {type(learner_context).__name__}"
+                    )
+                render_vars["LEARNER_CONTEXT"] = ctx.render_directive()
+
+        self.validate_variables(render_vars)
 
         rendered = self.template
-        for key, value in variables.items():
+        for key, value in render_vars.items():
             placeholder = f"{{{{{key}}}}}"
             rendered = rendered.replace(placeholder, str(value))
 

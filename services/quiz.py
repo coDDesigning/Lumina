@@ -15,6 +15,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import func, select
@@ -253,7 +254,12 @@ class QuizService:
         )
 
     @classmethod
-    def build_prompt(cls, course_material: str, request: QuizRequest) -> str:
+    def build_prompt(
+        cls,
+        course_material: str,
+        request: QuizRequest,
+        learner_context: Any = None,
+    ) -> str:
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {
@@ -267,6 +273,7 @@ class QuizService:
                 # that a later substitution would then fill in.
                 "TEXT": course_material,
             },
+            learner_context=learner_context,
         )
 
     @classmethod

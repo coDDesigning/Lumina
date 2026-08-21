@@ -606,7 +606,7 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
                   }}
                 >
                   <Sparkles style={{ width: '14px', height: '14px' }} />
-                  Import Samples
+                  Import Demo Topics (Sample)
                 </button>
               )}
               <button

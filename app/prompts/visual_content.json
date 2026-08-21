@@ -1,6 +1,9 @@
 {
   "name": "visual_content",
-  "version": "2.0.0",
+  "version": "2.1.0",
+  "status": "deferred",
+  "owner": "Advanced visual understanding (Design.md section 23 Future Extensions), not yet built",
+  "deferral_reason": "Wired vision is owned by the image_description template, which services/image_understanding.py renders for every extracted visual and which covers Design.md section 5.3 Basic Image Understanding. This richer multimodal analysis has no caller and is deferred until advanced visual understanding is built.",
   "description": "Analyzes and explains visual elements (diagrams, charts, tables, illustrations) extracted from course materials.",
   "required_variables": [
     "EDUCATION_LEVEL",

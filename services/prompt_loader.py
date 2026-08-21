@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from schemas.prompt_template import (
     MissingPromptVariableError,
+    PromptTemplateDeferredError,
     PromptTemplateModel,
     PromptTemplateNotFoundError,
     PromptTemplateSyntaxError,
@@ -19,6 +20,7 @@ from schemas.prompt_template import (
 __all__ = [
     "PromptLoader",
     "PromptTemplateModel",
+    "PromptTemplateDeferredError",
     "PromptTemplateNotFoundError",
     "PromptTemplateSyntaxError",
     "PromptTemplateValidationError",
@@ -94,9 +96,21 @@ class PromptLoader:
         variables: dict[str, Any],
         directory: Path | None = None,
         reload: bool = False,
+        *,
+        allow_deferred: bool = False,
     ) -> str:
-        """Load a prompt template by name, validate variables, and return rendered prompt."""
+        """Load a prompt template by name, validate variables, and return rendered prompt.
+
+        A deferred template is refused unless the caller opts in explicitly. Only
+        rendering is guarded: `load_template` and `load_all` keep the whole catalog
+        introspectable so tooling and tests can read a deferred template's metadata.
+        """
         template = cls.load_template(name, directory=directory, reload=reload)
+        if template.status == "deferred" and not allow_deferred:
+            raise PromptTemplateDeferredError(
+                f"Prompt template '{template.name}' is deferred and must not be "
+                f"rendered in production: {template.deferral_reason}"
+            )
         return template.render(variables)
 
     @classmethod

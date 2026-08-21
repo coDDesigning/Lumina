@@ -168,10 +168,19 @@ def test_build_prompt_inserts_course_material_and_question() -> None:
     assert "{{QUESTION}}" not in prompt
     assert "Example lecture material" in prompt
     assert "What is an operating system?" in prompt
-    assert (
-        "Open with a concise hint or guiding question, then give the full "
-        "explanation." in prompt
-    )
+    lowered = prompt.lower()
+    assert "open with a targeted hint or a guiding question" in lowered
+    assert "never open with the bare result" in lowered
+    assert "if the student is still stuck, escalate one step at a time" in lowered
+    assert "walk through the key intermediate steps" in lowered
+    assert "for a conceptual question" in lowered
+    for contradiction in (
+        "answer the student's question directly",
+        "provide the direct answer",
+        "give the answer immediately",
+        "answer directly",
+    ):
+        assert contradiction not in lowered, contradiction
     assert "When appropriate, guide the student with a helpful hint" not in prompt
     assert "apparent level" not in prompt
     assert "high_school" in prompt

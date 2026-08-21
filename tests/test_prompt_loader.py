@@ -10,7 +10,10 @@ Covers:
 - Observability and privacy-safe render metadata generation
 """
 
+import importlib
 import json
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -21,6 +24,7 @@ from schemas.prompt_context import (
 )
 from schemas.prompt_template import (
     MissingPromptVariableError,
+    PromptTemplateDeferredError,
     PromptTemplateModel,
     PromptTemplateNotFoundError,
     PromptTemplateSyntaxError,
@@ -92,13 +96,13 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "quiz": "3.1.0",
     "quiz_grading": "2.0.0",
     "flashcard": "2.0.0",
-    "ai_tutor": "2.1.0",
+    "ai_tutor": "2.2.0",
     "course_qa": "2.1.0",
     "prompt_generator": "2.0.0",
-    "exam_style_question": "1.0.0",
+    "exam_style_question": "1.1.0",
     "image_description": "1.0.0",
-    "visual_content": "2.0.0",
-    "ocr_cleanup": "1.0.0",
+    "visual_content": "2.1.0",
+    "ocr_cleanup": "1.1.0",
 }
 
 
@@ -568,7 +572,9 @@ def test_no_production_template_assumes_a_level_discipline_or_material() -> None
     assert set(SAMPLE_TEMPLATE_INPUTS) == set(templates)
 
     for name, sample_vars in SAMPLE_TEMPLATE_INPUTS.items():
-        lowered = PromptLoader.render(name, sample_vars).lower()
+        lowered = PromptLoader.render(
+            name, sample_vars, allow_deferred=True
+        ).lower()
         for field in RETAINED_FIELD_NAMES:
             lowered = lowered.replace(field, "")
         for banned in BANNED_PROMPT_DEFAULTS:
@@ -583,7 +589,7 @@ def test_all_production_templates_render_without_unresolved_placeholders() -> No
     assert set(sample_inputs) == set(templates)
     for name, sample_vars in sample_inputs.items():
         assert name in templates, f"Template '{name}' missing from prompt catalog"
-        rendered = PromptLoader.render(name, sample_vars)
+        rendered = PromptLoader.render(name, sample_vars, allow_deferred=True)
         assert "{{" not in rendered, (
             f"Unresolved placeholder found in rendered '{name}': {rendered}"
         )
@@ -710,9 +716,10 @@ def test_ai_tutor_template_regression() -> None:
     assert "{{CONVERSATION_HISTORY}}" not in rendered
     assert "{{QUESTION}}" not in rendered
     assert (
-        "Open with a concise hint or guiding question, then give the full "
-        "explanation." in rendered
+        "open with a targeted hint or a guiding question that points at the "
+        "next useful idea" in rendered
     )
+    assert "Never open with the bare result." in rendered
     assert "When appropriate, guide the student with a helpful hint" not in rendered
     assert "apparent level" not in rendered
     assert rendered.count("- Adapt the depth, terminology, and style") == 1
@@ -762,6 +769,7 @@ def test_visual_content_template() -> None:
             "VISUAL_CONTEXT": "A bar chart showing germination rates by soil type",
             "SOURCE_TEXT": "Chapter 4: Seed Germination",
         },
+        allow_deferred=True,
     )
     assert "A bar chart showing germination rates" in rendered
     assert "Chapter 4: Seed Germination" in rendered
@@ -788,6 +796,7 @@ def test_ocr_cleanup_template() -> None:
             **SHARED_PROMPT_VARIABLES,
             "RAW_OCR_TEXT": "Defi-nition of algo-rithm: A step-by-step procedvre...",
         },
+        allow_deferred=True,
     )
     assert "Defi-nition of algo-rithm" in rendered
     assert "{{RAW_OCR_TEXT}}" not in rendered
@@ -801,3 +810,269 @@ def test_ocr_cleanup_template() -> None:
         "MATERIAL_KIND",
         "RAW_OCR_TEXT",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Catalog Scope: Active vs Deferred Templates
+# ---------------------------------------------------------------------------
+
+
+DEFERRED_TEMPLATES = {"ocr_cleanup", "exam_style_question", "visual_content"}
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_CATALOG_DOC = _REPO_ROOT / "docs" / "prompt_templates.md"
+PRODUCTION_PACKAGES = ("services", "routes", "tasks", "workers", "backend", "utils")
+
+
+def _production_sources() -> dict[str, str]:
+    """Every production Python module, keyed by its repo-relative path."""
+    sources = {}
+    for package in PRODUCTION_PACKAGES:
+        for path in sorted((_REPO_ROOT / package).rglob("*.py")):
+            sources[path.relative_to(_REPO_ROOT).as_posix()] = path.read_text(
+                encoding="utf-8"
+            )
+
+    assert sources, "No production sources found to scan"
+    return sources
+
+
+def _is_referenced_as_a_string_literal(name: str, source: str) -> bool:
+    return f'"{name}"' in source or f"'{name}'" in source
+
+
+ACTIVE_TEMPLATE_OWNERS = {
+    "study_guide": ("services.study_guide", "StudyGuideService.PROMPT_TEMPLATE_NAME"),
+    "quiz": ("services.quiz", "QuizService.PROMPT_TEMPLATE_NAME"),
+    "quiz_grading": ("services.quiz_grading", "QuizGradingService.PROMPT_TEMPLATE_NAME"),
+    "flashcard": ("services.flashcard", "FlashcardService.PROMPT_TEMPLATE_NAME"),
+    "ai_tutor": ("services.ai_tutor", "AiTutorService.PROMPT_TEMPLATE_NAME"),
+    "course_qa": ("services.course_qa", "CourseQAService.PROMPT_TEMPLATE_NAME"),
+    "prompt_generator": (
+        "services.prompt_generator",
+        "PromptGeneratorService.PROMPT_TEMPLATE_NAME",
+    ),
+    "image_description": (
+        "services.image_understanding",
+        "_IMAGE_DESCRIPTION_TEMPLATE",
+    ),
+}
+
+
+def _resolve_declared_template_name(module_path: str, attribute_path: str) -> str:
+    target = importlib.import_module(module_path)
+    for attribute in attribute_path.split("."):
+        target = getattr(target, attribute)
+    return target
+
+
+CATALOG_HEADING = "## Production Prompt Catalog"
+
+
+def _documented_catalog_rows() -> dict[str, tuple[str, str]]:
+    """Parse the Status and Owner columns of the catalog table in the docs."""
+    rows: dict[str, str] = {}
+    inside = False
+
+    for line in _CATALOG_DOC.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            inside = stripped == CATALOG_HEADING
+            continue
+        if not inside or not stripped.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        rows[cells[0].strip("`")] = (cells[2].strip("`").lower(), cells[3].strip("`"))
+
+    assert rows, f"No catalog table found under {CATALOG_HEADING!r}"
+    return rows
+
+
+def test_deferred_templates_declare_a_reason() -> None:
+    templates = PromptLoader.load_all()
+    assert DEFERRED_TEMPLATES <= set(templates)
+
+    for name, template in templates.items():
+        if name in DEFERRED_TEMPLATES:
+            assert template.status == "deferred", name
+            assert template.deferral_reason, (
+                f"Deferred template '{name}' must record why it is deferred"
+            )
+        else:
+            assert template.status == "active", name
+
+
+def test_a_deferred_template_without_a_reason_fails_to_load(tmp_path) -> None:
+    (tmp_path / "unexplained.json").write_text(
+        json.dumps(
+            {
+                "name": "unexplained",
+                "version": "1.0.0",
+                "status": "deferred",
+                "template": "Body with no placeholders.",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PromptTemplateValidationError):
+        PromptLoader.load_template("unexplained", directory=tmp_path, reload=True)
+
+
+def test_rendering_a_deferred_template_is_refused() -> None:
+    for name in sorted(DEFERRED_TEMPLATES):
+        sample_vars = SAMPLE_TEMPLATE_INPUTS[name]
+
+        with pytest.raises(PromptTemplateDeferredError):
+            PromptLoader.render(name, sample_vars)
+
+        rendered = PromptLoader.render(name, sample_vars, allow_deferred=True)
+        assert "{{" not in rendered
+
+
+def test_no_production_module_references_a_deferred_template() -> None:
+    for file_path, source in _production_sources().items():
+        for name in sorted(DEFERRED_TEMPLATES):
+            assert not _is_referenced_as_a_string_literal(name, source), (
+                f"{file_path} references deferred template '{name}'; "
+                "a deferred template must not be wired into production behavior"
+            )
+
+
+def test_every_template_is_either_owned_or_deferred() -> None:
+    """A template cannot sit in the catalog unclassified."""
+    classified = set(ACTIVE_TEMPLATE_OWNERS) | DEFERRED_TEMPLATES
+
+    assert set(PromptLoader.load_all()) == classified, (
+        "Every template must either name an owning service in "
+        "ACTIVE_TEMPLATE_OWNERS or be listed in DEFERRED_TEMPLATES"
+    )
+    assert not (set(ACTIVE_TEMPLATE_OWNERS) & DEFERRED_TEMPLATES)
+
+
+def test_each_active_template_is_named_by_its_owning_service() -> None:
+    templates = PromptLoader.load_all()
+
+    for name, (module_path, attribute_path) in sorted(ACTIVE_TEMPLATE_OWNERS.items()):
+        assert templates[name].status == "active", name
+        assert _resolve_declared_template_name(module_path, attribute_path) == name, (
+            f"{module_path}.{attribute_path} no longer resolves to the '{name}' "
+            "template. An active template must be rendered by its owning service."
+        )
+
+
+def test_catalog_documentation_matches_template_status() -> None:
+    documented = _documented_catalog_rows()
+    templates = PromptLoader.load_all()
+
+    assert set(documented) == set(templates), (
+        "docs/prompt_templates.md catalog table must list exactly the templates "
+        "in app/prompts/"
+    )
+    for name, template in templates.items():
+        documented_status, documented_owner = documented[name]
+        assert documented_status == template.status, (
+            f"Catalog documentation records '{name}' as {documented_status}, "
+            f"but the template declares {template.status}"
+        )
+        if name in ACTIVE_TEMPLATE_OWNERS:
+            module_path, _ = ACTIVE_TEMPLATE_OWNERS[name]
+            expected_owner = module_path.replace(".", "/") + ".py"
+            assert documented_owner == expected_owner, (
+                f"Catalog documentation names '{documented_owner}' as the owner of "
+                f"'{name}', but the template is rendered by {expected_owner}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Tutor Policy: Hint-First Consistency
+# ---------------------------------------------------------------------------
+
+
+HINT_FIRST_TUTOR_MARKERS = (
+    "open with a targeted hint or a guiding question",
+    "never open with the bare result",
+    "if the student is still stuck, escalate one step at a time",
+    "explain the relevant concept or method",
+    "walk through the key intermediate steps",
+    "break complex reasoning into manageable steps",
+    "for a conceptual question",
+    "do not withhold a definition behind a counter-question",
+)
+
+CONTRADICTORY_TUTOR_INSTRUCTIONS = (
+    "answer the student's question directly",
+    "provide the direct answer",
+    "give the answer immediately",
+    "always provide direct answers",
+    "answer directly",
+    "when appropriate, guide the student with a helpful hint",
+)
+
+
+def _rendered_ai_tutor() -> str:
+    return PromptLoader.render("ai_tutor", SAMPLE_TEMPLATE_INPUTS["ai_tutor"])
+
+
+def test_ai_tutor_is_consistently_hint_first() -> None:
+    lowered = _rendered_ai_tutor().lower()
+
+    for marker in HINT_FIRST_TUTOR_MARKERS:
+        assert marker in lowered, f"ai_tutor prompt is missing: {marker!r}"
+
+
+def test_ai_tutor_rejects_contradictory_tutoring_instructions() -> None:
+    template = PromptLoader.load_template("ai_tutor")
+    metadata = " ".join(template.style_constraints + template.safety_constraints)
+    surfaces = {
+        "rendered prompt": _rendered_ai_tutor().lower(),
+        "declared constraints": metadata.lower(),
+    }
+
+    for surface, text in surfaces.items():
+        for instruction in CONTRADICTORY_TUTOR_INSTRUCTIONS:
+            assert instruction not in text, (
+                f"ai_tutor {surface} contains a direct-answer instruction "
+                f"that contradicts hint-first tutoring: {instruction!r}"
+            )
+
+
+@pytest.mark.parametrize(
+    "level",
+    [EducationLevel.HIGH_SCHOOL, EducationLevel.GRADUATE],
+)
+def test_tutoring_method_is_identical_across_education_levels(
+    level: EducationLevel,
+) -> None:
+    rendered = PromptLoader.render(
+        "ai_tutor",
+        {
+            **shared_variables(level),
+            "COURSE_MATERIAL": "Material",
+            "CONVERSATION_HISTORY": "",
+            "QUESTION": "How do I solve this?",
+        },
+    )
+    lowered = rendered.lower()
+
+    assert EDUCATION_LEVEL_DIRECTIVES[level] in rendered
+    for marker in HINT_FIRST_TUTOR_MARKERS:
+        assert marker in lowered, (level.value, marker)
+    for instruction in CONTRADICTORY_TUTOR_INSTRUCTIONS:
+        assert instruction not in lowered, (level.value, instruction)
+    assert (
+        "the education level changes how you explain, never whether you guide"
+        in lowered
+    )
+
+
+def test_course_qa_remains_direct_answer() -> None:
+    """Hint-first tutoring must not leak into the separate question-answering mode."""
+    rendered = PromptLoader.render("course_qa", SAMPLE_TEMPLATE_INPUTS["course_qa"])
+    lowered = rendered.lower()
+
+    assert "answer the question directly" in lowered
+    for marker in HINT_FIRST_TUTOR_MARKERS:
+        assert marker not in lowered, (
+            f"course_qa adopted a tutoring instruction it must not carry: {marker!r}"
+        )

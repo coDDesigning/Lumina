@@ -64,7 +64,7 @@ export function studyGuideToMarkdown(
   const examTips: string[] = [];
   if (guide.exam_tips.lecture_based.length > 0) {
     examTips.push(
-      '### From your lecture material',
+      '### From your course material',
       '',
       ...bullets(guide.exam_tips.lecture_based),
       '',

@@ -3,7 +3,6 @@
 
 Covers:
 - Template loading, parsing, and strict metadata validation
-- LearnerContext validation, safe defaults, and directive rendering
 - Education level prompt adaptation (high_school, undergraduate, graduate,
   professional_other, unspecified)
 - Comprehensive regression preventing hardcoded university or domain assumptions
@@ -15,12 +14,9 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from schemas.learner_context import (
-    EducationLevel,
-    LearnerContext,
-)
 from schemas.prompt_context import (
     EDUCATION_LEVEL_DIRECTIVES,
+    EducationLevel,
     PromptContext,
 )
 from schemas.prompt_template import (
@@ -33,7 +29,6 @@ from schemas.prompt_template import (
 )
 from services.prompt_components import (
     build_grounding_block,
-    build_learner_context_block,
     build_safety_block,
 )
 from services.prompt_loader import PromptLoader
@@ -61,7 +56,7 @@ SHARED_PROMPT_VARIABLES = {
 def test_load_valid_study_guide_template() -> None:
     template = PromptLoader.load_template("study_guide", reload=True)
     assert template.name == "study_guide"
-    assert template.version == "2.0.0"
+    assert template.version == "2.1.0"
     assert template.required_variables == [
         "EDUCATION_LEVEL",
         "COURSE_TITLE",
@@ -92,21 +87,30 @@ def test_load_valid_study_guide_template() -> None:
     assert "{{MATERIAL_KIND}}" in template.template
 
 
+EXPECTED_TEMPLATE_VERSIONS = {
+    "study_guide": "2.1.0",
+    "quiz": "3.1.0",
+    "quiz_grading": "2.0.0",
+    "flashcard": "2.0.0",
+    "ai_tutor": "2.1.0",
+    "course_qa": "2.1.0",
+    "prompt_generator": "2.0.0",
+    "exam_style_question": "1.0.0",
+    "image_description": "1.0.0",
+    "visual_content": "2.0.0",
+    "ocr_cleanup": "1.0.0",
+}
+
+
+def test_every_template_version_is_pinned() -> None:
+    templates = PromptLoader.load_all()
+    actual = {name: template.version for name, template in templates.items()}
+    assert actual == EXPECTED_TEMPLATE_VERSIONS
+
+
 def test_load_all_built_in_templates() -> None:
     templates = PromptLoader.load_all()
-    expected_names = {
-        "study_guide",
-        "quiz",
-        "quiz_grading",
-        "flashcard",
-        "ai_tutor",
-        "course_qa",
-        "prompt_generator",
-        "image_description",
-        "visual_content",
-        "ocr_cleanup",
-    }
-    assert set(templates.keys()) == expected_names
+    assert set(templates.keys()) == set(EXPECTED_TEMPLATE_VERSIONS)
     for name, template in templates.items():
         assert template.name == name
         assert template.version
@@ -148,86 +152,6 @@ def test_non_dict_json_raises_validation_error(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# LearnerContext Unit & Validation Tests
-# ---------------------------------------------------------------------------
-
-
-def test_learner_context_safe_default() -> None:
-    context = LearnerContext()
-    assert context.education_level == EducationLevel.UNSPECIFIED
-    assert context.course_name is None
-    assert context.current_topic is None
-    assert context.difficulty_level is None
-
-    directive = context.render_directive()
-    assert "General Learner (Unspecified Level)" in directive
-    assert "without assuming a specific academic tier" in directive
-    # Ensure no university identity is assumed in the default
-    assert "university" not in directive.lower()
-
-
-@pytest.mark.parametrize(
-    ("level", "expected_phrase"),
-    [
-        (EducationLevel.HIGH_SCHOOL, "High-School Level"),
-        (EducationLevel.UNDERGRADUATE, "Undergraduate Level"),
-        (EducationLevel.GRADUATE, "Graduate / Advanced Level"),
-        (EducationLevel.UNSPECIFIED, "General Learner (Unspecified Level)"),
-        (EducationLevel.PROFESSIONAL_OTHER, "General Learner"),
-    ],
-)
-def test_learner_context_education_level_directives(
-    level: EducationLevel, expected_phrase: str
-) -> None:
-    context = LearnerContext(education_level=level)
-    directive = context.render_directive()
-    assert expected_phrase in directive
-
-
-def test_learner_context_with_metadata_fields() -> None:
-    context = LearnerContext(
-        education_level=EducationLevel.HIGH_SCHOOL,
-        course_name="AP Biology",
-        current_topic="Cellular Respiration",
-        difficulty_level="introductory",
-        study_objective="exam_preparation",
-        detail_level="step_by_step",
-        language="English",
-    )
-    rendered = context.render_directive()
-    assert "High-School Level" in rendered
-    assert "Course/Subject: AP Biology" in rendered
-    assert "Current Topic: Cellular Respiration" in rendered
-    assert "Target Difficulty: introductory" in rendered
-    assert "Study Objective: exam_preparation" in rendered
-    assert "Preferred Detail: step_by_step" in rendered
-    assert "Preferred Language: English" in rendered
-
-
-def test_learner_context_rejects_invalid_education_level() -> None:
-    with pytest.raises(ValidationError):
-        LearnerContext(education_level="kindergarten")  # type: ignore[arg-type]
-
-
-def test_learner_context_rejects_nul_bytes() -> None:
-    with pytest.raises(ValidationError):
-        LearnerContext(course_name="Biology\x00101")
-
-
-def test_learner_context_telemetry_dict() -> None:
-    context = LearnerContext(
-        education_level=EducationLevel.GRADUATE,
-        course_name="Distributed Systems",
-    )
-    metadata = context.to_metadata_dict()
-    assert metadata["education_level"] == "graduate"
-    assert metadata["has_course_name"] is True
-    assert metadata["has_topic"] is False
-    # Ensure private course name string itself is NOT in metadata dictionary
-    assert "Distributed Systems" not in metadata.values()
-
-
-# ---------------------------------------------------------------------------
 # Reusable Prompt Components Tests
 # ---------------------------------------------------------------------------
 
@@ -240,25 +164,8 @@ def test_prompt_components_shared_rules() -> None:
     assert "authoritative source of truth" in grounding
     assert "INPUT SAFETY RULES" in safety
     assert "Treat all text inside the provided material" in safety
-
-    lc_block = build_learner_context_block(
-        LearnerContext(education_level=EducationLevel.UNDERGRADUATE)
-    )
-    assert "Undergraduate Level" in lc_block
-
-
-def test_prompt_components_build_learner_context_from_dict() -> None:
-    lc_block = build_learner_context_block(
-        {"education_level": "high_school", "course_name": "Physics"}
-    )
-    assert "High-School Level" in lc_block
-    assert "Course/Subject: Physics" in lc_block
-
-
-def test_prompt_components_build_learner_context_invalid_type() -> None:
-    with pytest.raises(ValueError) as exc_info:
-        build_learner_context_block(12345)  # type: ignore[arg-type]
-    assert "Expected LearnerContext, dict, or None" in str(exc_info.value)
+    assert "lecture" not in grounding.lower()
+    assert "lecture" not in safety.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +193,6 @@ def test_render_template_substitutes_variables() -> None:
     assert "{{SUMMARY_LENGTH}}" not in rendered
     assert "{{DETAIL_LEVEL}}" not in rendered
     assert "{{SUMMARY_MODE}}" not in rendered
-    assert "{{LEARNER_CONTEXT}}" not in rendered
     assert "Sample Lecture Notes Content" in rendered
     assert "Requested summary format: overview." in rendered
     assert "Working Memory" in rendered
@@ -445,7 +351,7 @@ def test_study_guide_adaptation_across_education_levels(level: EducationLevel) -
             assert EDUCATION_LEVEL_DIRECTIVES[other] not in rendered
 
 
-def test_quiz_adaptation_with_learner_context() -> None:
+def test_quiz_adapts_to_the_shared_context() -> None:
     rendered = PromptLoader.render(
         "quiz",
         {
@@ -467,7 +373,7 @@ def test_quiz_adaptation_with_learner_context() -> None:
     assert "{{" not in rendered
 
 
-def test_ai_tutor_adaptation_with_learner_context() -> None:
+def test_ai_tutor_adapts_to_the_shared_context() -> None:
     rendered = PromptLoader.render(
         "ai_tutor",
         {
@@ -484,7 +390,7 @@ def test_ai_tutor_adaptation_with_learner_context() -> None:
     assert "{{" not in rendered
 
 
-def test_course_qa_adaptation_with_learner_context() -> None:
+def test_course_qa_adapts_to_the_shared_context() -> None:
     rendered = PromptLoader.render(
         "course_qa",
         {
@@ -497,6 +403,8 @@ def test_course_qa_adaptation_with_learner_context() -> None:
     assert "undergraduate" in rendered
     assert EDUCATION_LEVEL_DIRECTIVES[EducationLevel.UNDERGRADUATE] in rendered
     assert "Computer Networks Notes" in rendered
+    assert rendered.count("- Adapt terminology, explanation depth, and clarity") == 1
+    assert "Adapt explanation clarity and terminology" not in rendered
     assert "{{" not in rendered
 
 
@@ -506,36 +414,24 @@ def test_course_qa_adaptation_with_learner_context() -> None:
 
 
 def test_get_render_metadata_returns_safe_telemetry() -> None:
-    context = LearnerContext(
-        education_level=EducationLevel.UNDERGRADUATE,
-        course_name="Linear Algebra",
-        current_topic="Eigenvalues",
-    )
     meta = PromptLoader.get_render_metadata(
         "study_guide",
         {
-            "TEXT": "Sensitive raw lecture text",
+            "TEXT": "Sensitive raw course material",
             "SUMMARY_FORMAT": "format",
             "TOPIC_FOCUS": "focus",
             "SUMMARY_LENGTH": "length",
             "DETAIL_LEVEL": "detail",
             "SUMMARY_MODE": "mode",
         },
-        learner_context=context,
     )
     assert meta["template_name"] == "study_guide"
-    assert meta["template_version"] == "2.0.0"
+    assert meta["template_version"] == "2.1.0"
     assert meta["output_schema_ref"] == "StudyGuideResponse"
-    assert meta["education_level"] == "undergraduate"
-    assert meta["learner_context_applied"] is True
-    assert meta["learner_metadata"]["has_course_name"] is True
-    assert meta["learner_metadata"]["has_topic"] is True
+    assert "TEXT" in meta["applied_variables"]
 
-    # Assert raw sensitive contents are NOT leaked into metadata
     meta_str = json.dumps(meta)
-    assert "Sensitive raw lecture text" not in meta_str
-    assert "Linear Algebra" not in meta_str
-    assert "Eigenvalues" not in meta_str
+    assert "Sensitive raw course material" not in meta_str
 
 
 # ---------------------------------------------------------------------------
@@ -594,66 +490,94 @@ def test_all_grounded_prompts_state_source_material_authority() -> None:
         ), f"Template '{name}' is missing explicit source grounding rules"
 
 
+SAMPLE_TEMPLATE_INPUTS = {
+    "study_guide": {
+        **SHARED_PROMPT_VARIABLES,
+        "TEXT": "Course material text",
+        "SUMMARY_FORMAT": "Format directive",
+        "TOPIC_FOCUS": "All Topics",
+        "SUMMARY_LENGTH": "Medium",
+        "DETAIL_LEVEL": "Standard",
+        "SUMMARY_MODE": "General",
+    },
+    "quiz": {
+        **SHARED_PROMPT_VARIABLES,
+        "TEXT": "Course material text",
+        "QUESTION_COUNT": "5",
+        "QUESTION_TYPES_DIRECTIVE": "Types",
+        "QUESTION_SCHEMAS": "Schemas",
+        "REQUESTED_DIFFICULTY": "medium",
+        "DIFFICULTY_DIRECTIVE": "Difficulty directive",
+        "TOPIC_FOCUS": "All Topics",
+    },
+    "quiz_grading": {
+        **SHARED_PROMPT_VARIABLES,
+        "SUBMISSION_COUNT": "1",
+        "SUBMISSIONS": "Submissions text",
+    },
+    "flashcard": {
+        **SHARED_PROMPT_VARIABLES,
+        "TEXT": "Course material text",
+    },
+    "ai_tutor": {
+        **SHARED_PROMPT_VARIABLES,
+        "COURSE_MATERIAL": "Material",
+        "CONVERSATION_HISTORY": "",
+        "QUESTION": "Question",
+    },
+    "course_qa": {
+        **SHARED_PROMPT_VARIABLES,
+        "COURSE_MATERIAL": "Material",
+        "CONVERSATION_HISTORY": "",
+        "QUESTION": "Question",
+    },
+    "prompt_generator": {
+        **SHARED_PROMPT_VARIABLES,
+        "TEXT": "User request",
+    },
+    "visual_content": {
+        **SHARED_PROMPT_VARIABLES,
+        "VISUAL_CONTEXT": "Visual elements description",
+        "SOURCE_TEXT": "Surrounding course material",
+    },
+    "ocr_cleanup": {
+        **SHARED_PROMPT_VARIABLES,
+        "RAW_OCR_TEXT": "Raw noisy OCR text fragment",
+    },
+    "image_description": {
+        **SHARED_PROMPT_VARIABLES,
+        "SUGGESTED_TYPE": "diagram",
+    },
+    "exam_style_question": {
+        **SHARED_PROMPT_VARIABLES,
+        "TEXT": "Material",
+        "QUESTION_COUNT": "5",
+        "QUESTION_SCHEMAS": '{"question_type": "multiple_choice"}',
+        "REQUESTED_DIFFICULTY": "hard",
+        "TOPIC_FOCUS": "All Topics",
+    },
+}
+
+
+BANNED_PROMPT_DEFAULTS = ("computer science", "university", "lecture")
+RETAINED_FIELD_NAMES = ("lecture_based",)
+
+
+def test_no_production_template_assumes_a_level_discipline_or_material() -> None:
+    templates = PromptLoader.load_all()
+    assert set(SAMPLE_TEMPLATE_INPUTS) == set(templates)
+
+    for name, sample_vars in SAMPLE_TEMPLATE_INPUTS.items():
+        lowered = PromptLoader.render(name, sample_vars).lower()
+        for field in RETAINED_FIELD_NAMES:
+            lowered = lowered.replace(field, "")
+        for banned in BANNED_PROMPT_DEFAULTS:
+            assert banned not in lowered, (name, banned)
+
+
 def test_all_production_templates_render_without_unresolved_placeholders() -> None:
     """Ensure every production template can render cleanly with sample inputs."""
-    sample_inputs = {
-        "study_guide": {
-            **SHARED_PROMPT_VARIABLES,
-            "TEXT": "Lecture text",
-            "SUMMARY_FORMAT": "Format directive",
-            "TOPIC_FOCUS": "All Topics",
-            "SUMMARY_LENGTH": "Medium",
-            "DETAIL_LEVEL": "Standard",
-            "SUMMARY_MODE": "General",
-        },
-        "quiz": {
-            **SHARED_PROMPT_VARIABLES,
-            "TEXT": "Lecture text",
-            "QUESTION_COUNT": "5",
-            "QUESTION_TYPES_DIRECTIVE": "Types",
-            "QUESTION_SCHEMAS": "Schemas",
-            "REQUESTED_DIFFICULTY": "medium",
-            "DIFFICULTY_DIRECTIVE": "Difficulty directive",
-            "TOPIC_FOCUS": "All Topics",
-        },
-        "quiz_grading": {
-            **SHARED_PROMPT_VARIABLES,
-            "SUBMISSION_COUNT": "1",
-            "SUBMISSIONS": "Submissions text",
-        },
-        "flashcard": {
-            **SHARED_PROMPT_VARIABLES,
-            "TEXT": "Lecture text",
-        },
-        "ai_tutor": {
-            **SHARED_PROMPT_VARIABLES,
-            "COURSE_MATERIAL": "Material",
-            "CONVERSATION_HISTORY": "",
-            "QUESTION": "Question",
-        },
-        "course_qa": {
-            **SHARED_PROMPT_VARIABLES,
-            "COURSE_MATERIAL": "Material",
-            "CONVERSATION_HISTORY": "",
-            "QUESTION": "Question",
-        },
-        "prompt_generator": {
-            **SHARED_PROMPT_VARIABLES,
-            "TEXT": "User request",
-        },
-        "visual_content": {
-            "VISUAL_CONTEXT": "Visual elements description",
-            "SOURCE_TEXT": "Surrounding lecture material",
-        },
-        "ocr_cleanup": {
-            **SHARED_PROMPT_VARIABLES,
-            "RAW_OCR_TEXT": "Raw noisy OCR text fragment",
-        },
-        "image_description": {
-            **SHARED_PROMPT_VARIABLES,
-            "SUGGESTED_TYPE": "diagram",
-        },
-    }
+    sample_inputs = SAMPLE_TEMPLATE_INPUTS
 
     templates = PromptLoader.load_all()
     assert set(sample_inputs) == set(templates)
@@ -695,7 +619,6 @@ def test_quiz_template_regression() -> None:
     assert "{{DIFFICULTY_DIRECTIVE}}" not in rendered
     assert "{{REQUESTED_DIFFICULTY}}" not in rendered
     assert "{{TOPIC_FOCUS}}" not in rendered
-    assert "{{LEARNER_CONTEXT}}" not in rendered
     assert "Generate exactly 8 questions" in rendered
     assert "Use only these question types: true_false." in rendered
     assert "Every question must be hard." in rendered
@@ -753,7 +676,6 @@ def test_flashcard_template_regression() -> None:
     )
     assert "Data Structures Notes" in rendered
     assert "{{TEXT}}" not in rendered
-    assert "{{LEARNER_CONTEXT}}" not in rendered
     assert "flashcards" in rendered.lower()
 
     template = PromptLoader.load_template("flashcard")
@@ -787,16 +709,14 @@ def test_ai_tutor_template_regression() -> None:
     assert "{{COURSE_MATERIAL}}" not in rendered
     assert "{{CONVERSATION_HISTORY}}" not in rendered
     assert "{{QUESTION}}" not in rendered
-    assert "{{LEARNER_CONTEXT}}" not in rendered
     assert (
         "Open with a concise hint or guiding question, then give the full "
         "explanation." in rendered
     )
     assert "When appropriate, guide the student with a helpful hint" not in rendered
     assert "apparent level" not in rendered
-    assert "Adapt the depth and style of your explanation to the education level" in (
-        rendered
-    )
+    assert rendered.count("- Adapt the depth, terminology, and style") == 1
+    assert "Do not guess the student's level from how they write." in rendered
 
     template = PromptLoader.load_template("ai_tutor")
     assert template.output_schema_ref == "AiTutorResponse"
@@ -838,21 +758,27 @@ def test_visual_content_template() -> None:
     rendered = PromptLoader.render(
         "visual_content",
         {
-            "VISUAL_CONTEXT": "A bar chart showing execution times of Sorting Algorithms",
-            "SOURCE_TEXT": "Chapter 4: Sorting and Searching Algorithms",
+            **shared_variables(EducationLevel.UNDERGRADUATE),
+            "VISUAL_CONTEXT": "A bar chart showing germination rates by soil type",
+            "SOURCE_TEXT": "Chapter 4: Seed Germination",
         },
-        learner_context=LearnerContext(education_level=EducationLevel.UNDERGRADUATE),
     )
-    assert "A bar chart showing execution times" in rendered
-    assert "Chapter 4: Sorting and Searching Algorithms" in rendered
-    assert "Undergraduate Level" in rendered
-    assert "{{VISUAL_CONTEXT}}" not in rendered
-    assert "{{SOURCE_TEXT}}" not in rendered
-    assert "{{LEARNER_CONTEXT}}" not in rendered
+    assert "A bar chart showing germination rates" in rendered
+    assert "Chapter 4: Seed Germination" in rendered
+    assert "undergraduate" in rendered
+    assert EDUCATION_LEVEL_DIRECTIVES[EducationLevel.UNDERGRADUATE] in rendered
+    assert "{{" not in rendered
 
     template = PromptLoader.load_template("visual_content")
     assert template.output_schema_ref == "VisualContentDescriptionResponse"
-    assert template.required_variables == ["VISUAL_CONTEXT", "SOURCE_TEXT"]
+    assert template.required_variables == [
+        "EDUCATION_LEVEL",
+        "COURSE_TITLE",
+        "SUBJECT_AREA",
+        "MATERIAL_KIND",
+        "VISUAL_CONTEXT",
+        "SOURCE_TEXT",
+    ]
 
 
 def test_ocr_cleanup_template() -> None:

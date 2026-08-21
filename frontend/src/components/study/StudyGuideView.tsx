@@ -127,7 +127,7 @@ export function StudyGuideView({ guide, context = null }: StudyGuideViewProps) {
           </h4>
           {guide.exam_tips.lecture_based.length > 0 ? (
             <>
-              <h5>From your lecture material</h5>
+              <h5>From your course material</h5>
               <ul className="summary-bullet-list">
                 {guide.exam_tips.lecture_based.map((tip, index) => (
                   <li key={index}>{tip}</li>

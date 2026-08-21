@@ -425,7 +425,7 @@ def test_retrieval_query_is_bounded(model_graph) -> None:
 
 def test_prompt_states_the_requested_count_types_and_difficulty() -> None:
     prompt = QuizService.build_prompt(
-        "Lecture material",
+        "Course material",
         _request(
             question_count=7,
             question_types=["true_false", "short_answer"],
@@ -435,7 +435,7 @@ def test_prompt_states_the_requested_count_types_and_difficulty() -> None:
         context=PROMPT_CONTEXT,
     )
 
-    assert "Lecture material" in prompt
+    assert "Course material" in prompt
     assert "Generate exactly 7 questions" in prompt
     assert "Use only these question types: true_false, short_answer" in prompt
     assert 'difficulty field must be exactly "hard"' in prompt
@@ -445,7 +445,7 @@ def test_prompt_states_the_requested_count_types_and_difficulty() -> None:
 
 def test_prompt_only_describes_the_allowed_question_types() -> None:
     prompt = QuizService.build_prompt(
-        "Lecture material",
+        "Course material",
         _request(question_types=["true_false"]),
         context=PROMPT_CONTEXT,
     )
@@ -462,6 +462,32 @@ def test_difficulty_changes_the_prompt(difficulty) -> None:
     )
 
     assert quiz_service.DIFFICULTY_DIRECTIVES[QuizDifficulty(difficulty)] in prompt
+
+
+def test_difficulty_is_independent_of_the_education_level() -> None:
+    graduate = PromptContext(
+        education_level=EducationLevel.GRADUATE,
+        course_title="Advanced Econometrics",
+        subject_area="Economics",
+        material_kind=MaterialKind.SLIDES,
+    )
+    hard = _request(difficulty="hard")
+    directive = quiz_service.DIFFICULTY_DIRECTIVES[QuizDifficulty.HARD]
+
+    school_prompt = QuizService.build_prompt("Material", hard, context=PROMPT_CONTEXT)
+    graduate_prompt = QuizService.build_prompt("Material", hard, context=graduate)
+
+    for prompt in (school_prompt, graduate_prompt):
+        assert directive in prompt
+        assert 'difficulty field must be exactly "hard"' in prompt
+
+    assert "high_school" in school_prompt
+    assert "graduate" in graduate_prompt
+
+
+def test_difficulty_directives_name_no_particular_material_kind() -> None:
+    for directive in quiz_service.DIFFICULTY_DIRECTIVES.values():
+        assert "lecture" not in directive.lower()
 
 
 def test_prompt_keeps_the_injection_guard() -> None:

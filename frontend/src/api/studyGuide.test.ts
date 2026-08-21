@@ -59,6 +59,7 @@ describe('studyGuideAPI.generate', () => {
       summary_length: 'long',
       detail_level: 'detailed',
       summary_mode: 'exam_focused',
+      include_profile_context: true,
     });
 
     expect(result).toEqual(STUDY_GUIDE);
@@ -75,6 +76,7 @@ describe('studyGuideAPI.generate', () => {
       summary_length: 'long',
       detail_level: 'detailed',
       summary_mode: 'exam_focused',
+      include_profile_context: true,
     });
     expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer test-token');
   });

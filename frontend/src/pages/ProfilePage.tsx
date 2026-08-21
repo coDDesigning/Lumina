@@ -9,7 +9,6 @@ import {
   Plus,
   RefreshCw,
   Smile,
-  Sparkles,
   Trash2,
   X,
 } from 'lucide-react'
@@ -220,33 +219,6 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
       setKnowledgeError(
         err instanceof Error ? err.message : 'Failed to delete knowledge entry.',
       )
-    }
-  }
-
-  const handleQuickImportSample = async () => {
-    setSubmittingKnowledge(true)
-    setKnowledgeError(null)
-    setKnowledgeSuccess(null)
-    try {
-      const sampleItems = [
-        {
-          topic: 'Calculus & Linear Algebra',
-          detail: 'Familiar with partial derivatives, gradient vectors, and matrix multiplication.',
-        },
-        {
-          topic: 'Python Programming',
-          detail: 'Comfortable with OOP, list comprehensions, and basic data structures.',
-        },
-      ]
-      const imported = await profileKnowledgeAPI.importBulk({ items: sampleItems })
-      setKnowledgeItems((prev) => [...imported, ...prev])
-      setKnowledgeSuccess(`Successfully imported ${imported.length} sample knowledge topics.`)
-    } catch (err: unknown) {
-      setKnowledgeError(
-        err instanceof Error ? err.message : 'Failed to import sample knowledge.',
-      )
-    } finally {
-      setSubmittingKnowledge(false)
     }
   }
 
@@ -591,24 +563,6 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
               </div>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
-              {knowledgeItems.length === 0 && (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={handleQuickImportSample}
-                  disabled={submittingKnowledge}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    fontSize: '13px',
-                    padding: '6px 12px',
-                  }}
-                >
-                  <Sparkles style={{ width: '14px', height: '14px' }} />
-                  Import Demo Topics (Sample)
-                </button>
-              )}
               <button
                 type="button"
                 className="primary-button"

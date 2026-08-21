@@ -205,19 +205,27 @@ def assemble_generation_context(
     course_id: int,
     user_id: int | None,
     *,
-    course_max_characters: int,
+    course_material: CourseMaterial | None = None,
+    course_max_characters: int | None = None,
     profile_max_characters: int = DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
+    include_profile_context: bool = True,
 ) -> GenerationContext:
     """Assembles course material and profile knowledge under strict priority rules.
 
     Course material is primary and authoritative. Profile knowledge is supplementary
-    context isolated strictly to the requesting user.
+    context isolated strictly to the requesting user and queried only when
+    include_profile_context is True.
     """
-    course_material = load_course_material(
-        db,
-        course_id,
-        max_characters=course_max_characters,
-    )
+    if course_material is None:
+        if course_max_characters is None:
+            raise ValueError(
+                "Either course_material or course_max_characters must be provided."
+            )
+        course_material = load_course_material(
+            db,
+            course_id,
+            max_characters=course_max_characters,
+        )
 
     profile_context = (
         load_profile_knowledge(
@@ -225,7 +233,7 @@ def assemble_generation_context(
             user_id,
             max_characters=profile_max_characters,
         )
-        if user_id is not None
+        if user_id is not None and include_profile_context
         else ProfileKnowledgeContext(
             text="", items_used=0, items_available=0, truncated=False
         )

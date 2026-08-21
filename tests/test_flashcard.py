@@ -5,8 +5,13 @@ from backend.app.models import (
     Course,
     DocumentChunk,
     GeneratedOutput,
+    ProfileKnowledge,
     UploadedDocument,
     User,
+)
+from schemas.flashcard import (
+    FlashcardGenerationContext,
+    FlashcardGenerationSettings,
 )
 from services.flashcard import (
     FlashcardGenerationError,
@@ -270,12 +275,19 @@ def test_save_generated_flashcards_persists_output(
         FakeProvider(),
     )
 
+    settings_json = FlashcardGenerationSettings().model_dump_json()
+    context_json = FlashcardGenerationContext.from_material(
+        flashcards.material
+    ).model_dump_json()
+
     generated_output = FlashcardService.save_generated_flashcards(
         db_session,
         model_graph.course.id,
         flashcards.flashcards,
         user_id=model_graph.user.id,
         model_used=flashcards.model_used,
+        generation_settings=settings_json,
+        generation_context=context_json,
     )
 
     persisted = db_session.scalar(
@@ -287,6 +299,65 @@ def test_save_generated_flashcards_persists_output(
     assert persisted.output_type == "flashcards"
     assert '"deck_title":"Example Flashcards"' in persisted.content
     assert '"card_count":10' in persisted.content
+    assert persisted.generation_settings is not None
+    assert persisted.generation_context is not None
+
+
+def test_flashcard_generation_with_profile_knowledge_opt_in(
+    db_session,
+    model_graph,
+) -> None:
+    _add_ready_document(
+        db_session,
+        model_graph,
+        file_hash="1" * 64,
+        text="Cellular biology and mitochondria function.",
+    )
+    db_session.add(
+        ProfileKnowledge(
+            user_id=model_graph.user.id,
+            topic="Cellular Biology Focus",
+            detail="Student needs extra practice on ATP synthesis.",
+        )
+    )
+    db_session.commit()
+
+    class PromptCapturingProvider:
+        def __init__(self):
+            self.prompt = ""
+
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            self.prompt = prompt
+            return _valid_flashcard_payload()
+
+    # 1. Opt-in True
+    provider_opt_in = PromptCapturingProvider()
+    generation_opt_in = FlashcardService.generate(
+        db_session,
+        model_graph.course.id,
+        provider_opt_in,
+        user_id=model_graph.user.id,
+        include_profile_context=True,
+    )
+    assert "[Supplementary Student Knowledge Profile]" in provider_opt_in.prompt
+    assert "Cellular Biology Focus" in provider_opt_in.prompt
+    assert "Student needs extra practice on ATP synthesis." in provider_opt_in.prompt
+    assert generation_opt_in.profile_knowledge is not None
+    assert generation_opt_in.profile_knowledge.items_used == 1
+
+    # 2. Opt-in False
+    provider_opt_out = PromptCapturingProvider()
+    generation_opt_out = FlashcardService.generate(
+        db_session,
+        model_graph.course.id,
+        provider_opt_out,
+        user_id=model_graph.user.id,
+        include_profile_context=False,
+    )
+    assert "[Supplementary Student Knowledge Profile]" not in provider_opt_out.prompt
+    assert "Cellular Biology Focus" not in provider_opt_out.prompt
+    assert generation_opt_out.profile_knowledge is not None
+    assert generation_opt_out.profile_knowledge.is_empty
 
 
 def test_generate_flashcards_endpoint_returns_generated_flashcards(
@@ -339,6 +410,7 @@ def test_generate_flashcards_endpoint_returns_generated_flashcards(
 
     response = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/flashcards",
+        json={"include_profile_context": True},
         headers=upload_api.authorization,
     )
 
@@ -354,3 +426,6 @@ def test_generate_flashcards_endpoint_returns_generated_flashcards(
     assert payload["data"]["context_truncated"] is False
     assert payload["data"]["chunks_used"] == 1
     assert payload["data"]["chunks_available"] == 1
+    assert "generated_output_id" in payload["data"]
+    assert payload["data"]["generated_output_id"] is not None
+    assert payload["data"]["profile_knowledge_used"] is False

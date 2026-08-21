@@ -15,7 +15,6 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import func, select
@@ -150,15 +149,15 @@ QUESTION_TYPE_SCHEMAS: dict[QuizQuestionType, str] = {
 DIFFICULTY_DIRECTIVES: dict[QuizDifficulty, str] = {
     QuizDifficulty.EASY: (
         "Every question must be easy: direct recall or straightforward comprehension "
-        "of the lecture material."
+        "of the course material."
     ),
     QuizDifficulty.MEDIUM: (
         "Every question must be of medium difficulty: applying or comparing ideas from "
-        "the lecture material."
+        "the course material."
     ),
     QuizDifficulty.HARD: (
         "Every question must be hard: analysis, synthesis, or reasoning that combines "
-        "several parts of the lecture material."
+        "several parts of the course material."
     ),
 }
 
@@ -260,7 +259,6 @@ class QuizService:
         cls,
         course_material: str,
         request: QuizRequest,
-        learner_context: Any = None,
         *,
         context: PromptContext,
     ) -> str:
@@ -278,7 +276,6 @@ class QuizService:
                 # that a later substitution would then fill in.
                 "TEXT": course_material,
             },
-            learner_context=learner_context,
         )
 
     @classmethod

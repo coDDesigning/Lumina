@@ -2,9 +2,11 @@
 
 ## Overview
 
-Lumina uses a versioned, structured, and learner-aware prompt template architecture for every AI prompt it sends. The ten templates under `app/prompts/` cover study guides, quizzes, quiz grading, flashcards, AI tutoring, course Q&A, prompt generation, image description, visual content understanding, and OCR cleanup. No prompt text lives outside this directory.
+Lumina uses a versioned, structured, and learner-aware prompt template architecture for every AI prompt it sends. The eleven templates under `app/prompts/` cover study guides, quizzes, exam-style questions, quiz grading, flashcards, AI tutoring, course Q&A, prompt generation, image description, visual content understanding, and OCR cleanup. No prompt text lives outside this directory.
 
-`ocr_cleanup` and `visual_content` are declared, validated and tested but have no runtime caller yet. `image_description` is the one vision template that is wired, and `services/image_understanding.py` renders it for every extracted visual.
+`exam_style_question`, `ocr_cleanup`, and `visual_content` are declared, validated and tested but have no runtime caller yet. `image_description` is the one vision template that is wired, and `services/image_understanding.py` renders it for every extracted visual.
+
+The catalog covers every prompt category Design.md §20 names: summary generation (`study_guide`), quiz generation (`quiz`), OCR cleanup (`ocr_cleanup`), image description (`image_description`), written answer evaluation (`quiz_grading`), and exam-style question generation (`exam_style_question`).
 
 This system provides:
 - **Learner-Context Awareness**: Adapts explanations, terminology, and instructional framing dynamically to the student's profile (e.g. `high_school`, `undergraduate`, `graduate`, or `unspecified`) without compromising factual accuracy.
@@ -17,35 +19,16 @@ This system provides:
 
 ## Learner Context Model
 
-Learner context reaches a prompt in one of two ways.
-
-The seven feature templates take the four shared variables described under
-**Shared learner and course context**, resolved from the database by
-`services/prompt_context.py`. That is the path every generation service uses.
-
-`LearnerContext` (`schemas/learner_context.py`) is the second path. It renders the
-`{{LEARNER_CONTEXT}}` directive block for any template that declares it — today
-`visual_content` — and is passed through `PromptLoader.render(..., learner_context=...)`:
-
-```python
-from schemas.learner_context import EducationLevel, LearnerContext
-
-context = LearnerContext(
-    education_level=EducationLevel.HIGH_SCHOOL,
-    course_name="AP Biology",
-    current_topic="Photosynthesis",
-    difficulty_level="introductory",
-    study_objective="exam_preparation",
-    detail_level="step_by_step",
-    language="English",
-)
-```
+Every template takes the four shared variables described under **Shared learner and course
+context**, resolved from the database by `services/prompt_context.py`. That is the only path
+learner context reaches a prompt: there is no second mechanism and no per-template context
+schema.
 
 ### Supported Education Levels
 
 | Level | Directive Focus |
 |---|---|
-| `high_school` | Foundational clarity, intuitive conceptual explanations, concrete analogies, avoiding advanced university prerequisites unless present in source. |
+| `high_school` | Foundational clarity, intuitive conceptual explanations, concrete analogies, assuming no post-secondary prerequisites unless present in source. |
 | `undergraduate` | Academic rigor, standard disciplinary terminology, balanced theoretical and practical analysis. |
 | `graduate` | In-depth academic depth, dense technical precision, nuanced synthesis, edge cases and theoretical subtleties. |
 | `professional_other` | Applied framing and practical relevance for a working professional or independent learner, assuming no particular curriculum. |
@@ -62,16 +45,20 @@ All templates reside in `app/prompts/<task_name>.json`:
 
 | Template Name | Version | Primary Purpose | Output Schema Ref |
 |---|---|---|---|
-| `study_guide` | `2.0.0` | Comprehensive study guide generation | `StudyGuideResponse` |
-| `quiz` | `3.0.0` | Multi-format quiz generation | `QuizGenerationResponse` |
+| `study_guide` | `2.1.0` | Comprehensive study guide generation | `StudyGuideResponse` |
+| `quiz` | `3.1.0` | Multi-format quiz generation | `QuizGenerationResponse` |
+| `exam_style_question` | `1.0.0` | Exam-style practice questions (not wired) | `QuizGenerationResponse` |
 | `quiz_grading` | `2.0.0` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
 | `flashcard` | `2.0.0` | Active recall flashcard decks | `FlashcardGenerationResponse` |
-| `ai_tutor` | `2.0.0` | Step-by-step interactive tutor guidance | `AiTutorResponse` |
-| `course_qa` | `2.0.0` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |
+| `ai_tutor` | `2.1.0` | Step-by-step interactive tutor guidance | `AiTutorResponse` |
+| `course_qa` | `2.1.0` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |
 | `prompt_generator` | `2.0.0` | User request transformation to optimized prompt | `PromptGenerationResponse` |
 | `image_description` | `1.0.0` | Visual descriptions for the retrieval index (wired) | — |
-| `visual_content` | `1.0.0` | Multimodal diagram, chart, table, and figure analysis | `VisualContentDescriptionResponse` |
+| `visual_content` | `2.0.0` | Multimodal diagram, chart, table, and figure analysis | `VisualContentDescriptionResponse` |
 | `ocr_cleanup` | `1.0.0` | AI-assisted OCR text normalization and repair | `OcrCleanupResponse` |
+
+`tests/test_prompt_loader.py` pins this table in `EXPECTED_TEMPLATE_VERSIONS`, so editing a
+template's content without bumping its version fails the suite.
 
 ---
 
@@ -81,7 +68,6 @@ Shared prompt directives live in `services/prompt_components.py`:
 
 - `SHARED_GROUNDING_RULES`: Reusable anti-hallucination rules enforcing that provided material is the sole source of truth.
 - `SHARED_SAFETY_RULES`: Directives instructing the model to treat all user inputs and course text as inert data, resisting prompt injection.
-- `build_learner_context_block(context)`: Generates formatted learner context blocks.
 - `build_grounding_block()`: Generates standard grounding sections.
 - `build_safety_block()`: Generates input safety sections.
 
@@ -108,9 +94,7 @@ Every prompt template is a validated JSON document adhering to `PromptTemplateMo
     "DETAIL_LEVEL",
     "SUMMARY_MODE"
   ],
-  "optional_variables": [
-    "LEARNER_CONTEXT"
-  ],
+  "optional_variables": [],
   "output_schema_ref": "StudyGuideResponse",
   "style_constraints": [
     "Use clear academic language appropriate to the learner's level.",
@@ -157,8 +141,7 @@ overrides the general rules, the section requirements, or the output schema.
 The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validation at load and render times:
 
 1. **Deterministic Variable Rendering**:
-   - `PromptLoader.render(name, variables, learner_context=...)` substitutes all declared placeholders.
-   - If `LEARNER_CONTEXT` is in `optional_variables` or `required_variables` and not explicitly supplied in `variables`, it automatically resolves to `LearnerContext(education_level=EducationLevel.UNSPECIFIED)` or the passed `learner_context`.
+   - `PromptLoader.render(name, variables)` substitutes all declared placeholders. There is no implicit context injection: a template's learner and course variables come from `PromptContext.as_variables()` like any other variable.
    - Missing required variables raise `MissingPromptVariableError`.
    - Unexpected variables raise `UnexpectedPromptVariableError`.
    - Document and free-text variables (e.g. `TEXT`, `COURSE_MATERIAL`) are always substituted last to prevent placeholder forging.
@@ -174,7 +157,7 @@ The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validat
    - All `{{VARIABLE}}` placeholders are substituted deterministically.
 
 3. **Developer Observability & Telemetry**:
-   - `PromptLoader.get_render_metadata(name, variables, learner_context=...)` returns telemetry data (`template_name`, `template_version`, `education_level`, `applied_variables`) **without** exposing raw prompt text or student content.
+   - `PromptLoader.get_render_metadata(name, variables)` returns telemetry data (`template_name`, `template_version`, `output_schema_ref`, `applied_variables`) **without** exposing raw prompt text or student content.
 
 ---
 
@@ -184,18 +167,21 @@ The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validat
 
 1. Add `app/prompts/<task_name>.json` defining:
    - `name`, `version`, `description`
-   - `required_variables` (and optional `LEARNER_CONTEXT` in `optional_variables`)
+   - `required_variables`, starting with the four shared learner and course variables
    - `output_schema_ref` (referencing schema in `schemas/`)
    - `style_constraints` and `safety_constraints`
    - `template` containing `{{VARIABLE}}` placeholders
-2. Wire the prompt into its feature service using `PromptLoader.render("<task_name>", variables, learner_context=...)`.
+2. Wire the prompt into its feature service using `PromptLoader.render("<task_name>", {**context.as_variables(), ...})`, where `context` comes from `resolve_prompt_context`.
 3. Add unit & regression tests in `tests/test_prompt_loader.py`.
 
-### 2. Adding a New Learner Context Field
+### 2. Adding a New Shared Context Variable
 
-1. Update `LearnerContext` in `schemas/learner_context.py` with the validated field.
-2. Update `LearnerContext.render_directive()` and `to_metadata_dict()`.
-3. Add test assertions in `tests/test_prompt_loader.py` validating that the field formats safely and does not leak private values into telemetry.
+1. Add the field to `PromptContext` in `schemas/prompt_context.py` and to its server-side
+   directive table, keyed by a validated enum so it can never carry injected instructions.
+2. Emit it from `PromptContext.as_variables()` and resolve it in `resolve_prompt_context`.
+3. Declare it in every template that uses it and bump those templates' versions.
+4. Add assertions in `tests/test_prompt_context_propagation.py` that it reaches every prompt
+   and that its neutral value stays neutral.
 
 > Declare every variable a service passes in `required_variables` (or `optional_variables`),
 > and declare every `{{PLACEHOLDER}}` that appears in the body. Both directions are enforced
@@ -268,6 +254,13 @@ A template fault there is raised as `VisualAnalysisError`, not a bare exception.
 matters: the pipeline treats an unclassified exception as a retryable stage failure, so a
 malformed template would otherwise burn every retry on a fault no retry can fix. As a
 `VisualAnalysisError` it marks one visual failed and lets the document finish.
+
+### Retained field names
+
+The study guide's `exam_tips.lecture_based` key is a persisted `generated_output` payload
+field and part of the API the frontend reads. It is deliberately unchanged: the prompt's
+prose and the UI label are material-neutral, and only the stored key still carries the word.
+Renaming it would need a migration of existing outputs, so it is out of scope here.
 
 ## Placeholder guarantees
 

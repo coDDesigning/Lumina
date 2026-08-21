@@ -16,7 +16,18 @@ from services.study_guide import StudyGuideService
 from schemas.quiz import QuizDifficulty, QuizQuestionType, QuizRequest
 from schemas.study_guide import StudyGuideRequest
 
-BANNED_DEFAULTS = ("Computer Science", "university", "lecture notes")
+BANNED_DEFAULTS = ("computer science", "university", "lecture")
+
+RETAINED_FIELD_NAMES = ("lecture_based",)
+
+
+def assert_neutral(prompt: str, name: str) -> None:
+    lowered = prompt.lower()
+    for field in RETAINED_FIELD_NAMES:
+        lowered = lowered.replace(field, "")
+    for banned in BANNED_DEFAULTS:
+        assert banned not in lowered, (name, banned)
+
 
 HIGH_SCHOOL_CONTEXT = PromptContext(
     education_level=EducationLevel.HIGH_SCHOOL,
@@ -97,8 +108,7 @@ def test_every_generation_prompt_carries_the_shared_context(
 
     for value in expected:
         assert value in prompt, (name, value)
-    for banned in BANNED_DEFAULTS:
-        assert banned not in prompt, (name, banned)
+    assert_neutral(prompt, name)
     assert "{{" not in prompt
 
 
@@ -107,8 +117,24 @@ def test_no_generation_prompt_defaults_a_learner_to_university(name) -> None:
     prompt = BUILDERS[name](PromptContext())
 
     assert "unspecified" in prompt
-    for banned in BANNED_DEFAULTS:
-        assert banned not in prompt, (name, banned)
+    assert_neutral(prompt, name)
+    assert "{{" not in prompt
+
+
+LECTURE_NOTES_CONTEXT = PromptContext(
+    education_level=EducationLevel.UNDERGRADUATE,
+    course_title="Introduction to Sociology",
+    subject_area="Sociology",
+    material_kind=MaterialKind.LECTURE_NOTES,
+)
+
+
+@pytest.mark.parametrize("name", sorted(BUILDERS))
+def test_lecture_wording_comes_only_from_the_material_kind(name) -> None:
+    prompt = BUILDERS[name](LECTURE_NOTES_CONTEXT)
+
+    assert "lecture_notes" in prompt
+    assert "The material is lecture notes" in prompt
     assert "{{" not in prompt
 
 
@@ -117,8 +143,7 @@ def test_quiz_grading_prompt_carries_the_shared_context(model_graph) -> None:
 
     for value in HIGH_SCHOOL_EXPECTED:
         assert value in prompt
-    for banned in BANNED_DEFAULTS:
-        assert banned not in prompt
+    assert_neutral(prompt, "quiz_grading")
     assert "{{" not in prompt
 
 
@@ -174,8 +199,7 @@ def test_generation_resolves_course_context_end_to_end(db_session, model_graph) 
     prompt = captured[0]
     for value in HIGH_SCHOOL_EXPECTED:
         assert value in prompt
-    for banned in BANNED_DEFAULTS:
-        assert banned not in prompt
+    assert_neutral(prompt, "flashcard")
     assert "{{" not in prompt
 
 
@@ -228,8 +252,7 @@ def test_legacy_course_reaches_the_provider_as_unspecified(
     prompt = captured[0]
     assert "unspecified" in prompt
     assert "Unspecified subject area" in prompt
-    for banned in BANNED_DEFAULTS:
-        assert banned not in prompt
+    assert_neutral(prompt, "flashcard")
 
 
 def test_a_template_fault_never_reaches_the_provider(

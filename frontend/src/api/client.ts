@@ -43,14 +43,20 @@ function parseApiErrorBody(data: unknown): ParsedApiError {
   return fallback;
 }
 
+export const ERROR_CODE_HEADER = 'X-Error-Code';
+
 export class APIError extends Error {
   public code: string | null;
 
-  constructor(public status: number, public data: unknown) {
+  constructor(
+    public status: number,
+    public data: unknown,
+    headerCode: string | null = null,
+  ) {
     const parsed = parseApiErrorBody(data);
     super(parsed.message);
     this.name = 'APIError';
-    this.code = parsed.code;
+    this.code = parsed.code ?? headerCode;
   }
 }
 
@@ -100,7 +106,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       window.dispatchEvent(new Event('auth:unauthorized'));
     }
 
-    throw new APIError(response.status, errorData);
+    throw new APIError(
+      response.status,
+      errorData,
+      response.headers?.get(ERROR_CODE_HEADER) ?? null,
+    );
   }
 
   const text = await response.text();

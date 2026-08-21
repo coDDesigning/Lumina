@@ -32,9 +32,19 @@ import { progressAPI } from './api/progress'
 import { courseQaAPI } from './api/courseQa'
 import { aiTutorAPI } from './api/aiTutor'
 import { promptGeneratorAPI } from './api/promptGenerator'
-import { describeError, describeUploadError, isAbortError } from './api/errors'
+import {
+  describeError,
+  describeGenerationError,
+  describeUploadError,
+  isAbortError,
+  isInsufficientCredits,
+} from './api/errors'
+import { useCredits } from './context/CreditContext'
+import CreditBalance from './components/credits/CreditBalance'
+import CreditExhaustedNotice from './components/credits/CreditExhaustedNotice'
 import type {
   ConversationDetail,
+  CreditSource,
   ConversationRole,
   ConversationType,
   Course,
@@ -109,6 +119,13 @@ type WorkspacePageProps = {
 
 function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const { user } = useAuth()
+  const {
+    refresh: refreshCredits,
+    canAfford: canAffordCredits,
+    isMetered: creditsMetered,
+  } = useCredits()
+  const promptGeneratorExhausted =
+    creditsMetered && !canAffordCredits('prompt_generator')
   const courseId = Number(workspace.id)
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('Exam')
   const [generatorPrompt, setGeneratorPrompt] = useState('')
@@ -148,6 +165,9 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const activeConversationType: ConversationType =
     activeTab === 'Tutoring' ? 'ai_tutor' : 'course_qa'
   const activeConversation = conversations[activeConversationType]
+  const conversationSource: CreditSource = activeConversationType
+  const conversationExhausted =
+    creditsMetered && !canAffordCredits(conversationSource)
 
   const {
     entries,
@@ -229,6 +249,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
     event.preventDefault()
     const request = generatorPrompt.trim()
     if (!request || isGeneratingPrompt) return
+    if (promptGeneratorExhausted) return
 
     setIsGeneratingPrompt(true)
     setPromptGeneratorError(null)
@@ -237,10 +258,18 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
       const res = await promptGeneratorAPI.generate({ description: request })
       setMainPrompt(res.generated_prompt)
       setGeneratorPrompt('')
+      void refreshCredits()
     } catch (err) {
-      setPromptGeneratorError(
-        describeError(err, 'Failed to generate prompt. Please try again.').message,
+      const described = describeGenerationError(
+        err,
+        'Failed to generate prompt. Please try again.',
       )
+      if (isInsufficientCredits(described)) {
+        await refreshCredits()
+        setPromptGeneratorError(null)
+      } else {
+        setPromptGeneratorError(described.message)
+      }
     } finally {
       setIsGeneratingPrompt(false)
     }
@@ -255,6 +284,9 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
       activeTab === 'Tutoring' ? 'ai_tutor' : 'course_qa'
     const conversation = conversations[conversationType]
     if (conversation.isLoading) return
+    // Guarded here rather than only on the button, so an implicit submit from
+    // the Enter key cannot get past an empty balance either.
+    if (conversationExhausted) return
 
     setMainPrompt('')
     setConversations((current) => ({
@@ -302,20 +334,29 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
           ],
         },
       }))
+      void refreshCredits()
     } catch (err) {
       setMainPrompt(prompt)
-      setConversations((current) => ({
-        ...current,
-        [conversationType]: {
-          ...current[conversationType],
-          error: describeError(
-            err,
-            conversationType === 'ai_tutor'
-              ? 'Failed to generate tutor explanation from course materials.'
-              : 'Failed to generate answer from course materials.',
-          ).message,
-        },
-      }))
+      const described = describeGenerationError(
+        err,
+        conversationType === 'ai_tutor'
+          ? 'Failed to generate tutor explanation from course materials.'
+          : 'Failed to generate answer from course materials.',
+      )
+      if (isInsufficientCredits(described)) {
+        // The exhaustion notice below the composer carries the recovery route,
+        // so a duplicate inline error would only repeat it. Earlier messages in
+        // the conversation stay exactly where they are.
+        await refreshCredits()
+      } else {
+        setConversations((current) => ({
+          ...current,
+          [conversationType]: {
+            ...current[conversationType],
+            error: described.message,
+          },
+        }))
+      }
     } finally {
       setConversations((current) => ({
         ...current,
@@ -494,7 +535,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
             <button
               type="submit"
               aria-label="Generate prompt"
-              disabled={isGeneratingPrompt}
+              disabled={isGeneratingPrompt || promptGeneratorExhausted}
             >
               {isGeneratingPrompt ? (
                 <LoadingSpinner size="sm" />
@@ -503,6 +544,13 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
               )}
             </button>
           </form>
+          {promptGeneratorExhausted ? (
+            <CreditExhaustedNotice
+              source="prompt_generator"
+              action="a prompt"
+              className="generator-credit-notice"
+            />
+          ) : null}
           {promptGeneratorError && (
             <p
               style={{
@@ -695,6 +743,21 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
                     <p>{activeConversation.error}</p>
                   </div>
                 ) : null}
+
+                {conversationExhausted ? (
+                  <CreditExhaustedNotice
+                    source={conversationSource}
+                    action={
+                      conversationSource === 'ai_tutor'
+                        ? 'a tutor explanation'
+                        : 'an answer'
+                    }
+                  />
+                ) : null}
+              </div>
+
+              <div className="composer-credit-balance">
+                <CreditBalance source={conversationSource} />
               </div>
 
               <form className="prompt-field main-prompt" onSubmit={submitPrompt}>
@@ -716,7 +779,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
                 <button
                   type="submit"
                   aria-label="Submit prompt"
-                  disabled={activeConversation.isLoading}
+                  disabled={activeConversation.isLoading || conversationExhausted}
                 >
                   <Search aria-hidden="true" />
                 </button>

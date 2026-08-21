@@ -55,6 +55,26 @@ export interface CreditMutation {
   transaction: CreditTransaction;
 }
 
+/** The credit-charging features, keyed as the backend names them. */
+export type CreditSource =
+  | 'study_guide'
+  | 'quiz'
+  | 'quiz_open_ended'
+  | 'flashcard'
+  | 'ai_tutor'
+  | 'course_qa'
+  | 'prompt_generator';
+
+export interface CreditStatus {
+  /** null means this account is not metered, so no credit UI applies. */
+  credits: number | null;
+  metering_enabled: boolean;
+  monthly_grant: number | null;
+  balance_cap: number | null;
+  next_grant_at: string | null;
+  generation_costs: Partial<Record<LooseUnion<CreditSource>, number>>;
+}
+
 export interface AuthResponse {
   access_token: string;
   token_type: string;

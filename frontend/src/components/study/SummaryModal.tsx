@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, Check, Copy, Download, Sparkles, X, XCircle } from 'lucide-react';
 import { studyGuideAPI } from '../../api/studyGuide';
-import { describeGenerationError, isAbortError } from '../../api/errors';
+import {
+  describeGenerationError,
+  isAbortError,
+  isInsufficientCredits,
+} from '../../api/errors';
+import { useCredits } from '../../context/CreditContext';
+import CreditBalance from '../credits/CreditBalance';
+import CreditExhaustedNotice from '../credits/CreditExhaustedNotice';
 import type {
   DetailLevel,
   StudyGuideGenerationResult,
@@ -87,6 +94,10 @@ export function SummaryModal({
     return () => clearTimeout(timer);
   }, [copyState]);
 
+  const { refresh, canAfford, isMetered } = useCredits();
+  const lastResultRef = useRef<StudyGuideGenerationResult | null>(null);
+  const exhausted = isMetered && !canAfford('study_guide');
+
   const handleGenerate = useCallback(async () => {
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -108,13 +119,24 @@ export function SummaryModal({
         { signal: controller.signal },
       );
       if (controller.signal.aborted) return;
+      lastResultRef.current = result;
       setState({ phase: 'success', result });
+      void refresh();
     } catch (error) {
       if (controller.signal.aborted || isAbortError(error)) return;
       const described = describeGenerationError(
         error,
         'The study guide could not be generated.',
       );
+      if (isInsufficientCredits(described)) {
+        // Correct the balance first, so the screen cannot claim credits remain
+        // while also saying there are none. A guide already generated stays put:
+        // only the action becomes unavailable.
+        await refresh();
+        const previous = lastResultRef.current;
+        setState(previous ? { phase: 'success', result: previous } : { phase: 'idle' });
+        return;
+      }
       setState({
         phase: 'error',
         message: described.message,
@@ -125,6 +147,7 @@ export function SummaryModal({
     courseId,
     detailLevel,
     includeProfileContext,
+    refresh,
     summaryFormat,
     summaryLength,
     summaryMode,
@@ -208,6 +231,12 @@ export function SummaryModal({
                 </h4>
                 <p>{state.message}</p>
               </div>
+            </div>
+          ) : null}
+
+          {exhausted && state.phase !== 'generating' ? (
+            <div className="summary-container">
+              <CreditExhaustedNotice source="study_guide" action="a study guide" />
             </div>
           ) : null}
 
@@ -344,11 +373,12 @@ export function SummaryModal({
               <button className="secondary-button" type="button" onClick={onClose}>
                 Close
               </button>
+              <CreditBalance source="study_guide" />
               <button
                 className="primary-button"
                 type="button"
                 onClick={handleGenerate}
-                disabled={!hasMaterial}
+                disabled={!hasMaterial || exhausted}
               >
                 <Sparkles aria-hidden="true" />
                 Generate study guide
@@ -361,7 +391,13 @@ export function SummaryModal({
               <button className="secondary-button" type="button" onClick={onClose}>
                 Close
               </button>
-              <button className="primary-button" type="button" onClick={handleGenerate}>
+              <CreditBalance source="study_guide" />
+              <button
+                className="primary-button"
+                type="button"
+                onClick={handleGenerate}
+                disabled={exhausted}
+              >
                 {state.retryable ? 'Try again' : 'Try again later'}
               </button>
             </>
@@ -376,6 +412,7 @@ export function SummaryModal({
               >
                 New study guide
               </button>
+              <CreditBalance source="study_guide" />
               <div className="summary-footer-actions">
                 <button className="secondary-button" type="button" onClick={handleCopy}>
                   {copyState === 'copied' ? (

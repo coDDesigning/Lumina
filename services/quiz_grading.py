@@ -35,11 +35,8 @@ from services.ai_usage_logger import AiUsageLogger
 from services.prompt_loader import PromptLoader
 from services.quiz import parse_correct_answer
 from services.text_generation import TextGenerationProvider
-from services.credits import CreditService
 
 logger = logging.getLogger(__name__)
-
-GRADING_CREDIT_COST = 1.0
 
 ProviderFactory = Callable[[], TextGenerationProvider]
 
@@ -222,15 +219,6 @@ class QuizGradingService:
             log_failure(ErrorCategory.PROVIDER_ERROR)
             return graded
 
-        receipt = None
-        if user_id:
-            receipt = CreditService.charge(
-                db, user_id, GRADING_CREDIT_COST, source_type="quiz_grading"
-            )
-            if receipt is None:
-                log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
-                return graded
-
         prompt = cls.build_prompt(pending)
         metadata = None
 
@@ -240,16 +228,12 @@ class QuizGradingService:
             else:
                 result = provider.generate_json(prompt)
         except Exception as exc:
-            if user_id:
-                CreditService.refund(db, receipt)
             log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
             return graded
 
         try:
             verdicts = OpenEndedGradingResponse.model_validate(result)
         except ValidationError:
-            if user_id:
-                CreditService.refund(db, receipt)
             log_failure(
                 ErrorCategory.INVALID_STRUCTURE,
                 latency_ms=metadata.latency_ms if metadata else None,

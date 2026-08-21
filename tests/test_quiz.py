@@ -342,6 +342,16 @@ def test_answer_normalization_ignores_case_punctuation_and_spacing() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_an_open_ended_quiz_costs_more_because_grading_is_prepaid() -> None:
+    plain = QuizService.credit_cost(_request(question_types=["multiple_choice"]))
+    mixed = QuizService.credit_cost(
+        _request(question_types=["multiple_choice", "open_ended"])
+    )
+
+    assert plain == 1.0
+    assert mixed == 2.0
+
+
 def test_question_types_are_deduplicated_preserving_order() -> None:
     request = _request(
         question_types=["true_false", "multiple_choice", "true_false"],

@@ -7,6 +7,20 @@ import { modelsAPI } from '../api/models'
 import { profileKnowledgeAPI } from '../api/profileKnowledge'
 import { userAPI } from '../api/user'
 
+// These suites are not about credits; an unmetered account renders no credit UI.
+vi.mock('../context/CreditContext', () => ({
+  useCredits: () => ({
+    status: null,
+    isLoading: false,
+    error: null,
+    refresh: vi.fn(),
+    isMetered: false,
+    costOf: () => null,
+    canAfford: () => true,
+  }),
+}))
+
+
 const mockLogout = vi.fn()
 const mockRefreshUser = vi.fn()
 

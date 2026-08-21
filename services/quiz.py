@@ -50,7 +50,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import CreditService
+from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -215,6 +215,12 @@ class QuizService:
         )
 
     @staticmethod
+    def credit_cost(request: QuizRequest) -> float:
+        if QuizQuestionType.OPEN_ENDED in request.question_types:
+            return GENERATION_CREDIT_COSTS["quiz_open_ended"]
+        return GENERATION_CREDIT_COSTS["quiz"]
+
+    @staticmethod
     def build_retrieval_query(course: Course | None, request: QuizRequest) -> str:
         """Turn a generation request into the query retrieval should rank against."""
         return build_retrieval_query(course, request.topic_focus)
@@ -309,7 +315,10 @@ class QuizService:
         receipt = None
         if resolved_user_id:
             receipt = CreditService.charge(
-                db, resolved_user_id, 1.0, source_type="quiz"
+                db,
+                resolved_user_id,
+                cls.credit_cost(request),
+                source_type="quiz",
             )
             if receipt is None:
                 log_failure(ErrorCategory.INSUFFICIENT_CREDITS)

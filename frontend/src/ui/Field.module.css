@@ -1,0 +1,96 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+}
+
+.optional {
+  font-weight: var(--weight-normal);
+  color: var(--text-muted);
+}
+
+.hint {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  line-height: var(--leading-normal);
+}
+
+.error {
+  font-size: var(--text-2xs);
+  color: var(--destructive);
+  line-height: var(--leading-normal);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.error svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: 0.125rem;
+}
+
+.control {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: var(--border-width) solid transparent;
+  background: var(--surface-sunken);
+  color: var(--text);
+  width: 100%;
+  min-height: var(--size-control-md);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.control::placeholder {
+  color: var(--text-subtle);
+}
+
+.control:focus {
+  background: var(--surface-raised);
+}
+
+.control:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.control[aria-invalid='true'] {
+  border-color: var(--destructive);
+  background: var(--destructive-subtle);
+}
+
+.textarea {
+  resize: vertical;
+  line-height: var(--leading-relaxed);
+  min-height: 6rem;
+}
+
+.select {
+  appearance: none;
+  padding-right: var(--space-6);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b6484' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+  background-size: 1rem;
+}
+
+:global([data-theme='dark']) .select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a099bc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+}
+
+.counter {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}

@@ -1,0 +1,138 @@
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  background: var(--scrim);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  overflow-y: auto;
+  animation: fadeIn var(--duration-fast) var(--ease-out);
+}
+
+.panel {
+  background: var(--surface-overlay);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+  width: 100%;
+  max-height: calc(100vh - var(--space-6));
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  animation: rise var(--duration-normal) var(--ease-out);
+}
+
+.sm {
+  max-width: 26rem;
+}
+
+.md {
+  max-width: 34rem;
+}
+
+.lg {
+  max-width: 48rem;
+}
+
+.xl {
+  max-width: 64rem;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-5) var(--space-3);
+}
+
+.headerText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.title {
+  font-size: var(--text-xl);
+}
+
+.description {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: var(--leading-relaxed);
+}
+
+.mark {
+  flex: 0 0 auto;
+  width: 2.125rem;
+  height: 2.125rem;
+  border-radius: var(--radius-md);
+  display: grid;
+  place-items: center;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.markDestructive {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+.mark svg {
+  width: var(--size-icon-md);
+  height: var(--size-icon-md);
+}
+
+.body {
+  padding: 0 var(--space-5) var(--space-5);
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-top: var(--border-width) solid var(--border);
+  flex-wrap: wrap;
+}
+
+.footerSpread {
+  justify-content: space-between;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .panel {
+    animation: none;
+  }
+}
+
+@media (max-width: 30rem) {
+  .scrim {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .panel {
+    max-width: none;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    max-height: 92vh;
+  }
+}

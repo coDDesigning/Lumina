@@ -1,0 +1,95 @@
+.wrapper {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+  min-height: var(--size-control-md);
+  padding: var(--space-1) 0;
+}
+
+.wrapper:has(input:disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.input {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 1.0625rem;
+  height: 1.0625rem;
+  margin: 0.1875rem 0 0;
+  border-radius: 0.3125rem;
+  border: var(--border-width-strong) solid var(--border-strong);
+  background: var(--surface-raised);
+  cursor: inherit;
+  display: grid;
+  place-items: center;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.input:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.input:checked::after {
+  content: '';
+  width: 0.5625rem;
+  height: 0.3125rem;
+  border-left: 2px solid var(--text-on-accent);
+  border-bottom: 2px solid var(--text-on-accent);
+  transform: rotate(-45deg) translate(0.03125rem, -0.0625rem);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.description {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  line-height: var(--leading-normal);
+}
+
+.switchInput {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 2.125rem;
+  height: 1.25rem;
+  margin: 0.125rem 0 0;
+  border-radius: var(--radius-full);
+  background: var(--border-strong);
+  cursor: inherit;
+  position: relative;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.switchInput::after {
+  content: '';
+  position: absolute;
+  top: 0.1875rem;
+  left: 0.1875rem;
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.switchInput:checked {
+  background: var(--accent);
+}
+
+.switchInput:checked::after {
+  transform: translateX(0.875rem);
+}

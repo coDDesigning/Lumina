@@ -1,0 +1,45 @@
+.card {
+  background: var(--surface-raised);
+  border-radius: var(--radius-lg);
+  min-width: 0;
+}
+
+.rest {
+  box-shadow: var(--shadow-1);
+}
+
+.raised {
+  box-shadow: var(--shadow-2);
+}
+
+.flat {
+  background: var(--surface-sunken);
+}
+
+.padSm {
+  padding: var(--space-3);
+}
+
+.padMd {
+  padding: var(--space-4);
+}
+
+.padLg {
+  padding: var(--space-5);
+}
+
+.interactive {
+  display: block;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    box-shadow var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.interactive:hover {
+  box-shadow: var(--shadow-2);
+}

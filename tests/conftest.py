@@ -13,7 +13,7 @@ from alembic import command
 from alembic.config import Config
 from chromadb.api.client import SharedSystemClient
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, func, inspect, select, text
+from sqlalchemy import Engine, event, func, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.base import Base
@@ -689,3 +689,35 @@ def authz_api(api_context: ApiContext) -> AuthorizationApiContext:
         authorization_b=_authorization_header("owner-b@example.com"),
         authorization_admin=_authorization_header("authz-admin@example.com"),
     )
+
+
+@dataclass
+class ProfileKnowledgeQuerySpy:
+    """Records every statement that touches profile_knowledge.
+
+    Opting out of profile context must not merely discard the result: the query
+    is never issued at all, and only a database-level spy can prove that.
+    """
+
+    statements: list[str]
+
+    def reset(self) -> None:
+        self.statements.clear()
+
+
+@pytest.fixture
+def profile_knowledge_queries(
+    database_engine: Engine,
+) -> Iterator[ProfileKnowledgeQuerySpy]:
+    spy = ProfileKnowledgeQuerySpy(statements=[])
+
+    def record(conn, cursor, statement, parameters, context, executemany) -> None:
+        normalized = " ".join(statement.split()).lower()
+        if "from profile_knowledge" in normalized:
+            spy.statements.append(normalized)
+
+    event.listen(database_engine, "before_cursor_execute", record)
+    try:
+        yield spy
+    finally:
+        event.remove(database_engine, "before_cursor_execute", record)

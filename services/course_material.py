@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from uuid import UUID
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
@@ -16,6 +17,7 @@ class CourseMaterial:
     chunks_used: int
     chunks_available: int
     truncated: bool
+    document_ids: tuple[UUID, ...] = ()
 
     @property
     def is_empty(self) -> bool:
@@ -50,7 +52,10 @@ def load_course_material(
         raise ValueError("max_characters must be a positive integer.")
 
     statement = (
-        _ready_chunks(select(DocumentChunk.text), course_id)
+        _ready_chunks(
+            select(DocumentChunk.text, DocumentChunk.document_id),
+            course_id,
+        )
         .order_by(
             UploadedDocument.created_at,
             UploadedDocument.id,
@@ -61,12 +66,13 @@ def load_course_material(
     )
 
     parts: list[str] = []
+    used_document_ids: list[UUID] = []
     length = 0
     truncated = False
 
-    chunks = db.scalars(statement)
+    chunk_rows = db.execute(statement)
     try:
-        for text in chunks:
+        for text, document_id in chunk_rows:
             stripped = (text or "").strip()
             if not stripped:
                 continue
@@ -75,13 +81,15 @@ def load_course_material(
                 truncated = True
                 break
             parts.append(stripped)
+            used_document_ids.append(document_id)
             length += addition
     finally:
-        chunks.close()
+        chunk_rows.close()
 
     return CourseMaterial(
         text=CHUNK_SEPARATOR.join(parts),
         chunks_used=len(parts),
         chunks_available=count_available_chunks(db, course_id),
         truncated=truncated,
+        document_ids=tuple(dict.fromkeys(used_document_ids)),
     )

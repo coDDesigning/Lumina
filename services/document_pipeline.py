@@ -777,7 +777,7 @@ def _process_document(
 
         current_stage = PipelineStage.CHUNKING
         _emit_stage(stage_callback, current_stage)
-        chunks = _chunk_pages(clean_pages, options)
+        chunks = _chunk_pages_with_retry(clean_pages, options)
         if not chunks:
             raise _failure(
                 ProcessingErrorCode.NO_PROCESSABLE_TEXT,
@@ -2289,6 +2289,37 @@ def _chunk_pages(
                 retryable=False,
             )
     return tuple(chunks)
+
+
+def _chunk_pages_with_retry(
+    pages: tuple[PageText, ...],
+    options: PipelineOptions,
+) -> tuple[DocumentChunk, ...]:
+    for attempt in range(2):
+        try:
+            return _chunk_pages(pages, options)
+        except DocumentProcessingError as exc:
+            if not exc.retryable or attempt == 1:
+                raise
+            logger.warning(
+                "Chunking attempt %d failed with retryable error (%s); retrying chunking stage once",
+                attempt + 1,
+                exc.code.value,
+            )
+        except Exception as exc:
+            if attempt == 1:
+                logger.exception("Chunking failed after retry")
+                raise _failure(
+                    ProcessingErrorCode.PROCESSING_FAILED,
+                    PipelineStage.CHUNKING,
+                    retryable=True,
+                ) from exc
+            logger.warning(
+                "Chunking attempt %d failed with unexpected error (%s); retrying chunking stage once",
+                attempt + 1,
+                exc,
+            )
+    return _chunk_pages(pages, options)
 
 
 def _join_page_text(

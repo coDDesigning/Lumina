@@ -20,7 +20,6 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     false,
-    true,
     func,
 )
 from sqlalchemy.engine import Dialect
@@ -351,12 +350,6 @@ class CourseSettings(Base):
     )
     detail_level: Mapped[str] = mapped_column(
         String(50), default="Balanced", server_default="Balanced"
-    )
-    notifications: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default=true()
-    )
-    progress_reminders: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default=true()
     )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()

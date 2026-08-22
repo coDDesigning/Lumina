@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
-import { BellRing, BrainCircuit, CheckCircle2, Settings, SlidersHorizontal } from 'lucide-react'
+import { BrainCircuit, CheckCircle2, Settings, SlidersHorizontal } from 'lucide-react'
 import PageLayout from '../components/PageLayout'
 import { settingsAPI } from '../api/settings'
 import { describeError } from '../api/errors'
@@ -11,8 +11,6 @@ const initialSettings = {
   questionCount: 10,
   summaryLength: 'Medium',
   detailLevel: 'Balanced',
-  notifications: true,
-  progressReminders: true,
 }
 
 type SettingsPageProps = {
@@ -39,8 +37,6 @@ function SettingsPage({ workspaceId }: SettingsPageProps) {
         questionCount: data.question_count,
         summaryLength: data.summary_length,
         detailLevel: data.detail_level,
-        notifications: data.notifications,
-        progressReminders: data.progress_reminders,
       })
     } catch (err) {
       setErrorMessage(describeError(err, 'Failed to load workspace settings.').message)
@@ -81,8 +77,6 @@ function SettingsPage({ workspaceId }: SettingsPageProps) {
         question_count: preferences.questionCount,
         summary_length: preferences.summaryLength,
         detail_level: preferences.detailLevel,
-        notifications: preferences.notifications,
-        progress_reminders: preferences.progressReminders,
       })
       setStatusMessage('Workspace preferences saved successfully!')
     } catch (err) {
@@ -245,48 +239,6 @@ function SettingsPage({ workspaceId }: SettingsPageProps) {
                     <option>Balanced</option>
                     <option>Detailed</option>
                   </select>
-                </label>
-              </div>
-            </section>
-
-            <section className="form-section form-section-wide">
-              <header className="form-section-header">
-                <BellRing aria-hidden="true" />
-                <div>
-                  <h2>Notifications</h2>
-                  <p>Control reminders and document status notifications.</p>
-                </div>
-              </header>
-
-              <div className="toggle-list">
-                <label className="toggle-row">
-                  <span>
-                    <strong>Document updates</strong>
-                    <small>Show a notification when an uploaded source is ready.</small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={preferences.notifications}
-                    onChange={(event) =>
-                      updatePreference('notifications', event.target.checked)
-                    }
-                  />
-                  <span className="toggle-control" aria-hidden="true" />
-                </label>
-
-                <label className="toggle-row">
-                  <span>
-                    <strong>Progress reminders</strong>
-                    <small>Show a gentle reminder after an inactive study period.</small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={preferences.progressReminders}
-                    onChange={(event) =>
-                      updatePreference('progressReminders', event.target.checked)
-                    }
-                  />
-                  <span className="toggle-control" aria-hidden="true" />
                 </label>
               </div>
             </section>

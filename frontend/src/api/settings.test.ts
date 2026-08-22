@@ -9,8 +9,6 @@ const MOCK_SETTINGS: CourseSettings = {
   question_count: 15,
   summary_length: 'Long',
   detail_level: 'Detailed',
-  notifications: true,
-  progress_reminders: false,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

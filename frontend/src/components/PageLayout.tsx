@@ -22,7 +22,7 @@ function PageLayout({
   const workspacePath = workspaceId ? `/workspaces/${workspaceId}` : '/'
 
   return (
-    <main className="detail-page-shell">
+    <div className="detail-page-shell">
       <section className="panel detail-page-panel">
         <header className="detail-page-header">
           <div className="detail-title-group">
@@ -44,7 +44,7 @@ function PageLayout({
 
         {children}
       </section>
-    </main>
+    </div>
   )
 }
 

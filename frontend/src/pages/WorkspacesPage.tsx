@@ -143,7 +143,7 @@ function WorkspacesPage({
   }
 
   return (
-    <main className="workspace-library-shell">
+    <div className="workspace-library-shell">
       <section className="workspace-library-content">
         <header className="workspace-library-header">
           <div>
@@ -505,7 +505,7 @@ function WorkspacesPage({
           </section>
         </div>
       )}
-    </main>
+    </div>
   )
 }
 

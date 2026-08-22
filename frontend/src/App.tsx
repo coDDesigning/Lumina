@@ -426,7 +426,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   ).length
 
   return (
-    <main className="workspace-shell">
+    <div className="workspace-shell">
       <aside className="sidebar" aria-label="Study sources and prompt tools">
         <section className="panel sources-panel">
           <header className="panel-header">
@@ -856,7 +856,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
           onClose={() => setIsFlashcardModalOpen(false)}
         />
       ) : null}
-    </main>
+    </div>
 
   )
 }

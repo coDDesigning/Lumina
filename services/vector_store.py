@@ -358,27 +358,36 @@ class ChromaVectorStore:
         self._collection = None
         self._client = None
 
-    @staticmethod
-    def _collection_is_gone(exc: Exception) -> bool:
-        if type(exc).__name__ in {"NotFoundError", "InvalidCollectionException"}:
-            return True
-        return "does not exist" in str(exc).lower()
+    def _discard_client(self) -> None:
+        """Drop this client and the process-wide system Chroma caches for it.
+
+        ``PersistentClient`` hands back a cached system for a given path, so
+        clearing the local references alone would rebind the same stale
+        in-memory index instead of reading what another process just wrote.
+        """
+        self.close()
+        try:
+            from chromadb.api.client import SharedSystemClient
+
+            SharedSystemClient.clear_system_cache()
+        except Exception:
+            logger.warning("Chroma system cache could not be cleared")
 
     def _run(self, operation, message: str):
-        """Run one collection call, re-resolving a handle the store has replaced.
+        """Run one collection call, reopening a handle another process invalidated.
 
-        The collection handle is cached for the life of the process, so a store
-        rebuilt underneath a long-running API would otherwise fail every later
-        request until that process restarted.
+        The client caches the collection and its in-memory index for the life of
+        the process, so a worker writing to the same embedded store leaves this
+        handle stale: reads then fail until the process restarts. Every operation
+        here is idempotent, so reopening once and retrying keeps a long-running
+        API serving rather than failing every later request.
         """
         try:
             return operation(self._get_collection())
         except VectorStoreError:
             raise
-        except Exception as exc:
-            if not self._collection_is_gone(exc):
-                raise VectorStoreError(message) from exc
-        self.close()
+        except Exception:
+            self._discard_client()
         try:
             return operation(self._get_collection())
         except VectorStoreError:

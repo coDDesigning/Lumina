@@ -9,6 +9,7 @@ from backend.app.models import (
     Course,
     DocumentChunk,
     ProfileKnowledge,
+    Role,
     UploadedDocument,
     User,
 )
@@ -38,6 +39,11 @@ PROMPT_CONTEXT = PromptContext(
     material_kind=MaterialKind.TEXTBOOK,
 )
 IRRELEVANT_SEED = 4.0
+
+
+class UncalledTextProvider:
+    def generate_text(self, prompt: str) -> str:
+        raise AssertionError("Provider should not be called")
 
 
 def _add_ready_document(
@@ -855,3 +861,130 @@ def test_ai_tutor_response_diagnostics_never_expose_private_material_content(
     assert "text" not in data
     assert "raw_material" not in data
     assert "chunk_text" not in data
+
+
+def test_ai_tutor_rejects_conversation_from_another_course(
+    upload_api,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        conversation = Conversation(
+            user_id=upload_api.user_id,
+            course_id=upload_api.other_course_id,
+            conversation_type=ConversationType.AI_TUTOR.value,
+        )
+        session.add(conversation)
+        session.commit()
+        conversation_id = conversation.id
+
+    monkeypatch.setattr(
+        ai_tutor_route,
+        "get_text_generation_provider",
+        lambda: UncalledTextProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "Continue", "conversation_id": conversation_id},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Conversation not found"}
+
+
+def test_ai_tutor_rejects_another_users_conversation(
+    upload_api,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        role = session.query(Role).filter_by(name="user").first()
+        other_user = User(
+            name="Tutor Intruder",
+            email="tutor-intruder@example.com",
+            password_hash="hash",
+            role=role,
+        )
+        session.add(other_user)
+        session.flush()
+        conversation = Conversation(
+            user_id=other_user.id,
+            course_id=upload_api.course_id,
+            conversation_type=ConversationType.AI_TUTOR.value,
+        )
+        session.add(conversation)
+        session.commit()
+        conversation_id = conversation.id
+
+    monkeypatch.setattr(
+        ai_tutor_route,
+        "get_text_generation_provider",
+        lambda: UncalledTextProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "Continue", "conversation_id": conversation_id},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Conversation not found"}
+
+
+def test_ai_tutor_provider_failure_does_not_create_conversation(
+    upload_api,
+    retrieval_env,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        assert user is not None and course is not None
+
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="f" * 64,
+            text="Ready course material for tutor failure test",
+            retrieval_env=retrieval_env,
+        )
+
+        conversations_before = (
+            session.query(Conversation)
+            .filter_by(
+                user_id=upload_api.user_id,
+                course_id=upload_api.course_id,
+            )
+            .count()
+        )
+
+    class FailingProvider:
+        def generate_text(self, prompt: str) -> str:
+            raise TextGenerationError("Generation failed")
+
+    monkeypatch.setattr(
+        ai_tutor_route,
+        "get_text_generation_provider",
+        lambda: FailingProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "This generation should fail"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code >= 400
+
+    with upload_api.session_factory() as session:
+        conversations_after = (
+            session.query(Conversation)
+            .filter_by(
+                user_id=upload_api.user_id,
+                course_id=upload_api.course_id,
+            )
+            .count()
+        )
+        assert conversations_after == conversations_before

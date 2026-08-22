@@ -90,4 +90,17 @@ describe('conversationsAPI', () => {
       MalformedResponseError,
     );
   });
+
+  it('deletes a conversation', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ success: true, message: 'ok', data: { id: 17 } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(conversationsAPI.delete(4, 17)).resolves.toEqual({ id: 17 });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe('/api/courses/4/conversations/17');
+    expect(init?.method).toBe('DELETE');
+  });
 });

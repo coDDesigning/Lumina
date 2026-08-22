@@ -24,6 +24,7 @@ from services.profile_knowledge import (
     format_profile_context,
 )
 from schemas.prompt_context import PromptContext
+from services.document_lock import acquire_generation_locks
 from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
 from services.course_material import count_available_chunks
@@ -311,87 +312,92 @@ class StudyGuideService:
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
 
-        generation_ctx = assemble_generation_context(
-            db,
-            course_id=course_id,
-            user_id=resolved_user_id,
-            course_material=material,
-            include_profile_context=effective_request.use_profile_knowledge,
-        )
-
-        prompt_context = resolve_prompt_context(
-            db, course=course, user_id=resolved_user_id
-        )
-        prompt = cls.build_prompt(
-            generation_ctx.course_material.text,
-            effective_request,
-            profile_knowledge=generation_ctx.profile_knowledge,
-            context=prompt_context,
-        )
-        metadata = None
-
-        receipt = None
-        if resolved_user_id:
-            receipt = CreditService.charge(
+        with acquire_generation_locks(material.document_ids):
+            generation_ctx = assemble_generation_context(
                 db,
-                resolved_user_id,
-                GENERATION_CREDIT_COSTS["study_guide"],
-                source_type="study_guide",
+                course_id=course_id,
+                user_id=resolved_user_id,
+                course_material=material,
+                include_profile_context=effective_request.use_profile_knowledge,
             )
-            if receipt is None:
-                AiUsageLogger.log_failure(
+
+            prompt_context = resolve_prompt_context(
+                db, course=course, user_id=resolved_user_id
+            )
+            prompt = cls.build_prompt(
+                generation_ctx.course_material.text,
+                effective_request,
+                profile_knowledge=generation_ctx.profile_knowledge,
+                context=prompt_context,
+            )
+            metadata = None
+
+            receipt = None
+            if resolved_user_id:
+                receipt = CreditService.charge(
+                    db,
+                    resolved_user_id,
+                    GENERATION_CREDIT_COSTS["study_guide"],
+                    source_type="study_guide",
+                )
+                if receipt is None:
+                    AiUsageLogger.log_failure(
+                        db,
+                        user_id=resolved_user_id,
+                        course_id=course_id,
+                        generation_type=GenerationType.STUDY_GUIDE,
+                        error_category=ErrorCategory.INSUFFICIENT_CREDITS,
+                    )
+                    raise InsufficientCreditsError("Insufficient credits.")
+
+            try:
+                if hasattr(provider, "generate_json_with_metadata"):
+                    result, metadata = provider.generate_json_with_metadata(prompt)
+                else:
+                    result = provider.generate_json(prompt)
+            except TextGenerationError as exc:
+                if resolved_user_id:
+                    CreditService.refund(db, receipt)
+                log_failure(
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
+                )
+                raise StudyGuideGenerationError(
+                    "Text generation provider failed."
+                ) from exc
+            except Exception:
+                if resolved_user_id:
+                    CreditService.refund(db, receipt)
+                raise
+
+            try:
+                validated = StudyGuideResponse.model_validate(result)
+            except ValidationError as exc:
+                if resolved_user_id:
+                    CreditService.refund(db, receipt)
+                log_failure(
+                    ErrorCategory.INVALID_STRUCTURE,
+                    latency_ms=metadata.latency_ms if metadata else None,
+                )
+                raise InvalidStudyGuideStructureError(
+                    "Generated study guide has an invalid structure."
+                ) from exc
+
+            if resolved_user_id:
+                AiUsageLogger.log_success(
                     db,
                     user_id=resolved_user_id,
                     course_id=course_id,
                     generation_type=GenerationType.STUDY_GUIDE,
-                    error_category=ErrorCategory.INSUFFICIENT_CREDITS,
+                    metadata=metadata,
                 )
-                raise InsufficientCreditsError("Insufficient credits.")
 
-        try:
-            if hasattr(provider, "generate_json_with_metadata"):
-                result, metadata = provider.generate_json_with_metadata(prompt)
-            else:
-                result = provider.generate_json(prompt)
-        except TextGenerationError as exc:
-            if resolved_user_id:
-                CreditService.refund(db, receipt)
-            log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
-            raise StudyGuideGenerationError("Text generation provider failed.") from exc
-        except Exception:
-            if resolved_user_id:
-                CreditService.refund(db, receipt)
-            raise
-
-        try:
-            validated = StudyGuideResponse.model_validate(result)
-        except ValidationError as exc:
-            if resolved_user_id:
-                CreditService.refund(db, receipt)
-            log_failure(
-                ErrorCategory.INVALID_STRUCTURE,
-                latency_ms=metadata.latency_ms if metadata else None,
+            return StudyGuideGeneration(
+                study_guide=validated,
+                material=material,
+                model_used=model_identifier(metadata),
+                effective_request=effective_request,
+                profile_knowledge=generation_ctx.profile_knowledge,
             )
-            raise InvalidStudyGuideStructureError(
-                "Generated study guide has an invalid structure."
-            ) from exc
-
-        if resolved_user_id:
-            AiUsageLogger.log_success(
-                db,
-                user_id=resolved_user_id,
-                course_id=course_id,
-                generation_type=GenerationType.STUDY_GUIDE,
-                metadata=metadata,
-            )
-
-        return StudyGuideGeneration(
-            study_guide=validated,
-            material=material,
-            model_used=model_identifier(metadata),
-            effective_request=effective_request,
-            profile_knowledge=generation_ctx.profile_knowledge,
-        )
 
     @staticmethod
     def save_generated_output(

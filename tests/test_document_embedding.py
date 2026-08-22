@@ -508,3 +508,18 @@ def test_embed_document_chunks_validates_the_returned_count() -> None:
 
     assert excinfo.value.code == "EMBEDDING_INVALID_RESPONSE"
     assert excinfo.value.retryable is False
+
+
+def test_embed_document_chunks_rejects_empty_or_whitespace_chunks() -> None:
+    provider = StubEmbeddingProvider()
+
+    for invalid_chunk in ["", "   ", "\n\t\r "]:
+        with pytest.raises(DocumentProcessingError) as excinfo:
+            embed_document_chunks([invalid_chunk], provider=provider)
+
+        assert excinfo.value.code == "EMBEDDING_INVALID_RESPONSE"
+        assert excinfo.value.retryable is False
+        assert excinfo.value.failed_stage == EMBEDDING_STAGE
+
+    # Ensure provider was never called with empty strings
+    assert provider.calls == []

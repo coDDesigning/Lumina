@@ -103,6 +103,9 @@ def embed_document_chunks(
     """Return exactly one vector per chunk text, in input order."""
     if not texts:
         return []
+    for text in texts:
+        if not isinstance(text, str) or not text.strip():
+            raise _processing_error(ERROR_EMBEDDING_INVALID_RESPONSE, retryable=False)
     if provider is None:
         try:
             provider = get_embedding_provider()

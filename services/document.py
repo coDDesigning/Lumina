@@ -22,6 +22,7 @@ from backend.app.models import (
 from backend.app.repositories.document import DocumentRepository
 from schemas.prompt_context import DocumentMaterialKind
 from services.document_hash import calculate_file_hash
+from services.document_lock import is_document_locked_for_generation
 from services.document_validation import validate_basic_upload
 from services.processing_jobs import (
     ProcessingJobStateError,
@@ -346,7 +347,9 @@ class DocumentService:
             db.rollback()
             raise NotFoundException("Document not found")
         document, job = row
-        if job.status in {"queued", "running"}:
+        if job.status in {"queued", "running"} or is_document_locked_for_generation(
+            document_id
+        ):
             db.rollback()
             raise DocumentActiveError
         if document.storage_provider != storage.provider:

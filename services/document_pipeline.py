@@ -1104,7 +1104,7 @@ def _validate_and_decode_text(content: bytes) -> str:
         )
 
     decoded = str(detected)
-    allowed_controls = "\n\r\t\f\u0085"
+    allowed_controls = "\n\r\t\v\f\u0085"
     if any(
         character not in allowed_controls
         and (ord(character) < 32 or 127 <= ord(character) <= 159)

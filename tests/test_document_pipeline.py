@@ -464,6 +464,15 @@ def test_binary_content_disguised_as_text_fails_in_pipeline(
     assert error.retryable is False
 
 
+def test_a_soft_line_break_from_a_slide_export_is_text_not_binary() -> None:
+    """Slide exports write Shift+Enter as a vertical tab, which is whitespace."""
+    content = "Case 3c\nheight h-1 \nor \x0bh-2 tail\n".encode()
+
+    result = process_document("txt", content, options=pipeline_options())
+
+    assert "h-2 tail" in result.pages[0].raw_text
+
+
 def test_text_with_binary_tail_fails_in_pipeline() -> None:
     assert_pipeline_error(
         "md",

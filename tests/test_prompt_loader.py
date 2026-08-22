@@ -97,7 +97,7 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "study_guide": "2.2.0",
     "quiz": "3.2.0",
     "quiz_grading": "2.0.0",
-    "flashcard": "2.1.0",
+    "flashcard": "2.2.0",
     "ai_tutor": "2.2.0",
     "course_qa": "2.2.0",
     "prompt_generator": "2.0.0",
@@ -509,6 +509,7 @@ SAMPLE_TEMPLATE_INPUTS = {
     "flashcard": {
         **SHARED_PROMPT_VARIABLES,
         "TEXT": "Course material text",
+        "TOPIC_FOCUS": "All Topics",
         "PROFILE_CONTEXT": "",
     },
     "ai_tutor": {
@@ -656,11 +657,14 @@ def test_flashcard_template_regression() -> None:
         {
             **SHARED_PROMPT_VARIABLES,
             "TEXT": "Data Structures Notes",
+            "TOPIC_FOCUS": "Binary Search Trees",
             "PROFILE_CONTEXT": "",
         },
     )
     assert "Data Structures Notes" in rendered
+    assert "Binary Search Trees" in rendered
     assert "{{TEXT}}" not in rendered
+    assert "{{TOPIC_FOCUS}}" not in rendered
     assert "flashcards" in rendered.lower()
 
     template = PromptLoader.load_template("flashcard")
@@ -671,6 +675,7 @@ def test_flashcard_template_regression() -> None:
         "SUBJECT_AREA",
         "MATERIAL_KIND",
         "TEXT",
+        "TOPIC_FOCUS",
         "PROFILE_CONTEXT",
     ]
 

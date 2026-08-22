@@ -24,6 +24,7 @@ build/
 # ── Databases & vector stores (self-hosted mode) ─────────
 *.sqlite3
 *.db
+data/
 chroma/
 chroma_db/
 

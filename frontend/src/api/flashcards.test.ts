@@ -5,6 +5,9 @@ import type { FlashcardGenerationResult } from './types';
 
 const FLASHCARD_RESULT: FlashcardGenerationResult = {
   context_truncated: false,
+  retrieval_narrowed: true,
+  lowest_similarity: 0.45,
+  highest_similarity: 0.85,
   chunks_used: 2,
   chunks_available: 4,
   flashcards: {

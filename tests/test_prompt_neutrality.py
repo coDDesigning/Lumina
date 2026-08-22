@@ -238,6 +238,7 @@ TEMPLATE_EXTRA_VARIABLES: dict[str, dict[str, str]] = {
     "flashcard": {
         "PROFILE_CONTEXT": PROFILE_CONTEXT_FIXTURE,
         "TEXT": "Course material body",
+        "TOPIC_FOCUS": "All Topics",
     },
     "ai_tutor": {
         "PROFILE_CONTEXT": PROFILE_CONTEXT_FIXTURE,

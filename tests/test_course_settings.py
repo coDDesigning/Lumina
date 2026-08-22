@@ -38,8 +38,6 @@ def test_course_settings_get_and_update(api_context) -> None:
     assert data["question_count"] == 10
     assert data["summary_length"] == "Medium"
     assert data["detail_level"] == "Balanced"
-    assert data["notifications"] is True
-    assert data["progress_reminders"] is True
 
     # 4. Update settings
     patch_res = api_context.client.patch(
@@ -48,7 +46,7 @@ def test_course_settings_get_and_update(api_context) -> None:
             "difficulty": "Hard",
             "question_count": 20,
             "summary_length": "Long",
-            "notifications": False,
+            "detail_level": "Detailed",
         },
         headers=headers,
     )
@@ -57,5 +55,5 @@ def test_course_settings_get_and_update(api_context) -> None:
     assert updated["difficulty"] == "Hard"
     assert updated["question_count"] == 20
     assert updated["summary_length"] == "Long"
-    assert updated["notifications"] is False
+    assert updated["detail_level"] == "Detailed"
     assert updated["study_mode"] == "Exam"  # unchanged

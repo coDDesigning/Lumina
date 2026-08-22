@@ -173,15 +173,14 @@ as Gemini:
 ## Course Material Context Budget
 
 Every AI feature bounds one request's material to a configured number of
-characters. Study guide, quiz, AI tutor, and course Q&A read **retrieved**
-material through `services/retrieval_material.py`; flashcard generation still
-reads **whole-corpus** material through `services/course_material.py`:
+characters. Study guide, quiz, flashcard, AI tutor, and course Q&A read **retrieved**
+material through `services/retrieval_material.py`:
 
 | Setting | Default | Bounds | Source |
 |---|---|---|---|
 | `STUDY_GUIDE_MATERIAL_MAX_CHARS` | `120000` | study guide generation | retrieval |
 | `QUIZ_MATERIAL_MAX_CHARS` | `120000` | quiz generation | retrieval |
-| `FLASHCARD_MATERIAL_MAX_CHARS` | `120000` | flashcard generation | whole corpus |
+| `FLASHCARD_MATERIAL_MAX_CHARS` | `120000` | flashcard generation | retrieval |
 | `AI_TUTOR_MATERIAL_MAX_CHARS` | `120000` | AI tutor answers | retrieval |
 | `COURSE_QA_MATERIAL_MAX_CHARS` | `120000` | course Q&A answers | retrieval |
 
@@ -246,10 +245,10 @@ different things:
   simply `chunks_used < chunks_available`; under retrieval that inequality holds
   on nearly every request and would make the flag noise.
 
-`services/course_material.py` remains the whole-corpus path for flashcard
-generation and the profile-knowledge assembly helper. Authorization, provider
-calls, schema validation, and persistence deliberately live outside both
-material modules so each remaining migration stays localized.
+`services/course_material.py` remains the whole-corpus path for the
+profile-knowledge assembly helper. Authorization, provider calls, schema
+validation, and persistence deliberately live outside both material modules so
+each remaining migration stays localized.
 
 ## Public Error Messages
 

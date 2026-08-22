@@ -145,7 +145,9 @@ def test_quiz_grading_prompt_carries_the_shared_context(model_graph) -> None:
     assert "{{" not in prompt
 
 
-def test_generation_resolves_course_context_end_to_end(db_session, model_graph) -> None:
+def test_generation_resolves_course_context_end_to_end(
+    db_session, model_graph, retrieval_env
+) -> None:
     model_graph.course.title = "AP Biology"
     model_graph.course.subject_area = "Biology"
     model_graph.course.education_level = EducationLevel.HIGH_SCHOOL.value
@@ -162,15 +164,17 @@ def test_generation_resolves_course_context_end_to_end(db_session, model_graph) 
         status="ready",
         material_kind=MaterialKind.TEXTBOOK.value,
     )
-    db_session.add(
-        DocumentChunk(
-            document=document,
-            course=model_graph.course,
-            chunk_index=0,
-            page_number=None,
-            text="Mitochondria produce ATP.",
-        )
+    chunk = DocumentChunk(
+        document=document,
+        course=model_graph.course,
+        chunk_index=0,
+        page_number=None,
+        text="Mitochondria produce ATP.",
     )
+    db_session.add(document)
+    db_session.add(chunk)
+    db_session.flush()
+    retrieval_env.index(db_session, document, [chunk], seeds=[0.1])
     db_session.commit()
 
     captured: list[str] = []
@@ -204,7 +208,7 @@ def test_generation_resolves_course_context_end_to_end(db_session, model_graph) 
 
 
 def test_legacy_course_reaches_the_provider_as_unspecified(
-    db_session, model_graph
+    db_session, model_graph, retrieval_env
 ) -> None:
     document = UploadedDocument(
         original_file_name="legacy.txt",
@@ -218,15 +222,17 @@ def test_legacy_course_reaches_the_provider_as_unspecified(
         storage_key="legacy.txt",
         status="ready",
     )
-    db_session.add(
-        DocumentChunk(
-            document=document,
-            course=model_graph.course,
-            chunk_index=0,
-            page_number=None,
-            text="Some legacy material.",
-        )
+    chunk = DocumentChunk(
+        document=document,
+        course=model_graph.course,
+        chunk_index=0,
+        page_number=None,
+        text="Some legacy material.",
     )
+    db_session.add(document)
+    db_session.add(chunk)
+    db_session.flush()
+    retrieval_env.index(db_session, document, [chunk], seeds=[0.1])
     db_session.commit()
 
     captured: list[str] = []
@@ -256,7 +262,7 @@ def test_legacy_course_reaches_the_provider_as_unspecified(
 
 
 def test_a_template_fault_never_reaches_the_provider(
-    db_session, model_graph, monkeypatch
+    db_session, model_graph, retrieval_env, monkeypatch
 ) -> None:
     document = UploadedDocument(
         original_file_name="notes.txt",
@@ -270,15 +276,17 @@ def test_a_template_fault_never_reaches_the_provider(
         storage_key="notes.txt",
         status="ready",
     )
-    db_session.add(
-        DocumentChunk(
-            document=document,
-            course=model_graph.course,
-            chunk_index=0,
-            page_number=None,
-            text="Material.",
-        )
+    chunk = DocumentChunk(
+        document=document,
+        course=model_graph.course,
+        chunk_index=0,
+        page_number=None,
+        text="Material.",
     )
+    db_session.add(document)
+    db_session.add(chunk)
+    db_session.flush()
+    retrieval_env.index(db_session, document, [chunk], seeds=[0.1])
     db_session.commit()
 
     calls: list[str] = []

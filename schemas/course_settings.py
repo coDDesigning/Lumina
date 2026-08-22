@@ -7,8 +7,6 @@ class CourseSettingsResponse(BaseModel):
     question_count: int = Field(ge=5, le=50)
     summary_length: str
     detail_level: str
-    notifications: bool
-    progress_reminders: bool
 
 
 class CourseSettingsUpdate(BaseModel):
@@ -17,5 +15,3 @@ class CourseSettingsUpdate(BaseModel):
     question_count: int | None = Field(default=None, ge=5, le=50)
     summary_length: str | None = None
     detail_level: str | None = None
-    notifications: bool | None = None
-    progress_reminders: bool | None = None

@@ -7,8 +7,10 @@ from backend.app.database import get_db
 from schemas.course_qa import CourseQAGenerationResult, CourseQARequest
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
-from services.course_qa import CourseQAService
+from services.course_qa import CourseQAError, CourseQAService
+from services.retrieval_material import RetrievalMaterialError
 from services.text_generation import (
+    TextGenerationError,
     get_text_generation_provider,
     resolve_effective_model,
 )
@@ -63,7 +65,12 @@ def ask_course_question(
 
     except HTTPException:
         raise
-    except Exception as exc:
+    except (
+        TextGenerationError,
+        CourseQAError,
+        RetrievalMaterialError,
+        Exception,
+    ) as exc:
         raise ai_generation_http_exception(exc, feature="course_qa") from exc
 
     return BaseResponse(

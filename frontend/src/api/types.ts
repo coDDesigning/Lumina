@@ -524,6 +524,7 @@ export interface ProfileKnowledgeImport {
 }
 
 export interface FlashcardRequest {
+  topic_focus?: string;
   use_profile_knowledge?: boolean;
   include_profile_context?: boolean;
   model?: string;
@@ -603,7 +604,7 @@ export interface FlashcardGenerationResponse {
   flashcards: GeneratedFlashcard[];
 }
 
-export interface FlashcardGenerationResult extends BoundedContext {
+export interface FlashcardGenerationResult extends RetrievedContext {
   flashcards: FlashcardGenerationResponse;
   generated_output_id?: number | null;
 }
@@ -614,8 +615,6 @@ export interface CourseSettings {
   question_count: number;
   summary_length: string;
   detail_level: string;
-  notifications: boolean;
-  progress_reminders: boolean;
 }
 
 export interface CourseSettingsUpdate {
@@ -624,6 +623,4 @@ export interface CourseSettingsUpdate {
   question_count?: number;
   summary_length?: string;
   detail_level?: string;
-  notifications?: boolean;
-  progress_reminders?: boolean;
 }

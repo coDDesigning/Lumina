@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.database import get_db
 from schemas.flashcard import (
     FlashcardGenerationContext,
@@ -13,6 +14,7 @@ from schemas.flashcard import (
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.flashcard import FlashcardGenerationError, FlashcardService
+from services.retrieval_material import RetrievalMaterialError
 from services.text_generation import (
     TextGenerationError,
     get_text_generation_provider,
@@ -36,8 +38,14 @@ router = APIRouter(
         401: {"description": "Authentication required"},
         402: {"description": "Insufficient credits"},
         404: {"description": "Course not found"},
+        409: {
+            "description": (
+                "No course material matched the request, or the course material "
+                "is not searchable yet"
+            )
+        },
         429: {"description": "AI provider rate limited"},
-        503: {"description": "AI provider unreachable"},
+        503: {"description": "AI provider or course search unreachable"},
         504: {"description": "AI provider timed out"},
     },
 )
@@ -57,19 +65,18 @@ def generate_flashcards(
         except TypeError:
             provider = get_text_generation_provider()
 
-        include_profile = (
-            request.include_profile_context if request is not None else False
-        )
         generation = FlashcardService.generate(
             db,
             course.id,
             provider,
+            request=request,
             user_id=current_user.id,
-            include_profile_context=include_profile,
         )
 
         applied_settings = FlashcardGenerationSettings.from_request(
-            request
+            generation.effective_request,
+            retrieval_limit=settings.retrieval_chunk_limit,
+            retrieval_min_similarity=settings.retrieval_min_similarity,
         ).model_dump_json()
         applied_context = FlashcardGenerationContext.from_material(
             generation.material,
@@ -86,7 +93,12 @@ def generate_flashcards(
             generation_context=applied_context,
         )
 
-    except (TextGenerationError, FlashcardGenerationError, Exception) as exc:
+    except (
+        TextGenerationError,
+        FlashcardGenerationError,
+        RetrievalMaterialError,
+        Exception,
+    ) as exc:
         raise ai_generation_http_exception(exc, feature="flashcard") from exc
 
     return BaseResponse(
@@ -95,6 +107,9 @@ def generate_flashcards(
         data=FlashcardGenerationResult(
             flashcards=generation.flashcards,
             generated_output_id=persisted.id,
+            retrieval_narrowed=generation.material.retrieval_narrowed,
+            lowest_similarity=generation.material.lowest_similarity,
+            highest_similarity=generation.material.highest_similarity,
             context_truncated=generation.material.truncated,
             chunks_used=generation.material.chunks_used,
             chunks_available=generation.material.chunks_available,

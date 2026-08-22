@@ -6,10 +6,16 @@ interface LoadingSpinnerProps {
   className?: string;
 }
 
+const sizeMap = {
+  sm: 16,
+  md: 24,
+  lg: 32,
+};
+
 const sizeClasses = {
-  sm: 'w-4 h-4',
-  md: 'w-6 h-6',
-  lg: 'w-8 h-8'
+  sm: 'spinner-sm',
+  md: 'spinner-md',
+  lg: 'spinner-lg',
 };
 
 export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ 
@@ -17,6 +23,10 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   className = '' 
 }) => {
   return (
-    <Loader2 className={`animate-spin text-indigo-600 dark:text-indigo-400 ${sizeClasses[size]} ${className}`} />
+    <Loader2
+      size={sizeMap[size]}
+      className={`animate-spin loading-spinner ${sizeClasses[size]} ${className}`}
+      aria-hidden="true"
+    />
   );
 };

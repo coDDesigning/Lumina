@@ -36,7 +36,8 @@ PGVECTOR_HARDENING_REVISION = "f5a7c2d9e104"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
 TYPED_CONVERSATIONS_REVISION = "b9c1d4e7f2a6"
 LEARNER_CONTEXT_REVISION = "a3d9e5c17b48"
-HEAD_REVISION = LEARNER_CONTEXT_REVISION
+REMOVE_NOTIFICATION_SETTINGS_REVISION = "e7c1d4a8b203"
+HEAD_REVISION = REMOVE_NOTIFICATION_SETTINGS_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -64,7 +65,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: TYPED_CONVERSATIONS_REVISION,
+        HEAD_REVISION: LEARNER_CONTEXT_REVISION,
+        LEARNER_CONTEXT_REVISION: TYPED_CONVERSATIONS_REVISION,
         TYPED_CONVERSATIONS_REVISION: CREDIT_LEDGER_REVISION,
         CREDIT_LEDGER_REVISION: PGVECTOR_HARDENING_REVISION,
         PGVECTOR_HARDENING_REVISION: QUIZ_SCHEMA_REVISION,
@@ -1850,6 +1852,65 @@ def test_typed_conversation_migration_backfills_and_enforces_types(
         assert connection.execute(
             "SELECT conversation_type FROM conversations ORDER BY id"
         ).fetchall() == [("course_qa",), ("course_qa",)]
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)
+
+
+def test_remove_notification_settings_migration(tmp_path: Path) -> None:
+    database_path = tmp_path / "remove-notification-settings.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", LEARNER_CONTEXT_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(course_settings)")
+        }
+        assert "notifications" in columns
+        assert "progress_reminders" in columns
+
+        user_id = insert_legacy_user(
+            connection,
+            email="settings-owner@example.com",
+            credits=10.0,
+        )
+        course_id = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Settings test course", user_id),
+        ).lastrowid
+        settings_id = connection.execute(
+            "INSERT INTO course_settings "
+            "(course_id, study_mode, difficulty, question_count, summary_length, detail_level, notifications, progress_reminders) "
+            "VALUES (?, 'Exam', 'Hard', 15, 'Long', 'Detailed', 0, 0)",
+            (course_id,),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(course_settings)")
+        }
+        assert "notifications" not in columns
+        assert "progress_reminders" not in columns
+        row = connection.execute(
+            "SELECT study_mode, difficulty, question_count, summary_length, detail_level "
+            "FROM course_settings WHERE id = ?",
+            (settings_id,),
+        ).fetchone()
+        assert row == ("Exam", "Hard", 15, "Long", "Detailed")
+
+    run_alembic(database_path, tmp_path, "downgrade", LEARNER_CONTEXT_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(course_settings)")
+        }
+        assert "notifications" in columns
+        assert "progress_reminders" in columns
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone() == (HEAD_REVISION,)

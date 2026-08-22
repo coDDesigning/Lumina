@@ -255,10 +255,10 @@ responses. **There is no fallback to whole-corpus assembly.** A retrieval failur
 fails the request; widening it silently would mean the feature was never really
 retrieval-backed.
 
-## What this does not cover
+## Feature wiring
+ 
+Study guide, quiz, flashcard, AI tutor, and course Q&A generation all read
+retrieved material through `services/retrieval_material.py`. Whole-corpus assembly
+via `services/course_material.py` remains in use only for the profile-knowledge
+assembly helper.
 
-Full feature wiring. Study guide, quiz, AI tutor, and course Q&A generation read
-retrieved material. Flashcard generation still reads whole-corpus material
-through `services/course_material.py`, which selects by chunk order and bounds
-the assembled material to its feature character budget. Switching that feature
-over is a product decision, not a plumbing change.

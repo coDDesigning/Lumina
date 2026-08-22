@@ -304,6 +304,9 @@ describe('Generation surfaces profile context toggle', () => {
     it('defaults toggle to false, explains course material primacy, and submits false when untouched', async () => {
       mockFlashcardGenerate.mockResolvedValueOnce({
         context_truncated: false,
+        retrieval_narrowed: true,
+        lowest_similarity: 0.45,
+        highest_similarity: 0.85,
         chunks_used: 2,
         chunks_available: 5,
         flashcards: {
@@ -361,6 +364,9 @@ describe('Generation surfaces profile context toggle', () => {
     it('submits use_profile_knowledge: true when toggle is checked in FlashcardModal', async () => {
       mockFlashcardGenerate.mockResolvedValueOnce({
         context_truncated: false,
+        retrieval_narrowed: true,
+        lowest_similarity: 0.45,
+        highest_similarity: 0.85,
         chunks_used: 2,
         chunks_available: 5,
         flashcards: {

@@ -226,6 +226,11 @@ export interface AiModelInfo {
   model: string;
   display_name: string;
   is_default: boolean;
+  cost_hint?: string;
+  capabilities?: string[];
+  description?: string;
+  is_local?: boolean;
+  supports_json?: boolean;
 }
 
 export interface StudyGuideRequest {

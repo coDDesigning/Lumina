@@ -40,7 +40,9 @@ router = APIRouter(
 
 
 def _provider_for(model: str | None, preferred_model: str | None):
-    effective_model = resolve_effective_model(model, preferred_model)
+    effective_model = resolve_effective_model(
+        model, preferred_model, required_capability="quiz"
+    )
     try:
         return get_text_generation_provider(effective_model=effective_model)
     except TypeError:

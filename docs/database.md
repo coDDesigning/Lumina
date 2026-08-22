@@ -585,16 +585,28 @@ Profile knowledge is user-scoped rather than course-scoped:
 ### Retrieval priority rules
 
 When assembling context for course-scoped AI features:
-1. **Course material is primary and authoritative**: Extracted document chunks for the
+1. **Consent is explicit and off by default**: Profile knowledge is read only when the
+   request opts in through `use_profile_knowledge`. When the opt-in is absent or false, no
+   `profile_knowledge` query is issued at all.
+2. **Course material is primary and authoritative**: Extracted document chunks for the
    target course are loaded first up to the configured per-feature character budget. If no
    ready course material is available, generation fails with `NoReadyCourseMaterialError`.
-2. **Profile knowledge is supplementary**: Relevant profile knowledge entries for the
-   authenticated user are loaded up to their separate budget and appended as supplementary
-   student background context.
-3. **Precedence under conflict**: If course material and profile knowledge contain
+   Profile knowledge is never a substitute for missing course material.
+3. **Profile knowledge is supplementary**: Eligible profile knowledge entries for the
+   authenticated user are loaded up to their own separate character budget and appended as
+   supplementary student background context. An entry carrying neither a topic nor a detail
+   is not eligible and is counted in neither `items_available` nor `items_used`. The course
+   and profile budgets are independent, so profile knowledge can never displace course
+   material; a profile that exceeds its budget is truncated within that budget alone.
+4. **Precedence under conflict**: If course material and profile knowledge contain
    conflicting statements, course material is authoritative.
-4. **Isolation**: A user's profile knowledge is never exposed to or included in another
+5. **Isolation**: A user's profile knowledge is never exposed to or included in another
    user's generation context.
+6. **Recorded use**: The persisted `generation_context` document reports what actually
+   reached the provider (`profile_knowledge_used`, `profile_knowledge_items_used`,
+   `profile_knowledge_characters_used`, `profile_knowledge_truncated`). The request's
+   intent is recorded separately as `use_profile_knowledge` in `generation_settings`, so an
+   opted-in request by a user holding no entries records requested-but-unused.
 
 ### Scope and document upload deferral decision
 

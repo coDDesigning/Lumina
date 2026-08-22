@@ -28,4 +28,16 @@ export const conversationsAPI = {
     );
     return unwrapData(res, 'Conversation');
   },
+
+  delete: async (
+    courseId: number,
+    conversationId: number,
+    options?: RequestInit,
+  ): Promise<{ id: number }> => {
+    const res = await apiClient.delete<BaseResponse<{ id: number }>>(
+      `/courses/${courseId}/conversations/${conversationId}`,
+      options,
+    );
+    return unwrapData(res, 'Conversation');
+  },
 };

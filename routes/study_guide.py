@@ -55,7 +55,9 @@ def generate_study_guide(
 ):
     try:
         effective_model = resolve_effective_model(
-            request.model, current_user.preferred_model
+            request.model,
+            current_user.preferred_model,
+            required_capability="study_guide",
         )
         try:
             provider = get_text_generation_provider(effective_model=effective_model)

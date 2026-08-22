@@ -59,6 +59,7 @@ def generate_flashcards(
         effective_model = resolve_effective_model(
             request.model if request else None,
             current_user.preferred_model,
+            required_capability="flashcard",
         )
         try:
             provider = get_text_generation_provider(effective_model=effective_model)

@@ -410,3 +410,131 @@ def test_reading_conversations_never_invokes_a_provider_or_changes_rows(
             session.scalar(select(func.count()).select_from(ConversationMessage)),
         )
     assert after == before
+
+
+def test_owner_deletes_conversation_and_its_messages(upload_api) -> None:
+    started_at = datetime(2026, 8, 20, 16, 0, tzinfo=timezone.utc)
+    conversation_id, message_ids = _store_conversation(
+        upload_api.session_factory,
+        upload_api.course_id,
+        upload_api.user_id,
+        messages=(
+            ("user", "Delete this question", started_at),
+            ("assistant", "Delete this answer", started_at + timedelta(seconds=1)),
+        ),
+    )
+
+    with upload_api.session_factory() as session:
+        assert session.get(Conversation, conversation_id) is not None
+        for message_id in message_ids:
+            assert session.get(ConversationMessage, message_id) is not None
+
+    response = upload_api.client.delete(
+        _detail_url(upload_api.course_id, conversation_id),
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["message"] == "Conversation deleted successfully"
+    assert payload["data"] == {"id": conversation_id}
+
+    with upload_api.session_factory() as session:
+        assert session.get(Conversation, conversation_id) is None
+        for message_id in message_ids:
+            assert session.get(ConversationMessage, message_id) is None
+
+
+def test_cross_user_cannot_delete_conversation(authz_api) -> None:
+    started_at = datetime(2026, 8, 20, 17, 0, tzinfo=timezone.utc)
+    conversation_id, message_ids = _store_conversation(
+        authz_api.session_factory,
+        authz_api.a_course_id,
+        authz_api.user_a_id,
+        messages=(("user", "Protected question", started_at),),
+    )
+
+    response = authz_api.client.delete(
+        _detail_url(authz_api.a_course_id, conversation_id),
+        headers=authz_api.authorization_b,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Course not found"}
+
+    with authz_api.session_factory() as session:
+        assert session.get(Conversation, conversation_id) is not None
+        assert session.get(ConversationMessage, message_ids[0]) is not None
+
+
+def test_administrator_cannot_delete_another_owners_conversation(authz_api) -> None:
+    started_at = datetime(2026, 8, 20, 18, 0, tzinfo=timezone.utc)
+    conversation_id, message_ids = _store_conversation(
+        authz_api.session_factory,
+        authz_api.a_course_id,
+        authz_api.user_a_id,
+        messages=(("user", "Admin cannot delete", started_at),),
+    )
+
+    response = authz_api.client.delete(
+        _detail_url(authz_api.a_course_id, conversation_id),
+        headers=authz_api.authorization_admin,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Course not found"}
+
+    with authz_api.session_factory() as session:
+        assert session.get(Conversation, conversation_id) is not None
+        assert session.get(ConversationMessage, message_ids[0]) is not None
+
+
+def test_cross_course_conversation_delete_is_not_found(upload_api) -> None:
+    started_at = datetime(2026, 8, 20, 19, 0, tzinfo=timezone.utc)
+    other_conversation_id, _ = _store_conversation(
+        upload_api.session_factory,
+        upload_api.other_course_id,
+        upload_api.user_id,
+        messages=(("user", "Question in other course", started_at),),
+    )
+
+    response = upload_api.client.delete(
+        _detail_url(upload_api.course_id, other_conversation_id),
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Conversation not found"}
+
+    with upload_api.session_factory() as session:
+        assert session.get(Conversation, other_conversation_id) is not None
+
+
+def test_delete_nonexistent_and_tombstoned_course_conversations(upload_api) -> None:
+    started_at = datetime(2026, 8, 20, 20, 0, tzinfo=timezone.utc)
+    conversation_id, _ = _store_conversation(
+        upload_api.session_factory,
+        upload_api.deleted_course_id,
+        upload_api.user_id,
+        messages=(("user", "Tombstoned course", started_at),),
+    )
+
+    res_missing_convo = upload_api.client.delete(
+        _detail_url(upload_api.course_id, 999999),
+        headers=upload_api.authorization,
+    )
+    assert res_missing_convo.status_code == 404
+    assert res_missing_convo.json() == {"detail": "Conversation not found"}
+
+    res_tombstoned = upload_api.client.delete(
+        _detail_url(upload_api.deleted_course_id, conversation_id),
+        headers=upload_api.authorization,
+    )
+    assert res_tombstoned.status_code == 404
+    assert res_tombstoned.json() == {"detail": "Course not found"}
+
+    res_unauth = upload_api.client.delete(
+        _detail_url(upload_api.course_id, conversation_id),
+    )
+    assert res_unauth.status_code == 401

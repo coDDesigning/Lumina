@@ -161,6 +161,26 @@ class ConversationService:
         return conversation
 
     @staticmethod
+    def delete_course_conversation(
+        db: Session,
+        *,
+        course_id: int,
+        conversation_id: int,
+        user_id: int,
+    ) -> None:
+        conversation = db.scalar(
+            select(Conversation).where(
+                Conversation.id == conversation_id,
+                Conversation.course_id == course_id,
+                Conversation.user_id == user_id,
+            )
+        )
+        if conversation is None:
+            raise NotFoundException(CONVERSATION_NOT_FOUND)
+        db.delete(conversation)
+        db.commit()
+
+    @staticmethod
     def _summary(
         conversation: Conversation,
         *,

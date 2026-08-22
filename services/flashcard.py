@@ -7,9 +7,12 @@ from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.models import Course, GeneratedOutput
 from schemas.ai_usage import ErrorCategory, GenerationType
-from schemas.flashcard import FlashcardGenerationResponse
+from schemas.flashcard import (
+    FlashcardGenerationResponse,
+    FlashcardRequest,
+)
 from services.ai_usage_logger import AiUsageLogger
-from services.course_material import CourseMaterial, load_course_material
+from services.course_material import count_available_chunks
 from services.generated_output import GeneratedOutputService
 from services.profile_knowledge import (
     ProfileKnowledgeContext,
@@ -19,6 +22,14 @@ from services.profile_knowledge import (
 from schemas.prompt_context import PromptContext
 from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
+from services.retrieval_material import (
+    MaterialNotIndexedError,
+    MaterialRetrievalError,
+    NoRelevantMaterialError,
+    RetrievedCourseMaterial,
+    load_retrieved_material,
+)
+from services.retrieval_query import build_retrieval_query
 from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
@@ -52,8 +63,9 @@ class InvalidFlashcardStructureError(
 @dataclass(frozen=True)
 class FlashcardGeneration:
     flashcards: FlashcardGenerationResponse
-    material: CourseMaterial
+    material: RetrievedCourseMaterial
     model_used: str
+    effective_request: FlashcardRequest
     profile_knowledge: ProfileKnowledgeContext | None = None
 
 
@@ -64,13 +76,22 @@ class FlashcardService:
     )
 
     @staticmethod
+    def build_retrieval_query(course: Course | None, request: FlashcardRequest) -> str:
+        return build_retrieval_query(course, request.topic_focus)
+
+    @staticmethod
     def get_course_material(
         db: Session,
         course_id: int,
-    ) -> CourseMaterial:
-        return load_course_material(
+        *,
+        query: str,
+    ) -> RetrievedCourseMaterial:
+        return load_retrieved_material(
             db,
             course_id,
+            query=query,
+            limit=settings.retrieval_chunk_limit,
+            min_similarity=settings.retrieval_min_similarity,
             max_characters=settings.flashcard_material_max_chars,
         )
 
@@ -79,6 +100,7 @@ class FlashcardService:
         cls,
         course_material: str,
         *,
+        topic_focus: str = "All Topics",
         profile_knowledge: ProfileKnowledgeContext | None = None,
         context: PromptContext,
     ) -> str:
@@ -86,6 +108,7 @@ class FlashcardService:
             cls.PROMPT_TEMPLATE_NAME,
             {
                 **context.as_variables(),
+                "TOPIC_FOCUS": topic_focus,
                 "TEXT": course_material,
                 "PROFILE_CONTEXT": format_profile_context(profile_knowledge),
             },
@@ -97,41 +120,70 @@ class FlashcardService:
         db: Session,
         course_id: int,
         provider: TextGenerationProvider,
+        request: FlashcardRequest | None = None,
         user_id: int | None = None,
         *,
         include_profile_context: bool = False,
         use_profile_knowledge: bool | None = None,
     ) -> FlashcardGeneration:
+        if request is None:
+            effective_request = FlashcardRequest()
+        else:
+            effective_request = request
+
         if use_profile_knowledge is not None:
-            include_profile_context = use_profile_knowledge
+            effective_request = FlashcardRequest(
+                topic_focus=effective_request.topic_focus,
+                use_profile_knowledge=use_profile_knowledge,
+                model=effective_request.model,
+            )
+        elif include_profile_context:
+            effective_request = FlashcardRequest(
+                topic_focus=effective_request.topic_focus,
+                use_profile_knowledge=True,
+                model=effective_request.model,
+            )
 
         course = db.get(Course, course_id)
         resolved_user_id = user_id
         if resolved_user_id is None and course is not None:
             resolved_user_id = course.owner_id
 
-        material = cls.get_course_material(
-            db,
-            course_id,
-        )
-
-        if material.is_empty:
+        def log_failure(category: ErrorCategory, **extra) -> None:
             if resolved_user_id:
                 AiUsageLogger.log_failure(
                     db,
                     user_id=resolved_user_id,
                     course_id=course_id,
                     generation_type=GenerationType.FLASHCARD,
-                    error_category=ErrorCategory.NO_READY_MATERIAL,
+                    error_category=category,
+                    **extra,
                 )
+
+        if count_available_chunks(db, course_id) == 0:
+            log_failure(ErrorCategory.NO_READY_MATERIAL)
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
+
+        query = cls.build_retrieval_query(course, effective_request)
+
+        try:
+            material = cls.get_course_material(db, course_id, query=query)
+        except MaterialNotIndexedError:
+            log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
+            raise
+        except NoRelevantMaterialError:
+            log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
+            raise
+        except MaterialRetrievalError:
+            log_failure(ErrorCategory.RETRIEVAL_ERROR)
+            raise
 
         generation_ctx = assemble_generation_context(
             db,
             course_id=course_id,
             user_id=resolved_user_id,
             course_material=material,
-            include_profile_context=include_profile_context,
+            include_profile_context=effective_request.use_profile_knowledge,
         )
 
         prompt_context = resolve_prompt_context(
@@ -139,6 +191,7 @@ class FlashcardService:
         )
         prompt = cls.build_prompt(
             generation_ctx.course_material.text,
+            topic_focus=effective_request.topic_focus,
             profile_knowledge=generation_ctx.profile_knowledge,
             context=prompt_context,
         )
@@ -153,13 +206,7 @@ class FlashcardService:
                 source_type="flashcard",
             )
             if receipt is None:
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.FLASHCARD,
-                    error_category=ErrorCategory.INSUFFICIENT_CREDITS,
-                )
+                log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
                 raise InsufficientCreditsError("Insufficient credits.")
 
         try:
@@ -170,14 +217,8 @@ class FlashcardService:
         except TextGenerationError as exc:
             if resolved_user_id:
                 CreditService.refund(db, receipt)
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.FLASHCARD,
-                    error_category=getattr(
-                        exc, "error_category", ErrorCategory.PROVIDER_ERROR
-                    ),
+                log_failure(
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
                 )
             raise FlashcardGenerationError("Text generation provider failed.") from exc
         except Exception:
@@ -190,12 +231,8 @@ class FlashcardService:
         except ValidationError as exc:
             if resolved_user_id:
                 CreditService.refund(db, receipt)
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.FLASHCARD,
-                    error_category=ErrorCategory.INVALID_STRUCTURE,
+                log_failure(
+                    ErrorCategory.INVALID_STRUCTURE,
                     latency_ms=metadata.latency_ms if metadata else None,
                 )
             raise InvalidFlashcardStructureError(
@@ -215,6 +252,7 @@ class FlashcardService:
             flashcards=validated,
             material=material,
             model_used=model_identifier(metadata),
+            effective_request=effective_request,
             profile_knowledge=generation_ctx.profile_knowledge,
         )
 

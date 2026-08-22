@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from schemas.generation import BoundedContext
+from schemas.generation import RetrievalGenerationContext, RetrievedContext
 
 
 class GeneratedFlashcard(BaseModel):
@@ -22,6 +22,12 @@ class FlashcardGenerationResponse(BaseModel):
 
 
 class FlashcardRequest(BaseModel):
+    topic_focus: str = Field(
+        default="All Topics",
+        min_length=1,
+        max_length=200,
+        description="The topic focus, or omit to use 'All Topics'",
+    )
     use_profile_knowledge: bool = Field(
         default=False,
         validation_alias=AliasChoices(
@@ -46,12 +52,15 @@ class FlashcardGenerationSettings(BaseModel):
 
     version: Literal[1] = 1
     output_type: Literal["flashcards"] = "flashcards"
+    topic_focus: str = "All Topics"
     use_profile_knowledge: bool = Field(
         default=False,
         validation_alias=AliasChoices(
             "use_profile_knowledge", "include_profile_context"
         ),
     )
+    retrieval_limit: int = 24
+    retrieval_min_similarity: float = 0.25
 
     @property
     def include_profile_context(self) -> bool:
@@ -61,50 +70,28 @@ class FlashcardGenerationSettings(BaseModel):
     def from_request(
         cls,
         request: FlashcardRequest | None = None,
+        *,
+        retrieval_limit: int = 24,
+        retrieval_min_similarity: float = 0.25,
     ) -> "FlashcardGenerationSettings":
         return cls(
-            use_profile_knowledge=(request.use_profile_knowledge if request else False),
+            topic_focus=(
+                request.topic_focus
+                if request is not None and request.topic_focus is not None
+                else "All Topics"
+            ),
+            use_profile_knowledge=(
+                request.use_profile_knowledge if request is not None else False
+            ),
+            retrieval_limit=retrieval_limit,
+            retrieval_min_similarity=retrieval_min_similarity,
         )
 
 
-class FlashcardGenerationContext(BaseModel):
-    """What material assembly actually produced for a stored flashcard deck."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    version: Literal[1] = 1
-    chunks_used: int
-    chunks_available: int
-    truncated: bool
-    profile_knowledge_used: bool = False
-    profile_knowledge_items_used: int = 0
-    profile_knowledge_characters_used: int = 0
-    profile_knowledge_truncated: bool = False
-
-    @classmethod
-    def from_material(
-        cls,
-        material,
-        profile_knowledge=None,
-    ) -> "FlashcardGenerationContext":
-        profile_used = profile_knowledge is not None and not profile_knowledge.is_empty
-        return cls(
-            chunks_used=material.chunks_used,
-            chunks_available=material.chunks_available,
-            truncated=material.truncated,
-            profile_knowledge_used=profile_used,
-            profile_knowledge_items_used=(
-                profile_knowledge.items_used if profile_knowledge else 0
-            ),
-            profile_knowledge_characters_used=(
-                len(profile_knowledge.text) if profile_knowledge else 0
-            ),
-            profile_knowledge_truncated=(
-                profile_knowledge.truncated if profile_knowledge else False
-            ),
-        )
+class FlashcardGenerationContext(RetrievalGenerationContext):
+    """What retrieval actually produced for a stored flashcard deck."""
 
 
-class FlashcardGenerationResult(BoundedContext):
+class FlashcardGenerationResult(RetrievedContext):
     flashcards: FlashcardGenerationResponse
     generated_output_id: int | None = None

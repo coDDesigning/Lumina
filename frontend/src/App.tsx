@@ -798,7 +798,11 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
                   aria-label="Submit prompt"
                   disabled={activeConversation.isLoading || conversationExhausted}
                 >
-                  <Search aria-hidden="true" />
+                  {activeConversation.isLoading ? (
+                    <LoadingSpinner size="sm" />
+                  ) : (
+                    <Search aria-hidden="true" />
+                  )}
                 </button>
               </form>
             </section>

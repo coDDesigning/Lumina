@@ -14,8 +14,6 @@ class CourseSettingsService:
             question_count=settings.question_count,
             summary_length=settings.summary_length,
             detail_level=settings.detail_level,
-            notifications=settings.notifications,
-            progress_reminders=settings.progress_reminders,
         )
 
     @classmethod

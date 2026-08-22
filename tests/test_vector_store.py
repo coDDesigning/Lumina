@@ -348,6 +348,36 @@ def test_chroma_vectors_survive_a_client_restart(
         }
 
 
+def test_chroma_recovers_when_the_collection_is_rebuilt_underneath_it(
+    tmp_path, session_factory: sessionmaker[Session]
+) -> None:
+    """A rebuilt store must not break search until the API process restarts."""
+    import chromadb
+
+    persist_directory = str(tmp_path / "chroma")
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-stale@example.com", chunk_count=3
+        )
+        store = ChromaVectorStore(persist_directory=persist_directory)
+        _replace(store, session, document, chunks)
+        session.commit()
+        assert store.count_document_vectors(session, document.id) == 3
+
+        rebuilder = chromadb.PersistentClient(path=persist_directory)
+        rebuilder.delete_collection(vector_store.CHROMA_COLLECTION_NAME)
+        rebuilder.get_or_create_collection(
+            name=vector_store.CHROMA_COLLECTION_NAME,
+            embedding_function=None,
+            configuration={"hnsw": {"space": vector_store.SIMILARITY_METRIC}},
+        )
+
+        assert store.count_document_vectors(session, document.id) == 0
+
+        _replace(store, session, document, chunks)
+        assert store.count_document_vectors(session, document.id) == 3
+
+
 def test_chroma_wraps_client_failures_as_vector_store_errors(
     chroma_store, session_factory: sessionmaker[Session]
 ) -> None:

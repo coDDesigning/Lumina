@@ -13,7 +13,6 @@ import {
   X,
 } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
-import WorkspaceNavigation from '../components/WorkspaceNavigation'
 import { describeError } from '../api/errors'
 import type { Workspace, WorkspaceDraft } from '../data/workspaces'
 import {
@@ -23,7 +22,6 @@ import {
 
 type WorkspacesPageProps = {
   workspaces: Workspace[]
-  activeWorkspaceId: string
   isLoading?: boolean
   error?: string | null
   onRetry?: () => void
@@ -58,7 +56,6 @@ function formatExamDate(date: string) {
 
 function WorkspacesPage({
   workspaces,
-  activeWorkspaceId,
   isLoading = false,
   error = null,
   onRetry,
@@ -147,8 +144,6 @@ function WorkspacesPage({
 
   return (
     <main className="workspace-library-shell">
-      <WorkspaceNavigation workspaceId={activeWorkspaceId} />
-
       <section className="workspace-library-content">
         <header className="workspace-library-header">
           <div>

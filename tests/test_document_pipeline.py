@@ -2040,3 +2040,73 @@ def test_pdf_warning_buffer_is_isolated_across_threads() -> None:
         results = list(executor.map(processing_result, payloads))
 
     assert results == ["valid", ProcessingErrorCode.CORRUPTED_PDF] * 8
+
+
+def test_chunking_stage_retries_once_on_transient_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    real_chunk_pages = pipeline._chunk_pages
+
+    def flaky_chunk_pages(pages, options):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("transient chunking error")
+        return real_chunk_pages(pages, options)
+
+    monkeypatch.setattr(pipeline, "_chunk_pages", flaky_chunk_pages)
+
+    result = process_document(
+        "txt", b"Retryable chunk content", options=pipeline_options()
+    )
+    assert calls == 2
+    assert len(result.chunks) >= 1
+    assert result.chunks[0].text == "Retryable chunk content"
+
+
+def test_chunking_stage_fails_after_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fail_chunk_pages(pages, options):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("persistent chunking failure")
+
+    monkeypatch.setattr(pipeline, "_chunk_pages", fail_chunk_pages)
+
+    with pytest.raises(DocumentProcessingError) as exc_info:
+        process_document(
+            "txt", b"Persistent failure content", options=pipeline_options()
+        )
+
+    assert calls == 2
+    assert exc_info.value.code == ProcessingErrorCode.PROCESSING_FAILED
+    assert exc_info.value.failed_stage == PipelineStage.CHUNKING
+    assert exc_info.value.retryable is True
+
+
+def test_chunking_stage_does_not_retry_non_retryable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def limit_chunk_pages(pages, options):
+        nonlocal calls
+        calls += 1
+        raise DocumentProcessingError(
+            ProcessingErrorCode.DOCUMENT_CHUNK_LIMIT_EXCEEDED,
+            PipelineStage.CHUNKING,
+            retryable=False,
+        )
+
+    monkeypatch.setattr(pipeline, "_chunk_pages", limit_chunk_pages)
+
+    with pytest.raises(DocumentProcessingError) as exc_info:
+        process_document("txt", b"Too many chunks", options=pipeline_options())
+
+    assert calls == 1
+    assert exc_info.value.code == ProcessingErrorCode.DOCUMENT_CHUNK_LIMIT_EXCEEDED
+    assert exc_info.value.retryable is False

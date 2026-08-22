@@ -84,10 +84,10 @@ class MaterialRetrievalRateLimitError(
 class RetrievedCourseMaterial(CourseMaterial):
     """``CourseMaterial`` plus the retrieval diagnostics the caller may report."""
 
-    chunks_retrieved: int
-    chunks_ranked: int
-    lowest_similarity: float | None
-    highest_similarity: float | None
+    chunks_retrieved: int = 0
+    chunks_ranked: int = 0
+    lowest_similarity: float | None = None
+    highest_similarity: float | None = None
 
     @property
     def retrieval_narrowed(self) -> bool:
@@ -226,6 +226,7 @@ def load_retrieved_material(
         chunks_used=len(kept),
         chunks_available=count_available_chunks(db, course_id),
         truncated=truncated,
+        document_ids=tuple(dict.fromkeys(chunk.document_id for chunk in kept)),
         chunks_retrieved=len(survivors),
         chunks_ranked=len(ranked),
         lowest_similarity=min(similarities),

@@ -19,7 +19,7 @@ import EditPage from './pages/EditPage'
 import ProfilePage from './pages/ProfilePage'
 import SettingsPage from './pages/SettingsPage'
 import AdminPage from './pages/AdminPage'
-import WorkspacesPage from './pages/WorkspacesPage'
+import CoursesPage from './features/courses/CoursesPage'
 import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
 import LandingPage from './features/marketing/LandingPage'
@@ -1140,7 +1140,7 @@ function App() {
               <Route
                 path="/dashboard"
           element={
-            <WorkspacesPage
+            <CoursesPage
               workspaces={workspaces}
               isLoading={isLoadingWorkspaces}
               error={workspacesError}

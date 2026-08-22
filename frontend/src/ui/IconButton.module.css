@@ -1,0 +1,52 @@
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.iconButton:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+.iconButton:disabled,
+.iconButton[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sm {
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+}
+
+.md {
+  width: var(--size-control-md);
+  height: var(--size-control-md);
+}
+
+.lg {
+  width: var(--size-control-lg);
+  height: var(--size-control-lg);
+}
+
+.accent {
+  color: var(--accent);
+}
+
+.accent:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.destructive:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}

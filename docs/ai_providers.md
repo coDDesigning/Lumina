@@ -328,6 +328,10 @@ per-provider cleanup logic exists. Schema validation stays in the feature
 services, above the provider, which is why malformed model output can never be
 persisted.
 
+## Model Catalog and Capability Routing
+
+`GET /api/models` exposes the active model catalog with capability and cost metadata (`capabilities`, `cost_hint`, `description`, `is_local`, and `supports_json`). `resolve_effective_model` resolves models by explicit request override, user preferred model, or deployment default, and validates that the resolved model supports the requested feature capability (e.g. `study_guide`, `quiz`, `flashcard`, `ai_tutor`, `course_qa`, `prompt_generator`). Unsupported task/model requests are rejected cleanly with a `400 Bad Request`. Provider factories (`get_text_generation_provider`) dynamically pass the requested model to concrete providers (`GeminiTextGenerationProvider`, `OllamaTextGenerationProvider`) rather than hardcoding a single static model.
+
 ## Telemetry and Privacy
 
 `services/ai_usage_logger.py` records provider, model, token counts, latency,

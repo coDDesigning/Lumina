@@ -27,6 +27,12 @@ def test_list_available_models(authz_api):
     assert "provider" in default_model
     assert "model" in default_model
     assert "display_name" in default_model
+    assert "cost_hint" in default_model
+    assert isinstance(default_model["capabilities"], list)
+    assert len(default_model["capabilities"]) >= 1
+    assert "description" in default_model
+    assert "is_local" in default_model
+    assert "supports_json" in default_model
 
 
 def test_list_models_unauthenticated():
@@ -85,6 +91,59 @@ def test_resolve_effective_model_precedence(monkeypatch: pytest.MonkeyPatch):
         )
         == gemini_id
     )
+
+
+def test_resolve_effective_model_capability_validation(monkeypatch: pytest.MonkeyPatch):
+    fake_settings = SimpleNamespace(
+        ai_provider="gemini",
+        ai_fallback_providers="ollama",
+        gemini_api_key="fake-key",
+        ollama_base_url="http://localhost:11434",
+        ollama_model="llama3.1",
+    )
+    monkeypatch.setattr(text_generation, "settings", fake_settings)
+
+    catalog = get_available_models()
+    gemini_id = next(m["id"] for m in catalog if m["provider"] == "gemini")
+
+    # Supported capability succeeds
+    resolved = resolve_effective_model(
+        request_model=gemini_id,
+        required_capability="study_guide",
+    )
+    assert resolved == gemini_id
+
+    # Unsupported capability on explicit request raises BadRequestException (400)
+    with pytest.raises(text_generation.BadRequestException) as exc_info:
+        resolve_effective_model(
+            request_model=gemini_id,
+            required_capability="unsupported_task_xyz",
+        )
+    assert "does not support" in str(exc_info.value.detail)
+
+
+def test_get_text_generation_provider_honors_model(monkeypatch: pytest.MonkeyPatch):
+    fake_settings = SimpleNamespace(
+        ai_provider="ollama",
+        ai_fallback_providers="gemini",
+        gemini_api_key="fake-key",
+        ollama_base_url="http://localhost:11434",
+        ollama_model="llama3.1",
+        ai_generation_timeout_seconds=60,
+        ai_generation_max_attempts=3,
+        ai_generation_backoff_base_seconds=0.01,
+        ai_generation_backoff_max_seconds=0.1,
+        ai_generation_max_concurrency=10,
+    )
+    monkeypatch.setattr(text_generation, "settings", fake_settings)
+
+    provider = text_generation.get_text_generation_provider(
+        effective_model="ollama:custom-llama"
+    )
+    assert hasattr(provider, "providers")
+    primary = provider.providers[0]
+    assert isinstance(primary, text_generation.OllamaTextGenerationProvider)
+    assert primary._model == "custom-llama"
 
 
 def test_update_preferred_model_valid_and_invalid(authz_api):

@@ -586,6 +586,159 @@ function ProfilePage({ workspaceId }: ProfilePageProps) {
               </select>
             </label>
 
+            {(() => {
+              const currentModelInfo = models.find((m) => m.id === selectedModel)
+              if (!currentModelInfo) return null
+              return (
+                <div
+                  data-testid="model-details-card"
+                  style={{
+                    marginTop: '10px',
+                    padding: '12px 14px',
+                    borderRadius: '8px',
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    fontSize: '13px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: '6px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span
+                        data-testid="model-environment-badge"
+                        style={{
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          fontWeight: 600,
+                          fontSize: '11px',
+                          background:
+                            currentModelInfo.is_local ||
+                            currentModelInfo.provider === 'ollama'
+                              ? '#f3e8ff'
+                              : '#e0e7ff',
+                          color:
+                            currentModelInfo.is_local ||
+                            currentModelInfo.provider === 'ollama'
+                              ? '#6b21a8'
+                              : '#3730a3',
+                          border: `1px solid ${
+                            currentModelInfo.is_local ||
+                            currentModelInfo.provider === 'ollama'
+                              ? '#d8b4fe'
+                              : '#c7d2fe'
+                          }`,
+                        }}
+                      >
+                        {currentModelInfo.is_local ||
+                        currentModelInfo.provider === 'ollama'
+                          ? 'Self-Hosted (Local)'
+                          : 'Cloud Hosted'}
+                      </span>
+                      {currentModelInfo.is_default && (
+                        <span
+                          style={{
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            fontWeight: 500,
+                            fontSize: '11px',
+                            background: '#dcfce7',
+                            color: '#166534',
+                            border: '1px solid #bbf7d0',
+                          }}
+                        >
+                          Default
+                        </span>
+                      )}
+                    </div>
+                    {currentModelInfo.cost_hint && (
+                      <span
+                        data-testid="model-cost-hint"
+                        style={{
+                          fontSize: '12px',
+                          fontWeight: 500,
+                          color: '#475569',
+                          background: '#f1f5f9',
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          border: '1px solid #cbd5e1',
+                        }}
+                      >
+                        {currentModelInfo.cost_hint}
+                      </span>
+                    )}
+                  </div>
+
+                  {currentModelInfo.description && (
+                    <p style={{ margin: 0, color: '#475569', lineHeight: '1.4' }}>
+                      {currentModelInfo.description}
+                    </p>
+                  )}
+
+                  {currentModelInfo.capabilities &&
+                    currentModelInfo.capabilities.length > 0 && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '4px',
+                          marginTop: '4px',
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            color: '#64748b',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                          }}
+                        >
+                          Supported Capabilities
+                        </span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {currentModelInfo.capabilities.map((cap) => {
+                            const capLabels: Record<string, string> = {
+                              study_guide: 'Study Guides',
+                              quiz: 'Quizzes',
+                              flashcard: 'Flashcards',
+                              ai_tutor: 'AI Tutor',
+                              course_qa: 'Course Q&A',
+                              prompt_generator: 'Prompt Generator',
+                            }
+                            return (
+                              <span
+                                key={cap}
+                                data-testid={`model-capability-${cap}`}
+                                style={{
+                                  fontSize: '11px',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  background: '#ffffff',
+                                  border: '1px solid #cbd5e1',
+                                  color: '#334155',
+                                }}
+                              >
+                                {capLabels[cap] || cap}
+                              </span>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                </div>
+              )
+            })()}
+
             {modelSuccess && (
               <div
                 role="status"

@@ -46,7 +46,9 @@ def ask_course_question(
 ):
     try:
         effective_model = resolve_effective_model(
-            request.model, current_user.preferred_model
+            request.model,
+            current_user.preferred_model,
+            required_capability="course_qa",
         )
         try:
             provider = get_text_generation_provider(effective_model=effective_model)

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.app.models import ProfileKnowledge
@@ -27,6 +27,11 @@ class ProfileKnowledgeContext:
     @property
     def is_empty(self) -> bool:
         return not self.text
+
+
+EMPTY_PROFILE_KNOWLEDGE = ProfileKnowledgeContext(
+    text="", items_used=0, items_available=0, truncated=False
+)
 
 
 @dataclass(frozen=True)
@@ -168,15 +173,6 @@ class ProfileKnowledgeService:
         return created_entries
 
 
-def count_available_profile_knowledge(db: Session, user_id: int) -> int:
-    statement = (
-        select(func.count())
-        .select_from(ProfileKnowledge)
-        .where(ProfileKnowledge.user_id == user_id)
-    )
-    return db.scalar(statement) or 0
-
-
 def load_profile_knowledge(
     db: Session,
     user_id: int,
@@ -193,20 +189,19 @@ def load_profile_knowledge(
         .order_by(ProfileKnowledge.created_at.asc(), ProfileKnowledge.id.asc())
     )
 
-    items = db.execute(statement).all()
-    total_available = len(items)
+    eligible: list[str] = []
+    for topic, detail in db.execute(statement).all():
+        topic_str = (topic or "").strip()
+        detail_str = (detail or "").strip()
+        if not topic_str and not detail_str:
+            continue
+        eligible.append(f"Topic: {topic_str}\nDetail: {detail_str}")
 
     parts: list[str] = []
     length = 0
     truncated = False
 
-    for topic, detail in items:
-        topic_str = (topic or "").strip()
-        detail_str = (detail or "").strip()
-        if not topic_str and not detail_str:
-            continue
-
-        formatted = f"Topic: {topic_str}\nDetail: {detail_str}"
+    for formatted in eligible:
         addition = len(formatted) + (len(ITEM_SEPARATOR) if parts else 0)
         if length + addition > max_characters:
             truncated = True
@@ -217,9 +212,22 @@ def load_profile_knowledge(
     return ProfileKnowledgeContext(
         text=ITEM_SEPARATOR.join(parts),
         items_used=len(parts),
-        items_available=total_available,
+        items_available=len(eligible),
         truncated=truncated,
     )
+
+
+def load_profile_knowledge_for_generation(
+    db: Session,
+    user_id: int | None,
+    *,
+    opted_in: bool,
+    max_characters: int = DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
+) -> ProfileKnowledgeContext:
+    """Single consent gate: profile knowledge is queried only for an opted-in owner."""
+    if user_id is None or not opted_in:
+        return EMPTY_PROFILE_KNOWLEDGE
+    return load_profile_knowledge(db, user_id, max_characters=max_characters)
 
 
 def assemble_generation_context(
@@ -253,16 +261,11 @@ def assemble_generation_context(
             max_characters=course_max_characters,
         )
 
-    profile_context = (
-        load_profile_knowledge(
-            db,
-            user_id,
-            max_characters=profile_max_characters,
-        )
-        if user_id is not None and include_profile_context
-        else ProfileKnowledgeContext(
-            text="", items_used=0, items_available=0, truncated=False
-        )
+    profile_context = load_profile_knowledge_for_generation(
+        db,
+        user_id,
+        opted_in=include_profile_context,
+        max_characters=profile_max_characters,
     )
 
     return GenerationContext(

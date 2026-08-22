@@ -348,8 +348,98 @@ def test_chroma_vectors_survive_a_client_restart(
         }
 
 
+def test_chroma_recovers_when_the_collection_is_rebuilt_underneath_it(
+    tmp_path, session_factory: sessionmaker[Session]
+) -> None:
+    """A rebuilt store must not break search until the API process restarts."""
+    import chromadb
+
+    persist_directory = str(tmp_path / "chroma")
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-stale@example.com", chunk_count=3
+        )
+        store = ChromaVectorStore(persist_directory=persist_directory)
+        _replace(store, session, document, chunks)
+        session.commit()
+        assert store.count_document_vectors(session, document.id) == 3
+
+        rebuilder = chromadb.PersistentClient(path=persist_directory)
+        rebuilder.delete_collection(vector_store.CHROMA_COLLECTION_NAME)
+        rebuilder.get_or_create_collection(
+            name=vector_store.CHROMA_COLLECTION_NAME,
+            embedding_function=None,
+            configuration={"hnsw": {"space": vector_store.SIMILARITY_METRIC}},
+        )
+
+        assert store.count_document_vectors(session, document.id) == 0
+
+        _replace(store, session, document, chunks)
+        assert store.count_document_vectors(session, document.id) == 3
+
+
+def test_chroma_reopens_a_handle_another_process_invalidated(
+    tmp_path, session_factory: sessionmaker[Session]
+) -> None:
+    """A worker writing to the same store must not break reads until restart."""
+
+    class StaleCollection:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, **kwargs):
+            self.calls += 1
+            raise RuntimeError("Error executing plan: Internal error: Error finding id")
+
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-reopen@example.com", chunk_count=3
+        )
+        store = ChromaVectorStore(persist_directory=str(tmp_path / "chroma"))
+        _replace(store, session, document, chunks)
+        session.commit()
+        assert store.count_document_vectors(session, document.id) == 3
+
+        stale = StaleCollection()
+        store._collection = stale
+
+        assert store.count_document_vectors(session, document.id) == 3
+        assert stale.calls == 1
+
+
+def test_chroma_reopen_clears_the_shared_system_cache(
+    tmp_path, session_factory: sessionmaker[Session], monkeypatch
+) -> None:
+    """Chroma hands back a cached system, so a reopen must clear it to see writes."""
+    from chromadb.api.client import SharedSystemClient
+
+    cleared: list[bool] = []
+    monkeypatch.setattr(
+        SharedSystemClient,
+        "clear_system_cache",
+        classmethod(lambda cls: cleared.append(True)),
+    )
+
+    class StaleCollection:
+        def get(self, **kwargs):
+            raise RuntimeError("Error executing plan: Internal error: Error finding id")
+
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-cache@example.com", chunk_count=2
+        )
+        store = ChromaVectorStore(persist_directory=str(tmp_path / "chroma"))
+        _replace(store, session, document, chunks)
+        session.commit()
+
+        store._collection = StaleCollection()
+        assert store.count_document_vectors(session, document.id) == 2
+
+    assert cleared
+
+
 def test_chroma_wraps_client_failures_as_vector_store_errors(
-    chroma_store, session_factory: sessionmaker[Session]
+    chroma_store, session_factory: sessionmaker[Session], monkeypatch
 ) -> None:
     class BrokenCollection:
         def delete(self, **kwargs):
@@ -364,7 +454,7 @@ def test_chroma_wraps_client_failures_as_vector_store_errors(
         def count(self, **kwargs):
             raise RuntimeError("chroma exploded")
 
-    chroma_store._collection = BrokenCollection()
+    monkeypatch.setattr(chroma_store, "_get_collection", BrokenCollection)
 
     with session_factory() as session:
         with pytest.raises(VectorStoreError):
@@ -580,13 +670,13 @@ def test_pgvector_search_requires_postgresql(
 
 
 def test_chroma_wraps_search_failures_as_vector_store_errors(
-    chroma_store, session_factory: sessionmaker[Session]
+    chroma_store, session_factory: sessionmaker[Session], monkeypatch
 ) -> None:
     class BrokenCollection:
         def query(self, **kwargs):
             raise RuntimeError("chroma exploded")
 
-    chroma_store._collection = BrokenCollection()
+    monkeypatch.setattr(chroma_store, "_get_collection", BrokenCollection)
 
     with session_factory() as session:
         course, _, _ = _seed_document(

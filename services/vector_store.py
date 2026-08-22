@@ -358,6 +358,43 @@ class ChromaVectorStore:
         self._collection = None
         self._client = None
 
+    def _discard_client(self) -> None:
+        """Drop this client and the process-wide system Chroma caches for it.
+
+        ``PersistentClient`` hands back a cached system for a given path, so
+        clearing the local references alone would rebind the same stale
+        in-memory index instead of reading what another process just wrote.
+        """
+        self.close()
+        try:
+            from chromadb.api.client import SharedSystemClient
+
+            SharedSystemClient.clear_system_cache()
+        except Exception:
+            logger.warning("Chroma system cache could not be cleared")
+
+    def _run(self, operation, message: str):
+        """Run one collection call, reopening a handle another process invalidated.
+
+        The client caches the collection and its in-memory index for the life of
+        the process, so a worker writing to the same embedded store leaves this
+        handle stale: reads then fail until the process restarts. Every operation
+        here is idempotent, so reopening once and retrying keeps a long-running
+        API serving rather than failing every later request.
+        """
+        try:
+            return operation(self._get_collection())
+        except VectorStoreError:
+            raise
+        except Exception:
+            self._discard_client()
+        try:
+            return operation(self._get_collection())
+        except VectorStoreError:
+            raise
+        except Exception as exc:
+            raise VectorStoreError(message) from exc
+
     @staticmethod
     def _metadata(
         record: VectorRecord,
@@ -384,8 +421,8 @@ class ChromaVectorStore:
         embedding_model: str,
     ) -> None:
         validated = _validated(records, document_id=document_id, course_id=course_id)
-        collection = self._get_collection()
-        try:
+
+        def operation(collection) -> None:
             collection.delete(where={"document_id": str(document_id)})
             if validated:
                 collection.upsert(
@@ -396,12 +433,11 @@ class ChromaVectorStore:
                         for record in validated
                     ],
                 )
-        except VectorStoreError:
-            raise
-        except Exception as exc:
-            raise VectorStoreError(
-                "The vector store could not record the document embeddings."
-            ) from exc
+
+        self._run(
+            operation,
+            "The vector store could not record the document embeddings.",
+        )
 
     def upsert_document_vectors(
         self,
@@ -416,20 +452,17 @@ class ChromaVectorStore:
         validated = _validated(records, document_id=document_id, course_id=course_id)
         if not validated:
             return
-        collection = self._get_collection()
-        try:
-            collection.upsert(
+        self._run(
+            lambda collection: collection.upsert(
                 ids=[str(record.chunk_id) for record in validated],
                 embeddings=[record.embedding for record in validated],
                 metadatas=[
                     self._metadata(record, embedding_provider, embedding_model)
                     for record in validated
                 ],
-            )
-        except Exception as exc:
-            raise VectorStoreError(
-                "The vector store could not record the document embeddings."
-            ) from exc
+            ),
+            "The vector store could not record the document embeddings.",
+        )
 
     def delete_chunk_vectors(
         self, session: Session, document_id: UUID, chunk_ids: Iterable[int]
@@ -437,22 +470,16 @@ class ChromaVectorStore:
         identifiers = [str(chunk_id) for chunk_id in chunk_ids]
         if not identifiers:
             return
-        collection = self._get_collection()
-        try:
-            collection.delete(ids=identifiers)
-        except Exception as exc:
-            raise VectorStoreError(
-                "The vector store could not remove the requested embeddings."
-            ) from exc
+        self._run(
+            lambda collection: collection.delete(ids=identifiers),
+            "The vector store could not remove the requested embeddings.",
+        )
 
     def _delete_where(self, where: dict) -> None:
-        collection = self._get_collection()
-        try:
-            collection.delete(where=where)
-        except Exception as exc:
-            raise VectorStoreError(
-                "The vector store could not remove the requested embeddings."
-            ) from exc
+        self._run(
+            lambda collection: collection.delete(where=where),
+            "The vector store could not remove the requested embeddings.",
+        )
 
     def delete_document_vectors(self, session: Session, document_id: UUID) -> None:
         self._delete_where({"document_id": str(document_id)})
@@ -461,11 +488,10 @@ class ChromaVectorStore:
         self._delete_where({"course_id": course_id})
 
     def _get_where(self, where: dict) -> dict:
-        collection = self._get_collection()
-        try:
-            return collection.get(where=where, include=["metadatas"])
-        except Exception as exc:
-            raise VectorStoreError("The vector store could not be read.") from exc
+        return self._run(
+            lambda collection: collection.get(where=where, include=["metadatas"]),
+            "The vector store could not be read.",
+        )
 
     def chunk_ids_with_vectors(self, session: Session, document_id: UUID) -> set[int]:
         found = self._get_where({"document_id": str(document_id)})
@@ -492,16 +518,15 @@ class ChromaVectorStore:
             )
         if limit < 1:
             raise ValueError("Search limit must be a positive integer")
-        collection = self._get_collection()
-        try:
-            found = collection.query(
+        found = self._run(
+            lambda collection: collection.query(
                 query_embeddings=[query_embedding],
                 where={"course_id": course_id},
                 n_results=limit,
                 include=["metadatas", "distances"],
-            )
-        except Exception as exc:
-            raise VectorStoreError("The vector store could not be searched.") from exc
+            ),
+            "The vector store could not be searched.",
+        )
         ids = found.get("ids", [[]])[0]
         metadatas = found.get("metadatas", [[]])[0] or []
         distances = found.get("distances", [[]])[0] or []
@@ -519,11 +544,12 @@ class ChromaVectorStore:
         ]
 
     def metadata_for_chunk(self, chunk_id: int) -> dict:
-        collection = self._get_collection()
-        try:
-            found = collection.get(ids=[str(chunk_id)], include=["metadatas"])
-        except Exception as exc:
-            raise VectorStoreError("The vector store could not be read.") from exc
+        found = self._run(
+            lambda collection: collection.get(
+                ids=[str(chunk_id)], include=["metadatas"]
+            ),
+            "The vector store could not be read.",
+        )
         metadatas = found.get("metadatas") or []
         if not metadatas:
             raise VectorStoreError("The requested embedding is not stored.")

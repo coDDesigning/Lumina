@@ -12,10 +12,9 @@ from services.ai_usage_logger import AiUsageLogger
 from services.conversation import CONVERSATION_NOT_FOUND, ConversationService
 from services.course_material import count_available_chunks
 from services.profile_knowledge import (
-    DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
     ProfileKnowledgeContext,
     format_profile_context,
-    load_profile_knowledge,
+    load_profile_knowledge_for_generation,
 )
 from schemas.prompt_context import PromptContext
 from services.document_lock import acquire_generation_locks
@@ -174,16 +173,10 @@ class CourseQAService:
         with acquire_generation_locks(material.document_ids):
             conversation_history = ConversationService.format_history(conversation)
 
-            profile_context = (
-                load_profile_knowledge(
-                    db,
-                    resolved_user_id,
-                    max_characters=DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
-                )
-                if resolved_user_id is not None and include_profile_context
-                else ProfileKnowledgeContext(
-                    text="", items_used=0, items_available=0, truncated=False
-                )
+            profile_context = load_profile_knowledge_for_generation(
+                db,
+                resolved_user_id,
+                opted_in=include_profile_context,
             )
 
             prompt_context = resolve_prompt_context(

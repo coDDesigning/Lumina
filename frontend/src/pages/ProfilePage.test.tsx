@@ -92,6 +92,11 @@ describe('ProfilePage', () => {
         display_name: 'Gemini 1.5 Flash',
         provider: 'gemini',
         is_default: true,
+        cost_hint: 'Metered (1-2 credits)',
+        capabilities: ['study_guide', 'quiz'],
+        description: 'Fast Google Gemini model',
+        is_local: false,
+        supports_json: true,
       },
       {
         id: 'gpt-4o-mini',
@@ -99,6 +104,11 @@ describe('ProfilePage', () => {
         display_name: 'GPT-4o Mini',
         provider: 'openai',
         is_default: false,
+        cost_hint: 'Metered (1 credit)',
+        capabilities: ['study_guide', 'quiz', 'flashcard'],
+        description: 'Compact OpenAI model',
+        is_local: false,
+        supports_json: true,
       },
     ])
     mockKnowledgeList.mockResolvedValue([
@@ -131,6 +141,16 @@ describe('ProfilePage', () => {
     expect(screen.queryByRole('button', { name: 'Save profile' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument()
     expect(screen.queryByText('Bilkent University')).not.toBeInTheDocument()
+  })
+
+  it('renders model capabilities and cost hints for the selected model', async () => {
+    renderProfilePage()
+
+    expect(await screen.findByTestId('model-details-card')).toBeInTheDocument()
+    expect(screen.getByText('Metered (1-2 credits)')).toBeInTheDocument()
+    expect(screen.getByText('Fast Google Gemini model')).toBeInTheDocument()
+    expect(screen.getByTestId('model-capability-study_guide')).toBeInTheDocument()
+    expect(screen.getByTestId('model-capability-quiz')).toBeInTheDocument()
   })
 
   it('allows changing preferred AI model and calls API', async () => {

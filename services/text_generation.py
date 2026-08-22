@@ -22,6 +22,7 @@ from backend.app.config import (
     settings,
 )
 from schemas.ai_usage import ErrorCategory
+from utils.exceptions import BadRequestException
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +216,7 @@ class GeminiTextGenerationProvider:
         self,
         api_key: str | None = None,
         timeout_seconds: int | None = None,
+        model: str | None = None,
     ) -> None:
         key = api_key or settings.gemini_api_key
         if not key:
@@ -227,6 +229,7 @@ class GeminiTextGenerationProvider:
         )
         http_opts = types.HttpOptions(timeout=int(timeout_sec * 1000))
         self._client = genai.Client(api_key=key, http_options=http_opts)
+        self._model = model or self.MODEL
 
     def _extract_metadata(
         self, response: object, latency_ms: int
@@ -243,7 +246,7 @@ class GeminiTextGenerationProvider:
 
         return GenerationMetadata(
             provider=self.PROVIDER_NAME,
-            model=self.MODEL,
+            model=self._model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
@@ -279,7 +282,7 @@ class GeminiTextGenerationProvider:
         start_time = time.perf_counter()
         try:
             response = self._client.models.generate_content(
-                model=self.MODEL,
+                model=self._model,
                 contents=prompt,
             )
         except Exception as exc:
@@ -303,7 +306,7 @@ class GeminiTextGenerationProvider:
         start_time = time.perf_counter()
         try:
             response = self._client.models.generate_content(
-                model=self.MODEL,
+                model=self._model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
@@ -351,9 +354,10 @@ class OllamaTextGenerationProvider:
         self,
         client: httpx.Client | None = None,
         timeout_seconds: int | None = None,
+        model: str | None = None,
     ) -> None:
         self._base_url = settings.ollama_base_url
-        self._model = settings.ollama_model
+        self._model = model or settings.ollama_model
         self._timeout_seconds = (
             timeout_seconds
             if timeout_seconds is not None
@@ -678,6 +682,15 @@ def get_available_models() -> list[dict[str, object]]:
             ):
                 provider_names.append(fallback_token)
 
+    standard_capabilities = [
+        "study_guide",
+        "quiz",
+        "flashcard",
+        "ai_tutor",
+        "course_qa",
+        "prompt_generator",
+    ]
+
     models: list[dict[str, object]] = []
     for prov in provider_names:
         if prov == AI_PROVIDER_GEMINI:
@@ -689,6 +702,11 @@ def get_available_models() -> list[dict[str, object]]:
                     "model": model_name,
                     "display_name": f"Gemini ({model_name})",
                     "is_default": prov == primary_name,
+                    "cost_hint": "Metered (1-2 credits)",
+                    "capabilities": list(standard_capabilities),
+                    "description": "Google Gemini 3.6 Flash · Fast, high-context instruction & JSON generation",
+                    "is_local": False,
+                    "supports_json": True,
                 }
             )
         elif prov == AI_PROVIDER_OLLAMA:
@@ -700,6 +718,11 @@ def get_available_models() -> list[dict[str, object]]:
                     "model": model_name,
                     "display_name": f"Ollama ({model_name})",
                     "is_default": prov == primary_name,
+                    "cost_hint": "Local execution · Unmetered",
+                    "capabilities": list(standard_capabilities),
+                    "description": f"Self-hosted local model via Ollama ({model_name}) · Private execution",
+                    "is_local": True,
+                    "supports_json": True,
                 }
             )
     return models
@@ -708,36 +731,84 @@ def get_available_models() -> list[dict[str, object]]:
 def resolve_effective_model(
     request_model: str | None = None,
     user_preferred_model: str | None = None,
+    required_capability: str | None = None,
 ) -> str:
     """Resolve the effective model using precedence rule:
     1. Explicit request override (if valid in catalog)
     2. User preferred model (if valid in catalog)
     3. Deployment default
+
+    Optionally validates that the resolved model supports ``required_capability``.
     """
     catalog = get_available_models()
-    valid_ids = {m["id"] for m in catalog}
+    catalog_by_id = {m["id"]: m for m in catalog}
 
-    if request_model and request_model in valid_ids:
-        return request_model
-    if user_preferred_model and user_preferred_model in valid_ids:
-        return user_preferred_model
+    resolved_id: str | None = None
 
-    for m in catalog:
-        if m.get("is_default"):
-            return str(m["id"])
+    if request_model and request_model in catalog_by_id:
+        if required_capability:
+            caps = catalog_by_id[request_model].get("capabilities") or []
+            if required_capability not in caps:
+                raise BadRequestException(
+                    f"Model '{request_model}' does not support '{required_capability}' task."
+                )
+        resolved_id = request_model
 
-    if catalog:
-        return str(catalog[0]["id"])
+    if (
+        not resolved_id
+        and user_preferred_model
+        and user_preferred_model in catalog_by_id
+    ):
+        if not required_capability or required_capability in (
+            catalog_by_id[user_preferred_model].get("capabilities") or []
+        ):
+            resolved_id = user_preferred_model
 
-    prov, model = configured_provider_identity()
-    return f"{prov}:{model}"
+    if not resolved_id:
+        for m in catalog:
+            if m.get("is_default"):
+                if not required_capability or required_capability in (
+                    m.get("capabilities") or []
+                ):
+                    resolved_id = str(m["id"])
+                    break
+
+    if not resolved_id and catalog:
+        for m in catalog:
+            if not required_capability or required_capability in (
+                m.get("capabilities") or []
+            ):
+                resolved_id = str(m["id"])
+                break
+
+    if not resolved_id:
+        if required_capability and catalog:
+            raise BadRequestException(
+                f"No available model supports '{required_capability}' task."
+            )
+        prov, model = configured_provider_identity()
+        resolved_id = f"{prov}:{model}"
+
+    return resolved_id
 
 
-def _instantiate_provider(provider_name: str) -> TextGenerationProvider:
+def _instantiate_provider(
+    provider_name: str, model_name: str | None = None
+) -> TextGenerationProvider:
     clean_name = provider_name.strip().lower()
     if clean_name == AI_PROVIDER_GEMINI:
+        if model_name is not None:
+            try:
+                return GeminiTextGenerationProvider(model=model_name)
+            except TypeError:
+                return GeminiTextGenerationProvider()
         return GeminiTextGenerationProvider()
     if clean_name == AI_PROVIDER_OLLAMA:
+        if model_name is not None:
+            try:
+                return OllamaTextGenerationProvider(model=model_name)
+            except TypeError:
+                return OllamaTextGenerationProvider()
         return OllamaTextGenerationProvider()
     raise TextGenerationError(
         f"Text generation provider '{clean_name}' is not implemented.",
@@ -760,15 +831,28 @@ def get_text_generation_provider(
             if fallback_token not in provider_names:
                 provider_names.append(fallback_token)
 
+    preferred_model_name: str | None = None
+    preferred_provider: str | None = None
+
     if effective_model:
-        preferred_provider = effective_model.split(":", 1)[0].strip().lower()
+        if ":" in effective_model:
+            preferred_provider, preferred_model_name = effective_model.split(":", 1)
+            preferred_provider = preferred_provider.strip().lower()
+        else:
+            preferred_provider = effective_model.strip().lower()
+
         if preferred_provider in provider_names:
             provider_names.remove(preferred_provider)
             provider_names.insert(0, preferred_provider)
 
     providers: list[TextGenerationProvider] = []
     for name in provider_names:
-        providers.append(_instantiate_provider(name))
+        m_name = (
+            preferred_model_name
+            if (preferred_provider and name == preferred_provider)
+            else None
+        )
+        providers.append(_instantiate_provider(name, model_name=m_name))
 
     return ReliableTextGenerationProvider(
         providers,

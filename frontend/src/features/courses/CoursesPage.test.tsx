@@ -255,6 +255,30 @@ describe('CoursesPage', () => {
     expect(screen.getByText('0%')).toBeInTheDocument();
   });
 
+  it('counts down to an upcoming exam and says so once, not twice', () => {
+    const inFiveDays = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+
+    renderPage({
+      workspaces: [{ ...mockWorkspaces[0], name: 'Thermodynamics', examDate: inFiveDays }],
+    });
+
+    expect(screen.getByText('Exam in 5 days')).toBeInTheDocument();
+    expect(screen.getByText('Your nearest exam is Thermodynamics, in 5 days.')).toBeInTheDocument();
+  });
+
+  it('labels a past exam rather than showing a bare date', () => {
+    const lastWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    renderPage({
+      workspaces: [{ ...mockWorkspaces[0], name: 'Statics', examDate: lastWeek }],
+    });
+
+    expect(screen.getByText(/^Exam was /)).toBeInTheDocument();
+    expect(screen.getByText('Pick a course to carry on, or start a new one.')).toBeInTheDocument();
+  });
+
   it('puts the nearest upcoming exam first', () => {
     renderPage({
       workspaces: [

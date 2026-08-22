@@ -54,6 +54,10 @@
   margin-top: var(--space-4);
 }
 
+.spaced {
+  margin-top: var(--space-4);
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(17.5rem, 1fr));

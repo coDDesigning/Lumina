@@ -1,0 +1,47 @@
+.mark {
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(150deg, #9b6ff0, #6b3fd0);
+  color: #ffffff;
+  font-family: var(--font-display);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+  flex: 0 0 auto;
+  box-shadow: 0 0.25rem 0.75rem -0.25rem rgba(107, 63, 208, 0.6);
+}
+
+.sm {
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: var(--text-sm);
+  border-radius: var(--radius-sm);
+}
+
+.md {
+  width: 2.25rem;
+  height: 2.25rem;
+  font-size: var(--text-lg);
+  border-radius: var(--radius-md);
+}
+
+.lg {
+  width: 2.75rem;
+  height: 2.75rem;
+  font-size: var(--text-xl);
+}
+
+.lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  text-decoration: none;
+  color: var(--text);
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-lg);
+  letter-spacing: var(--tracking-display);
+}

@@ -14,7 +14,6 @@ import {
   UserRound,
 } from 'lucide-react'
 import { Navigate, Route, Routes, useParams } from 'react-router-dom'
-import WorkspaceNavigation from './components/WorkspaceNavigation'
 import type { Workspace, WorkspaceDraft } from './data/workspaces'
 import EditPage from './pages/EditPage'
 import ProfilePage from './pages/ProfilePage'
@@ -24,6 +23,9 @@ import WorkspacesPage from './pages/WorkspacesPage'
 import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
 import LandingPage from './features/marketing/LandingPage'
+import { AppShell } from './app/AppShell'
+import { ThemeProvider } from './app/ThemeProvider'
+import { ToastProvider } from './ui/ToastProvider'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { LoadingSpinner } from './components/LoadingSpinner'
 import { useAuth } from './context/AuthContext'
@@ -571,8 +573,6 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
       </aside>
 
       <section className="main-workspace">
-        <WorkspaceNavigation workspaceId={workspace.id} />
-
         <div className="workspace-stage">
           <div className="workspace-tabs" role="tablist" aria-label="Study mode">
             {tabList.map((tab) => (
@@ -1128,18 +1128,20 @@ function App() {
   )
 
   return (
-    <Routes>
-      <Route path="/" element={<LandingPage />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
+    <ThemeProvider>
+      <ToastProvider>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
 
-      <Route element={<ProtectedRoute />}>
-        <Route
-          path="/dashboard"
+          <Route element={<ProtectedRoute />}>
+            <Route element={<AppShell />}>
+              <Route
+                path="/dashboard"
           element={
             <WorkspacesPage
               workspaces={workspaces}
-              activeWorkspaceId={activeWorkspaceId}
               isLoading={isLoadingWorkspaces}
               error={workspacesError}
               onRetry={() => fetchWorkspaces()}
@@ -1183,9 +1185,12 @@ function App() {
           path="/admin"
           element={<AdminPage />}
         />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+            </Route>
+          </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </ToastProvider>
+    </ThemeProvider>
   )
 }
 

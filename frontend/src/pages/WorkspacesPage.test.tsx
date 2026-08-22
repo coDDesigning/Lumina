@@ -86,7 +86,6 @@ describe('WorkspacesPage', () => {
       <MemoryRouter>
         <WorkspacesPage
           workspaces={mockWorkspaces}
-          activeWorkspaceId="1"
           onCreate={handleCreate}
           onSelect={handleSelect}
           onDelete={vi.fn()}
@@ -111,7 +110,6 @@ describe('WorkspacesPage', () => {
       <MemoryRouter>
         <WorkspacesPage
           workspaces={mockWorkspaces}
-          activeWorkspaceId="1"
           onCreate={handleCreate}
           onSelect={handleSelect}
           onDelete={vi.fn()}
@@ -139,7 +137,6 @@ describe('WorkspacesPage', () => {
       <MemoryRouter>
         <WorkspacesPage
           workspaces={mockWorkspaces}
-          activeWorkspaceId="1"
           onCreate={handleCreate}
           onSelect={handleSelect}
           onDelete={vi.fn()}
@@ -171,7 +168,6 @@ describe('WorkspacesPage', () => {
       <MemoryRouter>
         <WorkspacesPage
           workspaces={mockWorkspaces}
-          activeWorkspaceId="1"
           onCreate={handleCreate}
           onSelect={handleSelect}
           onDelete={vi.fn()}
@@ -224,7 +220,6 @@ describe('WorkspacesPage', () => {
       <MemoryRouter>
         <WorkspacesPage
           workspaces={mockWorkspaces}
-          activeWorkspaceId="1"
           onCreate={handleCreate}
           onSelect={handleSelect}
           onDelete={vi.fn()}
@@ -277,7 +272,6 @@ describe('WorkspacesPage', () => {
       <MemoryRouter>
         <WorkspacesPage
           workspaces={mockWorkspaces}
-          activeWorkspaceId="1"
           onCreate={handleCreate}
           onSelect={vi.fn()}
           onDelete={vi.fn()}
@@ -319,7 +313,6 @@ describe('WorkspacesPage', () => {
       <MemoryRouter>
         <WorkspacesPage
           workspaces={[]}
-          activeWorkspaceId=""
           error="Network connection timeout."
           onRetry={handleRetry}
           onCreate={vi.fn()}
@@ -348,7 +341,6 @@ describe('WorkspacesPage', () => {
       <MemoryRouter>
         <WorkspacesPage
           workspaces={mockWorkspaces}
-          activeWorkspaceId="1"
           onCreate={handleCreate}
           onSelect={vi.fn()}
           onDelete={vi.fn()}
@@ -396,7 +388,6 @@ describe('WorkspacesPage', () => {
       <MemoryRouter>
         <WorkspacesPage
           workspaces={workspacesWithMixedProgress}
-          activeWorkspaceId="10"
           onCreate={vi.fn()}
           onSelect={vi.fn()}
           onDelete={vi.fn()}
@@ -435,7 +426,6 @@ function renderDeletablePage(
     <MemoryRouter>
       <WorkspacesPage
         workspaces={[deletableWorkspace]}
-        activeWorkspaceId={deletableWorkspace.id}
         onCreate={vi.fn()}
         onSelect={overrides.onSelect ?? vi.fn()}
         onDelete={overrides.onDelete ?? vi.fn().mockResolvedValue(undefined)}

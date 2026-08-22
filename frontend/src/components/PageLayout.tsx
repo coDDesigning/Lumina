@@ -2,7 +2,6 @@ import type { PropsWithChildren } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { ArrowLeft } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import WorkspaceNavigation from './WorkspaceNavigation'
 
 type PageLayoutProps = PropsWithChildren<{
   title: string
@@ -24,8 +23,6 @@ function PageLayout({
 
   return (
     <main className="detail-page-shell">
-      <WorkspaceNavigation workspaceId={workspaceId} />
-
       <section className="panel detail-page-panel">
         <header className="detail-page-header">
           <div className="detail-title-group">

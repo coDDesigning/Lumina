@@ -86,12 +86,22 @@ function examUrgency(days: number | null): 'destructive' | 'warning' | 'neutral'
   return 'neutral';
 }
 
+function countdownPhrase(days: number): string {
+  if (days === 0) {
+    return 'today';
+  }
+  if (days === 1) {
+    return 'tomorrow';
+  }
+  return `in ${days} days`;
+}
+
 function examLabel(days: number | null, examDate: string): string {
   if (days === null) {
     return 'No exam date';
   }
   if (days < 0) {
-    return formatExamDate(examDate);
+    return `Exam was ${formatExamDate(examDate)}`;
   }
   if (days === 0) {
     return 'Exam today';
@@ -216,7 +226,7 @@ export default function CoursesPage({
             <h1 className={styles.title}>Your courses</h1>
             <p className={styles.subtitle}>
               {nextExam && nextExamDays !== null
-                ? `Nearest exam is ${nextExam.name}, ${examLabel(nextExamDays, nextExam.examDate).toLowerCase()}.`
+                ? `Your nearest exam is ${nextExam.name}, ${countdownPhrase(nextExamDays)}.`
                 : 'Pick a course to carry on, or start a new one.'}
             </p>
           </div>
@@ -247,7 +257,7 @@ export default function CoursesPage({
             tone="destructive"
             live="alert"
             title="We couldn't load your courses"
-            className={styles.count}
+            className={styles.spaced}
             actions={
               onRetry ? (
                 <Button
@@ -495,7 +505,7 @@ export default function CoursesPage({
         title={confirming ? `Delete ${confirming.name}?` : 'Delete course?'}
         description={
           confirming
-            ? `This permanently erases the course, everything you uploaded to it, and everything Lumina made from it. It cannot be undone.`
+            ? 'This permanently erases the course, everything you uploaded to it, and everything Lumina made from it. It cannot be undone.'
             : undefined
         }
         confirmLabel="Delete permanently"
@@ -505,7 +515,7 @@ export default function CoursesPage({
         confirmPhraseLabel={confirming ? `Type ${confirming.name} to confirm` : undefined}
       >
         {deleteError ? (
-          <Alert tone="destructive" live="alert" className={styles.count}>
+          <Alert tone="destructive" live="alert" className={styles.spaced}>
             {deleteError}
           </Alert>
         ) : null}

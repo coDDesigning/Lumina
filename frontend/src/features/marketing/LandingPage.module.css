@@ -116,6 +116,7 @@
   grid-template-columns: repeat(4, 1fr);
   gap: var(--space-3);
   margin-top: var(--space-5);
+  list-style: none;
 }
 
 @media (max-width: 52rem) {

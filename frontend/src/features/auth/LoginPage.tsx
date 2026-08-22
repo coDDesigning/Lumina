@@ -57,7 +57,7 @@ export default function LoginPage() {
         </>
       }
     >
-      <form className={styles.form} onSubmit={handleSubmit} noValidate={false}>
+      <form className={styles.form} onSubmit={handleSubmit}>
         {error ? (
           <Alert tone="destructive" live="alert">
             {error}

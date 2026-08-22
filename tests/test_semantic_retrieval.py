@@ -345,13 +345,13 @@ def test_retrieval_rejects_a_wrong_width_query_embedding(
 
 
 def test_retrieval_propagates_store_errors(
-    retrieval_store, session_factory: sessionmaker[Session]
+    retrieval_store, session_factory: sessionmaker[Session], monkeypatch
 ) -> None:
     class BrokenCollection:
         def query(self, **kwargs):
             raise RuntimeError("chroma exploded")
 
-    retrieval_store._collection = BrokenCollection()
+    monkeypatch.setattr(retrieval_store, "_get_collection", BrokenCollection)
     provider = StubEmbeddingProvider()
     with session_factory() as session:
         course, _, _ = _seed_course(

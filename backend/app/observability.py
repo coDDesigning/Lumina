@@ -19,6 +19,7 @@ _SECRET_PATTERN = re.compile(
 _ALLOWED_FIELDS = (
     "duration_ms",
     "error_code",
+    "exception_chain",
     "exception_type",
     "http_method",
     "http_path",
@@ -30,6 +31,23 @@ _ALLOWED_FIELDS = (
 
 def _redact(value: str) -> str:
     return _SECRET_PATTERN.sub(lambda match: f"{match.group(1)}=[REDACTED]", value)
+
+
+def _exception_type_chain(exc: BaseException | None) -> list[str]:
+    """Name every exception behind a failure without recording any content.
+
+    A wrapped error reports only the outermost type, which is rarely the one
+    that explains the failure. Type names carry no request content, so the
+    chain stays safe to log.
+    """
+    names: list[str] = []
+    seen: set[int] = set()
+    current = exc
+    while current is not None and id(current) not in seen and len(names) < 10:
+        seen.add(id(current))
+        names.append(type(current).__name__)
+        current = current.__cause__ or current.__context__
+    return names
 
 
 class JsonFormatter(logging.Formatter):
@@ -59,6 +77,9 @@ class JsonFormatter(logging.Formatter):
                 payload[field] = value
         if record.exc_info and "exception_type" not in payload:
             payload["exception_type"] = record.exc_info[0].__name__
+            chain = _exception_type_chain(record.exc_info[1])
+            if len(chain) > 1:
+                payload["exception_chain"] = chain
         emf = getattr(record, "emf", None)
         if isinstance(emf, dict):
             payload.update(emf)

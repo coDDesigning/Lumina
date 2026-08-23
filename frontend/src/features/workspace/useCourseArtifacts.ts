@@ -5,7 +5,7 @@ import type { CourseProgressResponse } from '@/api/types';
 
 export type CourseArtifact =
   | {
-      kind: 'study_guide' | 'flashcards' | 'other';
+      kind: 'study_guide' | 'flashcards' | 'quiz' | 'other';
       key: string;
       outputId: number;
       outputType: string;
@@ -36,8 +36,8 @@ const MEANINGFUL_TOPIC = (topic: string | null | undefined): string | null => {
   return topic;
 };
 
-function outputKind(outputType: string): 'study_guide' | 'flashcards' | 'other' {
-  if (outputType === 'study_guide' || outputType === 'flashcards') {
+function outputKind(outputType: string): 'study_guide' | 'flashcards' | 'quiz' | 'other' {
+  if (outputType === 'study_guide' || outputType === 'flashcards' || outputType === 'quiz') {
     return outputType;
   }
   return 'other';

@@ -1706,3 +1706,150 @@ def test_generate_quiz_rejects_json_incompatible_model(
         response.headers.get(ERROR_CODE_HEADER) == AiErrorCode.INCOMPATIBLE_MODEL.value
     )
     assert response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.INCOMPATIBLE_MODEL]
+
+
+def test_list_quizzes_returns_attempt_aggregations(upload_api) -> None:
+    from backend.app.models import QuizAttempt
+
+    with upload_api.session_factory() as session:
+        quiz = Quiz(
+            course_id=upload_api.course_id,
+            user_id=upload_api.user_id,
+            title="Data Structures Practice",
+        )
+        session.add(quiz)
+        session.flush()
+        session.add(
+            QuizQuestion(
+                quiz_id=quiz.id,
+                question_index=0,
+                question_type="multiple_choice",
+                difficulty="medium",
+                question_text="What is a tree?",
+                options=["A graph", "A list", "A map", "A set"],
+                correct_option_index=0,
+                topic="Trees",
+                explanation="A tree is a connected acyclic graph.",
+            )
+        )
+        session.commit()
+        quiz_id = quiz.id
+
+    # 1. No attempts yet
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/quizzes",
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200, response.text
+    summaries = response.json()["data"]
+    assert len(summaries) == 1
+    assert summaries[0]["quiz_id"] == quiz_id
+    assert summaries[0]["title"] == "Data Structures Practice"
+    assert summaries[0]["question_count"] == 1
+    assert summaries[0]["attempts_count"] == 0
+    assert summaries[0]["best_score"] is None
+    assert summaries[0]["last_score"] is None
+
+    # 2. Add first attempt: 50%
+    with upload_api.session_factory() as session:
+        att1 = QuizAttempt(
+            user_id=upload_api.user_id,
+            quiz_id=quiz_id,
+            score=0.5,
+            time_spent_seconds=30,
+        )
+        session.add(att1)
+        session.commit()
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/quizzes",
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200
+    summaries = response.json()["data"]
+    assert summaries[0]["attempts_count"] == 1
+    assert summaries[0]["best_score"] == pytest.approx(0.5)
+    assert summaries[0]["last_score"] == pytest.approx(0.5)
+
+    # 3. Add second attempt: 100%
+    with upload_api.session_factory() as session:
+        att2 = QuizAttempt(
+            user_id=upload_api.user_id,
+            quiz_id=quiz_id,
+            score=1.0,
+            time_spent_seconds=25,
+        )
+        session.add(att2)
+        session.commit()
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/quizzes",
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200
+    summaries = response.json()["data"]
+    assert summaries[0]["attempts_count"] == 2
+    assert summaries[0]["best_score"] == pytest.approx(1.0)
+    assert summaries[0]["last_score"] == pytest.approx(1.0)
+
+    # 4. Add third attempt: 75%
+    with upload_api.session_factory() as session:
+        att3 = QuizAttempt(
+            user_id=upload_api.user_id,
+            quiz_id=quiz_id,
+            score=0.75,
+            time_spent_seconds=20,
+        )
+        session.add(att3)
+        session.commit()
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/quizzes",
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200
+    summaries = response.json()["data"]
+    assert summaries[0]["attempts_count"] == 3
+    assert summaries[0]["best_score"] == pytest.approx(1.0)
+    assert summaries[0]["last_score"] == pytest.approx(0.75)
+
+
+def test_get_quiz_loads_stored_quiz_view(upload_api) -> None:
+    with upload_api.session_factory() as session:
+        quiz = Quiz(
+            course_id=upload_api.course_id,
+            user_id=upload_api.user_id,
+            title="Algorithm Analysis",
+        )
+        session.add(quiz)
+        session.flush()
+        session.add(
+            QuizQuestion(
+                quiz_id=quiz.id,
+                question_index=0,
+                question_type="multiple_choice",
+                difficulty="medium",
+                question_text="What is the worst-case of binary search?",
+                options=["O(1)", "O(log n)", "O(n)", "O(n^2)"],
+                correct_option_index=1,
+                topic="Searching",
+                explanation="Binary search halves the search space each step.",
+            )
+        )
+        session.commit()
+        quiz_id = quiz.id
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}",
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["quiz_id"] == quiz_id
+    assert data["title"] == "Algorithm Analysis"
+    assert len(data["questions"]) == 1
+    assert (
+        data["questions"][0]["question"] == "What is the worst-case of binary search?"
+    )
+    assert data["questions"][0]["options"] == ["O(1)", "O(log n)", "O(n)", "O(n^2)"]
+    assert data["questions"][0]["correct_option_index"] == 1

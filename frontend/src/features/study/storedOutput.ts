@@ -1,4 +1,8 @@
-import type { FlashcardGenerationResponse, StudyGuideResponse } from '@/api/types';
+import type {
+  FlashcardGenerationResponse,
+  QuizView,
+  StudyGuideResponse,
+} from '@/api/types';
 
 export function isRenderableStudyGuide(content: unknown): content is StudyGuideResponse {
   if (typeof content !== 'object' || content === null) {
@@ -40,5 +44,22 @@ export function isRenderableFlashcards(content: unknown): content is FlashcardGe
         candidate.flashcards[0] !== null &&
         'front' in candidate.flashcards[0] &&
         'back' in candidate.flashcards[0]))
+  );
+}
+
+export function isRenderableQuiz(content: unknown): content is QuizView {
+  if (typeof content !== 'object' || content === null) {
+    return false;
+  }
+  const candidate = content as Record<string, unknown>;
+
+  return (
+    typeof candidate.title === 'string' &&
+    typeof candidate.quiz_id === 'number' &&
+    Array.isArray(candidate.questions) &&
+    (candidate.questions.length === 0 ||
+      (typeof candidate.questions[0] === 'object' &&
+        candidate.questions[0] !== null &&
+        'question' in candidate.questions[0]))
   );
 }

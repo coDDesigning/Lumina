@@ -171,8 +171,14 @@ def list_quizzes(
         success=True,
         message="Quizzes retrieved successfully",
         data=[
-            QuizService.build_quiz_summary(quiz, question_count)
-            for quiz, question_count in rows
+            QuizService.build_quiz_summary(
+                quiz,
+                question_count,
+                attempts_count=attempts_count,
+                best_score=best_score,
+                last_score=last_score,
+            )
+            for quiz, question_count, attempts_count, best_score, last_score in rows
         ],
     )
 

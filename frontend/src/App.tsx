@@ -14,15 +14,12 @@ import { AppShell } from './app/AppShell'
 import { ThemeProvider } from './app/ThemeProvider'
 import { ToastProvider } from './ui/ToastProvider'
 import { ProtectedRoute } from './components/ProtectedRoute'
-import { Spinner } from './ui/Spinner'
+import { RouteLoading } from './app/RouteLoading'
 import { useAuth } from './context/AuthContext'
 import { coursesAPI } from './api/courses'
 import { progressAPI } from './api/progress'
 import { describeError } from './api/errors'
 import type { Course, CourseProgressResponse } from './api/types'
-import './App.css'
-import './pages/pages.css'
-import './pages/workspaces.css'
 
 
 const ACTIVE_WORKSPACE_STORAGE_KEY = 'lumina.activeWorkspaceId'
@@ -34,12 +31,7 @@ const workspaceAccents: Workspace['accent'][] = [
 ]
 
 function WorkspaceLoading() {
-  return (
-    <div className="route-loading" role="status">
-      <Spinner size="lg" />
-      <span className="visually-hidden">Loading course</span>
-    </div>
-  )
+  return <RouteLoading label="Loading course" />
 }
 
 type WorkspaceRouteProps = {

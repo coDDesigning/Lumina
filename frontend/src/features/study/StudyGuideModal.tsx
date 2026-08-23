@@ -12,10 +12,7 @@ import type {
 } from '@/api/types';
 import CreditBalance from '@/components/credits/CreditBalance';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
-import {
-  studyGuideFileName,
-  studyGuideToMarkdown,
-} from '@/components/study/studyGuideMarkdown';
+import { studyGuideFileName, studyGuideToMarkdown } from './studyGuideMarkdown';
 import { useCredits } from '@/context/CreditContext';
 import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';

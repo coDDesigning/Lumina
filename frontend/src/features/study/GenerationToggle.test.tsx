@@ -4,30 +4,30 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { StudyGuideModal } from '@/features/study/StudyGuideModal';
 import { QuizModal } from '@/features/study/quiz/QuizModal';
 import { FlashcardModal } from '@/features/study/FlashcardModal';
-import { CreditProvider } from '../../context/CreditContext';
-import { studyGuideAPI } from '../../api/studyGuide';
-import { quizAPI } from '../../api/quiz';
-import { flashcardsAPI } from '../../api/flashcards';
-import { userAPI } from '../../api/user';
-import type { CreditStatus } from '../../api/types';
+import { CreditProvider } from '@/context/CreditContext';
+import { studyGuideAPI } from '@/api/studyGuide';
+import { quizAPI } from '@/api/quiz';
+import { flashcardsAPI } from '@/api/flashcards';
+import { userAPI } from '@/api/user';
+import type { CreditStatus } from '@/api/types';
 
-vi.mock('../../api/studyGuide', () => ({
+vi.mock('@/api/studyGuide', () => ({
   studyGuideAPI: { generate: vi.fn() },
 }));
 
-vi.mock('../../api/quiz', () => ({
+vi.mock('@/api/quiz', () => ({
   quizAPI: { generate: vi.fn(), submitAttempt: vi.fn() },
 }));
 
-vi.mock('../../api/flashcards', () => ({
+vi.mock('@/api/flashcards', () => ({
   flashcardsAPI: { generate: vi.fn() },
 }));
 
-vi.mock('../../api/user', () => ({
+vi.mock('@/api/user', () => ({
   userAPI: { getCredits: vi.fn() },
 }));
 
-vi.mock('../../context/AuthContext', () => ({
+vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({ isAuthenticated: true }),
 }));
 

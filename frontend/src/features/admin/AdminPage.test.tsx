@@ -8,7 +8,6 @@ import type { CreditTransaction, User } from '@/api/types';
 import { ToastProvider } from '@/ui/ToastProvider'
 import AdminPage from './AdminPage';
 
-// These suites are not about credits; an unmetered account renders no credit UI.
 vi.mock('../context/CreditContext', () => ({
   useCredits: () => ({
     status: null,
@@ -20,7 +19,6 @@ vi.mock('../context/CreditContext', () => ({
     canAfford: () => true,
   }),
 }))
-
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {

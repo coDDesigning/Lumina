@@ -117,7 +117,6 @@ describe('StudyGuideModal credit handling', () => {
       expect(screen.getByText('Sorting Algorithms')).toBeInTheDocument(),
     );
 
-    // The balance is now stale: another tab spent it.
     mockGetCredits.mockResolvedValue(status(0));
     mockGenerate.mockRejectedValueOnce(
       new APIError(402, { detail: 'Not enough credits.' }, 'insufficient_credits'),
@@ -135,9 +134,7 @@ describe('StudyGuideModal credit handling', () => {
         /don't have enough credits/i,
       ),
     );
-    // The guide the student was reading survives the refusal.
     expect(screen.getByText('Sorting Algorithms')).toBeInTheDocument();
-    // And the screen cannot claim credits remain while saying there are none.
     expect(screen.queryByText('1')).toBeNull();
   });
 

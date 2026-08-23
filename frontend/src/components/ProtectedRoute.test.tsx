@@ -32,7 +32,6 @@ describe('ProtectedRoute', () => {
     );
 
     expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();
-    // Announced rather than merely drawn, so the wait is perceivable without sight.
     expect(screen.getByRole('status')).toHaveTextContent('Checking your session');
   });
 

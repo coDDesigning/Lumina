@@ -113,10 +113,6 @@ describe('form controls', () => {
   });
 });
 
-/**
- * The inline `onClose` here is deliberate: it changes identity on every parent
- * render, which is what the focus trap must tolerate.
- */
 function DialogHarness({ onClose }: { onClose?: () => void }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');

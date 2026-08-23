@@ -80,11 +80,6 @@ beforeEach(() => {
   });
 });
 
-/**
- * The shell owns the single main landmark. A page rendering its own <main>
- * inside it produces nested landmarks, which is invalid and confusing to
- * anyone navigating by landmark.
- */
 describe('shell landmarks', () => {
   it('exposes exactly one main landmark on the course list', async () => {
     renderAppAt('/dashboard');

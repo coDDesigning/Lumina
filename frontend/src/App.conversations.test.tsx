@@ -16,7 +16,6 @@ import type {
 } from './api/types';
 import { createMockCourse } from './test/mocks/api';
 
-// These suites are not about credits; an unmetered account renders no credit UI.
 vi.mock('./context/CreditContext', () => ({
   useCredits: () => ({
     status: null,
@@ -28,7 +27,6 @@ vi.mock('./context/CreditContext', () => ({
     canAfford: () => true,
   }),
 }))
-
 
 vi.mock('./context/AuthContext', () => ({
   useAuth: () => ({

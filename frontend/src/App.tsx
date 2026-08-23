@@ -5,7 +5,11 @@ import CourseSettingsPage from './features/courses/CourseSettingsPage'
 import CoursesPage from './features/courses/CoursesPage'
 import ProgressPage from './features/workspace/ProgressPage'
 import WorkspacePage from './features/workspace/WorkspacePage'
-import AccountPage from './features/account/AccountPage'
+import AccountLayout from './features/account/AccountLayout'
+import AccountYouPage from './features/account/AccountYouPage'
+import AccountAppearancePage from './features/account/AccountAppearancePage'
+import { AiPreferencesSection } from './features/account/AiPreferencesSection'
+import { ProfileKnowledgeSection } from './features/account/ProfileKnowledgeSection'
 import AdminPage from './features/admin/AdminPage'
 import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
@@ -378,10 +382,12 @@ function App() {
         <Route path="/workspaces/:courseId" element={<LegacyWorkspaceRedirect />} />
         <Route path="/profile" element={<Navigate to="/account" replace />} />
         <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
-        <Route
-          path="/account"
-          element={<AccountPage />}
-        />
+        <Route path="/account" element={<AccountLayout />}>
+          <Route index element={<AccountYouPage />} />
+          <Route path="background" element={<ProfileKnowledgeSection />} />
+          <Route path="ai" element={<AiPreferencesSection />} />
+          <Route path="appearance" element={<AccountAppearancePage />} />
+        </Route>
         <Route
           path="/admin"
           element={<AdminPage />}

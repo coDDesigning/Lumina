@@ -113,15 +113,16 @@ export function ProfileKnowledgeSection() {
     <section className={styles.section}>
       <div className={styles.sectionHead}>
         <div>
-          <h2 className={styles.sectionHeading}>Profile Knowledge &amp; Learning Background</h2>
+          <h2 className={styles.sectionHeading}>Your background</h2>
           <p className={styles.sectionLede}>
-            Things that stay true across all your courses. Lumina uses them only when you tick the
-            profile box on a specific request, and your course material always wins when the two
-            disagree.
+            Things that stay true across all your courses.
+            {items.length > 0
+              ? ` ${items.length} ${items.length === 1 ? 'note' : 'notes'}, used only when you ask for it.`
+              : ''}
           </p>
         </div>
         <Button icon={<Plus aria-hidden="true" />} onClick={openCompose}>
-          Add Knowledge Topic
+          Add a note
         </Button>
       </div>
 
@@ -255,6 +256,11 @@ export function ProfileKnowledgeSection() {
           </Alert>
         ) : null}
       </ConfirmDialog>
+
+      <p className={styles.footnote}>
+        These notes belong to you, not to any course. Deleting a course leaves them untouched, and
+        your course material always wins when the two disagree.
+      </p>
     </section>
   );
 }

@@ -1,10 +1,14 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CreditStatus } from '@/api/types'
 import { ThemeProvider } from '@/app/ThemeProvider'
-import AccountPage from './AccountPage'
+import AccountAppearancePage from './AccountAppearancePage'
+import AccountLayout from './AccountLayout'
+import AccountYouPage from './AccountYouPage'
+import { AiPreferencesSection } from './AiPreferencesSection'
+import { ProfileKnowledgeSection } from './ProfileKnowledgeSection'
 import { modelsAPI } from '@/api/models'
 import { profileKnowledgeAPI } from '@/api/profileKnowledge'
 import { userAPI } from '@/api/user'
@@ -76,11 +80,18 @@ const mockKnowledgeDelete = vi.mocked(profileKnowledgeAPI.delete)
 const mockUpdatePreferredModel = vi.mocked(userAPI.updatePreferredModel)
 const mockGetCreditTransactions = vi.mocked(userAPI.getCreditTransactions)
 
-function renderAccountPage() {
+function renderAccountPage(path = '/account') {
   return render(
     <ThemeProvider>
-      <MemoryRouter initialEntries={['/account']}>
-        <AccountPage />
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/account" element={<AccountLayout />}>
+            <Route index element={<AccountYouPage />} />
+            <Route path="background" element={<ProfileKnowledgeSection />} />
+            <Route path="ai" element={<AiPreferencesSection />} />
+            <Route path="appearance" element={<AccountAppearancePage />} />
+          </Route>
+        </Routes>
       </MemoryRouter>
     </ThemeProvider>,
   )
@@ -136,7 +147,6 @@ describe('AccountPage', () => {
     expect(screen.getByText('ada@example.com')).toBeInTheDocument()
     expect(screen.getByText('Student')).toBeInTheDocument()
     expect(screen.queryByText('42')).not.toBeInTheDocument()
-    expect(screen.getByText('This account is not metered')).toBeInTheDocument()
 
     expect(screen.queryByLabelText('First name')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Last name')).not.toBeInTheDocument()
@@ -148,7 +158,7 @@ describe('AccountPage', () => {
   })
 
   it('renders model capabilities and cost hints for the selected model', async () => {
-    renderAccountPage()
+    renderAccountPage('/account/ai')
 
     expect(await screen.findByTestId('model-details-card')).toBeInTheDocument()
     expect(screen.getByText('Metered (1-2 credits)')).toBeInTheDocument()
@@ -170,7 +180,7 @@ describe('AccountPage', () => {
       education_level: 'unspecified',
     })
 
-    renderAccountPage()
+    renderAccountPage('/account/ai')
 
     const select = await screen.findByLabelText('Preferred AI Model')
     await user.selectOptions(select, 'gpt-4o-mini')
@@ -192,14 +202,14 @@ describe('AccountPage', () => {
       updated_at: '2026-08-21T10:00:00Z',
     })
 
-    renderAccountPage()
+    renderAccountPage('/account/background')
 
     expect(await screen.findByText('Linear Algebra')).toBeInTheDocument()
     expect(
       screen.getByText('Eigenvalues and matrix decomposition.'),
     ).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Add Knowledge Topic' }))
+    await user.click(screen.getByRole('button', { name: 'Add a note' }))
 
     const topicInput = await screen.findByLabelText('Topic Name')
     const detailInput = screen.getByLabelText('Knowledge Details & Background')
@@ -226,7 +236,7 @@ describe('AccountPage', () => {
     const user = userEvent.setup()
     mockKnowledgeDelete.mockResolvedValue(undefined)
 
-    renderAccountPage()
+    renderAccountPage('/account/background')
 
     expect(await screen.findByText('Linear Algebra')).toBeInTheDocument()
 
@@ -246,9 +256,12 @@ describe('AccountPage', () => {
   })
 
   it('confirms profile knowledge is structured-only and contains no file or document upload controls', async () => {
-    renderAccountPage()
+    renderAccountPage('/account/background')
 
-    expect(await screen.findByText('Profile Knowledge & Learning Background')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Your background' })).toBeInTheDocument()
+    expect(
+      screen.getByText(/These notes belong to you, not to any course/),
+    ).toBeInTheDocument()
     expect(screen.queryByLabelText(/upload/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/upload document/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/drag and drop/i)).not.toBeInTheDocument()
@@ -275,7 +288,7 @@ describe('AccountPage credits', () => {
       generation_costs: { study_guide: 1, quiz: 1, quiz_open_ended: 2 },
     }
 
-    renderAccountPage()
+    renderAccountPage('/account/ai')
 
     expect(await screen.findByText('7')).toBeInTheDocument()
     expect(screen.queryByText('42')).not.toBeInTheDocument()
@@ -291,7 +304,7 @@ describe('AccountPage credits', () => {
       generation_costs: { study_guide: 1, quiz: 1, quiz_open_ended: 2 },
     }
 
-    renderAccountPage()
+    renderAccountPage('/account/ai')
 
     expect(await screen.findByText('Quiz including written questions')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
@@ -300,10 +313,45 @@ describe('AccountPage credits', () => {
   it('renders no credit UI whatsoever for an unmetered account', async () => {
     creditState.status = null
 
-    renderAccountPage()
+    renderAccountPage('/account/ai')
 
     expect(await screen.findByText('This account is not metered')).toBeInTheDocument()
     expect(screen.queryByText('Credits left')).not.toBeInTheDocument()
     expect(screen.queryByText('What things cost')).not.toBeInTheDocument()
+    expect(screen.queryByText(/credits/i)).toBeNull()
+  })
+
+  it('gives every part of the account its own address', async () => {
+    renderAccountPage()
+
+    const nav = screen.getByRole('navigation', { name: 'Account sections' })
+    expect(within(nav).getByRole('link', { name: 'You' })).toHaveAttribute('href', '/account')
+    expect(within(nav).getByRole('link', { name: 'Your background' })).toHaveAttribute(
+      'href',
+      '/account/background',
+    )
+    expect(within(nav).getByRole('link', { name: 'AI' })).toHaveAttribute('href', '/account/ai')
+    expect(within(nav).getByRole('link', { name: 'Appearance' })).toHaveAttribute(
+      'href',
+      '/account/appearance',
+    )
+  })
+
+  it('marks the section being read as the current one', async () => {
+    renderAccountPage('/account/background')
+
+    const nav = screen.getByRole('navigation', { name: 'Account sections' })
+    expect(within(nav).getByRole('link', { name: 'Your background' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+    expect(within(nav).getByRole('link', { name: 'You' })).not.toHaveAttribute('aria-current')
+  })
+
+  it('keeps who you are visible from every section', async () => {
+    renderAccountPage('/account/appearance')
+
+    expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument()
+    expect(screen.getByLabelText('Theme')).toBeInTheDocument()
   })
 })

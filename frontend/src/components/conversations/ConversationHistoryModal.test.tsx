@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { conversationsAPI } from '../../api/conversations';
@@ -6,11 +6,12 @@ import type { ConversationDetail, ConversationSummary } from '../../api/types';
 import { ConversationHistoryModal } from './ConversationHistoryModal';
 
 vi.mock('../../api/conversations', () => ({
-  conversationsAPI: { list: vi.fn(), get: vi.fn() },
+  conversationsAPI: { list: vi.fn(), get: vi.fn(), delete: vi.fn() },
 }));
 
 const mockList = vi.mocked(conversationsAPI.list);
 const mockGet = vi.mocked(conversationsAPI.get);
+const mockDelete = vi.mocked(conversationsAPI.delete);
 
 const QA_SUMMARY: ConversationSummary = {
   id: 12,
@@ -55,6 +56,7 @@ const TUTOR_DETAIL: ConversationDetail = {
 describe('ConversationHistoryModal', () => {
   beforeEach(() => {
     mockList.mockResolvedValue([QA_SUMMARY, TUTOR_SUMMARY]);
+    mockDelete.mockResolvedValue({ id: 18 });
   });
 
   it('lists both conversation types and loads the selected detail', async () => {
@@ -69,8 +71,8 @@ describe('ConversationHistoryModal', () => {
       />,
     );
 
-    expect(await screen.findByText('Course Q&A')).toBeInTheDocument();
-    expect(screen.getByText('AI Tutor')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Conversation 12/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Conversation 18/ })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /Conversation 18/ }));
 
@@ -106,6 +108,59 @@ describe('ConversationHistoryModal', () => {
     expect(onResume).toHaveBeenCalledWith(TUTOR_DETAIL);
   });
 
+  it('filters conversations by type', async () => {
+    render(
+      <ConversationHistoryModal
+        courseId={7}
+        courseName="Algorithms"
+        onClose={vi.fn()}
+        onResume={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole('button', { name: /Conversation 12/ });
+    expect(screen.getByRole('button', { name: /Conversation 18/ })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: /Q&A/ }));
+    expect(screen.getByRole('button', { name: /Conversation 12/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Conversation 18/ })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: /Tutor/ }));
+    expect(screen.queryByRole('button', { name: /Conversation 12/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Conversation 18/ })).toBeInTheDocument();
+  });
+
+  it('deletes a selected conversation and calls onDelete callback', async () => {
+    const onDelete = vi.fn();
+    mockGet.mockResolvedValue(TUTOR_DETAIL);
+
+    render(
+      <ConversationHistoryModal
+        courseId={7}
+        courseName="Algorithms"
+        onClose={vi.fn()}
+        onResume={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: /Conversation 18/ }),
+    );
+
+    const deleteBtn = await screen.findByRole('button', {
+      name: 'Delete conversation 18',
+    });
+    await userEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(mockDelete).toHaveBeenCalledWith(7, 18);
+    });
+    expect(onDelete).toHaveBeenCalledWith(18);
+    expect(screen.queryByRole('button', { name: /Conversation 18/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Select a conversation')).toBeInTheDocument();
+  });
+
   it('closes with Escape and restores focus', async () => {
     const onClose = vi.fn();
     const opener = document.createElement('button');
@@ -130,7 +185,7 @@ describe('ConversationHistoryModal', () => {
     opener.remove();
   });
 
-  it('does not offer resume for a read-only course', async () => {
+  it('does not offer resume or delete for a read-only course', async () => {
     mockGet.mockResolvedValue(TUTOR_DETAIL);
     render(
       <ConversationHistoryModal
@@ -148,6 +203,9 @@ describe('ConversationHistoryModal', () => {
     expect(await screen.findByText('Read-only access')).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Resume conversation' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Delete conversation 18' }),
     ).not.toBeInTheDocument();
   });
 });

@@ -28,6 +28,7 @@ import { ProtectedRoute } from './components/ProtectedRoute'
 import { LoadingSpinner } from './components/LoadingSpinner'
 import { useAuth } from './context/AuthContext'
 import { coursesAPI } from './api/courses'
+import { conversationsAPI } from './api/conversations'
 import { progressAPI } from './api/progress'
 import { courseQaAPI } from './api/courseQa'
 import { aiTutorAPI } from './api/aiTutor'
@@ -77,6 +78,13 @@ type WorkspaceConversation = {
   messages: WorkspaceChatMessage[]
   isLoading: boolean
   error: string | null
+}
+
+function getActiveConversationStorageKey(
+  courseId: number,
+  type: ConversationType,
+): string {
+  return `lumina.activeConversation.${courseId}.${type}`
 }
 
 const tabContent: Record<
@@ -162,6 +170,8 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
     },
   })
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const conversationsRef = useRef(conversations)
+  conversationsRef.current = conversations
 
   const activeConversationType: ConversationType =
     activeTab === 'Tutoring' ? 'ai_tutor' : 'course_qa'
@@ -213,6 +223,73 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
     if (!onUpdateProgress || progress?.average_score == null) return
     onUpdateProgress(workspace.id, Math.round(progress.average_score * 100))
   }, [onUpdateProgress, progress, workspace.id])
+
+  useEffect(() => {
+    if (!Number.isInteger(courseId) || courseId <= 0) return
+    const savedIdStr = sessionStorage.getItem(
+      getActiveConversationStorageKey(courseId, activeConversationType),
+    )
+    if (!savedIdStr) return
+    const savedId = Number(savedIdStr)
+    if (!Number.isInteger(savedId) || savedId <= 0) return
+
+    if (
+      conversationsRef.current[activeConversationType].conversationId === savedId &&
+      conversationsRef.current[activeConversationType].messages.length > 0
+    ) {
+      return
+    }
+
+    const controller = new AbortController()
+    let cancelled = false
+
+    setConversations((current) => ({
+      ...current,
+      [activeConversationType]: {
+        ...current[activeConversationType],
+        isLoading: true,
+        error: null,
+      },
+    }))
+
+    conversationsAPI
+      .get(courseId, savedId, { signal: controller.signal })
+      .then((detail) => {
+        if (cancelled) return
+        setConversations((current) => ({
+          ...current,
+          [activeConversationType]: {
+            conversationId: detail.id,
+            messages: detail.messages.map(({ role, content }) => ({
+              role,
+              content,
+            })),
+            isLoading: false,
+            error: null,
+          },
+        }))
+      })
+      .catch((error: unknown) => {
+        if (cancelled || isAbortError(error)) return
+        sessionStorage.removeItem(
+          getActiveConversationStorageKey(courseId, activeConversationType),
+        )
+        setConversations((current) => ({
+          ...current,
+          [activeConversationType]: {
+            conversationId: null,
+            messages: [],
+            isLoading: false,
+            error: null,
+          },
+        }))
+      })
+
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [courseId, activeConversationType])
 
   const addSources = async (fileList: FileList | null) => {
     const files = Array.from(fileList ?? [])
@@ -337,6 +414,10 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
           ],
         },
       }))
+      sessionStorage.setItem(
+        getActiveConversationStorageKey(courseId, conversationType),
+        String(res.conversation_id),
+      )
       void refreshCredits()
     } catch (err) {
       setMainPrompt(prompt)
@@ -372,6 +453,9 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   }
 
   const startNewConversation = () => {
+    sessionStorage.removeItem(
+      getActiveConversationStorageKey(courseId, activeConversationType),
+    )
     setConversations((current) => ({
       ...current,
       [activeConversationType]: {
@@ -384,6 +468,10 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   }
 
   const resumeConversation = (conversation: ConversationDetail) => {
+    sessionStorage.setItem(
+      getActiveConversationStorageKey(courseId, conversation.conversation_type),
+      String(conversation.id),
+    )
     setConversations((current) => ({
       ...current,
       [conversation.conversation_type]: {
@@ -399,6 +487,26 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
     setActiveTab(conversation.conversation_type === 'ai_tutor' ? 'Tutoring' : 'Exam')
     setIsConversationHistoryOpen(false)
     setMainPrompt('')
+  }
+
+  const handleConversationDeleted = (deletedId: number) => {
+    setConversations((current) => {
+      const updated = { ...current }
+      let changed = false
+      for (const type of ['course_qa', 'ai_tutor'] as const) {
+        if (updated[type].conversationId === deletedId) {
+          sessionStorage.removeItem(getActiveConversationStorageKey(courseId, type))
+          updated[type] = {
+            conversationId: null,
+            messages: [],
+            isLoading: false,
+            error: null,
+          }
+          changed = true
+        }
+      }
+      return changed ? updated : current
+    })
   }
 
   const chooseSuggestion = (suggestion: string) => {
@@ -734,9 +842,12 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
                   <div className="qa-loading-indicator" role="status">
                     <LoadingSpinner size="sm" />
                     <p>
-                      {activeConversationType === 'ai_tutor'
-                        ? 'AI Tutor is preparing personalized guidance...'
-                        : 'Searching course materials and preparing an answer...'}
+                      {activeConversation.messages.length === 0 &&
+                      activeConversation.conversationId
+                        ? 'Loading conversation history...'
+                        : activeConversationType === 'ai_tutor'
+                          ? 'AI Tutor is preparing personalized guidance...'
+                          : 'Searching course materials and preparing an answer...'}
                     </p>
                   </div>
                 ) : null}
@@ -835,6 +946,7 @@ function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
           canResume={workspace.ownerId == null || workspace.ownerId === user?.id}
           onClose={() => setIsConversationHistoryOpen(false)}
           onResume={resumeConversation}
+          onDelete={handleConversationDeleted}
         />
       ) : null}
 

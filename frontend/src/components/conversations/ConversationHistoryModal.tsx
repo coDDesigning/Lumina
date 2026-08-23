@@ -5,6 +5,7 @@ import {
   History,
   MessageCircle,
   MessagesSquare,
+  Trash2,
   UserRound,
   X,
 } from 'lucide-react';
@@ -17,12 +18,13 @@ import type {
 } from '../../api/types';
 import './conversations.css';
 
-interface ConversationHistoryModalProps {
+export interface ConversationHistoryModalProps {
   courseId: number;
   courseName: string;
   canResume?: boolean;
   onClose: () => void;
   onResume: (conversation: ConversationDetail) => void;
+  onDelete?: (conversationId: number) => void;
 }
 
 type ListState =
@@ -52,10 +54,14 @@ export function ConversationHistoryModal({
   canResume = true,
   onClose,
   onResume,
+  onDelete,
 }: ConversationHistoryModalProps) {
   const [listState, setListState] = useState<ListState>({ phase: 'loading' });
   const [detailState, setDetailState] = useState<DetailState>({ phase: 'empty' });
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [filterType, setFilterType] = useState<'all' | ConversationType>('all');
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const detailAbortRef = useRef<AbortController | null>(null);
   const dialogRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -129,6 +135,7 @@ export function ConversationHistoryModal({
     detailAbortRef.current = controller;
 
     setSelectedId(conversationId);
+    setDeleteError(null);
     setDetailState({ phase: 'loading' });
 
     conversationsAPI
@@ -146,6 +153,43 @@ export function ConversationHistoryModal({
         });
       });
   };
+
+  const handleDelete = async (conversationId: number) => {
+    if (isDeleting) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      await conversationsAPI.delete(courseId, conversationId);
+      setListState((current) => {
+        if (current.phase !== 'ready') return current;
+        return {
+          phase: 'ready',
+          conversations: current.conversations.filter((c) => c.id !== conversationId),
+        };
+      });
+
+      if (selectedId === conversationId) {
+        setSelectedId(null);
+        setDetailState({ phase: 'empty' });
+      }
+
+      onDelete?.(conversationId);
+    } catch (err) {
+      setDeleteError(
+        describeError(err, 'Failed to delete conversation. Please try again.').message,
+      );
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const filteredConversations =
+    listState.phase === 'ready'
+      ? listState.conversations.filter(
+          (c) => filterType === 'all' || c.conversation_type === filterType,
+        )
+      : [];
 
   return (
     <div className="conversation-modal-backdrop">
@@ -176,6 +220,38 @@ export function ConversationHistoryModal({
 
         <div className="conversation-history-layout">
           <aside className="conversation-history-sidebar" aria-label="Saved conversations">
+            {listState.phase === 'ready' && listState.conversations.length > 0 ? (
+              <div className="conversation-filter-tabs" role="tablist" aria-label="Filter conversations">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={filterType === 'all'}
+                  className={filterType === 'all' ? 'active' : ''}
+                  onClick={() => setFilterType('all')}
+                >
+                  All ({listState.conversations.length})
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={filterType === 'course_qa'}
+                  className={filterType === 'course_qa' ? 'active' : ''}
+                  onClick={() => setFilterType('course_qa')}
+                >
+                  Q&A ({listState.conversations.filter((c) => c.conversation_type === 'course_qa').length})
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={filterType === 'ai_tutor'}
+                  className={filterType === 'ai_tutor' ? 'active' : ''}
+                  onClick={() => setFilterType('ai_tutor')}
+                >
+                  Tutor ({listState.conversations.filter((c) => c.conversation_type === 'ai_tutor').length})
+                </button>
+              </div>
+            ) : null}
+
             {listState.phase === 'loading' ? (
               <p className="conversation-state" role="status">
                 Loading conversations...
@@ -196,9 +272,19 @@ export function ConversationHistoryModal({
               </div>
             ) : null}
 
-            {listState.phase === 'ready' && listState.conversations.length > 0 ? (
+            {listState.phase === 'ready' &&
+            listState.conversations.length > 0 &&
+            filteredConversations.length === 0 ? (
+              <div className="conversation-empty-state">
+                <MessagesSquare aria-hidden="true" />
+                <strong>No matching conversations</strong>
+                <span>No conversations found for the selected filter.</span>
+              </div>
+            ) : null}
+
+            {listState.phase === 'ready' && filteredConversations.length > 0 ? (
               <ul className="conversation-history-list">
-                {listState.conversations.map((conversation) => (
+                {filteredConversations.map((conversation) => (
                   <li key={conversation.id}>
                     <button
                       type="button"
@@ -240,6 +326,12 @@ export function ConversationHistoryModal({
           </aside>
 
           <div className="conversation-history-detail">
+            {deleteError ? (
+              <div className="conversation-state is-error" role="alert" style={{ marginBottom: '16px' }}>
+                {deleteError}
+              </div>
+            ) : null}
+
             {detailState.phase === 'empty' ? (
               <div className="conversation-empty-state is-detail">
                 <MessagesSquare aria-hidden="true" />
@@ -271,17 +363,32 @@ export function ConversationHistoryModal({
                     </span>
                     <h3>Conversation {detailState.conversation.id}</h3>
                   </div>
-                  {canResume ? (
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => onResume(detailState.conversation)}
-                    >
-                      Resume conversation
-                    </button>
-                  ) : (
-                    <span className="conversation-read-only">Read-only access</span>
-                  )}
+                  <div className="conversation-detail-actions">
+                    {canResume ? (
+                      <>
+                        <button
+                          className="danger-button conversation-delete-btn"
+                          type="button"
+                          onClick={() => handleDelete(detailState.conversation.id)}
+                          disabled={isDeleting}
+                          aria-label={`Delete conversation ${detailState.conversation.id}`}
+                        >
+                          <Trash2 aria-hidden="true" />
+                          {isDeleting ? 'Deleting…' : 'Delete'}
+                        </button>
+                        <button
+                          className="primary-button"
+                          type="button"
+                          onClick={() => onResume(detailState.conversation)}
+                          disabled={isDeleting}
+                        >
+                          Resume conversation
+                        </button>
+                      </>
+                    ) : (
+                      <span className="conversation-read-only">Read-only access</span>
+                    )}
+                  </div>
                 </div>
 
                 <ol className="conversation-detail-messages">

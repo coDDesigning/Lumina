@@ -72,7 +72,7 @@
 .conversation-history-layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(240px, 310px) minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
   flex: 1;
 }
 
@@ -87,6 +87,41 @@
   padding: 16px;
   border-right: 1px solid #eee8f4;
   background: #fcfafd;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conversation-filter-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #f1eaf7;
+  padding: 4px;
+  border-radius: 9px;
+}
+
+.conversation-filter-tabs button {
+  flex: 1;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #6e6478;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.conversation-filter-tabs button:hover {
+  color: #25113f;
+}
+
+.conversation-filter-tabs button.active {
+  background: #fff;
+  color: #8b5cf6;
+  box-shadow: 0 1px 4px rgba(37, 17, 63, 0.08);
 }
 
 .conversation-history-list,
@@ -115,6 +150,7 @@
   color: #352e3d;
   text-align: left;
   cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .conversation-history-entry:hover {
@@ -197,8 +233,44 @@
   font-size: 18px;
 }
 
-.conversation-detail-heading .primary-button {
+.conversation-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.conversation-detail-actions .primary-button {
   white-space: nowrap;
+}
+
+.conversation-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff5f5;
+  color: #dc2626;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.conversation-delete-btn:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+
+.conversation-delete-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.conversation-delete-btn svg {
+  width: 15px;
+  height: 15px;
 }
 
 .conversation-read-only {

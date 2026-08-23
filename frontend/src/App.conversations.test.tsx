@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { aiTutorAPI } from './api/aiTutor';
+import { APIError } from './api/client';
 import { conversationsAPI } from './api/conversations';
 import { courseQaAPI } from './api/courseQa';
 import { coursesAPI } from './api/courses';
@@ -28,7 +29,6 @@ vi.mock('./context/CreditContext', () => ({
     canAfford: () => true,
   }),
 }))
-
 
 vi.mock('./context/AuthContext', () => ({
   useAuth: () => ({
@@ -76,7 +76,7 @@ vi.mock('./api/aiTutor', () => ({
 }));
 
 vi.mock('./api/conversations', () => ({
-  conversationsAPI: { list: vi.fn(), get: vi.fn() },
+  conversationsAPI: { list: vi.fn(), get: vi.fn(), delete: vi.fn() },
 }));
 
 const mockCourseList = vi.mocked(coursesAPI.list);
@@ -86,6 +86,7 @@ const mockQaAsk = vi.mocked(courseQaAPI.ask);
 const mockTutorAsk = vi.mocked(aiTutorAPI.ask);
 const mockConversationList = vi.mocked(conversationsAPI.list);
 const mockConversationGet = vi.mocked(conversationsAPI.get);
+const mockConversationDelete = vi.mocked(conversationsAPI.delete);
 
 function qaResult(
   answer: string,
@@ -137,6 +138,7 @@ async function sendPrompt(prompt: string) {
 
 describe('Workspace conversations', () => {
   beforeEach(() => {
+    sessionStorage.clear();
     mockCourseList.mockResolvedValue([
       createMockCourse({ id: 1, title: 'Operating Systems' }),
     ]);
@@ -147,6 +149,7 @@ describe('Workspace conversations', () => {
       topic_mastery: [],
     });
     mockConversationList.mockResolvedValue([]);
+    mockConversationDelete.mockResolvedValue({ id: 1 });
   });
 
   it('reuses the returned Q&A ID on turn two and clears it for a new conversation', async () => {
@@ -316,6 +319,118 @@ describe('Workspace conversations', () => {
     );
   }, 15_000);
 
+  it('restores active conversation from API on mount when saved in session', async () => {
+    const detail: ConversationDetail = {
+      id: 55,
+      course_id: 1,
+      user_id: 1,
+      conversation_type: 'course_qa',
+      preview: 'What is synchronization?',
+      message_count: 2,
+      created_at: '2026-08-20T10:00:00Z',
+      updated_at: '2026-08-20T10:05:00Z',
+      messages: [
+        {
+          id: 201,
+          role: 'user',
+          content: 'What is synchronization?',
+          created_at: '2026-08-20T10:00:00Z',
+        },
+        {
+          id: 202,
+          role: 'assistant',
+          content: 'Synchronization coordinates concurrent access to shared data.',
+          created_at: '2026-08-20T10:00:01Z',
+        },
+      ],
+    };
+    sessionStorage.setItem('lumina.activeConversation.1.course_qa', '55');
+    mockConversationGet.mockResolvedValue(detail);
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+
+    expect(await screen.findByText('What is synchronization?')).toBeInTheDocument();
+    expect(
+      screen.getByText('Synchronization coordinates concurrent access to shared data.'),
+    ).toBeInTheDocument();
+    expect(mockConversationGet).toHaveBeenCalledWith(1, 55, expect.anything());
+  }, 15_000);
+
+  it('resets visible thread when active conversation is deleted in modal', async () => {
+    const summary: ConversationSummary = {
+      id: 66,
+      course_id: 1,
+      user_id: 1,
+      conversation_type: 'course_qa',
+      preview: 'What is deadlock?',
+      message_count: 2,
+      created_at: '2026-08-20T10:00:00Z',
+      updated_at: '2026-08-20T10:05:00Z',
+    };
+    const detail: ConversationDetail = {
+      ...summary,
+      messages: [
+        {
+          id: 301,
+          role: 'user',
+          content: 'What is deadlock?',
+          created_at: '2026-08-20T10:00:00Z',
+        },
+        {
+          id: 302,
+          role: 'assistant',
+          content: 'Deadlock is a circular wait condition.',
+          created_at: '2026-08-20T10:00:01Z',
+        },
+      ],
+    };
+    mockConversationList.mockResolvedValue([summary]);
+    mockConversationGet.mockResolvedValue(detail);
+    mockConversationDelete.mockResolvedValue({ id: 66 });
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+
+    // Open history modal and resume conversation 66
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Conversation history' }),
+    );
+    await userEvent.click(
+      await screen.findByRole('button', { name: /Conversation 66/ }),
+    );
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Resume conversation' }),
+    );
+
+    expect(screen.getByText('What is deadlock?')).toBeInTheDocument();
+
+    // Re-open history modal and delete conversation 66
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Conversation history' }),
+    );
+    await userEvent.click(
+      await screen.findByRole('button', { name: /Conversation 66/ }),
+    );
+    const deleteBtn = await screen.findByRole('button', {
+      name: 'Delete conversation 66',
+    });
+    await userEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(mockConversationDelete).toHaveBeenCalledWith(1, 66);
+    });
+
+    // Close modal
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Close conversation history' }),
+    );
+
+    // Active thread is reset
+    expect(screen.queryByText('What is deadlock?')).not.toBeInTheDocument();
+    expect(screen.getByText(/Ask questions about your uploaded course materials/)).toBeInTheDocument();
+  }, 15_000);
+
   it('restores the question when generation fails', async () => {
     mockQaAsk.mockRejectedValue(new Error('Provider unavailable'));
 
@@ -328,6 +443,27 @@ describe('Workspace conversations', () => {
     );
     expect(screen.getByRole('textbox', { name: 'Enter prompt' })).toHaveValue(
       'Explain virtual memory.',
+    );
+  }, 15_000);
+
+  it('displays explicit error message when material is not indexed or has no relevance', async () => {
+    mockQaAsk.mockRejectedValue(
+      new APIError(
+        409,
+        {
+          detail:
+            "This course's material is not searchable yet. If it does not become available shortly, its documents need to be processed again.",
+        },
+        'material_not_indexed',
+      ),
+    );
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+    await sendPrompt('Explain semaphores.');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "This course's material is not searchable yet.",
     );
   }, 15_000);
 
@@ -388,4 +524,3 @@ describe('Workspace conversations', () => {
     ).toBeInTheDocument();
   }, 15_000);
 });
-

@@ -552,8 +552,8 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
 
             <div className={styles.composerMeta}>
               <Checkbox
-                label="Include personal study profile context"
-                description="Includes your profile background as supplementary context. Course material remains primary and authoritative."
+                label="Use my study profile"
+                description="Adds your background as supporting context. Your course material stays primary."
                 checked={includeProfileContext}
                 onChange={(event) => setIncludeProfileContext(event.target.checked)}
               />

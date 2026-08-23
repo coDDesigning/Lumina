@@ -240,7 +240,7 @@ export default function CoursesPage({
               fieldClassName={styles.search}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by course, term, or topic"
+              placeholder="Search courses"
             />
             <Button
               variant="primary"

@@ -35,7 +35,7 @@ from services.ai_usage_logger import AiUsageLogger
 from services.prompt_loader import PromptLoader
 from services.quiz import parse_correct_answer
 from services.text_generation import TextGenerationProvider
-from services.credits import CreditService
+from services.credits import ChargeReceipt, CreditService
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,7 @@ class QuizGradingService:
         provider_factory: ProviderFactory | None = None,
         user_id: int | None = None,
         course_id: int | None = None,
+        charge_receipts: list[ChargeReceipt] | None = None,
     ) -> list[GradedAnswer]:
         """Score every question of a quiz, in the order the questions are given.
 
@@ -163,6 +164,7 @@ class QuizGradingService:
                 provider_factory=provider_factory,
                 user_id=user_id,
                 course_id=course_id,
+                charge_receipts=charge_receipts,
             )
 
         return graded
@@ -197,6 +199,7 @@ class QuizGradingService:
         provider_factory: ProviderFactory | None,
         user_id: int | None,
         course_id: int | None,
+        charge_receipts: list[ChargeReceipt] | None,
     ) -> list[GradedAnswer]:
         def log_failure(category: ErrorCategory, **extra) -> None:
             if user_id:
@@ -255,6 +258,9 @@ class QuizGradingService:
                 latency_ms=metadata.latency_ms if metadata else None,
             )
             return graded
+
+        if receipt is not None and charge_receipts is not None:
+            charge_receipts.append(receipt)
 
         by_number = {verdict.question_number: verdict for verdict in verdicts.verdicts}
 

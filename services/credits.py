@@ -224,24 +224,40 @@ class CreditService:
         caller that lost the race must see the same quiet skip as one that
         never started it.
         """
-        user = db.get(User, user_id)
-        if user is None or not CreditService.is_metered(user) or user.is_banned:
+        if not settings.credit_metering_enabled:
             return
 
         period = current_grant_period()
         if CreditService._period_grant_id(db, user_id, period) is not None:
             return
 
-        headroom = settings.credit_max_balance - (user.credits or 0.0)
+        # This no-op update obtains the user-row write lock on PostgreSQL and
+        # SQLite. Headroom and period uniqueness are rechecked while that lock
+        # is held, so every outcome is equivalent to one serial ordering.
+        locked = db.execute(
+            update(User)
+            .where(User.id == user_id, User.credits.is_not(None))
+            .values(credits=User.credits)
+            .returning(User.credits, User.is_banned)
+            .execution_options(synchronize_session=False)
+        ).one_or_none()
+        if locked is None or locked.is_banned:
+            return
+        if CreditService._period_grant_id(db, user_id, period) is not None:
+            return
+
+        headroom = settings.credit_max_balance - locked.credits
         delta = min(settings.credit_periodic_grant, headroom)
         if delta <= 0:
             return
 
         try:
-            db.execute(
+            balance_after = db.scalar(
                 update(User)
                 .where(User.id == user_id, User.credits.is_not(None))
-                .values(credits=User.credits + delta)
+                .values(credits=locked.credits + delta)
+                .returning(User.credits)
+                .execution_options(synchronize_session=False)
             )
             CreditService._record(
                 db,
@@ -250,6 +266,7 @@ class CreditService:
                 reason=CreditReason.PERIODIC_GRANT,
                 actor=CreditActor.system(),
                 grant_period=period,
+                balance_after=balance_after,
             )
             db.commit()
         except IntegrityError:
@@ -305,16 +322,20 @@ class CreditService:
             raise BadRequestException(
                 "This account is not metered and holds no credit balance"
             )
-        if user.credits + delta < 0:
+        conditions = [User.id == user_id, User.credits.is_not(None)]
+        if delta < 0:
+            conditions.append(User.credits >= -delta)
+        balance_after = db.scalar(
+            update(User)
+            .where(*conditions)
+            .values(credits=User.credits + delta)
+            .returning(User.credits)
+            .execution_options(synchronize_session=False)
+        )
+        if balance_after is None:
             raise BadRequestException(
                 "A credit adjustment cannot take the balance below zero"
             )
-
-        db.execute(
-            update(User)
-            .where(User.id == user_id, User.credits.is_not(None))
-            .values(credits=User.credits + delta)
-        )
         transaction = CreditService._record(
             db,
             user_id=user_id,
@@ -322,6 +343,7 @@ class CreditService:
             reason=reason,
             actor=actor,
             note=note,
+            balance_after=balance_after,
         )
         db.commit()
         db.refresh(transaction)

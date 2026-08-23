@@ -16,7 +16,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import CreditService
+from services.credits import ChargeReceipt, CreditService
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -46,6 +46,7 @@ class FlashcardGeneration:
     flashcards: FlashcardGenerationResponse
     material: CourseMaterial
     model_used: str
+    charge_receipt: ChargeReceipt | None = None
 
 
 class FlashcardService:
@@ -173,6 +174,7 @@ class FlashcardService:
             flashcards=validated,
             material=material,
             model_used=model_identifier(metadata),
+            charge_receipt=receipt,
         )
 
     @staticmethod

@@ -7,10 +7,11 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Barrier
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine, inspect, select, text
+from sqlalchemy import Engine, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
@@ -20,6 +21,7 @@ from backend.app.database_engine import create_database_engine
 from backend.app.models import (
     EMBEDDING_DIMENSIONS,
     ChunkEmbedding,
+    CreditTransaction,
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
@@ -33,6 +35,8 @@ from backend.app.models import (
     User,
 )
 from backend.app.readiness import ReadinessError, check_readiness
+from schemas.credits import CreditReason
+from services.credits import CreditActor, CreditService
 from services.processing_jobs import (
     ChunkData,
     PageData,
@@ -46,6 +50,7 @@ from services.processing_jobs import (
 )
 from services.vector_store import PgVectorStore
 from storage.local import LocalStorage
+from utils.exceptions import BadRequestException
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
@@ -949,6 +954,73 @@ def test_postgresql_parallel_workers_claim_every_job_once(
         assert statuses == [JOB_STATUS_RUNNING] * len(job_ids)
         user = session.get(User, user_id)
         assert user is not None
+        session.delete(user)
+        session.commit()
+
+
+def test_postgresql_parallel_credit_debits_never_go_negative(
+    postgresql_sessions: sessionmaker[Session],
+) -> None:
+    with postgresql_sessions() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Parallel credit user",
+            email=f"parallel-credit-{uuid4().hex}@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+            credits=10.0,
+        )
+        initial = CreditService.build_initial_grant(user)
+        assert initial is not None
+        user.credit_transactions.append(initial)
+        session.add(user)
+        session.commit()
+        user_id = user.id
+
+    barrier = Barrier(2)
+
+    def debit(_index: int) -> bool:
+        with postgresql_sessions() as session:
+            barrier.wait()
+            try:
+                CreditService.apply_admin_change(
+                    session,
+                    user_id,
+                    -7.0,
+                    reason=CreditReason.ADMIN_ADJUSTMENT,
+                    actor=CreditActor.admin(user_id, "parallel@example.com"),
+                    note="Parallel PostgreSQL debit",
+                )
+            except BadRequestException:
+                session.rollback()
+                return False
+            return True
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(debit, range(2)))
+
+    assert sorted(outcomes) == [False, True]
+    with postgresql_sessions() as session:
+        user = session.get(User, user_id)
+        assert user is not None
+        assert user.credits == 3.0
+        assert (
+            session.scalar(
+                select(func.sum(CreditTransaction.delta)).where(
+                    CreditTransaction.user_id == user_id
+                )
+            )
+            == 3.0
+        )
+        debits = session.scalars(
+            select(CreditTransaction).where(
+                CreditTransaction.user_id == user_id,
+                CreditTransaction.note == "Parallel PostgreSQL debit",
+            )
+        ).all()
+        assert len(debits) == 1
+        assert debits[0].balance_after == 3.0
         session.delete(user)
         session.commit()
 

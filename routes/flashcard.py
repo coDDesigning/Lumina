@@ -7,6 +7,7 @@ from backend.app.database import get_db
 from schemas.flashcard import FlashcardGenerationResult, FlashcardRequest
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
+from services.credits import CreditService
 from services.flashcard import FlashcardGenerationError, FlashcardService
 from services.text_generation import (
     TextGenerationError,
@@ -42,6 +43,7 @@ def generate_flashcards(
     db: Annotated[Session, Depends(get_db)],
     request: FlashcardRequest | None = None,
 ):
+    generation = None
     try:
         effective_model = resolve_effective_model(
             request.model if request else None,
@@ -68,6 +70,9 @@ def generate_flashcards(
         )
 
     except (TextGenerationError, FlashcardGenerationError, Exception) as exc:
+        if generation is not None:
+            db.rollback()
+            CreditService.refund(db, generation.charge_receipt)
         raise ai_generation_http_exception(exc, feature="flashcard") from exc
 
     return BaseResponse(

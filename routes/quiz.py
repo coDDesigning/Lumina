@@ -21,6 +21,7 @@ from schemas.quiz_attempt import (
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.generated_output import GeneratedOutputService
+from services.credits import CreditService
 from services.quiz import QuizGenerationError, QuizService
 from services.quiz_attempt import QuizAttemptService
 from services.retrieval_material import RetrievalMaterialError
@@ -73,6 +74,7 @@ def generate_quiz(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
+    generation = None
     try:
         provider = _provider_for(request.model, current_user.preferred_model)
 
@@ -122,6 +124,9 @@ def generate_quiz(
         RetrievalMaterialError,
         Exception,
     ) as exc:
+        if generation is not None:
+            db.rollback()
+            CreditService.refund(db, generation.charge_receipt)
         raise ai_generation_http_exception(exc, feature="quiz") from exc
 
     return BaseResponse(

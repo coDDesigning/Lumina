@@ -14,6 +14,7 @@ from schemas.study_guide import (
 )
 from schemas.user import UserResponse
 from services.retrieval_material import RetrievalMaterialError
+from services.credits import CreditService
 from services.study_guide import StudyGuideGenerationError, StudyGuideService
 from services.text_generation import (
     TextGenerationError,
@@ -53,6 +54,7 @@ def generate_study_guide(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
+    generation = None
     try:
         effective_model = resolve_effective_model(
             request.model, current_user.preferred_model
@@ -90,6 +92,9 @@ def generate_study_guide(
         RetrievalMaterialError,
         Exception,
     ) as exc:
+        if generation is not None:
+            db.rollback()
+            CreditService.refund(db, generation.charge_receipt)
         raise ai_generation_http_exception(exc, feature="study_guide") from exc
 
     return BaseResponse(

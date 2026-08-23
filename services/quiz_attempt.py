@@ -23,6 +23,7 @@ from schemas.quiz_attempt import (
     QuizHistoryItem,
     TopicMastery,
 )
+from services.credits import ChargeReceipt, CreditService
 from services.quiz import QuizService
 from services.quiz_grading import ProviderFactory, QuizGradingService
 from utils.exceptions import BadRequestException
@@ -131,6 +132,7 @@ class QuizAttemptService:
         submitted = cls._validate_submissions(request, questions)
 
         ordered = sorted(quiz.questions, key=lambda row: (row.question_index, row.id))
+        charge_receipts: list[ChargeReceipt] = []
         graded = QuizGradingService.grade(
             db,
             questions=ordered,
@@ -138,6 +140,7 @@ class QuizAttemptService:
             provider_factory=provider_factory,
             user_id=user_id,
             course_id=course_id,
+            charge_receipts=charge_receipts,
         )
 
         scored = [answer for answer in graded if answer.score is not None]
@@ -185,6 +188,8 @@ class QuizAttemptService:
             db.commit()
         except Exception:
             db.rollback()
+            for receipt in charge_receipts:
+                CreditService.refund(db, receipt)
             raise
 
         db.refresh(attempt)

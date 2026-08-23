@@ -6,6 +6,8 @@ The invariant helper is the thread running through them.
 """
 
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from typing import get_args
 
 import pytest
@@ -203,6 +205,46 @@ def test_concurrent_charges_cannot_overspend(authz_api):
         assert (
             len(rows(session, authz_api.user_a_id, CreditReason.GENERATION_CHARGE)) == 1
         )
+        assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
+def test_parallel_admin_debits_cannot_take_balance_below_zero(authz_api):
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 10.0)
+    barrier = Barrier(2)
+
+    def debit(_index: int) -> bool:
+        with authz_api.session_factory() as session:
+            barrier.wait()
+            try:
+                CreditService.apply_admin_change(
+                    session,
+                    authz_api.user_a_id,
+                    -7.0,
+                    reason=CreditReason.ADMIN_ADJUSTMENT,
+                    actor=CreditActor.admin(
+                        authz_api.admin_id, "authz-admin@example.com"
+                    ),
+                    note="Parallel debit",
+                )
+            except BadRequestException:
+                session.rollback()
+                return False
+            return True
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(debit, range(2)))
+
+    assert sorted(outcomes) == [False, True]
+    with authz_api.session_factory() as session:
+        user = session.get(User, authz_api.user_a_id)
+        assert user.credits == 3.0
+        debits = [
+            row
+            for row in rows(session, authz_api.user_a_id, CreditReason.ADMIN_ADJUSTMENT)
+            if row.note == "Parallel debit"
+        ]
+        assert len(debits) == 1
+        assert debits[0].balance_after == 3.0
         assert_balance_is_derivable(session, authz_api.user_a_id)
 
 

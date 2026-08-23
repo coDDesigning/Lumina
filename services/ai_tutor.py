@@ -138,24 +138,6 @@ class AiTutorService:
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
         query = cls.build_retrieval_query(course, question)
-        try:
-            material = cls.get_course_material(db, course_id, query=query)
-        except MaterialNotIndexedError:
-            log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
-            raise
-        except NoRelevantMaterialError:
-            log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
-            raise
-        except MaterialRetrievalError:
-            log_failure(ErrorCategory.RETRIEVAL_ERROR)
-            raise
-
-        prompt = cls.build_prompt(
-            material.text,
-            question,
-            ConversationService.format_history(conversation),
-        )
-        metadata = None
 
         receipt = None
         if resolved_user_id:
@@ -165,6 +147,31 @@ class AiTutorService:
             if receipt is None:
                 log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
                 raise InsufficientCreditsError("Insufficient credits.")
+
+        try:
+            material = cls.get_course_material(db, course_id, query=query)
+            prompt = cls.build_prompt(
+                material.text,
+                question,
+                ConversationService.format_history(conversation),
+            )
+        except MaterialNotIndexedError:
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
+            raise
+        except NoRelevantMaterialError:
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
+            raise
+        except MaterialRetrievalError:
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.RETRIEVAL_ERROR)
+            raise
+        except Exception:
+            CreditService.refund(db, receipt)
+            raise
+
+        metadata = None
 
         try:
             if hasattr(provider, "generate_text_with_metadata"):

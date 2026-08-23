@@ -227,7 +227,9 @@ def test_delete_removes_the_directories_the_upload_created(tmp_path: Path) -> No
 
     assert not stored.exists()
     assert not stored.parent.exists()
-    assert not stored.parent.parent.exists()
+    # The shared levels stay: an upload builds them one component at a time, so removing
+    # them here could make a concurrent upload fail.
+    assert stored.parent.parent.is_dir()
     assert tmp_path.exists()
 
 
@@ -285,3 +287,20 @@ def test_delete_stops_pruning_at_a_directory_holding_something_else(
 
     assert sibling.exists()
     assert stored.parent.is_dir()
+
+
+def test_delete_leaves_the_shared_levels_for_concurrent_uploads(tmp_path: Path) -> None:
+    root = tmp_path / "uploads"
+    root.mkdir()
+    storage = LocalStorage(root, require_existing_root=True)
+    key = storage.generate_key(4, uuid4(), "txt")
+    storage.save(key, BytesIO(b"payload"))
+
+    storage.delete(key)
+
+    assert (root / "courses" / "4" / "documents").is_dir()
+
+    # A later upload into the same course must still succeed.
+    again = storage.generate_key(4, uuid4(), "txt")
+    storage.save(again, BytesIO(b"second"))
+    assert storage.exists(again) is True

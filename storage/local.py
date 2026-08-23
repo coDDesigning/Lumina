@@ -160,27 +160,29 @@ class LocalStorage(Storage):
         except OSError as exc:
             raise StorageError("Unable to delete stored document.") from exc
 
-        self._prune_empty_parents(path.parent)
+        self._prune_document_directory(path.parent)
 
-    def _prune_empty_parents(self, directory: Path) -> None:
-        """Remove now-empty directories up to, but never including, the root.
+    def _prune_document_directory(self, directory: Path) -> None:
+        """Remove the per-document directory this key owned, if it is now empty.
 
-        Upload creates one directory per document, so deleting only the file leaves an
-        empty directory behind for every document ever removed. Pruning is best effort:
-        a directory that is not empty, is gone already, or cannot be removed simply
-        stops the walk, and never fails the deletion that has already happened.
+        A key is courses/<course>/documents/<uuid>/<file>, so each document has a
+        directory of its own that nothing else writes to; leaving it behind accumulates
+        one empty directory per deleted document. Only that directory is removed. The
+        shared courses/ and documents/ levels are deliberately left alone: an upload
+        creates them one component at a time, so removing them here could make a
+        concurrent upload fail. Pruning is best effort and never fails a deletion that
+        has already happened.
         """
-        current = directory
-        while True:
-            try:
-                if current == self.root or not current.is_relative_to(self.root):
-                    return
-                if current.is_symlink() or not current.is_dir():
-                    return
-                current.rmdir()
-            except OSError:
+        try:
+            if directory == self.root or not directory.is_relative_to(self.root):
                 return
-            current = current.parent
+            if directory.parent == self.root:
+                return
+            if directory.is_symlink() or not directory.is_dir():
+                return
+            directory.rmdir()
+        except OSError:
+            return
 
     def exists(self, key: str) -> bool:
         """Return whether a key identifies a regular stored file."""

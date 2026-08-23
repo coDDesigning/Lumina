@@ -16,7 +16,7 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
 
   // Code spans are matched first so that markers inside them stay literal.
   const pattern =
-    /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]*\]\([^)\s]+\))/;
+    /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![A-Za-z0-9])__(?:(?!__)[^\n])+__(?![A-Za-z0-9]))|(\*[^*\n]+\*)|((?<![A-Za-z0-9])_[^_\n]+_(?![A-Za-z0-9]))|(\[[^\]\n]*\]\([^)\s]+\))/;
 
   while (rest.length > 0) {
     const hit = pattern.exec(rest);
@@ -98,6 +98,7 @@ export function Markdown({ text, className }: MarkdownProps) {
   const nextKey = () => `b${(key += 1)}`;
 
   while (cursor < lines.length) {
+    const startedAt = cursor;
     const line = lines[cursor];
 
     if (line.trim() === '') {
@@ -105,7 +106,7 @@ export function Markdown({ text, className }: MarkdownProps) {
       continue;
     }
 
-    const fence = /^\s*```(\w*)\s*$/.exec(line);
+    const fence = /^\s*```/.test(line);
     if (fence) {
       const body: string[] = [];
       cursor += 1;
@@ -202,11 +203,17 @@ export function Markdown({ text, className }: MarkdownProps) {
       paragraph.push(lines[cursor]);
       cursor += 1;
     }
-    blocks.push(
-      <p className={styles.paragraph} key={nextKey()}>
-        {withBreaks(paragraph, nextKey())}
-      </p>,
-    );
+    if (paragraph.length > 0) {
+      blocks.push(
+        <p className={styles.paragraph} key={nextKey()}>
+          {withBreaks(paragraph, nextKey())}
+        </p>,
+      );
+    }
+
+    if (cursor === startedAt) {
+      cursor += 1;
+    }
   }
 
   return <div className={cx(styles.prose, className)}>{blocks}</div>;

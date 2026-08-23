@@ -42,6 +42,7 @@ import { formatDuration } from './quizScoring';
 import styles from './QuizModal.module.css';
 
 export interface QuizModalProps {
+  onQuizReady?: (quizId: number) => void;
   courseId: number;
   topics: string[];
   readyDocumentCount: number;
@@ -97,6 +98,7 @@ export function QuizModal({
   readyDocumentCount,
   onClose,
   onAttemptRecorded,
+  onQuizReady,
 }: QuizModalProps) {
   const [step, setStep] = useState<QuizStep>('config');
   const [failure, setFailure] = useState<GenerationFailure | null>(null);
@@ -255,6 +257,12 @@ export function QuizModal({
         return;
       }
 
+      if (onQuizReady) {
+        onQuizReady(generated.quiz.quiz_id);
+        void refresh();
+        return;
+      }
+
       setQuiz(generated.quiz);
       setIndex(0);
       setAnswers({});
@@ -276,7 +284,7 @@ export function QuizModal({
       setFailure(described);
       setStep('error');
     }
-  }, [courseId, setup, refresh]);
+  }, [courseId, setup, refresh, onQuizReady]);
 
   const backToSetup = () => {
     abortRef.current?.abort();

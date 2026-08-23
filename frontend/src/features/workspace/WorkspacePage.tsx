@@ -610,7 +610,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             artifacts={artifacts}
             isLoading={areArtifactsLoading}
             onOpenAll={() => setIsMadeForYouOpen(true)}
-            onOpenOutput={() => setIsMadeForYouOpen(true)}
+            onOpenOutput={(outputId) => navigate(`/courses/${workspace.id}/guides/${outputId}`)}
             onOpenProgress={() => navigate(`/courses/${workspace.id}/progress`)}
           />
 
@@ -628,6 +628,11 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           courseName={workspace.name}
           topics={workspace.topics}
           readyDocumentCount={readyCount}
+          onGenerated={(outputId) => {
+            setIsSummaryOpen(false);
+            reloadArtifacts();
+            navigate(`/courses/${workspace.id}/guides/${outputId}`);
+          }}
           onClose={() => {
             setIsSummaryOpen(false);
             reloadArtifacts();
@@ -645,6 +650,10 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
 
       {isQuizOpen ? (
         <QuizModal
+          onQuizReady={(quizId) => {
+            setIsQuizOpen(false);
+            navigate(`/courses/${workspace.id}/practice/${quizId}`);
+          }}
           courseId={courseId}
           topics={workspace.topics}
           readyDocumentCount={readyCount}

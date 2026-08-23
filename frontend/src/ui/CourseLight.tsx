@@ -11,11 +11,6 @@ export interface CourseLightProps extends HTMLAttributes<HTMLElement> {
   children?: ReactNode;
 }
 
-/**
- * The course light: a soft radial wash whose hue is derived from the course id,
- * so a workspace is recognisable before its name is read. Identity only — it
- * never carries status, which has its own colour roles.
- */
 export function CourseLight({
   as,
   courseId,

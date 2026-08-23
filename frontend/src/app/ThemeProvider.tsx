@@ -10,7 +10,7 @@ function readStoredPreference(): ThemePreference {
       return stored;
     }
   } catch {
-    // Private browsing and blocked site data both throw here; the default is fine.
+    return 'system';
   }
   return 'system';
 }
@@ -55,7 +55,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem(THEME_STORAGE_KEY, next);
     } catch {
-      // Storing the choice is a convenience; failing to store it must not break the app.
+      return;
     }
   }, []);
 

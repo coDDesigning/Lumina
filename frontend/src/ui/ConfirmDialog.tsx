@@ -17,18 +17,10 @@ export interface ConfirmDialogProps {
   isPending?: boolean;
   pendingLabel?: string;
   destructive?: boolean;
-  /**
-   * When set, the confirm button stays disabled until the user types this
-   * exact text. Reserve it for actions that cannot be undone.
-   */
   confirmPhrase?: string;
   confirmPhraseLabel?: string;
 }
 
-/**
- * Every destructive action in the product goes through this. There is no
- * window.confirm and no bespoke two-step inline confirm.
- */
 export function ConfirmDialog({
   open,
   onClose,

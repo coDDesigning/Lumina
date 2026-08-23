@@ -10,10 +10,6 @@ export interface CourseProgressState {
   reload: () => void;
 }
 
-/**
- * Course progress, shared by the workspace (which reports the average score
- * back to the course list) and the progress page.
- */
 export function useCourseProgress(courseId: number): CourseProgressState {
   const [progress, setProgress] = useState<CourseProgressResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);

@@ -6,7 +6,6 @@ import { CourseLight } from '@/ui/CourseLight';
 import styles from './AuthLayout.module.css';
 
 export interface AuthLayoutProps {
-  /** Drives the hue of the light behind the panel, so sign-in and sign-up read differently. */
   tone: number;
   documentTitle: string;
   title: string;

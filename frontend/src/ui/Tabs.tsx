@@ -17,9 +17,6 @@ export interface TabsProps<T extends string> {
   className?: string;
 }
 
-/**
- * Segmented control with roving arrow-key navigation, per the WAI tabs pattern.
- */
 export function Tabs<T extends string>({
   label,
   options,

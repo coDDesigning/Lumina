@@ -13,14 +13,9 @@ import { Input } from '@/ui/Input';
 export interface PromptGeneratorDialogProps {
   open: boolean;
   onClose: () => void;
-  /** Receives the generated prompt so it can be dropped into the composer. */
   onGenerated: (prompt: string) => void;
 }
 
-/**
- * Turns a rough description into a fuller prompt. It is a real, credited
- * backend feature, so it keeps its own exhaustion notice and error handling.
- */
 export function PromptGeneratorDialog({ open, onClose, onGenerated }: PromptGeneratorDialogProps) {
   const { refresh: refreshCredits, canAfford, isMetered } = useCredits();
   const [description, setDescription] = useState('');

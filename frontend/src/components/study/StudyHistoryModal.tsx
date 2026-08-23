@@ -10,7 +10,7 @@ import type {
   FlashcardGenerationResponse,
 } from '../../api/types';
 import { StudyGuideView } from './StudyGuideView';
-import { FlashcardView } from './FlashcardView';
+import { FlashcardDeck } from '@/features/study/FlashcardDeck';
 import { Button } from '@/ui/Button';
 import { Dialog } from '@/ui/Dialog';
 import './study.css';
@@ -108,7 +108,7 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
   const { content } = output;
 
   if (output.output_type === 'flashcards' && isRenderableFlashcards(content)) {
-    return <FlashcardView initialCards={content.flashcards} />;
+    return <FlashcardDeck cards={content.flashcards} />;
   }
 
   if (output.output_type !== 'study_guide' || !isRenderableStudyGuide(content)) {

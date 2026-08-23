@@ -31,6 +31,7 @@ import type {
 } from '../../api/types';
 import { isOptionBased } from '../../api/types';
 import { Dialog } from '@/ui/Dialog';
+import { ALL_TOPICS, topicOptions } from '@/features/study/topicOptions';
 import './study.css';
 
 interface QuizModalProps {
@@ -64,7 +65,6 @@ type QuizStep =
   | 'results'
   | 'error';
 
-const ALL_TOPICS = 'All Topics';
 const SECONDS_PER_QUESTION = 60;
 const QUESTION_COUNTS = [5, 10, 15, 20];
 
@@ -321,7 +321,7 @@ export function QuizModal({
       ? Math.round(((currentQuestionIndex + 1) / questions.length) * 100)
       : 0;
 
-  const topicOptions = [ALL_TOPICS, ...topics];
+  const topicChoices = topicOptions(topics);
   const hasMaterial = readyDocumentCount > 0;
   const scorePercentage = attempt ? Math.round(attempt.score * 100) : 0;
 
@@ -487,7 +487,7 @@ export function QuizModal({
                         setSetup({ ...setup, topic: event.target.value })
                       }
                     >
-                      {topicOptions.map((topic) => (
+                      {topicChoices.map((topic) => (
                         <option key={topic} value={topic}>
                           {topic}
                         </option>

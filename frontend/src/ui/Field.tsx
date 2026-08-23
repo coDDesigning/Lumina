@@ -21,10 +21,6 @@ export interface FieldProps {
   children: (args: FieldRenderArgs) => ReactNode;
 }
 
-/**
- * Wires label, hint and validation message to the control with real ids, so a
- * screen reader announces the error with the field rather than in isolation.
- */
 export function Field({
   label,
   hint,

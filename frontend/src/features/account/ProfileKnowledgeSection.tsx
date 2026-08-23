@@ -17,10 +17,6 @@ type Draft = { topic: string; detail: string };
 
 const EMPTY_DRAFT: Draft = { topic: '', detail: '' };
 
-/**
- * Profile knowledge is structured notes only — there is deliberately no upload
- * control here, because profile-level ingestion is not implemented.
- */
 export function ProfileKnowledgeSection() {
   const [items, setItems] = useState<ProfileKnowledgeItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);

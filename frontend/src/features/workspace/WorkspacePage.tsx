@@ -32,7 +32,8 @@ import CreditBalance from '@/components/credits/CreditBalance';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { DocumentRow } from '@/components/documents/DocumentRow';
 import { ConversationHistoryModal } from '@/components/conversations/ConversationHistoryModal';
-import { FlashcardModal } from '@/components/study/FlashcardModal';
+import { FlashcardModal } from '@/features/study/FlashcardModal';
+import { provenanceParts } from '@/features/study/provenanceParts';
 import { QuizModal } from '@/components/study/QuizModal';
 import { StudyHistoryModal } from '@/components/study/StudyHistoryModal';
 import { SummaryModal } from '@/components/study/SummaryModal';
@@ -93,27 +94,6 @@ const THREAD_COPY: Record<ConversationType, { title: string; body: string }> = {
     body: 'The tutor explains step by step and asks you questions back, rather than handing over the answer.',
   },
 };
-
-function provenanceSentence(context: RetrievedContext): string {
-  const parts = [`Read ${context.chunks_used} of ${context.chunks_available} passages`];
-
-  if (context.lowest_similarity != null && context.highest_similarity != null) {
-    parts.push(
-      `match ${context.lowest_similarity.toFixed(2)}–${context.highest_similarity.toFixed(2)}`,
-    );
-  }
-  if (context.retrieval_narrowed) {
-    parts.push('narrowed to the passages about your question');
-  }
-  if (context.context_truncated) {
-    parts.push('some selected passages did not fit and were left out');
-  }
-  if (context.profile_knowledge_used) {
-    parts.push(`plus ${context.profile_knowledge_items_used} notes from your profile`);
-  }
-
-  return parts.join(' · ');
-}
 
 export default function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const { user } = useAuth();
@@ -220,8 +200,6 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
     if (current.isLoading) {
       return;
     }
-    // Guarded here rather than only on the button, so an implicit submit from
-    // the Enter key cannot get past an empty balance either.
     if (threadExhausted) {
       return;
     }
@@ -280,8 +258,6 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           : 'Failed to generate answer from course materials.',
       );
       if (isInsufficientCredits(described)) {
-        // The exhaustion notice below the composer carries the recovery route,
-        // so a duplicate inline error would only repeat it.
         await refreshCredits();
       } else {
         setThreads((state) => ({
@@ -485,7 +461,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                   {message.context ? (
                     <span className={styles.provenance}>
                       <FileText className={styles.provenanceIcon} aria-hidden="true" />
-                      <span>{provenanceSentence(message.context)}</span>
+                      <span>{provenanceParts(message.context).join(' · ')}</span>
                     </span>
                   ) : null}
                 </div>

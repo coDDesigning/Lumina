@@ -22,14 +22,9 @@ export interface DialogProps {
   children?: ReactNode;
   className?: string;
   showClose?: boolean;
-  /** Set false for a step the user must resolve with an explicit choice. */
   dismissOnScrimClick?: boolean;
 }
 
-/**
- * The single dialog in the product. Traps focus, restores it on close, closes
- * on Escape, and locks the page behind it.
- */
 export function Dialog({
   open,
   onClose,

@@ -81,7 +81,6 @@ export function AiPreferencesSection() {
         if (!cancelled) setTransactions(result);
       })
       .catch(() => {
-        // The ledger is supporting detail; failing to load it must not break the page.
       });
 
     return () => {

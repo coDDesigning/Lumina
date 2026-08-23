@@ -20,6 +20,7 @@ import type {
 import { StudyGuideView } from './StudyGuideView';
 import { studyGuideFileName, studyGuideToMarkdown } from './studyGuideMarkdown';
 import { Dialog } from '@/ui/Dialog';
+import { ALL_TOPICS, topicOptions } from '@/features/study/topicOptions';
 import './study.css';
 
 interface SummaryModalProps {
@@ -36,7 +37,6 @@ type SummaryState =
   | { phase: 'success'; result: StudyGuideGenerationResult }
   | { phase: 'error'; message: string; retryable: boolean };
 
-const ALL_TOPICS = 'All Topics';
 
 const FORMAT_OPTIONS: { value: SummaryFormat; label: string }[] = [
   { value: 'overview', label: 'Quick Overview & Essentials' },
@@ -222,7 +222,7 @@ export function SummaryModal({
     setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
-  const topicOptions = [ALL_TOPICS, ...topics];
+  const topicChoices = topicOptions(topics);
   const hasMaterial = readyDocumentCount > 0;
   const guide = result?.study_guide ?? null;
 
@@ -382,7 +382,7 @@ export function SummaryModal({
                       value={topicFocus}
                       onChange={(event) => setTopicFocus(event.target.value)}
                     >
-                      {topicOptions.map((topic) => (
+                      {topicChoices.map((topic) => (
                         <option key={topic} value={topic}>
                           {topic}
                         </option>

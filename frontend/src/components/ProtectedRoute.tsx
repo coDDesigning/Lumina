@@ -1,19 +1,14 @@
 import React from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Spinner } from '@/ui/Spinner';
+import { RouteLoading } from '@/app/RouteLoading';
 
 export const ProtectedRoute: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
-    return (
-      <div className="route-loading" role="status">
-        <Spinner size="lg" />
-        <span className="visually-hidden">Checking your session</span>
-      </div>
-    );
+    return <RouteLoading label="Checking your session" />;
   }
 
   if (!isAuthenticated) {

@@ -1,7 +1,8 @@
 import { useDocumentTitle } from '@/app/useDocumentTitle';
-import { ProgressDashboard } from '@/components/study/ProgressDashboard';
+import { ProgressView } from './ProgressView';
 import type { Workspace } from '@/data/workspaces';
 import { useCourseDocuments } from '@/hooks/useCourseDocuments';
+import { LinkButton } from '@/ui/LinkButton';
 import { PageHeader } from '@/ui/PageHeader';
 import { useCourseProgress } from './useCourseProgress';
 import styles from './ProgressPage.module.css';
@@ -29,13 +30,17 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
       />
 
       <div className={styles.body}>
-        <ProgressDashboard
-          courseName={workspace.name}
+        <ProgressView
           documentCount={entries.length}
           readyDocumentCount={readyCount}
           progress={progress}
           isLoading={isLoading}
           error={error}
+          actions={
+            <LinkButton variant="primary" to={`/workspaces/${workspace.id}`}>
+              Back to the course
+            </LinkButton>
+          }
         />
       </div>
     </div>

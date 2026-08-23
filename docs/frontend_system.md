@@ -113,13 +113,20 @@ Rules that are not negotiable:
 
   ── everything below is inside ProtectedRoute > AppShell ──
 /dashboard                         course list
-/workspaces/:id                    course workspace (chat-first)
-/workspaces/:id/progress           progress and topic mastery
-/workspaces/:id/settings           course details, generation defaults, danger zone
-/workspaces/:id/edit               → redirects to /settings
-/settings                          → redirects to /dashboard
-/profile                           account
+/courses/:id                       course workspace (chat-first)
+/courses/:id/progress              progress and topic mastery
+/courses/:id/settings              course details, generation defaults, danger zone
+/account                           who you are, and your level
+/account/background                profile knowledge
+/account/ai                        model choice, and credits when metered
+/account/appearance                theme
 /admin                             admin (rail entry hidden unless role === 'admin')
+
+  -- kept so older links still resolve --
+/workspaces/:id/**                 -> /courses/:id/**
+/courses/:id/edit                  -> /courses/:id/settings
+/profile                           -> /account
+/settings                          -> /dashboard
 ```
 
 The shell is a left rail (bottom bar under 48rem). Every page renders its own
@@ -127,6 +134,11 @@ The shell is a left rail (bottom bar under 48rem). Every page renders its own
 and carries `aria-current="page"`. A course-scoped page passes `courseId` so the header
 carries that course's light — **a student must never lose track of which course they are
 operating in.**
+
+The URL says the same word the screen says. Everything visible calls these courses, so the
+route is `/courses/:id`, not the `/workspaces/` the old code used. Account is four
+addressable sections rather than one long scroll, because identity, background, model
+choice and theme are four unrelated things and each deserves its own link.
 
 ## The workspace
 
@@ -152,6 +164,23 @@ Use `describeGenerationError()` and `isInsufficientCredits()` from `src/api/erro
 since retrieval landed) and `context_truncated` (the budget dropped a passage retrieval had
 already selected — an actual loss) mean different things and must never be collapsed into
 one message.
+
+## Generation failures
+
+Every AI route sends `X-Error-Code`, and that header — not the status — is the contract.
+`no_relevant_material` and `material_not_indexed` both return **409**, so branching on the
+status merges two failures that need different words and different next steps: one is the
+reader's topic being too narrow, the other is an indexing gap on our side that a retry can
+clear.
+
+`describeGenerationError` in `src/api/errors.ts` is the single mapper. Each known code owns
+its title, its message, whether a retry can help, and which remedy to offer
+(`broaden_topic`, `see_sources`, `shorten`, or none). `GenerationError` renders those
+remedies as real buttons. An unknown code keeps whatever the server said rather than
+replacing it with a generic apology.
+
+Where credits are involved, the message says so: a provider that could not be reached says
+nothing was charged, and an unreadable response says the credit was refunded.
 
 ## Credits
 

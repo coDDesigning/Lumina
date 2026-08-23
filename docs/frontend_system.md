@@ -130,7 +130,10 @@ Rules that are not negotiable:
   ── everything below is inside ProtectedRoute > AppShell ──
 /dashboard                         course list
 /courses/:id                       course workspace (chat-first)
-/courses/:id/progress              progress and topic mastery
+/courses/:id/guides/:outputId      one study guide, its own page
+/courses/:id/practice/:quizId      taking a quiz
+/courses/:id/practice/:quizId/attempts/:attemptId   what you scored
+/courses/:id/progress              progress, topic mastery, quizzes to retake
 /courses/:id/settings              course details, generation defaults, danger zone
 /account                           who you are, and your level
 /account/background                profile knowledge
@@ -150,6 +153,12 @@ The shell is a left rail (bottom bar under 48rem). Every page renders its own
 and carries `aria-current="page"`. A course-scoped page passes `courseId` so the header
 carries that course's light — **a student must never lose track of which course they are
 operating in.**
+
+A generated artifact has an address. Setting one up still happens in a dialog, but the
+moment it exists the reader is sent to its own page — so a study guide can be linked, a quiz
+attempt survives a refresh, and the back button behaves. Reviewing a past attempt
+question by question is the one thing still missing, because the backend serves an attempt
+only in the response to handing it in.
 
 The URL says the same word the screen says. Everything visible calls these courses, so the
 route is `/courses/:id`, not the `/workspaces/` the old code used. Account is four
@@ -258,6 +267,28 @@ These are product rules, not style preferences.
 - **A disabled control explains itself in text.** A `title` on a disabled button reaches
   nobody: disabled buttons are not focusable and the tooltip is not announced. When delete
   is unavailable because the source is still being read, that sentence is on the screen.
+
+## Looking at it in a browser
+
+Tests and contrast maths do not catch a bounced deep link or a chevron tiling across a
+focused select. Two throwaway tools under `.user/scripts/` make a real browser cheap:
+
+- `stub_api.py` answers on :8000 with the shapes the client expects, so every authenticated
+  screen renders without a database, a worker or a model provider — including the states a
+  real backend will not reproduce on demand.
+- `shoot.mjs` drives headless Chrome over the DevTools Protocol with no dependencies at all,
+  seeds an auth token, captures each route full height, and prints anything the page logged
+  as an error.
+
+```
+python .user/scripts/stub_api.py &
+npm --prefix frontend run dev &
+node .user/scripts/shoot.mjs /tmp/ui 1440 /dashboard /courses/1 /courses/1/progress
+```
+
+Neither is used by the app, the tests or CI. Three real defects came out of the first two
+runs: a course link opened cold bounced to the dashboard, a focused select tiled its chevron
+across the field, and one malformed poll response took the whole workspace down.
 
 ## What the test suite enforces
 

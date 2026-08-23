@@ -200,7 +200,6 @@ export function ProgressView({
         </section>
       ) : null}
 
-      {actions ? <div className={styles.actions}>{actions}</div> : null}
     </div>
   );
 }

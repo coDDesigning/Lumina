@@ -48,6 +48,19 @@
   white-space: nowrap;
 }
 
+.empty {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  padding: var(--space-2) 0;
+}
+
+.loadingGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+
 @media (max-width: 40rem) {
   .row {
     grid-template-columns: minmax(0, 1fr);

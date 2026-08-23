@@ -48,7 +48,7 @@ nothing defines, because an undefined `var()` fails silently in CSS.
 `src/styles/tokens.css` is the single source of colour, type, space, radius, elevation,
 z-index, breakpoint and motion.
 
-**Components consume roles, never literals.** There is no `#7c4ddb` in a component file;
+**Components consume roles, never literals.** There is no `#1a56c4` in a component file;
 there is `var(--accent)`. Colour roles are semantic — `--surface`, `--surface-raised`,
 `--surface-sunken`, `--text`, `--text-muted`, `--text-subtle`, `--border`, `--accent`,
 `--success`, `--warning`, `--destructive`, `--processing`, `--info` — each status role
@@ -66,6 +66,22 @@ add a colour to a component that is not a token.
 
 Motion tokens zero out under `prefers-reduced-motion`, so a transition written with
 `var(--duration-fast)` is automatically respectful.
+
+**The shapes are square on purpose.** The radius scale runs 2/3/5/8px, not the half-inch
+pillows a component library ships with. `--radius-full` is reserved for things that are
+genuinely circular — a course dot, a bullet, a switch track — and using it on a chip or a
+bar puts the interface back where it started. Surfaces are drawn with a hairline border and
+almost no shadow, because an edge reads as deliberate where a glow reads as generic.
+
+**Labels are not shouted.** No `text-transform: uppercase`, and `--tracking-label` is
+0.01em. A wall of wide-tracked capitals is the single loudest signal that nobody chose the
+typography.
+
+Two tests hold the palette to account: `darkTokens.test.ts` proves the two dark blocks
+define exactly the same tokens with exactly the same values, and `contrast.test.ts`
+computes WCAG ratios for every text-on-surface and status-on-subtle pair in both themes —
+body text at 4.5:1, supporting text at 3:1. Three of the light status colours were too pale
+to pass when it was first written, which is precisely the kind of thing an eye lets through.
 
 ## The course light
 

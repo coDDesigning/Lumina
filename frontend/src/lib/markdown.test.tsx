@@ -133,4 +133,49 @@ describe('Markdown', () => {
 
     expect(container.textContent).toBe('');
   });
+
+  it.each([
+    ['c++', 'int main(){}'],
+    ['c#', 'class A {}'],
+    ['objective-c', '@interface A @end'],
+    ['js title="example.js"', 'const a = 1;'],
+    ['', 'plain'],
+  ])('renders a fence whose info string is %s without hanging', (info, body) => {
+    const { container } = render(
+      <Markdown text={'Here:\n```' + info + '\n' + body + '\n```'} />,
+    );
+
+    expect(container.querySelector('pre')?.textContent).toBe(body);
+    expect(container.textContent).not.toContain('```');
+  });
+
+  it('ends even when a fence is never closed', () => {
+    const { container } = render(<Markdown text={'Here:\n```c++\nint main(){}'} />);
+
+    expect(container.querySelector('pre')?.textContent).toBe('int main(){}');
+  });
+
+  it('leaves a snake_case identifier exactly as written', () => {
+    const { container } = render(
+      <Markdown text="Tell no_relevant_material and material_not_indexed apart." />,
+    );
+
+    expect(container.querySelector('em')).toBeNull();
+    expect(container.textContent).toBe(
+      'Tell no_relevant_material and material_not_indexed apart.',
+    );
+  });
+
+  it('still italicises a word wrapped in underscores on its own', () => {
+    const { container } = render(<Markdown text="This is _subtle_ emphasis." />);
+
+    expect(container.querySelector('em')).toHaveTextContent('subtle');
+  });
+
+  it('leaves a snake_case identifier alone inside a bold run too', () => {
+    const { container } = render(<Markdown text="Use __graded_count__ not total_questions." />);
+
+    expect(container.querySelector('strong')).toHaveTextContent('graded_count');
+    expect(container.textContent).toContain('total_questions');
+  });
 });

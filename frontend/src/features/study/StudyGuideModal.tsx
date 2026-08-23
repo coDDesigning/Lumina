@@ -26,6 +26,7 @@ import { ALL_TOPICS, topicOptions } from './topicOptions';
 import styles from './StudyGuideModal.module.css';
 
 export interface StudyGuideModalProps {
+  onGenerated?: (outputId: number) => void;
   courseId: number;
   courseName: string;
   topics: string[];
@@ -69,6 +70,7 @@ export function StudyGuideModal({
   topics,
   readyDocumentCount,
   onClose,
+  onGenerated,
 }: StudyGuideModalProps) {
   const [summaryFormat, setSummaryFormat] = useState<SummaryFormat>('comprehensive');
   const [topicFocus, setTopicFocus] = useState(ALL_TOPICS);
@@ -168,6 +170,9 @@ export function StudyGuideModal({
       lastResultRef.current = result;
       setState({ phase: 'success', result });
       void refresh();
+      if (onGenerated && result.generated_output_id) {
+        onGenerated(result.generated_output_id);
+      }
     } catch (caught) {
       if (controller.signal.aborted || isAbortError(caught)) {
         return;
@@ -190,6 +195,7 @@ export function StudyGuideModal({
     summaryLength,
     summaryMode,
     topicFocus,
+    onGenerated,
   ]);
 
   const handleCancel = useCallback(() => {

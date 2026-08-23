@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { ReactElement } from 'react'
 import { Navigate, Route, Routes, useParams } from 'react-router-dom'
 import type { Workspace, WorkspaceDraft } from './data/workspaces'
 import CourseSettingsPage from './features/courses/CourseSettingsPage'
 import CoursesPage from './features/courses/CoursesPage'
 import ProgressPage from './features/workspace/ProgressPage'
+import GuidePage from './features/study/GuidePage'
+import QuizAttemptPage from './features/study/quiz/QuizAttemptPage'
+import QuizResultsPage from './features/study/quiz/QuizResultsPage'
 import WorkspacePage from './features/workspace/WorkspacePage'
 import AccountLayout from './features/account/AccountLayout'
 import AccountYouPage from './features/account/AccountYouPage'
@@ -64,6 +68,24 @@ function WorkspaceRoute({ workspaces, isLoading, onSelect, onUpdateProgress }: W
       onUpdateProgress={onUpdateProgress}
     />
   )
+}
+
+function CourseScopedRoute({
+  workspaces,
+  isLoading,
+  onSelect,
+  render,
+}: WorkspaceRouteProps & { render: (workspace: Workspace) => ReactElement }) {
+  const { courseId } = useParams()
+  const workspace = workspaces.find(({ id }) => id === courseId)
+
+  useEffect(() => {
+    if (workspace) onSelect(workspace.id)
+  }, [onSelect, workspace])
+
+  if (isLoading) return <WorkspaceLoading />
+  if (!workspace) return <Navigate to="/" replace />
+  return render(workspace)
 }
 
 function ProgressRoute({ workspaces, isLoading, onSelect }: WorkspaceRouteProps) {
@@ -373,6 +395,39 @@ function App() {
               workspaces={workspaces}
               isLoading={!haveWorkspacesArrived}
               onSelect={selectWorkspace}
+            />
+          }
+        />
+        <Route
+          path="/courses/:courseId/guides/:outputId"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              isLoading={!haveWorkspacesArrived}
+              onSelect={selectWorkspace}
+              render={(workspace) => <GuidePage workspace={workspace} />}
+            />
+          }
+        />
+        <Route
+          path="/courses/:courseId/practice/:quizId/attempts/:attemptId"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              isLoading={!haveWorkspacesArrived}
+              onSelect={selectWorkspace}
+              render={(workspace) => <QuizResultsPage workspace={workspace} />}
+            />
+          }
+        />
+        <Route
+          path="/courses/:courseId/practice/:quizId"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              isLoading={!haveWorkspacesArrived}
+              onSelect={selectWorkspace}
+              render={(workspace) => <QuizAttemptPage workspace={workspace} />}
             />
           }
         />

@@ -1,7 +1,8 @@
 import { Coins } from 'lucide-react';
 import { useCredits } from '../../context/CreditContext';
 import type { CreditSource } from '../../api/types';
-import './credits.css';
+import { cx } from '@/lib/cx';
+import styles from './CreditBalance.module.css';
 
 const LOW_BALANCE_THRESHOLD = 5;
 
@@ -25,7 +26,7 @@ function CreditBalance({ source, className }: CreditBalanceProps) {
     if (isLoading || error) {
       return (
         <span
-          className={`credit-chip is-unknown${className ? ` ${className}` : ''}`}
+          className={cx(styles.chip, styles.unknown, className)}
           aria-label={error ?? 'Loading credit balance'}
         >
           <Coins aria-hidden="true" />
@@ -39,14 +40,14 @@ function CreditBalance({ source, className }: CreditBalanceProps) {
   const credits = status?.credits ?? 0;
   const exhausted = source ? !canAfford(source) : credits <= 0;
   const low = !exhausted && credits <= LOW_BALANCE_THRESHOLD;
-  const state = exhausted ? ' is-empty' : low ? ' is-low' : '';
-
   return (
-    <span className={`credit-chip${state}${className ? ` ${className}` : ''}`}>
+    <span
+      className={cx(styles.chip, exhausted && styles.empty, low && styles.low, className)}
+    >
       <Coins aria-hidden="true" />
       <span>
         {credits}
-        <span className="credit-chip-label"> credits</span>
+        <span className={styles.unit}> credits</span>
       </span>
     </span>
   );

@@ -4,7 +4,9 @@ import type {
   ProcessingStage,
 } from '../../api/types';
 
-export type BadgeTone = 'neutral' | 'info' | 'success' | 'danger';
+import type { BadgeTone } from '@/ui/Badge';
+
+export type { BadgeTone };
 
 const STATUS_LABELS: Record<DocumentStatus, string> = {
   uploaded: 'Queued',
@@ -16,10 +18,10 @@ const STATUS_LABELS: Record<DocumentStatus, string> = {
 
 const STATUS_TONES: Record<DocumentStatus, BadgeTone> = {
   uploaded: 'neutral',
-  processing: 'info',
+  processing: 'processing',
   ready: 'success',
-  failed: 'danger',
-  deleting: 'neutral',
+  failed: 'destructive',
+  deleting: 'warning',
 };
 
 const STAGE_LABELS: Record<ProcessingStage, string> = {

@@ -2,8 +2,8 @@
   display: grid;
   place-items: center;
   border-radius: var(--radius-lg);
-  background: linear-gradient(150deg, #9b6ff0, #6b3fd0);
-  color: #ffffff;
+  background: linear-gradient(150deg, var(--brand-from), var(--brand-to));
+  color: var(--brand-ink);
   font-family: var(--font-display);
   font-weight: var(--weight-bold);
   letter-spacing: -0.02em;

@@ -2,7 +2,9 @@ import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { useCredits } from '../../context/CreditContext';
 import type { CreditSource } from '../../api/types';
-import './credits.css';
+import { cx } from '@/lib/cx';
+import { Button } from '@/ui/Button';
+import styles from './CreditExhaustedNotice.module.css';
 
 type CreditExhaustedNoticeProps = {
   source: CreditSource;
@@ -54,17 +56,16 @@ function CreditExhaustedNotice({
   const monthlyGrant = status?.monthly_grant ?? null;
 
   return (
-    <div
-      className={`credit-notice${className ? ` ${className}` : ''}`}
-      role="alert"
-    >
-      <h4>You don&apos;t have enough credits to generate {action}.</h4>
-      <p>
+    <div className={cx(styles.notice, className)} role="alert">
+      <h4 className={styles.heading}>
+        You don&apos;t have enough credits to generate {action}.
+      </h4>
+      <p className={styles.body}>
         {cost !== null
           ? `This costs ${cost} ${cost === 1 ? 'credit' : 'credits'} and you have ${balance} left.`
           : `You have ${balance} credits left.`}
       </p>
-      <ul>
+      <ul className={styles.routes}>
         <li>
           {grantDate
             ? `Your credits refresh on ${grantDate}${
@@ -77,16 +78,16 @@ function CreditExhaustedNotice({
           account straight away.
         </li>
       </ul>
-      <div className="credit-notice-actions">
-        <button
-          type="button"
-          className="credit-refresh-button"
-          onClick={handleRefresh}
-          disabled={refreshing}
+      <div className={styles.actions}>
+        <Button
+          size="sm"
+          onClick={() => void handleRefresh()}
+          isLoading={refreshing}
+          loadingLabel="Refreshing your balance"
+          icon={<RefreshCw aria-hidden="true" />}
         >
-          <RefreshCw aria-hidden="true" />
-          {refreshing ? 'Refreshing…' : 'Refresh balance'}
-        </button>
+          {refreshing ? 'Refreshing' : 'Refresh balance'}
+        </Button>
       </div>
     </div>
   );

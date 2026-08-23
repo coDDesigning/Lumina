@@ -280,9 +280,7 @@ describe('Workspace conversations', () => {
 
     renderWorkspace();
     await screen.findByRole('button', { name: 'Add Sources' });
-    expect(
-      screen.getByRole('button', { name: 'Made for you' }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/^Made for you/)).toBeInTheDocument();
 
     await userEvent.click(
       screen.getByRole('button', { name: 'Past threads' }),

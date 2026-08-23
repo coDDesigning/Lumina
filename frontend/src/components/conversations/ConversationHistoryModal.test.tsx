@@ -121,7 +121,7 @@ describe('ConversationHistoryModal', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Close conversation history' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus();
     await userEvent.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledOnce();
 

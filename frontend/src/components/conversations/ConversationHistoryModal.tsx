@@ -6,7 +6,6 @@ import {
   MessageCircle,
   MessagesSquare,
   UserRound,
-  X,
 } from 'lucide-react';
 import { conversationsAPI } from '../../api/conversations';
 import { describeError, isAbortError } from '../../api/errors';
@@ -15,6 +14,7 @@ import type {
   ConversationSummary,
   ConversationType,
 } from '../../api/types';
+import { Dialog } from '@/ui/Dialog';
 import './conversations.css';
 
 interface ConversationHistoryModalProps {
@@ -57,45 +57,7 @@ export function ConversationHistoryModal({
   const [detailState, setDetailState] = useState<DetailState>({ phase: 'empty' });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const detailAbortRef = useRef<AbortController | null>(null);
-  const dialogRef = useRef<HTMLElement | null>(null);
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    closeButtonRef.current?.focus();
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key !== 'Tab' || !dialogRef.current) return;
-
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      );
-      if (focusable.length === 0) return;
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      previouslyFocused?.focus();
-    };
-  }, [onClose]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -148,31 +110,14 @@ export function ConversationHistoryModal({
   };
 
   return (
-    <div className="conversation-modal-backdrop">
-      <section
-        ref={dialogRef}
-        className="conversation-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="conversation-history-title"
-      >
-        <header className="conversation-modal-header">
-          <div>
-            <h2 id="conversation-history-title">
-              <History aria-hidden="true" />
-              Conversation history
-            </h2>
-            <p>Course Q&A and AI Tutor threads for {courseName}</p>
-          </div>
-          <button
-            ref={closeButtonRef}
-            type="button"
-            onClick={onClose}
-            aria-label="Close conversation history"
-          >
-            <X aria-hidden="true" />
-          </button>
-        </header>
+    <Dialog
+      open
+      onClose={onClose}
+      size="xl"
+      title="Past threads"
+      description={`Course Q&A and AI Tutor threads for ${courseName}`}
+      mark={<History aria-hidden="true" />}
+    >
 
         <div className="conversation-history-layout">
           <aside className="conversation-history-sidebar" aria-label="Saved conversations">
@@ -303,7 +248,6 @@ export function ConversationHistoryModal({
             ) : null}
           </div>
         </div>
-      </section>
-    </div>
+    </Dialog>
   );
 }

@@ -354,4 +354,47 @@ describe('AccountPage credits', () => {
     expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument()
     expect(screen.getByLabelText('Theme')).toBeInTheDocument()
   })
+
+  it('takes several notes at once, one to a line', async () => {
+    const user = userEvent.setup()
+    const importBulk = vi.mocked(profileKnowledgeAPI.importBulk)
+    importBulk.mockResolvedValue([
+      {
+        id: 9,
+        user_id: 1,
+        topic: 'How exams look',
+        detail: 'Two-hour written papers.',
+        created_at: '2026-08-23T09:00:00Z',
+        updated_at: '2026-08-23T09:00:00Z',
+      },
+    ])
+
+    renderAccountPage('/account/background')
+    await user.click(await screen.findByRole('button', { name: 'Paste several' }))
+
+    await user.type(
+      screen.getByLabelText('Your notes'),
+      'How exams look: Two-hour written papers.{enter}Grading: Partial credit for method.',
+    )
+    await user.click(screen.getByRole('button', { name: /Save 2 notes/ }))
+
+    await waitFor(() =>
+      expect(importBulk).toHaveBeenCalledWith({
+        items: [
+          { topic: 'How exams look', detail: 'Two-hour written papers.' },
+          { topic: 'Grading', detail: 'Partial credit for method.' },
+        ],
+      }),
+    )
+  })
+
+  it('will not save a paste that has no topic and detail on any line', async () => {
+    const user = userEvent.setup()
+
+    renderAccountPage('/account/background')
+    await user.click(await screen.findByRole('button', { name: 'Paste several' }))
+    await user.type(screen.getByLabelText('Your notes'), 'just some prose with no colon')
+
+    expect(screen.getByRole('button', { name: /Save/ })).toBeDisabled()
+  })
 })

@@ -17,8 +17,29 @@ type Draft = { topic: string; detail: string };
 
 const EMPTY_DRAFT: Draft = { topic: '', detail: '' };
 
+function parseImport(raw: string): { topic: string; detail: string }[] {
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const split = line.indexOf(':');
+      if (split <= 0) {
+        return null;
+      }
+      const topic = line.slice(0, split).trim();
+      const detail = line.slice(split + 1).trim();
+      return topic && detail ? { topic, detail } : null;
+    })
+    .filter((entry): entry is { topic: string; detail: string } => entry !== null);
+}
+
 export function ProfileKnowledgeSection() {
   const [items, setItems] = useState<ProfileKnowledgeItem[]>([]);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importError, setImportError] = useState<string | null>(null);
+  const [isSavingImport, setIsSavingImport] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -48,6 +69,26 @@ export function ProfileKnowledgeSection() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function handleImport() {
+    const parsed = parseImport(importText);
+    if (parsed.length === 0) {
+      return;
+    }
+    setIsSavingImport(true);
+    setImportError(null);
+    try {
+      const created = await profileKnowledgeAPI.importBulk({ items: parsed });
+      setItems((previous) => [...created, ...previous]);
+      setImportText('');
+      setIsImporting(false);
+      setNotice(`${created.length} ${created.length === 1 ? 'note' : 'notes'} added.`);
+    } catch (caught) {
+      setImportError(describeError(caught, 'Those notes could not be saved.').message);
+    } finally {
+      setIsSavingImport(false);
+    }
+  }
 
   function openCompose() {
     setEditing(null);
@@ -121,9 +162,12 @@ export function ProfileKnowledgeSection() {
               : ''}
           </p>
         </div>
-        <Button icon={<Plus aria-hidden="true" />} onClick={openCompose}>
-          Add a note
-        </Button>
+        <div className={styles.headActions}>
+          <Button onClick={() => setIsImporting(true)}>Paste several</Button>
+          <Button variant="primary" icon={<Plus aria-hidden="true" />} onClick={openCompose}>
+            Add a note
+          </Button>
+        </div>
       </div>
 
       {notice ? (
@@ -256,6 +300,44 @@ export function ProfileKnowledgeSection() {
           </Alert>
         ) : null}
       </ConfirmDialog>
+
+      <Dialog
+        open={isImporting}
+        onClose={() => {
+          setIsImporting(false);
+          setImportError(null);
+        }}
+        title="Paste several notes"
+        description="One note a line, as Topic: detail."
+        footer={
+          <>
+            <Button onClick={() => setIsImporting(false)}>Cancel</Button>
+            <Button
+              variant="primary"
+              onClick={() => void handleImport()}
+              isLoading={isSavingImport}
+              loadingLabel="Saving your notes"
+              disabled={parseImport(importText).length === 0}
+            >
+              Save {parseImport(importText).length || ''} notes
+            </Button>
+          </>
+        }
+        spreadFooter
+      >
+        {importError ? (
+          <Alert tone="destructive" live="alert">
+            {importError}
+          </Alert>
+        ) : null}
+        <Textarea
+          label="Your notes"
+          hint="For example — How exams usually look: two-hour written papers, mostly derivations."
+          rows={9}
+          value={importText}
+          onChange={(event) => setImportText(event.target.value)}
+        />
+      </Dialog>
 
       <p className={styles.footnote}>
         These notes belong to you, not to any course. Deleting a course leaves them untouched, and

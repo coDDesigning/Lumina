@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { conversationsAPI } from '@/api/conversations';
@@ -6,7 +6,7 @@ import type { ConversationDetail, ConversationSummary } from '@/api/types';
 import { ConversationHistoryModal } from './ConversationHistoryModal';
 
 vi.mock('@/api/conversations', () => ({
-  conversationsAPI: { list: vi.fn(), get: vi.fn() },
+  conversationsAPI: { list: vi.fn(), get: vi.fn(), delete: vi.fn() },
 }));
 
 const mockList = vi.mocked(conversationsAPI.list);
@@ -149,5 +149,33 @@ describe('ConversationHistoryModal', () => {
     expect(
       screen.queryByRole('button', { name: 'Pick this up' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('removes a thread once, and only after asking', async () => {
+    const remove = vi.mocked(conversationsAPI.delete);
+    remove.mockResolvedValue({ id: 18 });
+
+    mockGet.mockResolvedValue(TUTOR_DETAIL);
+    render(
+      <ConversationHistoryModal
+        courseId={7}
+        courseName="Algorithms"
+        onClose={vi.fn()}
+        onResume={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: /Tutoring 18/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+
+    expect(screen.getByText(/deleted for good/i)).toBeInTheDocument();
+    expect(remove).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove it' }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(7, 18));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /Tutoring 18/ })).toBeNull(),
+    );
   });
 });

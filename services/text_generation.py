@@ -19,12 +19,24 @@ from tenacity import (
 from backend.app.config import (
     AI_PROVIDER_GEMINI,
     AI_PROVIDER_OLLAMA,
+    DEFAULT_GEMINI_MODEL,
     settings,
 )
 from schemas.ai_usage import ErrorCategory
 from utils.exceptions import BadRequestException
 
 logger = logging.getLogger(__name__)
+_shared_http_client: httpx.Client | None = None
+_shared_http_client_lock = threading.Lock()
+
+
+def _get_shared_http_client() -> httpx.Client:
+    global _shared_http_client
+
+    with _shared_http_client_lock:
+        if _shared_http_client is None:
+            _shared_http_client = httpx.Client()
+        return _shared_http_client
 
 
 @dataclass(frozen=True)
@@ -51,6 +63,21 @@ class TextGenerationProvider(Protocol):
     def generate_json_with_metadata(
         self, prompt: str
     ) -> tuple[dict[str, object], GenerationMetadata]: ...
+
+
+def _model_catalog_entry(model_id: str) -> dict[str, object] | None:
+    for model in get_available_models():
+        if model["id"] == model_id:
+            return model
+    return None
+
+
+class UnavailableModelError(ValueError):
+    """Requested AI model is not available in the deployment catalog."""
+
+
+class IncompatibleModelError(ValueError):
+    """Requested AI model does not support the required capability."""
 
 
 class TextGenerationError(RuntimeError):
@@ -209,7 +236,7 @@ def _parse_json_object(text: str, provider_label: str) -> dict[str, object]:
 
 
 class GeminiTextGenerationProvider:
-    MODEL = "gemini-3.6-flash"
+    MODEL = DEFAULT_GEMINI_MODEL
     PROVIDER_NAME = "gemini"
 
     def __init__(
@@ -221,6 +248,8 @@ class GeminiTextGenerationProvider:
         key = api_key or settings.gemini_api_key
         if not key:
             raise TextGenerationAuthError("GEMINI_API_KEY is not configured.")
+
+        self._model = model or self.MODEL
 
         timeout_sec = (
             timeout_seconds
@@ -328,22 +357,6 @@ class GeminiTextGenerationProvider:
     def generate_json(self, prompt: str) -> dict[str, object]:
         result, _ = self.generate_json_with_metadata(prompt)
         return result
-
-
-_shared_http_client: httpx.Client | None = None
-
-
-def _get_shared_http_client() -> httpx.Client:
-    """Return the process-wide HTTP client used for self-hosted providers.
-
-    A provider instance is built per request, so creating a client per
-    provider would leak one connection pool per generation. httpx clients
-    are safe to share across threads.
-    """
-    global _shared_http_client
-    if _shared_http_client is None:
-        _shared_http_client = httpx.Client()
-    return _shared_http_client
 
 
 class OllamaTextGenerationProvider:
@@ -666,7 +679,6 @@ class ReliableTextGenerationProvider:
 
 
 def get_available_models() -> list[dict[str, object]]:
-    """Return the catalog of models actually available under the current deployment."""
     primary_name = settings.ai_provider
     provider_names = [primary_name]
 
@@ -676,10 +688,7 @@ def get_available_models() -> list[dict[str, object]]:
             for item in settings.ai_fallback_providers.split(",")
             if item.strip()
         ):
-            if fallback_token not in provider_names and fallback_token in (
-                AI_PROVIDER_GEMINI,
-                AI_PROVIDER_OLLAMA,
-            ):
+            if fallback_token not in provider_names:
                 provider_names.append(fallback_token)
 
     standard_capabilities = [
@@ -692,39 +701,44 @@ def get_available_models() -> list[dict[str, object]]:
     ]
 
     models: list[dict[str, object]] = []
-    for prov in provider_names:
-        if prov == AI_PROVIDER_GEMINI:
-            model_name = GeminiTextGenerationProvider.MODEL
+
+    for provider in provider_names:
+        provider_models = settings.ai_model_catalog.get(provider, [])
+
+        for index, entry in enumerate(provider_models):
+            model_name = str(entry["model"])
+            is_json = bool(entry.get("json_mode", True))
+            context_win = int(entry.get("context_window", 8192))
+            has_vision = bool(entry.get("vision", False))
+            is_local = provider == AI_PROVIDER_OLLAMA
+
+            cost_hint = (
+                "Local execution · Unmetered" if is_local else "Metered (1-2 credits)"
+            )
+            description = (
+                f"Self-hosted local model via Ollama ({model_name}) · Private execution"
+                if is_local
+                else f"Google Gemini ({model_name}) · Fast, high-context instruction & JSON generation"
+            )
+
             models.append(
                 {
-                    "id": f"{prov}:{model_name}",
-                    "provider": prov,
+                    "id": f"{provider}:{model_name}",
+                    "provider": provider,
                     "model": model_name,
-                    "display_name": f"Gemini ({model_name})",
-                    "is_default": prov == primary_name,
-                    "cost_hint": "Metered (1-2 credits)",
+                    "display_name": f"{provider.title()} ({model_name})",
+                    "is_default": provider == primary_name and index == 0,
+                    "cost_hint": cost_hint,
                     "capabilities": list(standard_capabilities),
-                    "description": "Google Gemini 3.6 Flash · Fast, high-context instruction & JSON generation",
-                    "is_local": False,
-                    "supports_json": True,
+                    "description": description,
+                    "is_local": is_local,
+                    "supports_json": is_json,
+                    "json_mode": is_json,
+                    "context_window": context_win,
+                    "vision": has_vision,
                 }
             )
-        elif prov == AI_PROVIDER_OLLAMA:
-            model_name = settings.ollama_model
-            models.append(
-                {
-                    "id": f"{prov}:{model_name}",
-                    "provider": prov,
-                    "model": model_name,
-                    "display_name": f"Ollama ({model_name})",
-                    "is_default": prov == primary_name,
-                    "cost_hint": "Local execution · Unmetered",
-                    "capabilities": list(standard_capabilities),
-                    "description": f"Self-hosted local model via Ollama ({model_name}) · Private execution",
-                    "is_local": True,
-                    "supports_json": True,
-                }
-            )
+
     return models
 
 
@@ -734,31 +748,30 @@ def resolve_effective_model(
     required_capability: str | None = None,
 ) -> str:
     """Resolve the effective model using precedence rule:
-    1. Explicit request override (if valid in catalog)
-    2. User preferred model (if valid in catalog)
+    1. Explicit request override
+    2. User preferred model
     3. Deployment default
 
     Optionally validates that the resolved model supports ``required_capability``.
     """
     catalog = get_available_models()
     catalog_by_id = {m["id"]: m for m in catalog}
+    valid_ids = set(catalog_by_id.keys())
 
-    resolved_id: str | None = None
-
-    if request_model and request_model in catalog_by_id:
+    if request_model:
+        if request_model not in valid_ids:
+            raise UnavailableModelError("Requested AI model is not available.")
         if required_capability:
             caps = catalog_by_id[request_model].get("capabilities") or []
             if required_capability not in caps:
                 raise BadRequestException(
                     f"Model '{request_model}' does not support '{required_capability}' task."
                 )
-        resolved_id = request_model
+        return request_model
 
-    if (
-        not resolved_id
-        and user_preferred_model
-        and user_preferred_model in catalog_by_id
-    ):
+    resolved_id: str | None = None
+
+    if user_preferred_model and user_preferred_model in catalog_by_id:
         if not required_capability or required_capability in (
             catalog_by_id[user_preferred_model].get("capabilities") or []
         ):
@@ -793,23 +806,21 @@ def resolve_effective_model(
 
 
 def _instantiate_provider(
-    provider_name: str, model_name: str | None = None
+    provider_name: str,
+    model_name: str | None = None,
 ) -> TextGenerationProvider:
     clean_name = provider_name.strip().lower()
+
     if clean_name == AI_PROVIDER_GEMINI:
-        if model_name is not None:
-            try:
-                return GeminiTextGenerationProvider(model=model_name)
-            except TypeError:
-                return GeminiTextGenerationProvider()
-        return GeminiTextGenerationProvider()
+        if model_name is None:
+            return GeminiTextGenerationProvider()
+        return GeminiTextGenerationProvider(model=model_name)
+
     if clean_name == AI_PROVIDER_OLLAMA:
-        if model_name is not None:
-            try:
-                return OllamaTextGenerationProvider(model=model_name)
-            except TypeError:
-                return OllamaTextGenerationProvider()
-        return OllamaTextGenerationProvider()
+        if model_name is None:
+            return OllamaTextGenerationProvider()
+        return OllamaTextGenerationProvider(model=model_name)
+
     raise TextGenerationError(
         f"Text generation provider '{clean_name}' is not implemented.",
         error_category=ErrorCategory.PROVIDER_ERROR,
@@ -818,6 +829,8 @@ def _instantiate_provider(
 
 def get_text_generation_provider(
     effective_model: str | None = None,
+    *,
+    require_json_mode: bool = False,
 ) -> TextGenerationProvider:
     primary_name = settings.ai_provider
     provider_names = [primary_name]
@@ -831,28 +844,33 @@ def get_text_generation_provider(
             if fallback_token not in provider_names:
                 provider_names.append(fallback_token)
 
-    preferred_model_name: str | None = None
-    preferred_provider: str | None = None
+    if effective_model and require_json_mode:
+        model_entry = _model_catalog_entry(effective_model)
+
+        if model_entry is None:
+            raise UnavailableModelError("Requested AI model is not available.")
+
+        if not model_entry["json_mode"]:
+            raise IncompatibleModelError(
+                "Requested AI model does not support JSON mode."
+            )
+
+    selected_provider: str | None = None
+    selected_model: str | None = None
 
     if effective_model:
-        if ":" in effective_model:
-            preferred_provider, preferred_model_name = effective_model.split(":", 1)
-            preferred_provider = preferred_provider.strip().lower()
-        else:
-            preferred_provider = effective_model.strip().lower()
+        selected_provider, selected_model = effective_model.split(":", 1)
+        selected_provider = selected_provider.strip().lower()
 
-        if preferred_provider in provider_names:
-            provider_names.remove(preferred_provider)
-            provider_names.insert(0, preferred_provider)
+        if selected_provider in provider_names:
+            provider_names.remove(selected_provider)
+            provider_names.insert(0, selected_provider)
 
     providers: list[TextGenerationProvider] = []
+
     for name in provider_names:
-        m_name = (
-            preferred_model_name
-            if (preferred_provider and name == preferred_provider)
-            else None
-        )
-        providers.append(_instantiate_provider(name, model_name=m_name))
+        model_override = selected_model if name == selected_provider else None
+        providers.append(_instantiate_provider(name, model_override))
 
     return ReliableTextGenerationProvider(
         providers,

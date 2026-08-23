@@ -61,10 +61,10 @@ def generate_flashcards(
             current_user.preferred_model,
             required_capability="flashcard",
         )
-        try:
-            provider = get_text_generation_provider(effective_model=effective_model)
-        except TypeError:
-            provider = get_text_generation_provider()
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            require_json_mode=True,
+        )
 
         generation = FlashcardService.generate(
             db,

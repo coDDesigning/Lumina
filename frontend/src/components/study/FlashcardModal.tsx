@@ -159,7 +159,7 @@ export function FlashcardModal({
       mark={<Layers aria-hidden="true" />}
     >
 
-        <div className="study-modal-body">
+        <div className="study-modal-content">
           {state.phase === 'idle' && (
             <div className="study-idle-state" style={{ textAlign: 'center', padding: '32px 16px' }}>
               <div style={{ display: 'inline-flex', padding: '16px', background: '#f5f3ff', borderRadius: '50%', marginBottom: '16px', color: '#8b5cf6' }}>

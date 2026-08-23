@@ -217,7 +217,7 @@ export function StudyHistoryModal({
         </Button>
       }
     >
-        <div className="study-modal-body">
+        <div className="study-modal-content">
           {listState.phase === 'loading' ? (
             <div className="study-loading-state">
               <div className="study-pulse-spinner" />

@@ -226,6 +226,86 @@ export function SummaryModal({
   const hasMaterial = readyDocumentCount > 0;
   const guide = result?.study_guide ?? null;
 
+  const modalFooter = (
+    <>
+      {state.phase === 'generating' ? (
+        <button className="secondary-button" type="button" onClick={handleCancel}>
+          Cancel
+        </button>
+      ) : null}
+
+      {state.phase === 'idle' ? (
+        <>
+          <button className="secondary-button" type="button" onClick={onClose}>
+            Close
+          </button>
+          <CreditBalance source="study_guide" />
+          <button
+            className="primary-button"
+            type="button"
+            onClick={handleGenerate}
+            disabled={!hasMaterial || exhausted}
+          >
+            <Sparkles aria-hidden="true" />
+            Generate study guide
+          </button>
+        </>
+      ) : null}
+
+      {state.phase === 'error' ? (
+        <>
+          <button className="secondary-button" type="button" onClick={onClose}>
+            Close
+          </button>
+          <CreditBalance source="study_guide" />
+          <button
+            className="primary-button"
+            type="button"
+            onClick={handleGenerate}
+            disabled={exhausted}
+          >
+            {state.retryable ? 'Try again' : 'Try again later'}
+          </button>
+        </>
+      ) : null}
+
+      {state.phase === 'success' ? (
+        <>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setState({ phase: 'idle' })}
+          >
+            New study guide
+          </button>
+          <CreditBalance source="study_guide" />
+          <div className="summary-footer-actions">
+            <button className="secondary-button" type="button" onClick={handleCopy}>
+              {copyState === 'copied' ? (
+                <Check aria-hidden="true" />
+              ) : (
+                <Copy aria-hidden="true" />
+              )}
+              {copyState === 'copied'
+                ? 'Copied!'
+                : copyState === 'failed'
+                  ? 'Copy failed'
+                  : 'Copy'}
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={handleDownload}
+            >
+              <Download aria-hidden="true" />
+              Download MD
+            </button>
+          </div>
+        </>
+      ) : null}
+    </>
+  );
+
   return (
     <Dialog
       open
@@ -233,10 +313,11 @@ export function SummaryModal({
       size="xl"
       title="Study guide"
       description="Generate clean, high-retention notes from your course sources"
+      footer={modalFooter}
       mark={<Sparkles aria-hidden="true" />}
     >
 
-        <div className="study-modal-body">
+        <div className="study-modal-content">
           {state.phase === 'generating' ? (
             <div className="study-loading-state">
               <div className="study-pulse-spinner" />
@@ -390,83 +471,6 @@ export function SummaryModal({
           ) : null}
         </div>
 
-        <footer className="study-modal-footer">
-          {state.phase === 'generating' ? (
-            <button className="secondary-button" type="button" onClick={handleCancel}>
-              Cancel
-            </button>
-          ) : null}
-
-          {state.phase === 'idle' ? (
-            <>
-              <button className="secondary-button" type="button" onClick={onClose}>
-                Close
-              </button>
-              <CreditBalance source="study_guide" />
-              <button
-                className="primary-button"
-                type="button"
-                onClick={handleGenerate}
-                disabled={!hasMaterial || exhausted}
-              >
-                <Sparkles aria-hidden="true" />
-                Generate study guide
-              </button>
-            </>
-          ) : null}
-
-          {state.phase === 'error' ? (
-            <>
-              <button className="secondary-button" type="button" onClick={onClose}>
-                Close
-              </button>
-              <CreditBalance source="study_guide" />
-              <button
-                className="primary-button"
-                type="button"
-                onClick={handleGenerate}
-                disabled={exhausted}
-              >
-                {state.retryable ? 'Try again' : 'Try again later'}
-              </button>
-            </>
-          ) : null}
-
-          {state.phase === 'success' ? (
-            <>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => setState({ phase: 'idle' })}
-              >
-                New study guide
-              </button>
-              <CreditBalance source="study_guide" />
-              <div className="summary-footer-actions">
-                <button className="secondary-button" type="button" onClick={handleCopy}>
-                  {copyState === 'copied' ? (
-                    <Check aria-hidden="true" />
-                  ) : (
-                    <Copy aria-hidden="true" />
-                  )}
-                  {copyState === 'copied'
-                    ? 'Copied!'
-                    : copyState === 'failed'
-                      ? 'Copy failed'
-                      : 'Copy'}
-                </button>
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={handleDownload}
-                >
-                  <Download aria-hidden="true" />
-                  Download MD
-                </button>
-              </div>
-            </>
-          ) : null}
-        </footer>
     </Dialog>
   );
 }

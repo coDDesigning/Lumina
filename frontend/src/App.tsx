@@ -6,7 +6,7 @@ import CoursesPage from './features/courses/CoursesPage'
 import ProgressPage from './features/workspace/ProgressPage'
 import WorkspacePage from './features/workspace/WorkspacePage'
 import AccountPage from './features/account/AccountPage'
-import AdminPage from './pages/AdminPage'
+import AdminPage from './features/admin/AdminPage'
 import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
 import LandingPage from './features/marketing/LandingPage'
@@ -14,7 +14,7 @@ import { AppShell } from './app/AppShell'
 import { ThemeProvider } from './app/ThemeProvider'
 import { ToastProvider } from './ui/ToastProvider'
 import { ProtectedRoute } from './components/ProtectedRoute'
-import { LoadingSpinner } from './components/LoadingSpinner'
+import { Spinner } from './ui/Spinner'
 import { useAuth } from './context/AuthContext'
 import { coursesAPI } from './api/courses'
 import { progressAPI } from './api/progress'
@@ -36,7 +36,7 @@ const workspaceAccents: Workspace['accent'][] = [
 function WorkspaceLoading() {
   return (
     <div className="route-loading" role="status">
-      <LoadingSpinner size="lg" />
+      <Spinner size="lg" />
       <span className="visually-hidden">Loading course</span>
     </div>
   )

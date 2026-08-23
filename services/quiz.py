@@ -21,7 +21,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.config import settings
-from backend.app.models import Course, CourseSettings, Quiz, QuizQuestion
+from backend.app.models import (
+    Course,
+    CourseSettings,
+    Quiz,
+    QuizAttempt,
+    QuizQuestion,
+)
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.quiz import (
     MULTIPLE_CHOICE_OPTION_COUNT,
@@ -543,19 +549,38 @@ class QuizService:
         return quiz
 
     @staticmethod
-    def list_course_quizzes(db: Session, course_id: int) -> Sequence[tuple[Quiz, int]]:
-        """List an already authorized course's quizzes, newest first, with counts."""
+    def list_course_quizzes(
+        db: Session, course_id: int
+    ) -> Sequence[tuple[Quiz, int, int, float | None, float | None]]:
+        """List an already authorized course's quizzes, newest first, with counts and attempt stats."""
         question_count = (
             select(func.count(QuizQuestion.id))
             .where(QuizQuestion.quiz_id == Quiz.id)
             .scalar_subquery()
         )
+        attempts_count = (
+            select(func.count(QuizAttempt.id))
+            .where(QuizAttempt.quiz_id == Quiz.id)
+            .scalar_subquery()
+        )
+        best_score = (
+            select(func.max(QuizAttempt.score))
+            .where(QuizAttempt.quiz_id == Quiz.id)
+            .scalar_subquery()
+        )
+        last_score = (
+            select(QuizAttempt.score)
+            .where(QuizAttempt.quiz_id == Quiz.id)
+            .order_by(QuizAttempt.created_at.desc(), QuizAttempt.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
         rows = db.execute(
-            select(Quiz, question_count)
+            select(Quiz, question_count, attempts_count, best_score, last_score)
             .where(Quiz.course_id == course_id)
             .order_by(Quiz.created_at.desc(), Quiz.id.desc())
         ).all()
-        return [(row[0], row[1]) for row in rows]
+        return [(row[0], row[1], row[2], row[3], row[4]) for row in rows]
 
     @staticmethod
     def get_course_quiz(db: Session, course_id: int, quiz_id: int) -> Quiz:
@@ -606,12 +631,23 @@ class QuizService:
         )
 
     @classmethod
-    def build_quiz_summary(cls, quiz: Quiz, question_count: int) -> QuizSummary:
+    def build_quiz_summary(
+        cls,
+        quiz: Quiz,
+        question_count: int,
+        *,
+        attempts_count: int = 0,
+        best_score: float | None = None,
+        last_score: float | None = None,
+    ) -> QuizSummary:
         return QuizSummary(
             quiz_id=quiz.id,
             course_id=quiz.course_id,
             title=quiz.title,
             question_count=question_count,
+            attempts_count=attempts_count,
+            best_score=best_score,
+            last_score=last_score,
             created_at=quiz.created_at,
             user_id=quiz.user_id,
             model_used=quiz.model_used,

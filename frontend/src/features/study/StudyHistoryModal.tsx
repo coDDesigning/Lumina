@@ -18,13 +18,19 @@ import {
   MasterDetail,
 } from '@/ui/MasterDetail';
 import { FlashcardDeck } from './FlashcardDeck';
+import { StoredQuiz } from './quiz/StoredQuiz';
 import { StudyGuide } from './StudyGuide';
-import { isRenderableFlashcards, isRenderableStudyGuide } from './storedOutput';
+import {
+  isRenderableFlashcards,
+  isRenderableQuiz,
+  isRenderableStudyGuide,
+} from './storedOutput';
 import styles from './StudyHistoryModal.module.css';
 
 export interface StudyHistoryModalProps {
   courseId: number;
   courseName: string;
+  initialSelectedId?: number | null;
   onClose: () => void;
 }
 
@@ -42,6 +48,7 @@ type DetailState =
 const OUTPUT_TYPE_LABELS: Record<string, string> = {
   study_guide: 'Study guide',
   flashcards: 'Flashcards',
+  quiz: 'Practice quiz',
 };
 
 function outputLabel(output: GeneratedOutputSummary): string {
@@ -66,6 +73,8 @@ function settingBadges(output: GeneratedOutputSummary): string[] {
     settings.summary_length,
     settings.detail_level,
     settings.summary_mode,
+    settings.difficulty,
+    settings.question_count ? `${settings.question_count} questions` : undefined,
   ].filter((value): value is string => Boolean(value));
 }
 
@@ -74,6 +83,10 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
 
   if (output.output_type === 'flashcards' && isRenderableFlashcards(content)) {
     return <FlashcardDeck cards={content.flashcards} />;
+  }
+
+  if (output.output_type === 'quiz' && isRenderableQuiz(content)) {
+    return <StoredQuiz quiz={content} courseId={output.course_id} />;
   }
 
   if (output.output_type !== 'study_guide' || !isRenderableStudyGuide(content)) {
@@ -107,39 +120,12 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
   return <StudyGuide guide={content} context={reporting} />;
 }
 
-export function StudyHistoryModal({ courseId, courseName, onClose }: StudyHistoryModalProps) {
+export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onClose }: StudyHistoryModalProps) {
   const [listState, setListState] = useState<ListState>({ phase: 'loading' });
   const [detailState, setDetailState] = useState<DetailState>({ phase: 'empty' });
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
   const detailAbortRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    generatedOutputsAPI
-      .list(courseId, { signal: controller.signal })
-      .then((outputs) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setListState({ phase: 'ready', outputs });
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted || isAbortError(caught)) {
-          return;
-        }
-        setListState({
-          phase: 'error',
-          message: describeError(caught, 'The history could not be loaded.').message,
-        });
-      });
-
-    return () => {
-      controller.abort();
-      detailAbortRef.current?.abort();
-    };
-  }, [courseId]);
 
   const handleSelect = useCallback(
     (output: GeneratedOutputSummary) => {
@@ -170,6 +156,40 @@ export function StudyHistoryModal({ courseId, courseName, onClose }: StudyHistor
     },
     [courseId],
   );
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    generatedOutputsAPI
+      .list(courseId, { signal: controller.signal })
+      .then((outputs) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setListState({ phase: 'ready', outputs });
+        
+        if (initialSelectedId) {
+          const found = outputs.find((o) => o.id === initialSelectedId);
+          if (found) {
+            handleSelect(found);
+          }
+        }
+      })
+      .catch((caught: unknown) => {
+        if (controller.signal.aborted || isAbortError(caught)) {
+          return;
+        }
+        setListState({
+          phase: 'error',
+          message: describeError(caught, 'The history could not be loaded.').message,
+        });
+      });
+
+    return () => {
+      controller.abort();
+      detailAbortRef.current?.abort();
+    };
+  }, [courseId, initialSelectedId, handleSelect]);
 
   return (
     <Dialog

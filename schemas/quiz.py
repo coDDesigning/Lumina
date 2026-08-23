@@ -388,6 +388,9 @@ class QuizSummary(BaseModel):
     course_id: int
     title: str
     question_count: int
+    attempts_count: int = 0
+    best_score: float | None = None
+    last_score: float | None = None
     created_at: datetime
     user_id: int | None = None
     model_used: str | None = None

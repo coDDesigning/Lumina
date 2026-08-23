@@ -430,6 +430,9 @@ export interface QuizSummary {
   course_id: number;
   title: string;
   question_count: number;
+  attempts_count?: number;
+  best_score?: number | null;
+  last_score?: number | null;
   created_at: string;
   user_id: number | null;
   model_used: string | null;

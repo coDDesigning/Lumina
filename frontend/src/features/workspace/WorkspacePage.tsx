@@ -139,6 +139,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   const [isQuizOpen, setIsQuizOpen] = useState(false);
   const [isFlashcardOpen, setIsFlashcardOpen] = useState(false);
   const [isMadeForYouOpen, setIsMadeForYouOpen] = useState(false);
+  const [madeForYouInitialId, setMadeForYouInitialId] = useState<number | null>(null);
   const [openDeckId, setOpenDeckId] = useState<number | null>(null);
   const [materialKind, setMaterialKind] = useState<DocumentMaterialKind>('unspecified');
   const [isPastThreadsOpen, setIsPastThreadsOpen] = useState(false);
@@ -627,6 +628,11 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                 setOpenDeckId(artifact.outputId);
                 return;
               }
+              if (artifact.kind === 'quiz') {
+                setMadeForYouInitialId(artifact.outputId);
+                setIsMadeForYouOpen(true);
+                return;
+              }
               navigate(`/courses/${workspace.id}/guides/${artifact.outputId}`);
             }}
             onOpenProgress={() => navigate(`/courses/${workspace.id}/progress`)}
@@ -671,7 +677,11 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
         <StudyHistoryModal
           courseId={courseId}
           courseName={workspace.name}
-          onClose={() => setIsMadeForYouOpen(false)}
+          initialSelectedId={madeForYouInitialId}
+          onClose={() => {
+            setIsMadeForYouOpen(false);
+            setMadeForYouInitialId(null);
+          }}
         />
       ) : null}
 

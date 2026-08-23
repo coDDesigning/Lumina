@@ -16,7 +16,7 @@ export interface ArtifactRailProps {
 const VISIBLE = 5;
 
 function titleOf(artifact: CourseArtifact): string {
-  if (artifact.kind === 'quiz') {
+  if (artifact.kind === 'quiz' && 'totalQuestions' in artifact) {
     return `Quiz · ${artifact.totalQuestions} question${artifact.totalQuestions === 1 ? '' : 's'}`;
   }
   if (artifact.topic) {
@@ -28,13 +28,16 @@ function titleOf(artifact: CourseArtifact): string {
   if (artifact.kind === 'flashcards') {
     return 'Flashcards';
   }
+  if (artifact.kind === 'quiz') {
+    return 'Practice quiz';
+  }
   return artifact.outputType.replace(/_/g, ' ');
 }
 
 function metaOf(artifact: CourseArtifact): string {
   const when = relativeDay(artifact.createdAt);
 
-  if (artifact.kind === 'quiz') {
+  if (artifact.kind === 'quiz' && 'score' in artifact) {
     return `Scored ${Math.round(artifact.score * 100)}% · ${when}`;
   }
   if (!artifact.topic) {
@@ -45,6 +48,9 @@ function metaOf(artifact: CourseArtifact): string {
   }
   if (artifact.kind === 'flashcards') {
     return `Flashcards · ${when}`;
+  }
+  if (artifact.kind === 'quiz') {
+    return `Practice quiz · ${when}`;
   }
   return when;
 }
@@ -95,7 +101,9 @@ export function ArtifactRail({
               type="button"
               className={styles.entry}
               onClick={() =>
-                artifact.kind === 'quiz' ? onOpenProgress() : onOpen(artifact)
+                artifact.kind === 'quiz' && 'score' in artifact
+                  ? onOpenProgress()
+                  : onOpen(artifact as SavedArtifact)
               }
             >
               <span className={styles.icon} aria-hidden="true">

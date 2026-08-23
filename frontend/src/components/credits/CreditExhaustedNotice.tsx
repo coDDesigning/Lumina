@@ -8,7 +8,6 @@ import styles from './CreditExhaustedNotice.module.css';
 
 type CreditExhaustedNoticeProps = {
   source: CreditSource;
-  /** What the user was trying to make, e.g. "a study guide". */
   action: string;
   className?: string;
 };
@@ -27,12 +26,6 @@ function formatGrantDate(value: string | null): string | null {
   });
 }
 
-/**
- * Why generation is unavailable, and the recovery routes that actually exist.
- *
- * The two routes are the monthly grant and an administrator change. There is
- * no purchase path, so this must never offer one.
- */
 function CreditExhaustedNotice({
   source,
   action,

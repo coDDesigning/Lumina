@@ -131,7 +131,7 @@ describe('Document Upload UI in Workspace', () => {
 
     await user.upload(fileInput, file);
 
-    expect(mockUploadDocument).toHaveBeenCalledWith(1, file);
+    expect(mockUploadDocument).toHaveBeenCalledWith(1, file, 'unspecified');
     await waitFor(() => {
       expect(screen.getByText('syllabus.pdf')).toBeInTheDocument();
     });
@@ -165,7 +165,10 @@ describe('Document Upload UI in Workspace', () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(screen.getByText('lecture1.pdf is already in this course.')).toBeInTheDocument();
+      expect(
+        screen.getByText(/lecture1\.pdf is already in this course/),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/The original was kept/)).toBeInTheDocument();
     });
   });
 

@@ -52,6 +52,8 @@ import { Spinner } from '@/ui/Spinner';
 import { Tabs } from '@/ui/Tabs';
 import { PromptGeneratorDialog } from './PromptGeneratorDialog';
 import { useNavigate } from 'react-router-dom';
+import type { DocumentMaterialKind } from '@/api/types';
+import { MATERIAL_KIND_CHOICES } from '@/components/documents/documentLabels';
 import { ArtifactRail } from './ArtifactRail';
 import { useCourseArtifacts } from './useCourseArtifacts';
 import { useCourseProgress } from './useCourseProgress';
@@ -98,6 +100,14 @@ const THREAD_COPY: Record<ConversationType, { title: string; body: string }> = {
   },
 };
 
+function uploadedOn(value: string): string | null {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
+  return `on ${new Intl.DateTimeFormat('en', { day: 'numeric', month: 'long' }).format(parsed)}`;
+}
+
 export default function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const { user } = useAuth();
   const {
@@ -127,6 +137,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   const [isQuizOpen, setIsQuizOpen] = useState(false);
   const [isFlashcardOpen, setIsFlashcardOpen] = useState(false);
   const [isMadeForYouOpen, setIsMadeForYouOpen] = useState(false);
+  const [materialKind, setMaterialKind] = useState<DocumentMaterialKind>('unspecified');
   const [isPastThreadsOpen, setIsPastThreadsOpen] = useState(false);
   const [isPromptHelperOpen, setIsPromptHelperOpen] = useState(false);
 
@@ -181,10 +192,15 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
 
     for (const file of files) {
       try {
-        const response = await coursesAPI.uploadDocument(courseId, file);
+        const response = await coursesAPI.uploadDocument(courseId, file, materialKind);
         addUploaded(response.document);
         if (response.duplicate) {
-          notices.push(`${file.name} is already in this course.`);
+          const when = uploadedOn(response.document.created_at);
+          notices.push(
+            when
+              ? `${file.name} is already in this course — you added it ${when}. The original was kept.`
+              : `${file.name} is already in this course. The original was kept.`,
+          );
         }
       } catch (caught) {
         errors.push({ fileName: file.name, message: describeUploadError(caught).message });
@@ -349,6 +365,22 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             >
               Add Sources
             </Button>
+            <label className={styles.kindPicker}>
+              <span className={styles.kindLabel}>Adding as</span>
+              <select
+                className={styles.kindSelect}
+                value={materialKind}
+                onChange={(event) =>
+                  setMaterialKind(event.target.value as DocumentMaterialKind)
+                }
+              >
+                {MATERIAL_KIND_CHOICES.map((choice) => (
+                  <option key={choice.value} value={choice.value}>
+                    {choice.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <input
               ref={fileInputRef}
               className={styles.uploadInput}

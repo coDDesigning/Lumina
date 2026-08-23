@@ -21,7 +21,7 @@ describe('ProtectedRoute', () => {
       refreshUser: vi.fn(),
     });
 
-    const { container } = render(
+    render(
       <MemoryRouter initialEntries={['/dashboard']}>
         <Routes>
           <Route element={<ProtectedRoute />}>
@@ -32,7 +32,7 @@ describe('ProtectedRoute', () => {
     );
 
     expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();
-    expect(container.querySelector('.animate-spin')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Checking your session');
   });
 
   it('redirects unauthenticated users to the login route', () => {

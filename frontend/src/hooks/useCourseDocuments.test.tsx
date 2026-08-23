@@ -30,6 +30,7 @@ function document(
     original_file_name: 'lecture.pdf',
     file_type: 'pdf',
     mime_type: 'application/pdf',
+    material_kind: 'unspecified',
     file_size: 1024,
     course_id: 1,
     status,
@@ -78,6 +79,51 @@ async function advance(ms: number) {
 }
 
 describe('useCourseDocuments polling lifecycle', () => {
+  it('keeps every source the course has, whatever state each one is in', async () => {
+    listDocuments.mockResolvedValue([
+      document('ready', '2026-08-19T10:04:00Z', '11111111-1111-1111-1111-111111111111'),
+      document('processing', '2026-08-19T10:02:00Z', '22222222-2222-2222-2222-222222222222'),
+      document('failed', '2026-08-19T10:03:00Z', '33333333-3333-3333-3333-333333333333'),
+    ]);
+    getDocumentStatus.mockImplementation(async (_courseId, documentId) => ({
+      document: document(
+        documentId === '22222222-2222-2222-2222-222222222222' ? 'processing' : 'failed',
+        '2026-08-19T10:05:00Z',
+        documentId,
+      ),
+      processing_job: null,
+    }) as unknown as DocumentStatusResponse);
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.entries).toHaveLength(3);
+    expect(result.current.entries.map((entry) => entry.document.status).sort()).toEqual([
+      'failed',
+      'processing',
+      'ready',
+    ]);
+    expect(result.current.readyCount).toBe(1);
+  });
+
+  it('survives a status response that carries no document', async () => {
+    listDocuments.mockResolvedValue([document('processing', '2026-08-19T10:00:00Z')]);
+    getDocumentStatus.mockResolvedValue({} as unknown as DocumentStatusResponse);
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    expect(result.current.entries).toHaveLength(1);
+    expect(result.current.entries[0].document.status).toBe('processing');
+  });
+
   it('walks a document to ready and then stops polling', async () => {
     listDocuments.mockResolvedValue([document('uploaded', '2026-08-19T10:00:00Z')]);
     getDocumentStatus

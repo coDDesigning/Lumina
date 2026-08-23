@@ -16,7 +16,6 @@ import type {
 } from './api/types';
 import { createMockCourse } from './test/mocks/api';
 
-// These suites are not about credits; an unmetered account renders no credit UI.
 vi.mock('./context/CreditContext', () => ({
   useCredits: () => ({
     status: null,
@@ -28,7 +27,6 @@ vi.mock('./context/CreditContext', () => ({
     canAfford: () => true,
   }),
 }))
-
 
 vi.mock('./context/AuthContext', () => ({
   useAuth: () => ({
@@ -121,7 +119,7 @@ function tutorResult(
 
 function renderWorkspace() {
   return render(
-    <MemoryRouter initialEntries={['/workspaces/1']}>
+    <MemoryRouter initialEntries={['/courses/1']}>
       <App />
     </MemoryRouter>,
   );
@@ -211,7 +209,7 @@ describe('Workspace conversations', () => {
     await sendPrompt('What does a process own?');
     await screen.findByText('A process owns an address space.');
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Tutoring' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Tutor' }));
     expect(screen.queryByText('A process owns an address space.')).not.toBeInTheDocument();
     await sendPrompt('Teach me the process model.');
     await screen.findByText('Picture a process as a container for threads.');
@@ -230,7 +228,7 @@ describe('Workspace conversations', () => {
       include_profile_context: false,
     });
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Exam' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Ask' }));
     expect(screen.getByText('A process owns an address space.')).toBeInTheDocument();
     expect(
       screen.queryByText('Picture a process as a container for threads.'),
@@ -282,21 +280,19 @@ describe('Workspace conversations', () => {
 
     renderWorkspace();
     await screen.findByRole('button', { name: 'Add Sources' });
-    expect(
-      screen.getByRole('button', { name: 'Generated history' }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/^Made for you/)).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole('button', { name: 'Conversation history' }),
+      screen.getByRole('button', { name: 'Past threads' }),
     );
     await userEvent.click(
-      await screen.findByRole('button', { name: /Conversation 88/ }),
+      await screen.findByRole('button', { name: /Tutoring 88/ }),
     );
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Resume conversation' }),
+      await screen.findByRole('button', { name: 'Pick this up' }),
     );
 
-    expect(screen.getByRole('tab', { name: 'Tutoring' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: 'Tutor' })).toHaveAttribute(
       'aria-selected',
       'true',
     );
@@ -362,12 +358,12 @@ describe('Workspace conversations', () => {
     await screen.findByRole('button', { name: 'Add Sources' });
 
     const toggle = screen.getByRole('checkbox', {
-      name: /include personal study profile context/i,
+      name: /use my study profile/i,
     });
     expect(toggle).not.toBeChecked();
     expect(
       screen.getByText(
-        /Includes your profile background as supplementary context\. Course material remains primary and authoritative\./i,
+        /supporting context\. Your course material stays primary\./i,
       ),
     ).toBeInTheDocument();
 

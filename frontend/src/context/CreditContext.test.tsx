@@ -56,7 +56,6 @@ afterEach(() => {
 
 describe('CreditProvider', () => {
   it('reads the balance from the credits endpoint, not the user snapshot', async () => {
-    // Only that endpoint materialises an owed monthly grant.
     mockGetCredits.mockResolvedValue(status({ credits: 37 }));
     const { result } = renderHook(() => useCredits(), { wrapper });
 
@@ -83,7 +82,6 @@ describe('CreditProvider', () => {
     await waitFor(() => expect(result.current.error).toBeTruthy());
     expect(result.current.status).toBeNull();
     expect(result.current.isMetered).toBe(false);
-    // An unknown balance must not block generation; the server still decides.
     expect(result.current.canAfford('quiz')).toBe(true);
   });
 

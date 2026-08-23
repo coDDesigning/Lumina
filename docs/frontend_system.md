@@ -34,9 +34,14 @@ first, and type errors in test files fail it. Run all three.
 | `src/features/<domain>/` | Screens and the hooks/dialogs they own |
 | `src/api/` | One module per backend area + `client.ts`, `types.ts`, `errors.ts` |
 | `src/hooks/`, `src/lib/` | Cross-feature hooks and helpers |
-| `src/components/` | Legacy, mid-migration. Do not add to it. |
+| `src/components/` | The route guard, document rows, credit chips. Prefer `src/features/`. |
 
 Import with the `@/` alias, not deep relative paths.
+
+There is no page-level or component-level global CSS left. Every component that needs styling
+owns a `Name.module.css` beside it, and every value in it comes from a token — a test
+(`src/styles/tokenUsage.test.ts`) fails the build if a module references a custom property
+nothing defines, because an undefined `var()` fails silently in CSS.
 
 ## Design tokens
 
@@ -77,8 +82,8 @@ Everything in `src/ui/`. Use them; do not hand-roll an equivalent.
 
 `Alert` · `Badge` · `Brandmark` · `Breath` · `Button` · `Card` · `Checkbox` ·
 `ConfirmDialog` · `CourseLight` · `Dialog` · `EmptyState` · `Field` · `IconButton` ·
-`Input` / `Textarea` / `Select` · `LinkButton` · `PageHeader` · `Skeleton` · `Spinner` ·
-`Switch` · `Tabs` · `ToastProvider`
+`Input` / `Textarea` / `Select` · `LinkButton` · `MasterDetail` · `PageHeader` ·
+`Skeleton` · `Spinner` · `Switch` · `Tabs` · `ToastProvider`
 
 Rules that are not negotiable:
 
@@ -91,6 +96,10 @@ Rules that are not negotiable:
 - **`ConfirmDialog` is the only destructive confirmation.** No `window.confirm`, no
   bespoke two-step inline confirm. Pass `confirmPhrase` for anything irreversible.
 - **The shell owns the single `<main>`.** A page must not render its own.
+- **No two controls in one dialog answer to the same name.** `Dialog` already renders a
+  dismiss control called "Close", so a footer button must be called something else —
+  "Done", "Not now", "Cancel". Two identical names make the dialog unusable by voice and
+  ambiguous by screen reader.
 - Status is never carried by colour alone — a `Badge` always renders its label, and
   status badges pass an icon as a third channel.
 - Two controls on one screen must not share an accessible name. "Reset" and "Reset" is a
@@ -177,6 +186,14 @@ Three rules the UI enforces so nobody discovers them through an error:
 - An answer the model could not grade returns `is_correct: null` and `score: null`. It is
   excluded from the denominator and must read as **"not scored"**, never as wrong.
 - Attempt validation failures are **400, not 422**.
+- The attempt carries `graded_count` as well as `total_questions`. Score is correct out of
+  **graded**; anything ungraded is counted separately and never as an error. Deriving
+  "incorrect" as `total - correct` marks unscored written answers wrong, which is the bug
+  `tallyAttempt` exists to prevent.
+- Each question type gets its own layout: a radio group for multiple choice, a two-way
+  choice for true/false, a line for short answer, a box for a written answer. Options are
+  real `input[type=radio]` in one named group, never styled buttons — a screen reader must
+  be able to say how many choices there are and which is chosen.
 
 ## Honesty rules
 
@@ -190,8 +207,24 @@ These are product rules, not style preferences.
 - **Name what is not built.** The landing page lists unbuilt capabilities as prominently as
   built ones.
 - **Label a value as what the API returns.** Average score is "average score", not "course
-  progress". `quizzes_completed` is the attempt count. `completion` is the average score,
-  not coverage.
+  progress". `quizzes_completed` is the attempt count — the progress screen says "quiz
+  attempts" and adds that retaking the same quiz counts again. `completion` is the average
+  score, not coverage.
+- **A disabled control explains itself in text.** A `title` on a disabled button reaches
+  nobody: disabled buttons are not focusable and the tooltip is not announced. When delete
+  is unavailable because the source is still being read, that sentence is on the screen.
+
+## What the test suite enforces
+
+Beyond the per-screen tests, three guards catch whole classes of mistake:
+
+- **React warnings fail the test.** `setupTests.ts` promotes duplicate keys, invalid DOM
+  nesting, missing `act`, and bad ARIA into assertion failures. These used to scroll past
+  in green runs; a real duplicate-key bug in the topic pickers survived that way.
+- **Unknown design tokens fail the test.** `tokenUsage.test.ts` reads every
+  `*.module.css` and rejects a `var(--x)` that nothing defines.
+- **Regression tests are checked against the bug.** When you fix something, confirm the new
+  test fails with the fix reverted. A test that passes either way protects nothing.
 
 ## States every screen owes the user
 

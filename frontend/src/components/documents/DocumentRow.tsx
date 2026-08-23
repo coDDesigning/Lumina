@@ -1,6 +1,9 @@
 import { useState } from 'react';
-import { File, RotateCcw, Trash2 } from 'lucide-react';
-import type { DocumentEntry } from '../../hooks/useCourseDocuments';
+import { FileText, RotateCcw, Trash2 } from 'lucide-react';
+import type { DocumentEntry } from '@/hooks/useCourseDocuments';
+import { Badge } from '@/ui/Badge';
+import { Button } from '@/ui/Button';
+import { ConfirmDialog } from '@/ui/ConfirmDialog';
 import {
   documentStatusLabel,
   documentStatusTone,
@@ -8,9 +11,9 @@ import {
   isDocumentBusy,
   progressLabel,
 } from './documentLabels';
-import './documents.css';
+import styles from './DocumentRow.module.css';
 
-interface DocumentRowProps {
+export interface DocumentRowProps {
   entry: DocumentEntry;
   onRetry: (documentId: string) => void;
   onDelete: (documentId: string) => void;
@@ -31,19 +34,11 @@ function describeEntry(entry: DocumentEntry): string {
     return size ? `${type} · ${size}` : type;
   }
 
-  if (document.status === 'uploaded') {
-    return stage ?? 'Waiting to start';
-  }
-
-  if (document.status === 'processing') {
-    return stage ?? 'Processing';
-  }
-
   return stage ?? '';
 }
 
 export function DocumentRow({ entry, onRetry, onDelete }: DocumentRowProps) {
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
   const { document, pending } = entry;
 
   const busy = isDocumentBusy(document.status);
@@ -51,73 +46,71 @@ export function DocumentRow({ entry, onRetry, onDelete }: DocumentRowProps) {
   const description = describeEntry(entry);
 
   return (
-    <article className="source-item" aria-busy={pending !== null}>
-      <File aria-hidden="true" strokeWidth={2.1} />
-      <div className="source-item-body">
-        <h2 title={document.original_file_name}>{document.original_file_name}</h2>
-        <p>
-          <span className={`doc-badge is-${documentStatusTone(document.status)}`}>
-            {documentStatusLabel(document.status)}
-          </span>
-          {description ? <span className="doc-description">{description}</span> : null}
+    <article className={styles.row} aria-busy={pending !== null}>
+      <FileText className={styles.icon} aria-hidden="true" />
+
+      <div className={styles.body}>
+        <p className={styles.name} title={document.original_file_name}>
+          {document.original_file_name}
         </p>
+        <p className={styles.meta}>
+          <Badge tone={documentStatusTone(document.status)}>
+            {documentStatusLabel(document.status)}
+          </Badge>
+          {description ? <span className={styles.description}>{description}</span> : null}
+        </p>
+        {busy ? (
+          <p className={styles.locked}>A source cannot be removed while it is being read.</p>
+        ) : null}
         {entry.error ? (
-          <p className="doc-row-error" role="alert">
+          <p className={styles.error} role="alert">
             {entry.error}
           </p>
         ) : null}
       </div>
-      <div className="doc-actions">
+
+      <div className={styles.actions}>
         {canRetry ? (
-          <button
-            className="doc-action-button"
-            type="button"
+          <Button
+            size="sm"
             onClick={() => onRetry(document.id)}
             disabled={pending !== null}
+            isLoading={pending === 'retry'}
+            loadingLabel="Trying again"
+            icon={<RotateCcw aria-hidden="true" />}
           >
-            <RotateCcw aria-hidden="true" />
-            {pending === 'retry' ? 'Retrying…' : 'Retry'}
-          </button>
+            Try again
+          </Button>
         ) : null}
 
-        {confirmingDelete ? (
-          <>
-            <button
-              className="doc-action-button"
-              type="button"
-              onClick={() => setConfirmingDelete(false)}
-              disabled={pending !== null}
-            >
-              Cancel
-            </button>
-            <button
-              className="doc-action-button is-danger"
-              type="button"
-              onClick={() => {
-                setConfirmingDelete(false);
-                onDelete(document.id);
-              }}
-              disabled={pending !== null}
-            >
-              {pending === 'delete' ? 'Removing…' : 'Remove'}
-            </button>
-          </>
-        ) : (
-          <button
-            className="doc-action-button"
-            type="button"
-            onClick={() => setConfirmingDelete(true)}
-            disabled={pending !== null || busy}
-            title={
-              busy ? 'A source cannot be removed while it is being processed.' : undefined
-            }
-            aria-label={`Delete ${document.original_file_name}`}
-          >
-            <Trash2 aria-hidden="true" />
-            {pending === 'delete' ? 'Removing…' : 'Delete'}
-          </button>
-        )}
+        <Button
+          size="sm"
+          variant="destructive"
+          onClick={() => setIsConfirming(true)}
+          disabled={pending !== null || busy}
+          isLoading={pending === 'delete'}
+          loadingLabel="Removing"
+          icon={<Trash2 aria-hidden="true" />}
+          aria-label={`Remove ${document.original_file_name}`}
+        >
+          Remove
+        </Button>
       </div>
+
+      <ConfirmDialog
+        open={isConfirming}
+        onClose={() => setIsConfirming(false)}
+        onConfirm={() => {
+          setIsConfirming(false);
+          onDelete(document.id);
+        }}
+        title="Remove this source?"
+        confirmLabel="Remove it"
+        destructive
+      >
+        Everything built from {document.original_file_name} stays, but nothing new can draw on
+        it. Putting it back means uploading and processing it again.
+      </ConfirmDialog>
     </article>
   );
 }

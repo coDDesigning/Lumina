@@ -149,7 +149,7 @@
   display: block;
   height: 100%;
   border-radius: var(--radius-full);
-  background: linear-gradient(90deg, #9b6ff0, var(--accent));
+  background: linear-gradient(90deg, var(--brand-from), var(--accent));
 }
 
 .cardActions {

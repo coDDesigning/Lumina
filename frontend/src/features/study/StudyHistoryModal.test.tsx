@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { generatedOutputsAPI } from '@/api/generatedOutputs';
 import type { GeneratedOutputDetail, GeneratedOutputSummary } from '@/api/types';
@@ -53,7 +54,9 @@ const DETAIL: GeneratedOutputDetail = {
 
 function renderModal() {
   return render(
-    <StudyHistoryModal courseId={7} courseName="Cell Biology" onClose={vi.fn()} />,
+    <MemoryRouter>
+      <StudyHistoryModal courseId={7} courseName="Cell Biology" onClose={vi.fn()} />
+    </MemoryRouter>,
   );
 }
 
@@ -164,5 +167,58 @@ describe('StudyHistoryModal', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Show the answer' }));
     expect(screen.getByText('By distance.')).toBeInTheDocument();
+  });
+
+  it('renders stored quiz questions and retake action when a quiz output is opened', async () => {
+    mockList.mockResolvedValue([
+      {
+        ...SUMMARY,
+        id: 30,
+        output_type: 'quiz',
+        generation_settings: {
+          version: 1,
+          output_type: 'quiz',
+          topic_focus: 'Cell Division',
+          difficulty: 'medium',
+          question_count: 1,
+        },
+      },
+    ]);
+    mockGet.mockResolvedValue({
+      ...SUMMARY,
+      id: 30,
+      output_type: 'quiz',
+      content: {
+        quiz_id: 55,
+        course_id: 7,
+        title: 'Cell Division Quiz',
+        created_at: '2026-08-20T10:00:00Z',
+        questions: [
+          {
+            question_id: 101,
+            question_number: 1,
+            question_type: 'multiple_choice',
+            difficulty: 'medium',
+            topic: 'Mitosis',
+            question: 'What phase comes after prophase?',
+            options: ['Metaphase', 'Anaphase', 'Telophase', 'Interphase'],
+            correct_option_index: 0,
+            correct_answer: { type: 'multiple_choice', option_index: 0 },
+            explanation: 'Metaphase follows prophase.',
+          },
+        ],
+      },
+    } as unknown as GeneratedOutputDetail);
+
+    renderModal();
+    await userEvent.click(await screen.findByRole('button', { name: /Practice quiz/ }));
+
+    expect(await screen.findByText('Cell Division Quiz')).toBeInTheDocument();
+    expect(screen.getByText('What phase comes after prophase?')).toBeInTheDocument();
+    expect(screen.getByText('Metaphase')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Take this quiz' })).toHaveAttribute(
+      'href',
+      '/courses/7/practice/55',
+    );
   });
 });

@@ -9,7 +9,6 @@ import { modelsAPI } from '@/api/models'
 import { profileKnowledgeAPI } from '@/api/profileKnowledge'
 import { userAPI } from '@/api/user'
 
-// These suites are not about credits; an unmetered account renders no credit UI.
 const creditState: { status: CreditStatus | null } = { status: null }
 
 vi.mock('@/context/CreditContext', () => ({
@@ -23,7 +22,6 @@ vi.mock('@/context/CreditContext', () => ({
     canAfford: () => true,
   }),
 }))
-
 
 const mockLogout = vi.fn()
 const mockRefreshUser = vi.fn()
@@ -134,16 +132,12 @@ describe('AccountPage', () => {
   it('renders real user info and excludes fake personal info form controls and fake save button', async () => {
     renderAccountPage()
 
-    // Real user info is visible
     expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument()
     expect(screen.getByText('ada@example.com')).toBeInTheDocument()
     expect(screen.getByText('Student')).toBeInTheDocument()
-    // The balance is not read from the auth snapshot, and this mock is unmetered,
-    // so no credit figure may appear here at all.
     expect(screen.queryByText('42')).not.toBeInTheDocument()
     expect(screen.getByText('This account is not metered')).toBeInTheDocument()
 
-    // Fake form elements must NOT be in the document
     expect(screen.queryByLabelText('First name')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Last name')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Institution')).not.toBeInTheDocument()
@@ -283,7 +277,6 @@ describe('AccountPage credits', () => {
 
     renderAccountPage()
 
-    // The auth mock says 42; the credits endpoint says 7. The endpoint wins.
     expect(await screen.findByText('7')).toBeInTheDocument()
     expect(screen.queryByText('42')).not.toBeInTheDocument()
   })

@@ -86,10 +86,6 @@ beforeEach(() => {
   });
 });
 
-/**
- * The prompt generator is a real, credited backend endpoint. It must keep a
- * reachable entry point in the workspace after the redesign.
- */
 describe('prompt generator', () => {
   it('is reachable from the composer', async () => {
     renderWorkspace();

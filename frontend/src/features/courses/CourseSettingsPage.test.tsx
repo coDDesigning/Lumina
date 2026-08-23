@@ -189,7 +189,6 @@ describe('CourseSettingsPage — generation defaults', () => {
 
     await user.click(screen.getByRole('button', { name: 'Reset defaults' }));
 
-    // 12 is what this course had stored; 10 is the built-in default it must not fall back to.
     expect(questionCount).toHaveValue(12);
   });
 

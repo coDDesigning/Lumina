@@ -13,7 +13,6 @@ import {
   MockErrors,
 } from './test/mocks/api';
 
-// These suites are not about credits; an unmetered account renders no credit UI.
 vi.mock('./context/CreditContext', () => ({
   useCredits: () => ({
     status: null,
@@ -25,7 +24,6 @@ vi.mock('./context/CreditContext', () => ({
     canAfford: () => true,
   }),
 }))
-
 
 vi.mock('./context/AuthContext', () => ({
   useAuth: () => ({
@@ -78,11 +76,6 @@ const mockGetDocumentStatus = vi.mocked(coursesAPI.getDocumentStatus);
 const mockUploadDocument = vi.mocked(coursesAPI.uploadDocument);
 const mockGetProgress = vi.mocked(progressAPI.get);
 
-
-/**
- * The failing file name is the alert title and the reason is its body, so the
- * two are separate nodes rather than one concatenated string.
- */
 function uploadAlertFor(fileName: string) {
   const alert = screen
     .getAllByRole('alert')

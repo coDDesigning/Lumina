@@ -17,6 +17,7 @@ from schemas.quiz_attempt import (
     CourseProgressResponse,
     QuizAttemptRequest,
     QuizAttemptResponse,
+    QuizHistoryItem,
 )
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
@@ -236,6 +237,64 @@ def submit_quiz_attempt(
     return BaseResponse(
         success=True,
         message="Quiz attempt recorded successfully",
+        data=attempt,
+    )
+
+
+@router.get(
+    "/{course_id}/quizzes/{quiz_id}/attempts",
+    response_model=BaseResponse[list[QuizHistoryItem]],
+    responses={
+        401: {"description": "Authentication required"},
+        404: {"description": "Course or quiz not found"},
+    },
+)
+def list_quiz_attempts(
+    quiz_id: int,
+    course: AuthorizedCourse,
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[list[QuizHistoryItem]]:
+    """List attempts for one quiz in an authorized course."""
+    items = QuizAttemptService.list_quiz_attempts(
+        db,
+        course.id,
+        quiz_id,
+        user_id=course.owner_id,
+    )
+
+    return BaseResponse(
+        success=True,
+        message="Quiz attempts retrieved successfully",
+        data=items,
+    )
+
+
+@router.get(
+    "/{course_id}/quizzes/{quiz_id}/attempts/{attempt_id}",
+    response_model=BaseResponse[QuizAttemptResponse],
+    responses={
+        401: {"description": "Authentication required"},
+        404: {"description": "Course, quiz, or attempt not found"},
+    },
+)
+def get_quiz_attempt(
+    quiz_id: int,
+    attempt_id: int,
+    course: AuthorizedCourse,
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[QuizAttemptResponse]:
+    """Retrieve full per-question review for one stored quiz attempt."""
+    attempt = QuizAttemptService.get_attempt_detail(
+        db,
+        course.id,
+        quiz_id,
+        attempt_id,
+        user_id=course.owner_id,
+    )
+
+    return BaseResponse(
+        success=True,
+        message="Quiz attempt retrieved successfully",
         data=attempt,
     )
 

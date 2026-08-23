@@ -23,9 +23,9 @@ from schemas.quiz_attempt import (
     QuizHistoryItem,
     TopicMastery,
 )
-from services.quiz import QuizService
+from services.quiz import QuizService, parse_correct_answer
 from services.quiz_grading import ProviderFactory, QuizGradingService
-from utils.exceptions import BadRequestException
+from utils.exceptions import BadRequestException, NotFoundException
 
 UNTAGGED_TOPIC = "Untagged"
 
@@ -375,4 +375,105 @@ class QuizAttemptService:
             weak_topics=summary.weak_topics,
             topic_mastery=summary.topic_mastery,
             quiz_history=summary.quiz_history,
+        )
+
+    @classmethod
+    def list_quiz_attempts(
+        cls,
+        db: Session,
+        course_id: int,
+        quiz_id: int,
+        *,
+        user_id: int,
+    ) -> list[QuizHistoryItem]:
+        """List past attempts for one quiz belonging to a course, in chronological order."""
+        QuizService.get_course_quiz(db, course_id, quiz_id)
+
+        attempts = db.scalars(
+            select(QuizAttempt)
+            .where(QuizAttempt.quiz_id == quiz_id, QuizAttempt.user_id == user_id)
+            .options(selectinload(QuizAttempt.answers))
+            .order_by(QuizAttempt.created_at.asc(), QuizAttempt.id.asc())
+        ).all()
+
+        return [
+            QuizHistoryItem(
+                attempt_id=attempt.id,
+                quiz_id=attempt.quiz_id,
+                score=attempt.score,
+                correct_count=sum(
+                    1 for answer in attempt.answers if answer.is_correct is True
+                ),
+                total_questions=len(attempt.answers),
+                time_spent_seconds=attempt.time_spent_seconds,
+                created_at=attempt.created_at,
+            )
+            for attempt in attempts
+        ]
+
+    @classmethod
+    def get_attempt_detail(
+        cls,
+        db: Session,
+        course_id: int,
+        quiz_id: int,
+        attempt_id: int,
+        *,
+        user_id: int,
+    ) -> QuizAttemptResponse:
+        """Return the complete per-question review for one stored attempt."""
+        quiz = QuizService.get_course_quiz(db, course_id, quiz_id)
+
+        attempt = db.scalars(
+            select(QuizAttempt)
+            .where(
+                QuizAttempt.id == attempt_id,
+                QuizAttempt.quiz_id == quiz_id,
+                QuizAttempt.user_id == user_id,
+            )
+            .options(selectinload(QuizAttempt.answers))
+        ).one_or_none()
+
+        if attempt is None:
+            raise NotFoundException("Quiz attempt not found")
+
+        ordered = sorted(quiz.questions, key=lambda row: (row.question_index, row.id))
+        answers_by_question_id = {
+            answer.quiz_question_id: answer for answer in attempt.answers
+        }
+
+        scored = [a for a in attempt.answers if a.score is not None]
+        correct_count = sum(1 for a in attempt.answers if a.is_correct is True)
+
+        answer_results: list[QuizAnswerResult] = []
+        for question in ordered:
+            answer = answers_by_question_id.get(question.id)
+            answer_results.append(
+                QuizAnswerResult(
+                    question_id=question.id,
+                    question_type=QuizQuestionType(question.question_type),
+                    selected_option_index=(
+                        answer.selected_option_index if answer else None
+                    ),
+                    text_response=answer.text_response if answer else None,
+                    correct_option_index=question.correct_option_index,
+                    correct_answer=parse_correct_answer(question),
+                    is_correct=answer.is_correct if answer else False,
+                    score=answer.score if answer else None,
+                    feedback=answer.feedback if answer else None,
+                    time_spent_seconds=answer.time_spent_seconds if answer else None,
+                    topic=(answer.topic if answer and answer.topic else question.topic),
+                )
+            )
+
+        return QuizAttemptResponse(
+            attempt_id=attempt.id,
+            quiz_id=quiz.id,
+            score=attempt.score,
+            correct_count=correct_count,
+            graded_count=len(scored),
+            total_questions=len(ordered),
+            time_spent_seconds=attempt.time_spent_seconds,
+            created_at=attempt.created_at,
+            answers=answer_results,
         )

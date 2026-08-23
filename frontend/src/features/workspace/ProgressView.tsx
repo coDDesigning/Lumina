@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { CircleDot, Target, TrendingUp } from 'lucide-react';
 import type { CourseProgressResponse, MasteryStatus } from '@/api/types';
 import { cx } from '@/lib/cx';
@@ -9,6 +10,7 @@ import { Skeleton } from '@/ui/Skeleton';
 import styles from './ProgressView.module.css';
 
 export interface ProgressViewProps {
+  courseId?: string | number;
   documentCount: number;
   readyDocumentCount: number;
   progress: CourseProgressResponse | null;
@@ -46,6 +48,7 @@ function Figure({ value, label, hint }: { value: string; label: string; hint?: s
 }
 
 export function ProgressView({
+  courseId,
   documentCount,
   readyDocumentCount,
   progress,
@@ -185,17 +188,35 @@ export function ProgressView({
             Every attempt
           </h2>
           <ol className={styles.history}>
-            {history.map((item) => (
-              <li key={item.attempt_id} className={styles.historyRow}>
-                <span className={styles.historyDate}>{formatDate(item.created_at)}</span>
-                <span className={cx(styles.historyScore, 'tabular')}>
-                  {Math.round(item.score * 100)}%
-                </span>
-                <span className={cx(styles.historyDetail, 'tabular')}>
-                  {item.correct_count} of {item.total_questions}
-                </span>
-              </li>
-            ))}
+            {history.map((item) => {
+              const content = (
+                <>
+                  <span className={styles.historyDate}>{formatDate(item.created_at)}</span>
+                  <span className={cx(styles.historyScore, 'tabular')}>
+                    {Math.round(item.score * 100)}%
+                  </span>
+                  <span className={cx(styles.historyDetail, 'tabular')}>
+                    {item.correct_count} of {item.total_questions}
+                  </span>
+                </>
+              );
+
+              return (
+                <li key={item.attempt_id} className={styles.historyRow}>
+                  {courseId ? (
+                    <Link
+                      to={`/courses/${courseId}/practice/${item.quiz_id}/attempts/${item.attempt_id}`}
+                      className={styles.historyLink}
+                      aria-label={`Review attempt from ${formatDate(item.created_at)}: ${Math.round(item.score * 100)}%`}
+                    >
+                      {content}
+                    </Link>
+                  ) : (
+                    <div className={styles.historyItem}>{content}</div>
+                  )}
+                </li>
+              );
+            })}
           </ol>
         </section>
       ) : null}

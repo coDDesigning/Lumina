@@ -264,7 +264,9 @@ def test_progress_labels_questions_without_a_topic(upload_api) -> None:
     assert payload["topic_mastery"][0]["topic"] == "Untagged"
 
 
-def test_progress_is_scoped_to_the_requesting_user(authz_api) -> None:
+def test_progress_is_scoped_to_the_course_owner_and_accessible_by_admin(
+    authz_api,
+) -> None:
     with authz_api.session_factory() as session:
         course = session.get(Course, authz_api.a_course_id)
         assert course is not None
@@ -287,21 +289,30 @@ def test_progress_is_scoped_to_the_requesting_user(authz_api) -> None:
         f"/api/courses/{authz_api.a_course_id}/progress",
         headers=authz_api.authorization_a,
     )
-    assert owner_progress.json()["data"]["attempts_count"] == 1
+    assert owner_progress.status_code == 200, owner_progress.text
+    owner_data = owner_progress.json()["data"]
+    assert owner_data["attempts_count"] == 1
+    assert len(owner_data["topic_mastery"]) == 1
 
     admin_progress = authz_api.client.get(
         f"/api/courses/{authz_api.a_course_id}/progress",
         headers=authz_api.authorization_admin,
     )
     assert admin_progress.status_code == 200, admin_progress.text
-    assert admin_progress.json()["data"]["attempts_count"] == 0
-    assert admin_progress.json()["data"]["topic_mastery"] == []
+    admin_data = admin_progress.json()["data"]
+    assert admin_data["attempts_count"] == 1
+    assert admin_data["topic_mastery"] == owner_data["topic_mastery"]
 
     stranger_progress = authz_api.client.get(
         f"/api/courses/{authz_api.a_course_id}/progress",
         headers=authz_api.authorization_b,
     )
     assert stranger_progress.status_code == 404
+
+    unauthenticated_progress = authz_api.client.get(
+        f"/api/courses/{authz_api.a_course_id}/progress",
+    )
+    assert unauthenticated_progress.status_code == 401
 
 
 def _create_custom_quiz(session, course_id: int, specs: list[dict]) -> Quiz:

@@ -244,13 +244,12 @@ def submit_quiz_attempt(
 )
 def get_course_progress(
     course: AuthorizedCourse,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
     progress = QuizAttemptService.get_course_progress(
         db,
         course.id,
-        user_id=current_user.id,
+        user_id=course.owner_id,
     )
 
     return BaseResponse(

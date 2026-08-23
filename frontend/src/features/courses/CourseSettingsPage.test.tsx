@@ -125,7 +125,7 @@ describe('CourseSettingsPage — course details', () => {
     await user.type(name, 'Temporary Name');
     expect(name).toHaveValue('Temporary Name');
 
-    await user.click(screen.getAllByRole('button', { name: 'Reset' })[0]);
+    await user.click(screen.getByRole('button', { name: 'Reset details' }));
     expect(name).toHaveValue('Operating Systems');
   });
 
@@ -175,6 +175,23 @@ describe('CourseSettingsPage — generation defaults', () => {
         detail_level: 'Balanced',
       });
     });
+  });
+
+  it('resets to what the server stored, not to the built-in defaults', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const questionCount = await screen.findByLabelText('Questions per quiz');
+    expect(questionCount).toHaveValue(12);
+
+    await user.clear(questionCount);
+    await user.type(questionCount, '20');
+    expect(questionCount).toHaveValue(20);
+
+    await user.click(screen.getByRole('button', { name: 'Reset defaults' }));
+
+    // 12 is what this course had stored; 10 is the built-in default it must not fall back to.
+    expect(questionCount).toHaveValue(12);
   });
 
   it('states the real range, including that a quiz caps lower than the setting', async () => {

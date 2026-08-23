@@ -7,7 +7,6 @@ import {
   Play,
   RotateCcw,
   Sparkles,
-  X,
   XCircle,
 } from 'lucide-react';
 import { quizAPI } from '../../api/quiz';
@@ -31,6 +30,7 @@ import type {
   QuizView,
 } from '../../api/types';
 import { isOptionBased } from '../../api/types';
+import { Dialog } from '@/ui/Dialog';
 import './study.css';
 
 interface QuizModalProps {
@@ -326,25 +326,14 @@ export function QuizModal({
   const scorePercentage = attempt ? Math.round(attempt.score * 100) : 0;
 
   return (
-    <div className="study-modal-backdrop" role="dialog" aria-modal="true">
-      <div className="study-modal large-modal">
-        <header className="study-modal-header">
-          <div>
-            <h2>
-              <Award aria-hidden="true" />
-              Interactive Practice Quiz
-            </h2>
-            <p>Test your conceptual understanding and master exam topics</p>
-          </div>
-          <button
-            className="modal-close-button"
-            type="button"
-            onClick={onClose}
-            aria-label="Close quiz modal"
-          >
-            <X aria-hidden="true" />
-          </button>
-        </header>
+    <Dialog
+      open
+      onClose={onClose}
+      size="xl"
+      title="Practice quiz"
+      description="Test your understanding against the material in this course"
+      mark={<Award aria-hidden="true" />}
+    >
 
         <div className="study-modal-body">
           {step === 'generating' || step === 'submitting' ? (
@@ -825,7 +814,6 @@ export function QuizModal({
             </>
           ) : null}
         </footer>
-      </div>
-    </div>
+    </Dialog>
   );
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Clock, FileText, History, X, XCircle } from 'lucide-react';
+import { Clock, FileText, History, XCircle } from 'lucide-react';
 import { generatedOutputsAPI } from '../../api/generatedOutputs';
 import { describeError, isAbortError } from '../../api/errors';
 import type {
@@ -11,6 +11,8 @@ import type {
 } from '../../api/types';
 import { StudyGuideView } from './StudyGuideView';
 import { FlashcardView } from './FlashcardView';
+import { Button } from '@/ui/Button';
+import { Dialog } from '@/ui/Dialog';
 import './study.css';
 
 interface StudyHistoryModalProps {
@@ -202,26 +204,19 @@ export function StudyHistoryModal({
   );
 
   return (
-    <div className="study-modal-backdrop" role="dialog" aria-modal="true">
-      <div className="study-modal large-modal">
-        <header className="study-modal-header">
-          <div>
-            <h2>
-              <History aria-hidden="true" />
-              Generated History
-            </h2>
-            <p>Everything Lumina has generated for {courseName}</p>
-          </div>
-          <button
-            className="modal-close-button"
-            type="button"
-            onClick={onClose}
-            aria-label="Close history modal"
-          >
-            <X aria-hidden="true" />
-          </button>
-        </header>
-
+    <Dialog
+      open
+      onClose={onClose}
+      size="xl"
+      title="Made for you"
+      description={`Everything Lumina has generated for ${courseName}`}
+      mark={<History aria-hidden="true" />}
+      footer={
+        <Button variant="secondary" onClick={onClose}>
+          Close
+        </Button>
+      }
+    >
         <div className="study-modal-body">
           {listState.phase === 'loading' ? (
             <div className="study-loading-state">
@@ -336,12 +331,6 @@ export function StudyHistoryModal({
           ) : null}
         </div>
 
-        <footer className="study-modal-footer">
-          <button className="secondary-button" type="button" onClick={onClose}>
-            Close
-          </button>
-        </footer>
-      </div>
-    </div>
+    </Dialog>
   );
 }

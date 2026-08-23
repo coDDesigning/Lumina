@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BookOpen, Check, Copy, Download, Sparkles, X, XCircle } from 'lucide-react';
+import { BookOpen, Check, Copy, Download, Sparkles, XCircle } from 'lucide-react';
 import { studyGuideAPI } from '../../api/studyGuide';
 import { settingsAPI } from '../../api/settings';
 import {
@@ -19,6 +19,7 @@ import type {
 } from '../../api/types';
 import { StudyGuideView } from './StudyGuideView';
 import { studyGuideFileName, studyGuideToMarkdown } from './studyGuideMarkdown';
+import { Dialog } from '@/ui/Dialog';
 import './study.css';
 
 interface SummaryModalProps {
@@ -226,25 +227,14 @@ export function SummaryModal({
   const guide = result?.study_guide ?? null;
 
   return (
-    <div className="study-modal-backdrop" role="dialog" aria-modal="true">
-      <div className="study-modal large-modal">
-        <header className="study-modal-header">
-          <div>
-            <h2>
-              <Sparkles aria-hidden="true" />
-              AI Study Summary Generator
-            </h2>
-            <p>Generate clean, high-retention notes from your course sources</p>
-          </div>
-          <button
-            className="modal-close-button"
-            type="button"
-            onClick={onClose}
-            aria-label="Close summary modal"
-          >
-            <X aria-hidden="true" />
-          </button>
-        </header>
+    <Dialog
+      open
+      onClose={onClose}
+      size="xl"
+      title="Study guide"
+      description="Generate clean, high-retention notes from your course sources"
+      mark={<Sparkles aria-hidden="true" />}
+    >
 
         <div className="study-modal-body">
           {state.phase === 'generating' ? (
@@ -477,7 +467,6 @@ export function SummaryModal({
             </>
           ) : null}
         </footer>
-      </div>
-    </div>
+    </Dialog>
   );
 }

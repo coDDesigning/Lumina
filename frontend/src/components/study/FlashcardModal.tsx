@@ -8,7 +8,6 @@ import {
   RotateCw,
   Shuffle,
   Sparkles,
-  X,
   XCircle,
 } from 'lucide-react';
 import {
@@ -21,6 +20,7 @@ import CreditBalance from '../credits/CreditBalance';
 import CreditExhaustedNotice from '../credits/CreditExhaustedNotice';
 import { flashcardsAPI } from '../../api/flashcards';
 import type { FlashcardGenerationResult, GeneratedFlashcard } from '../../api/types';
+import { Dialog } from '@/ui/Dialog';
 import './study.css';
 
 interface FlashcardModalProps {
@@ -138,42 +138,26 @@ export function FlashcardModal({
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault();
         handlePrev();
-      } else if (event.key === 'Escape') {
-        onClose();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [state.phase, cards.length, handleFlip, handleNext, handlePrev, onClose]);
+  }, [state.phase, cards.length, handleFlip, handleNext, handlePrev]);
 
   const currentCard = cards[currentIndex];
   const progressPercent =
     cards.length > 0 ? ((currentIndex + 1) / cards.length) * 100 : 0;
 
   return (
-    <div className="study-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true">
-      <div
-        className="study-modal"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="study-modal-header">
-          <div>
-            <h2>
-              <Layers aria-hidden="true" />
-              Flashcards Study Deck
-            </h2>
-            {courseName && <p>{courseName}</p>}
-          </div>
-          <button
-            type="button"
-            className="study-modal-close"
-            onClick={onClose}
-            aria-label="Close modal"
-          >
-            <X aria-hidden="true" />
-          </button>
-        </header>
+    <Dialog
+      open
+      onClose={onClose}
+      size="lg"
+      title="Flashcards"
+      description={courseName}
+      mark={<Layers aria-hidden="true" />}
+    >
 
         <div className="study-modal-body">
           {state.phase === 'idle' && (
@@ -351,8 +335,7 @@ export function FlashcardModal({
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 

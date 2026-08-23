@@ -358,12 +358,12 @@ describe('Workspace conversations', () => {
     await screen.findByRole('button', { name: 'Add Sources' });
 
     const toggle = screen.getByRole('checkbox', {
-      name: /include personal study profile context/i,
+      name: /use my study profile/i,
     });
     expect(toggle).not.toBeChecked();
     expect(
       screen.getByText(
-        /Includes your profile background as supplementary context\. Course material remains primary and authoritative\./i,
+        /supporting context\. Your course material stays primary\./i,
       ),
     ).toBeInTheDocument();
 

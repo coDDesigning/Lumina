@@ -52,6 +52,7 @@ import { Spinner } from '@/ui/Spinner';
 import { Tabs } from '@/ui/Tabs';
 import { PromptGeneratorDialog } from './PromptGeneratorDialog';
 import { useNavigate } from 'react-router-dom';
+import { Markdown } from '@/lib/markdown';
 import type { DocumentMaterialKind } from '@/api/types';
 import { MATERIAL_KIND_CHOICES } from '@/components/documents/documentLabels';
 import { ArtifactRail } from './ArtifactRail';
@@ -142,8 +143,17 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   const [isPromptHelperOpen, setIsPromptHelperOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
 
   const thread = threads[threadType];
+
+  useEffect(() => {
+    const node = threadRef.current;
+    if (!node) {
+      return;
+    }
+    node.scrollTop = node.scrollHeight;
+  }, [threads, threadType]);
   const creditSource: CreditSource = threadType;
   const threadExhausted = creditsMetered && !canAffordCredits(creditSource);
 
@@ -476,7 +486,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             </span>
           </div>
 
-          <div className={styles.thread} aria-live="polite">
+          <div className={styles.thread} ref={threadRef} aria-live="polite">
             {thread.messages.length === 0 && !thread.isLoading ? (
               <div className={styles.emptyThread}>
                 <h2 className={styles.emptyThreadTitle}>{THREAD_COPY[threadType].title}</h2>
@@ -498,7 +508,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                 </p>
               ) : (
                 <div key={index} className={styles.turnAssistant}>
-                  <p className={styles.answer}>{message.content}</p>
+                  <Markdown className={styles.answer} text={message.content} />
                   {message.context ? (
                     <span className={styles.provenance}>
                       <FileText className={styles.provenanceIcon} aria-hidden="true" />

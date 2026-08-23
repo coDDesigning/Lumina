@@ -1,0 +1,107 @@
+.prose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.paragraph {
+  line-height: var(--leading-relaxed);
+}
+
+.heading {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  margin-top: var(--space-2);
+}
+
+.subheading {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
+  margin-top: var(--space-1);
+}
+
+.unordered,
+.ordered {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: var(--space-5);
+}
+
+.unordered li,
+.ordered li {
+  position: relative;
+  line-height: var(--leading-relaxed);
+}
+
+.unordered li::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--space-4) * -1);
+  top: 0.62em;
+  width: 0.3125rem;
+  height: 0.3125rem;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.ordered {
+  counter-reset: step;
+}
+
+.ordered li {
+  counter-increment: step;
+}
+
+.ordered li::before {
+  content: counter(step) '.';
+  position: absolute;
+  left: calc(var(--space-5) * -1);
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.quote {
+  padding-left: var(--space-4);
+  border-left: var(--border-width-strong) solid var(--border-strong);
+  color: var(--text-muted);
+  line-height: var(--leading-relaxed);
+}
+
+.code {
+  padding: 0.0625rem 0.3125rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.pre {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: var(--border-width) solid var(--border);
+  background: var(--surface-sunken);
+  overflow-x: auto;
+}
+
+.pre code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  white-space: pre;
+}
+
+.rule {
+  border: 0;
+  border-top: var(--border-width) solid var(--border);
+}
+
+.link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}

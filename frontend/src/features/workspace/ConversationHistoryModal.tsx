@@ -4,6 +4,7 @@ import { conversationsAPI } from '@/api/conversations';
 import { describeError, isAbortError } from '@/api/errors';
 import type { ConversationDetail, ConversationSummary, ConversationType } from '@/api/types';
 import { cx } from '@/lib/cx';
+import { Markdown } from '@/lib/markdown';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
@@ -255,7 +256,11 @@ export function ConversationHistoryModal({
                           )}
                           {message.role === 'user' ? 'You' : 'Lumina'}
                         </span>
-                        <p className={styles.body}>{message.content}</p>
+                        {message.role === 'assistant' ? (
+                          <Markdown className={styles.body} text={message.content} />
+                        ) : (
+                          <p className={styles.body}>{message.content}</p>
+                        )}
                       </li>
                     ))}
                   </ol>

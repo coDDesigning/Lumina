@@ -71,4 +71,16 @@ describe('PastQuizzes', () => {
     await Promise.resolve();
     expect(container).toBeEmptyDOMElement();
   });
+
+  it('lists every quiz as its own row', async () => {
+    mockList.mockResolvedValue([
+      quiz({ quiz_id: 4, title: 'Graph traversals' }),
+      quiz({ quiz_id: 3, title: 'Shortest paths' }),
+    ]);
+    renderList();
+
+    expect(await screen.findByText('Graph traversals')).toBeInTheDocument();
+    expect(screen.getByText('Shortest paths')).toBeInTheDocument();
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+  });
 });

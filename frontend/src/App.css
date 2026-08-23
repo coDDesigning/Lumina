@@ -783,3 +783,11 @@
 .generator-credit-notice {
   margin-top: 10px;
 }
+
+.route-loading {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+  width: 100%;
+  color: var(--text-muted);
+}

@@ -34,7 +34,7 @@ import { DocumentRow } from '@/components/documents/DocumentRow';
 import { ConversationHistoryModal } from '@/components/conversations/ConversationHistoryModal';
 import { FlashcardModal } from '@/features/study/FlashcardModal';
 import { provenanceParts } from '@/features/study/provenanceParts';
-import { QuizModal } from '@/components/study/QuizModal';
+import { QuizModal } from '@/features/study/quiz/QuizModal';
 import { StudyHistoryModal } from '@/components/study/StudyHistoryModal';
 import { StudyGuideModal } from '@/features/study/StudyGuideModal';
 import { useCredits } from '@/context/CreditContext';

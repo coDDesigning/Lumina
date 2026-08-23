@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { StudyGuideModal } from '@/features/study/StudyGuideModal';
-import { QuizModal } from './QuizModal';
+import { QuizModal } from '@/features/study/quiz/QuizModal';
 import { FlashcardModal } from '@/features/study/FlashcardModal';
 import { CreditProvider } from '../../context/CreditContext';
 import { studyGuideAPI } from '../../api/studyGuide';
@@ -211,19 +211,15 @@ describe('Generation surfaces profile context toggle', () => {
         </CreditProvider>,
       );
 
-      const toggle = screen.getByRole('checkbox', {
-        name: /include personal study profile context/i,
-      });
+      const toggle = screen.getByRole('checkbox', { name: /use my study profile/i });
       expect(toggle).not.toBeChecked();
 
       expect(
-        screen.getByText(
-          /Includes your profile background as supplementary context\. Course material remains primary and authoritative\./i,
-        ),
+        screen.getByText(/supporting context\. Your course material stays primary\./i),
       ).toBeInTheDocument();
 
       await userEvent.click(
-        screen.getByRole('button', { name: /start quiz/i }),
+        screen.getByRole('button', { name: /start the quiz/i }),
       );
 
       await waitFor(() => {
@@ -271,14 +267,12 @@ describe('Generation surfaces profile context toggle', () => {
         </CreditProvider>,
       );
 
-      const toggle = screen.getByRole('checkbox', {
-        name: /include personal study profile context/i,
-      });
+      const toggle = screen.getByRole('checkbox', { name: /use my study profile/i });
       await userEvent.click(toggle);
       expect(toggle).toBeChecked();
 
       await userEvent.click(
-        screen.getByRole('button', { name: /start quiz/i }),
+        screen.getByRole('button', { name: /start the quiz/i }),
       );
 
       await waitFor(() => {

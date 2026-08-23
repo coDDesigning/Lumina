@@ -12,3 +12,6 @@ class AiModelInfo(BaseModel):
     description: str = ""
     is_local: bool = False
     supports_json: bool = True
+    json_mode: bool = True
+    context_window: int = 8192
+    vision: bool = False

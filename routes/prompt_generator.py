@@ -52,10 +52,10 @@ def generate_prompt(
             current_user.preferred_model,
             required_capability="prompt_generator",
         )
-        try:
-            provider = get_text_generation_provider(effective_model=effective_model)
-        except TypeError:
-            provider = get_text_generation_provider()
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            require_json_mode=True,
+        )
 
         generated_prompt = PromptGeneratorService.generate(
             request.description,

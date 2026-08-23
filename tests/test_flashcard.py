@@ -688,3 +688,113 @@ def test_generate_flashcards_endpoint_retrieval_error_returns_503(
     assert response.status_code == 503
     assert response.headers.get("X-Error-Code") == AiErrorCode.RETRIEVAL_UNAVAILABLE
     assert provider.calls == 0
+
+
+def test_generate_flashcards_rejects_unavailable_model(
+    upload_api,
+) -> None:
+    with upload_api.session_factory() as session:
+        course = session.get(Course, upload_api.course_id)
+        document = UploadedDocument(
+            original_file_name="lecture.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=10,
+            file_hash="8" * 64,
+            user_id=upload_api.user_id,
+            course=course,
+            storage_provider="local:test",
+            storage_key="lecture.txt",
+            status="ready",
+        )
+        session.add(document)
+        session.flush()
+
+        session.add(
+            DocumentChunk(
+                document=document,
+                course=course,
+                chunk_index=0,
+                page_number=None,
+                text="Flashcard content",
+            )
+        )
+        session.commit()
+
+    from utils.ai_errors import ERROR_CODE_HEADER, PUBLIC_MESSAGES, AiErrorCode
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/flashcards",
+        json={"model": "nonexistent:model"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.headers.get(ERROR_CODE_HEADER) == AiErrorCode.UNAVAILABLE_MODEL.value
+    )
+    assert response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.UNAVAILABLE_MODEL]
+
+
+def test_generate_flashcards_rejects_json_incompatible_model(
+    upload_api, monkeypatch
+) -> None:
+    with upload_api.session_factory() as session:
+        course = session.get(Course, upload_api.course_id)
+        document = UploadedDocument(
+            original_file_name="lecture.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=10,
+            file_hash="7" * 64,
+            user_id=upload_api.user_id,
+            course=course,
+            storage_provider="local:test",
+            storage_key="lecture2.txt",
+            status="ready",
+        )
+        session.add(document)
+        session.flush()
+
+        session.add(
+            DocumentChunk(
+                document=document,
+                course=course,
+                chunk_index=0,
+                page_number=None,
+                text="Flashcard content",
+            )
+        )
+        session.commit()
+
+    from types import SimpleNamespace
+    import services.text_generation as text_gen
+    from utils.ai_errors import ERROR_CODE_HEADER, PUBLIC_MESSAGES, AiErrorCode
+
+    fake_settings = SimpleNamespace(
+        ai_provider="ollama",
+        ai_fallback_providers="",
+        ai_model_catalog={
+            "ollama": [
+                {
+                    "model": "text-only",
+                    "json_mode": False,
+                    "context_window": 8192,
+                    "vision": False,
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(text_gen, "settings", fake_settings)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/flashcards",
+        json={"model": "ollama:text-only"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.headers.get(ERROR_CODE_HEADER) == AiErrorCode.INCOMPATIBLE_MODEL.value
+    )
+    assert response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.INCOMPATIBLE_MODEL]

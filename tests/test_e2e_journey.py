@@ -266,7 +266,7 @@ def journey_env(
         monkeypatch.setattr(
             module,
             "get_text_generation_provider",
-            lambda: text_provider,
+            lambda *args, **kwargs: text_provider,
         )
 
     for module in (

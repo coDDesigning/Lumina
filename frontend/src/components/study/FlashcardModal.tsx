@@ -162,17 +162,17 @@ export function FlashcardModal({
         <div className="study-modal-content">
           {state.phase === 'idle' && (
             <div className="study-idle-state" style={{ textAlign: 'center', padding: '32px 16px' }}>
-              <div style={{ display: 'inline-flex', padding: '16px', background: '#f5f3ff', borderRadius: '50%', marginBottom: '16px', color: '#8b5cf6' }}>
+              <div style={{ display: 'inline-flex', padding: '16px', background: 'var(--accent-subtle)', borderRadius: '50%', marginBottom: '16px', color: 'var(--accent)' }}>
                 <BookOpen size={40} />
               </div>
-              <h3 style={{ fontSize: '20px', fontWeight: 700, margin: '0 0 8px 0', color: '#1e1b4b' }}>
+              <h3 style={{ fontSize: '20px', fontWeight: 700, margin: '0 0 8px 0', color: 'var(--text)' }}>
                 Ready to Study with Flashcards?
               </h3>
-              <p style={{ color: '#6b7280', maxWidth: '440px', margin: '0 auto 24px auto', lineHeight: 1.5 }}>
+              <p style={{ color: 'var(--text-muted)', maxWidth: '440px', margin: '0 auto 24px auto', lineHeight: 1.5 }}>
                 Generate an intelligent set of interactive flashcards based directly on your course materials.
               </p>
               {readyDocumentCount === 0 ? (
-                <div style={{ padding: '12px', background: '#fffbeb', color: '#b45309', borderRadius: '8px', marginBottom: '16px' }}>
+                <div style={{ padding: '12px', background: 'var(--warning-subtle)', color: 'var(--warning)', borderRadius: '8px', marginBottom: '16px' }}>
                   ⚠️ No ready course materials found. Please upload and process documents first.
                 </div>
               ) : (
@@ -217,9 +217,9 @@ export function FlashcardModal({
 
           {state.phase === 'error' && (
             <div className="study-error-state" style={{ textAlign: 'center', padding: '32px 16px' }}>
-              <XCircle size={48} color="#ef4444" style={{ margin: '0 auto 16px auto' }} />
-              <h3 style={{ color: '#991b1b', margin: '0 0 8px 0' }}>Generation Failed</h3>
-              <p style={{ color: '#6b7280', marginBottom: '24px' }}>{state.message}</p>
+              <XCircle size={48} color="var(--destructive)" style={{ margin: '0 auto 16px auto' }} />
+              <h3 style={{ color: 'var(--destructive)', margin: '0 0 8px 0' }}>Generation Failed</h3>
+              <p style={{ color: 'var(--text-muted)', marginBottom: '24px' }}>{state.message}</p>
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
                 {state.retryable && (
                   <button type="button" className="study-primary-btn" onClick={handleGenerate}>

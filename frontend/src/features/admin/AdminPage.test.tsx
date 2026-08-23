@@ -2,9 +2,10 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { APIError } from '../api/client';
-import { adminAPI } from '../api/admin';
-import type { CreditTransaction, User } from '../api/types';
+import { APIError } from '@/api/client';
+import { adminAPI } from '@/api/admin';
+import type { CreditTransaction, User } from '@/api/types';
+import { ToastProvider } from '@/ui/ToastProvider'
 import AdminPage from './AdminPage';
 
 // These suites are not about credits; an unmetered account renders no credit UI.
@@ -21,7 +22,7 @@ vi.mock('../context/CreditContext', () => ({
 }))
 
 
-vi.mock('../api/admin', () => ({
+vi.mock('@/api/admin', () => ({
   adminAPI: {
     listUsers: vi.fn(),
     banUser: vi.fn(),
@@ -31,7 +32,7 @@ vi.mock('../api/admin', () => ({
   },
 }));
 
-vi.mock('../context/AuthContext', () => ({
+vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({
     user: {
       id: 1,
@@ -92,9 +93,11 @@ const mocked = vi.mocked(adminAPI);
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <AdminPage />
-    </MemoryRouter>,
+    <ToastProvider>
+      <MemoryRouter>
+        <AdminPage />
+      </MemoryRouter>
+    </ToastProvider>,
   );
 }
 
@@ -171,7 +174,7 @@ describe('AdminPage credit administration', () => {
         'alice@example.com',
         -5,
         'admin_adjustment',
-        '',
+        undefined,
       ),
     );
   });
@@ -182,7 +185,7 @@ describe('AdminPage credit administration', () => {
     await userEvent.click(within(dialog).getByText('Apply'));
 
     expect(within(dialog).getByRole('alert').textContent).toContain(
-      'A grant must add credits',
+      'can only add credits',
     );
     expect(mocked.changeCredits).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeTruthy();

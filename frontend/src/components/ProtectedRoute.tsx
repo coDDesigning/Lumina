@@ -1,7 +1,7 @@
 import React from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LoadingSpinner } from './LoadingSpinner';
+import { Spinner } from '@/ui/Spinner';
 
 export const ProtectedRoute: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
@@ -9,8 +9,9 @@ export const ProtectedRoute: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-gray-50 dark:bg-[#0a0a0a]">
-        <LoadingSpinner size="lg" />
+      <div className="route-loading" role="status">
+        <Spinner size="lg" />
+        <span className="visually-hidden">Checking your session</span>
       </div>
     );
   }

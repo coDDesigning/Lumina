@@ -1,0 +1,157 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.body {
+  padding: 0 var(--space-5) var(--space-7);
+  min-width: 0;
+}
+
+.title {
+  font-size: var(--text-3xl);
+}
+
+.subtitle {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin-top: var(--space-1);
+}
+
+.filters {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-5);
+  align-items: flex-end;
+}
+
+.search {
+  width: 16rem;
+}
+
+.filter {
+  width: 10rem;
+}
+
+@media (max-width: 34rem) {
+  .search,
+  .filter {
+    width: 100%;
+  }
+}
+
+.tableWrap {
+  margin-top: var(--space-4);
+  overflow-x: auto;
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-1);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.table th {
+  text-align: left;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: var(--weight-bold);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--border-width) solid var(--border);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--border-width) solid var(--border);
+  vertical-align: middle;
+}
+
+.table tr:last-child td {
+  border-bottom: 0;
+}
+
+.banned td {
+  background: var(--destructive-subtle);
+}
+
+.account {
+  min-width: 0;
+}
+
+.accountName {
+  font-weight: var(--weight-semibold);
+}
+
+.accountEmail {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: flex;
+  gap: var(--space-1);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.ledgerRow td {
+  background: var(--surface-sunken);
+  padding: 0;
+}
+
+.ledger {
+  padding: var(--space-4);
+}
+
+.ledgerTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+
+.ledgerTable td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+.dialogMeta {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-4);
+}
+
+.formGrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.preview {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: var(--leading-relaxed);
+}
+
+.preview strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.spaced {
+  margin-top: var(--space-4);
+}

@@ -7,18 +7,10 @@ import styles from './CreditBalance.module.css';
 const LOW_BALANCE_THRESHOLD = 5;
 
 type CreditBalanceProps = {
-  /** When given, the balance reads as empty once it cannot cover this action. */
   source?: CreditSource;
   className?: string;
 };
 
-/**
- * The remaining balance, or nothing at all when credits do not apply.
- *
- * A balance that is merely loading or unreadable is never rendered as zero:
- * those are different states from an exhausted account and lead the reader to
- * a different next step.
- */
 function CreditBalance({ source, className }: CreditBalanceProps) {
   const { status, isLoading, error, isMetered, canAfford } = useCredits();
 

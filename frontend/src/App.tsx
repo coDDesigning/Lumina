@@ -21,7 +21,6 @@ import { progressAPI } from './api/progress'
 import { describeError } from './api/errors'
 import type { Course, CourseProgressResponse } from './api/types'
 
-
 const ACTIVE_WORKSPACE_STORAGE_KEY = 'lumina.activeWorkspaceId'
 const workspaceAccents: Workspace['accent'][] = [
   'blue',
@@ -198,7 +197,6 @@ function App() {
         })
       } catch (error: unknown) {
         if (error instanceof Error && error.name === 'AbortError') {
-          // Abort/unmount behavior is intentionally NOT shown as an error
           return
         }
         const described = describeError(

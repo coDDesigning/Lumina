@@ -170,7 +170,6 @@ function mapCourseToWorkspace(
 function App() {
   const { isAuthenticated } = useAuth()
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
-  const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(true)
   const [haveWorkspacesArrived, setHaveWorkspacesArrived] = useState(false)
   const [workspacesError, setWorkspacesError] = useState<string | null>(null)
 
@@ -181,12 +180,10 @@ function App() {
   const fetchWorkspaces = useCallback(
     async (signal?: AbortSignal) => {
       if (!isAuthenticated) {
-        setIsLoadingWorkspaces(false)
         setWorkspacesError(null)
         return
       }
       setHaveWorkspacesArrived(false)
-      setIsLoadingWorkspaces(true)
       setWorkspacesError(null)
       try {
         const courses = await coursesAPI.list({ signal })
@@ -217,7 +214,6 @@ function App() {
         )
         setWorkspacesError(described.message)
       } finally {
-        setIsLoadingWorkspaces(false)
         setHaveWorkspacesArrived(true)
       }
     },

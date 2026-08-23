@@ -1636,3 +1636,73 @@ def test_quiz_course_settings_question_count_clamped(
     stored_settings = json.loads(quizzes[0].generation_settings)
     assert stored_settings["question_count"] == 20
     assert stored_settings["difficulty"] == "medium"
+
+
+def test_generate_quiz_rejects_unavailable_model(upload_api, retrieval_env) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["Quiz model test material"],
+            file_hash="ad" + "a" * 62,
+            retrieval_env=retrieval_env,
+        )
+
+    from utils.ai_errors import ERROR_CODE_HEADER, PUBLIC_MESSAGES, AiErrorCode
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        json={"model": "nonexistent:model"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.headers.get(ERROR_CODE_HEADER) == AiErrorCode.UNAVAILABLE_MODEL.value
+    )
+    assert response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.UNAVAILABLE_MODEL]
+
+
+def test_generate_quiz_rejects_json_incompatible_model(
+    upload_api, retrieval_env, monkeypatch
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["Quiz model test material"],
+            file_hash="ae" + "a" * 62,
+            retrieval_env=retrieval_env,
+        )
+
+    from types import SimpleNamespace
+    import services.text_generation as text_gen
+    from utils.ai_errors import ERROR_CODE_HEADER, PUBLIC_MESSAGES, AiErrorCode
+
+    fake_settings = SimpleNamespace(
+        ai_provider="ollama",
+        ai_fallback_providers="",
+        ai_model_catalog={
+            "ollama": [
+                {
+                    "model": "text-only",
+                    "json_mode": False,
+                    "context_window": 8192,
+                    "vision": False,
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(text_gen, "settings", fake_settings)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        json={"model": "ollama:text-only"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.headers.get(ERROR_CODE_HEADER) == AiErrorCode.INCOMPATIBLE_MODEL.value
+    )
+    assert response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.INCOMPATIBLE_MODEL]

@@ -126,10 +126,50 @@ rather than at the first user click:
 | `OLLAMA_BASE_URL` | empty, whitespace, or not a valid `http://`/`https://` URL with a host (`banana` and `localhost:11434` both fail) |
 | `OLLAMA_MODEL` | empty, whitespace, longer than 128 characters, or containing characters outside letters, digits, `. : / - _` |
 | `AI_FALLBACK_PROVIDERS` | any token is unrecognized, or recognized but not implemented |
+| `AI_MODEL_CATALOG` | not valid JSON, empty, contains an unimplemented provider, contains duplicate model names, or a model entry is missing/invalid `model`, `json_mode`, `context_window`, or `vision` metadata |
 
 Configuration validation deliberately does **not** contact Ollama. Booting the
 API must not depend on a model server being up, so reachability is a
 generation-time concern.
+
+### Model Catalog
+
+`AI_MODEL_CATALOG` configures the available text-generation models for each
+implemented provider. The value is a JSON object keyed by provider name.
+
+Each model entry must provide its model identifier and capability metadata:
+
+```json
+{
+  "ollama": [
+    {
+      "model": "llama3.1",
+      "json_mode": true,
+      "context_window": 8192,
+      "vision": false
+    },
+    {
+      "model": "qwen3:8b",
+      "json_mode": true,
+      "context_window": 32768,
+      "vision": false
+    }
+  ]
+}
+
+Each entry requires:
+
+- `model` — non-empty model identifier
+- `json_mode` — whether structured JSON generation is supported
+- `context_window` — positive integer context-window size
+- `vision` — whether visual input is supported
+
+Invalid catalog configuration fails during application startup. Explicit model
+selections are validated against the catalog, and a selected model is passed to
+the provider request instead of always using the provider's default model.
+
+A model that does not support JSON mode is rejected when a generation path
+requires structured JSON output.
 
 ## Error Semantics
 

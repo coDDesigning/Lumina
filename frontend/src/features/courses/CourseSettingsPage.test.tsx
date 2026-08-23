@@ -31,7 +31,6 @@ const workspace: Workspace = {
   status: 'In progress',
   updatedAt: 'Updated today',
   accent: 'blue',
-  sources: [],
 };
 
 const settingsPayload = {

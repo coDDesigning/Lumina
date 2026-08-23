@@ -121,17 +121,42 @@
 }
 
 .historyRow {
-  display: grid;
-  grid-template-columns: 5rem 4rem 1fr;
-  gap: var(--space-3);
-  align-items: baseline;
-  padding: var(--space-3) 0;
   border-bottom: var(--border-width) solid var(--border);
   font-size: var(--text-sm);
 }
 
 .historyRow:last-child {
   border-bottom: 0;
+}
+
+.historyLink {
+  display: grid;
+  grid-template-columns: 5rem 4rem 1fr;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-3) var(--space-2);
+  margin: 0 calc(-1 * var(--space-2));
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.historyLink:hover {
+  background: var(--surface-sunken);
+}
+
+.historyLink:focus-visible {
+  outline: var(--border-width-strong) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.historyItem {
+  display: grid;
+  grid-template-columns: 5rem 4rem 1fr;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-3) 0;
 }
 
 .historyDate {

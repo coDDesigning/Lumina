@@ -32,6 +32,7 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
 
       <div className={styles.body}>
         <ProgressView
+          courseId={workspace.id}
           documentCount={entries.length}
           readyDocumentCount={readyCount}
           progress={progress}

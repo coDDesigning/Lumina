@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SummaryModal } from './SummaryModal';
+import { StudyGuideModal } from '@/features/study/StudyGuideModal';
 import { QuizModal } from './QuizModal';
 import { FlashcardModal } from '@/features/study/FlashcardModal';
 import { CreditProvider } from '../../context/CreditContext';
@@ -58,7 +58,7 @@ describe('Generation surfaces profile context toggle', () => {
     mockGetCredits.mockResolvedValue(status(50));
   });
 
-  describe('SummaryModal', () => {
+  describe('StudyGuideModal', () => {
     it('defaults toggle to false, explains course material primacy, and submits false when untouched', async () => {
       mockStudyGuideGenerate.mockResolvedValueOnce({
         generated_output_id: 1,
@@ -86,7 +86,7 @@ describe('Generation surfaces profile context toggle', () => {
 
       render(
         <CreditProvider>
-          <SummaryModal
+          <StudyGuideModal
             courseId={1}
             courseName="Algorithms"
             topics={['All Topics']}
@@ -96,19 +96,15 @@ describe('Generation surfaces profile context toggle', () => {
         </CreditProvider>,
       );
 
-      const toggle = screen.getByRole('checkbox', {
-        name: /include personal study profile context/i,
-      });
+      const toggle = screen.getByRole('checkbox', { name: /use my study profile/i });
       expect(toggle).not.toBeChecked();
 
       expect(
-        screen.getByText(
-          /Includes your profile background as supplementary context\. Course material remains primary and authoritative\./i,
-        ),
+        screen.getByText(/supporting context\. Your course material stays primary\./i),
       ).toBeInTheDocument();
 
       await userEvent.click(
-        screen.getByRole('button', { name: /generate study guide/i }),
+        screen.getByRole('button', { name: /write my study guide/i }),
       );
 
       await waitFor(() => {
@@ -150,7 +146,7 @@ describe('Generation surfaces profile context toggle', () => {
 
       render(
         <CreditProvider>
-          <SummaryModal
+          <StudyGuideModal
             courseId={1}
             courseName="Algorithms"
             topics={['All Topics']}
@@ -160,14 +156,12 @@ describe('Generation surfaces profile context toggle', () => {
         </CreditProvider>,
       );
 
-      const toggle = screen.getByRole('checkbox', {
-        name: /include personal study profile context/i,
-      });
+      const toggle = screen.getByRole('checkbox', { name: /use my study profile/i });
       await userEvent.click(toggle);
       expect(toggle).toBeChecked();
 
       await userEvent.click(
-        screen.getByRole('button', { name: /generate study guide/i }),
+        screen.getByRole('button', { name: /write my study guide/i }),
       );
 
       await waitFor(() => {

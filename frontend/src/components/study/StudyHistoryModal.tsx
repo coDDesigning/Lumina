@@ -9,7 +9,7 @@ import type {
   StudyGuideResponse,
   FlashcardGenerationResponse,
 } from '../../api/types';
-import { StudyGuideView } from './StudyGuideView';
+import { StudyGuide } from '@/features/study/StudyGuide';
 import { FlashcardDeck } from '@/features/study/FlashcardDeck';
 import { Button } from '@/ui/Button';
 import { Dialog } from '@/ui/Dialog';
@@ -133,7 +133,7 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
       }
     : null;
 
-  return <StudyGuideView guide={content} context={reporting} />;
+  return <StudyGuide guide={content} context={reporting} />;
 }
 
 export function StudyHistoryModal({

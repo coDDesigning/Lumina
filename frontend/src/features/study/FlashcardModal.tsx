@@ -143,9 +143,12 @@ export function FlashcardModal({
           ) : (
             <NoMaterialNotice what="A deck" />
           )}
-          {exhausted ? <CreditExhaustedNotice source="flashcard" action="flashcards" /> : null}
           <CreditBalance source="flashcard" />
         </SetupPanel>
+      ) : null}
+
+      {exhausted && state.phase !== 'generating' ? (
+        <CreditExhaustedNotice source="flashcard" action="flashcards" />
       ) : null}
 
       {state.phase === 'generating' ? (

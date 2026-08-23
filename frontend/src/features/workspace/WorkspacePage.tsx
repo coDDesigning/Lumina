@@ -36,7 +36,7 @@ import { FlashcardModal } from '@/features/study/FlashcardModal';
 import { provenanceParts } from '@/features/study/provenanceParts';
 import { QuizModal } from '@/components/study/QuizModal';
 import { StudyHistoryModal } from '@/components/study/StudyHistoryModal';
-import { SummaryModal } from '@/components/study/SummaryModal';
+import { StudyGuideModal } from '@/features/study/StudyGuideModal';
 import { useCredits } from '@/context/CreditContext';
 import { useAuth } from '@/context/AuthContext';
 import type { Workspace } from '@/data/workspaces';
@@ -584,7 +584,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
       </div>
 
       {isSummaryOpen ? (
-        <SummaryModal
+        <StudyGuideModal
           courseId={courseId}
           courseName={workspace.name}
           topics={workspace.topics}

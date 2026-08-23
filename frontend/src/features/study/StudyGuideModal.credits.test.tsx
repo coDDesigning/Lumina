@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SummaryModal } from './SummaryModal';
+import { StudyGuideModal } from '@/features/study/StudyGuideModal';
 import { CreditProvider } from '../../context/CreditContext';
 import { studyGuideAPI } from '../../api/studyGuide';
 import { userAPI } from '../../api/user';
@@ -61,7 +61,7 @@ function status(credits: number | null): CreditStatus {
 function renderModal() {
   return render(
     <CreditProvider>
-      <SummaryModal
+      <StudyGuideModal
         courseId={1}
         courseName="Algorithms"
         topics={['All Topics']}
@@ -77,14 +77,14 @@ beforeEach(() => {
   mockGetCredits.mockReset();
 });
 
-describe('SummaryModal credit handling', () => {
+describe('StudyGuideModal credit handling', () => {
   it('shows the remaining balance beside the generate action', async () => {
     mockGetCredits.mockResolvedValue(status(12));
     renderModal();
 
     await waitFor(() => expect(screen.getByText('12')).toBeInTheDocument());
     expect(
-      screen.getByRole('button', { name: /generate study guide/i }),
+      screen.getByRole('button', { name: /write my study guide/i }),
     ).toBeEnabled();
   });
 
@@ -94,7 +94,7 @@ describe('SummaryModal credit handling', () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: /generate study guide/i }),
+        screen.getByRole('button', { name: /write my study guide/i }),
       ).toBeDisabled(),
     );
     const notice = screen.getByRole('alert');
@@ -111,7 +111,7 @@ describe('SummaryModal credit handling', () => {
 
     await waitFor(() => expect(screen.getByText('1')).toBeInTheDocument());
     await userEvent.click(
-      screen.getByRole('button', { name: /generate study guide/i }),
+      screen.getByRole('button', { name: /write my study guide/i }),
     );
     await waitFor(() =>
       expect(screen.getByText('Sorting Algorithms')).toBeInTheDocument(),
@@ -124,10 +124,10 @@ describe('SummaryModal credit handling', () => {
     );
 
     await userEvent.click(
-      screen.getByRole('button', { name: /new study guide/i }),
+      screen.getByRole('button', { name: /make another/i }),
     );
     await userEvent.click(
-      screen.getByRole('button', { name: /generate study guide/i }),
+      screen.getByRole('button', { name: /write my study guide/i }),
     );
 
     await waitFor(() =>
@@ -150,7 +150,7 @@ describe('SummaryModal credit handling', () => {
     mockGetCredits.mockResolvedValue(status(11));
 
     await userEvent.click(
-      screen.getByRole('button', { name: /generate study guide/i }),
+      screen.getByRole('button', { name: /write my study guide/i }),
     );
 
     await waitFor(() => expect(mockGetCredits).toHaveBeenCalledTimes(2));
@@ -166,7 +166,7 @@ describe('SummaryModal credit handling', () => {
 
     await waitFor(() => expect(screen.getByText('20')).toBeInTheDocument());
     await userEvent.click(
-      screen.getByRole('button', { name: /generate study guide/i }),
+      screen.getByRole('button', { name: /write my study guide/i }),
     );
 
     await waitFor(() =>
@@ -182,7 +182,7 @@ describe('SummaryModal credit handling', () => {
     await waitFor(() => expect(mockGetCredits).toHaveBeenCalled());
     expect(screen.queryByText(/credits/i)).toBeNull();
     expect(
-      screen.getByRole('button', { name: /generate study guide/i }),
+      screen.getByRole('button', { name: /write my study guide/i }),
     ).toBeEnabled();
   });
 });

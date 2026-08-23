@@ -1147,3 +1147,9 @@
   color: #4b5563;
 }
 
+
+.study-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}

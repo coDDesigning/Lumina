@@ -325,6 +325,95 @@ export function QuizModal({
   const hasMaterial = readyDocumentCount > 0;
   const scorePercentage = attempt ? Math.round(attempt.score * 100) : 0;
 
+  const modalFooter = (
+    <>
+      {step === 'config' ? (
+        <>
+          <button className="secondary-button" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <CreditBalance source={quizSource} />
+          <button
+            className="primary-button"
+            type="button"
+            onClick={startQuiz}
+            disabled={!hasMaterial || exhausted}
+          >
+            <Play aria-hidden="true" />
+            Start Quiz
+          </button>
+        </>
+      ) : null}
+
+      {step === 'generating' || step === 'submitting' ? (
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => {
+            abortRef.current?.abort();
+            setStep(step === 'generating' ? 'config' : 'solving');
+          }}
+        >
+          Cancel
+        </button>
+      ) : null}
+
+      {step === 'error' ? (
+        <>
+          <button className="secondary-button" type="button" onClick={onClose}>
+            Close
+          </button>
+          <button className="primary-button" type="button" onClick={resetToConfig}>
+            Back to setup
+          </button>
+        </>
+      ) : null}
+
+      {step === 'solving' ? (
+        <>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={currentQuestionIndex === 0}
+            onClick={() => setCurrentQuestionIndex((index) => index - 1)}
+          >
+            Previous
+          </button>
+          {currentQuestionIndex < questions.length - 1 ? (
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => setCurrentQuestionIndex((index) => index + 1)}
+            >
+              Next Question
+            </button>
+          ) : (
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => void submitAttempt()}
+            >
+              <Sparkles aria-hidden="true" />
+              Submit Quiz
+            </button>
+          )}
+        </>
+      ) : null}
+
+      {step === 'results' ? (
+        <>
+          <button className="secondary-button" type="button" onClick={resetToConfig}>
+            <RotateCcw aria-hidden="true" />
+            New Quiz Setup
+          </button>
+          <button className="primary-button" type="button" onClick={onClose}>
+            Done
+          </button>
+        </>
+      ) : null}
+    </>
+  );
+
   return (
     <Dialog
       open
@@ -332,10 +421,11 @@ export function QuizModal({
       size="xl"
       title="Practice quiz"
       description="Test your understanding against the material in this course"
+      footer={modalFooter}
       mark={<Award aria-hidden="true" />}
     >
 
-        <div className="study-modal-body">
+        <div className="study-modal-content">
           {step === 'generating' || step === 'submitting' ? (
             <div className="study-loading-state">
               <div className="study-pulse-spinner" />
@@ -728,92 +818,6 @@ export function QuizModal({
           ) : null}
         </div>
 
-        <footer className="study-modal-footer">
-          {step === 'config' ? (
-            <>
-              <button className="secondary-button" type="button" onClick={onClose}>
-                Cancel
-              </button>
-              <CreditBalance source={quizSource} />
-              <button
-                className="primary-button"
-                type="button"
-                onClick={startQuiz}
-                disabled={!hasMaterial || exhausted}
-              >
-                <Play aria-hidden="true" />
-                Start Quiz
-              </button>
-            </>
-          ) : null}
-
-          {step === 'generating' || step === 'submitting' ? (
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => {
-                abortRef.current?.abort();
-                setStep(step === 'generating' ? 'config' : 'solving');
-              }}
-            >
-              Cancel
-            </button>
-          ) : null}
-
-          {step === 'error' ? (
-            <>
-              <button className="secondary-button" type="button" onClick={onClose}>
-                Close
-              </button>
-              <button className="primary-button" type="button" onClick={resetToConfig}>
-                Back to setup
-              </button>
-            </>
-          ) : null}
-
-          {step === 'solving' ? (
-            <>
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={currentQuestionIndex === 0}
-                onClick={() => setCurrentQuestionIndex((index) => index - 1)}
-              >
-                Previous
-              </button>
-              {currentQuestionIndex < questions.length - 1 ? (
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={() => setCurrentQuestionIndex((index) => index + 1)}
-                >
-                  Next Question
-                </button>
-              ) : (
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={() => void submitAttempt()}
-                >
-                  <Sparkles aria-hidden="true" />
-                  Submit Quiz
-                </button>
-              )}
-            </>
-          ) : null}
-
-          {step === 'results' ? (
-            <>
-              <button className="secondary-button" type="button" onClick={resetToConfig}>
-                <RotateCcw aria-hidden="true" />
-                New Quiz Setup
-              </button>
-              <button className="primary-button" type="button" onClick={onClose}>
-                Done
-              </button>
-            </>
-          ) : null}
-        </footer>
     </Dialog>
   );
 }

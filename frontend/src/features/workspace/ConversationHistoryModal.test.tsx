@@ -1,11 +1,11 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { conversationsAPI } from '../../api/conversations';
-import type { ConversationDetail, ConversationSummary } from '../../api/types';
+import { conversationsAPI } from '@/api/conversations';
+import type { ConversationDetail, ConversationSummary } from '@/api/types';
 import { ConversationHistoryModal } from './ConversationHistoryModal';
 
-vi.mock('../../api/conversations', () => ({
+vi.mock('@/api/conversations', () => ({
   conversationsAPI: { list: vi.fn(), get: vi.fn() },
 }));
 
@@ -69,10 +69,10 @@ describe('ConversationHistoryModal', () => {
       />,
     );
 
-    expect(await screen.findByText('Course Q&A')).toBeInTheDocument();
-    expect(screen.getByText('AI Tutor')).toBeInTheDocument();
+    expect(await screen.findByText('Question')).toBeInTheDocument();
+    expect(screen.getByText('Tutoring')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /Conversation 18/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Tutoring 18/ }));
 
     expect(
       await screen.findAllByText('Teach me graph traversal.'),
@@ -97,10 +97,10 @@ describe('ConversationHistoryModal', () => {
     );
 
     await userEvent.click(
-      await screen.findByRole('button', { name: /Conversation 18/ }),
+      await screen.findByRole('button', { name: /Tutoring 18/ }),
     );
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Resume conversation' }),
+      await screen.findByRole('button', { name: 'Pick this up' }),
     );
 
     expect(onResume).toHaveBeenCalledWith(TUTOR_DETAIL);
@@ -143,11 +143,11 @@ describe('ConversationHistoryModal', () => {
     );
 
     await userEvent.click(
-      await screen.findByRole('button', { name: /Conversation 18/ }),
+      await screen.findByRole('button', { name: /Tutoring 18/ }),
     );
-    expect(await screen.findByText('Read-only access')).toBeInTheDocument();
+    expect(await screen.findByText(/read this thread, but not continue it/i)).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Resume conversation' }),
+      screen.queryByRole('button', { name: 'Pick this up' }),
     ).not.toBeInTheDocument();
   });
 });

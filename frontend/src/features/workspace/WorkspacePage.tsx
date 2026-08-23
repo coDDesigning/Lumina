@@ -9,6 +9,7 @@ import {
   Sparkles,
   Target,
   Upload,
+  Wand2,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { coursesAPI } from '@/api/courses';
@@ -43,10 +44,12 @@ import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';
+import { IconButton } from '@/ui/IconButton';
 import { Input } from '@/ui/Input';
 import { PageHeader } from '@/ui/PageHeader';
 import { Spinner } from '@/ui/Spinner';
 import { Tabs } from '@/ui/Tabs';
+import { PromptGeneratorDialog } from './PromptGeneratorDialog';
 import { useCourseProgress } from './useCourseProgress';
 import styles from './WorkspacePage.module.css';
 
@@ -142,6 +145,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   const [isFlashcardOpen, setIsFlashcardOpen] = useState(false);
   const [isMadeForYouOpen, setIsMadeForYouOpen] = useState(false);
   const [isPastThreadsOpen, setIsPastThreadsOpen] = useState(false);
+  const [isPromptHelperOpen, setIsPromptHelperOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -455,7 +459,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             </span>
           </div>
 
-          <div className={styles.thread}>
+          <div className={styles.thread} aria-live="polite">
             {thread.messages.length === 0 && !thread.isLoading ? (
               <div className={styles.emptyThread}>
                 <h2 className={styles.emptyThreadTitle}>{THREAD_COPY[threadType].title}</h2>
@@ -511,6 +515,11 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                 onChange={(event) => setPrompt(event.target.value)}
                 placeholder={`Ask anything about ${workspace.name}…`}
                 disabled={thread.isLoading}
+              />
+              <IconButton
+                label="Help me word this"
+                icon={<Wand2 aria-hidden="true" />}
+                onClick={() => setIsPromptHelperOpen(true)}
               />
               <Button
                 type="submit"
@@ -634,6 +643,12 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           onClose={() => setIsFlashcardOpen(false)}
         />
       ) : null}
+
+      <PromptGeneratorDialog
+        open={isPromptHelperOpen}
+        onClose={() => setIsPromptHelperOpen(false)}
+        onGenerated={setPrompt}
+      />
 
       {isPastThreadsOpen ? (
         <ConversationHistoryModal

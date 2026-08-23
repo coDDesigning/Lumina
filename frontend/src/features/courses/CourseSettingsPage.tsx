@@ -19,7 +19,7 @@ import styles from './CourseSettingsPage.module.css';
 export interface CourseSettingsPageProps {
   workspace: Workspace;
   onSave: (workspace: Workspace) => Promise<void> | void;
-  onDelete: (workspaceId: string) => Promise<void>;
+  onDelete: (courseId: string) => Promise<void>;
 }
 
 const DEFAULT_PREFERENCES = {
@@ -171,7 +171,7 @@ export default function CourseSettingsPage({
         courseId={workspace.id}
         crumbs={[
           { label: 'Courses', to: '/dashboard' },
-          { label: workspace.name, to: `/workspaces/${workspace.id}` },
+          { label: workspace.name, to: `/courses/${workspace.id}` },
           { label: 'Settings' },
         ]}
       />

@@ -36,13 +36,13 @@ function WorkspaceLoading() {
 type WorkspaceRouteProps = {
   workspaces: Workspace[]
   isLoading?: boolean
-  onSelect: (workspaceId: string) => void
-  onUpdateProgress?: (workspaceId: string, progress: number) => void
+  onSelect: (courseId: string) => void
+  onUpdateProgress?: (courseId: string, progress: number) => void
 }
 
 function WorkspaceRoute({ workspaces, isLoading, onSelect, onUpdateProgress }: WorkspaceRouteProps) {
-  const { workspaceId } = useParams()
-  const workspace = workspaces.find(({ id }) => id === workspaceId)
+  const { courseId } = useParams()
+  const workspace = workspaces.find(({ id }) => id === courseId)
 
   useEffect(() => {
     if (workspace) onSelect(workspace.id)
@@ -63,8 +63,8 @@ function WorkspaceRoute({ workspaces, isLoading, onSelect, onUpdateProgress }: W
 }
 
 function ProgressRoute({ workspaces, isLoading, onSelect }: WorkspaceRouteProps) {
-  const { workspaceId } = useParams()
-  const workspace = workspaces.find(({ id }) => id === workspaceId)
+  const { courseId } = useParams()
+  const workspace = workspaces.find(({ id }) => id === courseId)
 
   useEffect(() => {
     if (workspace) onSelect(workspace.id)
@@ -77,12 +77,18 @@ function ProgressRoute({ workspaces, isLoading, onSelect }: WorkspaceRouteProps)
 
 type CourseSettingsRouteProps = WorkspaceRouteProps & {
   onSave: (workspace: Workspace) => Promise<void> | void
-  onDelete: (workspaceId: string) => Promise<void>
+  onDelete: (courseId: string) => Promise<void>
 }
 
 function LegacyEditRedirect() {
-  const { workspaceId } = useParams()
-  return <Navigate to={`/workspaces/${workspaceId}/settings`} replace />
+  const { courseId } = useParams()
+  return <Navigate to={`/courses/${courseId}/settings`} replace />
+}
+
+function LegacyWorkspaceRedirect() {
+  const { courseId, '*': rest } = useParams()
+  const tail = rest ? `/${rest}` : ''
+  return <Navigate to={`/courses/${courseId}${tail}`} replace />
 }
 
 function CourseSettingsRoute({
@@ -92,8 +98,8 @@ function CourseSettingsRoute({
   onSave,
   onDelete,
 }: CourseSettingsRouteProps) {
-  const { workspaceId } = useParams()
-  const workspace = workspaces.find(({ id }) => id === workspaceId)
+  const { courseId } = useParams()
+  const workspace = workspaces.find(({ id }) => id === courseId)
 
   useEffect(() => {
     if (workspace) onSelect(workspace.id)
@@ -225,8 +231,8 @@ function App() {
     }
   }, [activeWorkspaceId])
 
-  const selectWorkspace = (workspaceId: string) => {
-    setActiveWorkspaceId(workspaceId)
+  const selectWorkspace = (courseId: string) => {
+    setActiveWorkspaceId(courseId)
   }
 
   const createWorkspace = async (draft: WorkspaceDraft) => {
@@ -251,14 +257,14 @@ function App() {
     }
   }
 
-  const deleteWorkspace = async (workspaceId: string) => {
-    await coursesAPI.delete(Number(workspaceId))
+  const deleteWorkspace = async (courseId: string) => {
+    await coursesAPI.delete(Number(courseId))
     const remaining = workspaces.filter(
-      (workspace) => workspace.id !== workspaceId,
+      (workspace) => workspace.id !== courseId,
     )
     setWorkspaces(remaining)
 
-    if (activeWorkspaceId !== workspaceId) return
+    if (activeWorkspaceId !== courseId) return
     const nextWorkspaceId = remaining[0]?.id ?? ''
     if (!nextWorkspaceId) {
       localStorage.removeItem(ACTIVE_WORKSPACE_STORAGE_KEY)
@@ -298,12 +304,12 @@ function App() {
   }
 
   const updateWorkspaceProgress = useCallback(
-    (workspaceId: string, progress: number) => {
+    (courseId: string, progress: number) => {
       setWorkspaces((current) => {
-        const target = current.find((w) => w.id === workspaceId)
+        const target = current.find((w) => w.id === courseId)
         if (!target || target.progress === progress) return current
         return current.map((w) =>
-          w.id === workspaceId ? { ...w, progress } : w,
+          w.id === courseId ? { ...w, progress } : w,
         )
       })
     },
@@ -335,7 +341,7 @@ function App() {
           }
         />
         <Route
-          path="/workspaces/:workspaceId"
+          path="/courses/:courseId"
           element={
             <WorkspaceRoute
               workspaces={workspaces}
@@ -346,7 +352,7 @@ function App() {
           }
         />
         <Route
-          path="/workspaces/:workspaceId/settings"
+          path="/courses/:courseId/settings"
           element={
             <CourseSettingsRoute
               workspaces={workspaces}
@@ -358,7 +364,7 @@ function App() {
           }
         />
         <Route
-          path="/workspaces/:workspaceId/progress"
+          path="/courses/:courseId/progress"
           element={
             <ProgressRoute
               workspaces={workspaces}
@@ -367,10 +373,13 @@ function App() {
             />
           }
         />
-        <Route path="/workspaces/:workspaceId/edit" element={<LegacyEditRedirect />} />
+        <Route path="/courses/:courseId/edit" element={<LegacyEditRedirect />} />
+        <Route path="/workspaces/:courseId/*" element={<LegacyWorkspaceRedirect />} />
+        <Route path="/workspaces/:courseId" element={<LegacyWorkspaceRedirect />} />
+        <Route path="/profile" element={<Navigate to="/account" replace />} />
         <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
         <Route
-          path="/profile"
+          path="/account"
           element={<AccountPage />}
         />
         <Route

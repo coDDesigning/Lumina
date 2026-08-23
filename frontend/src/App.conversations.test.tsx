@@ -119,7 +119,7 @@ function tutorResult(
 
 function renderWorkspace() {
   return render(
-    <MemoryRouter initialEntries={['/workspaces/1']}>
+    <MemoryRouter initialEntries={['/courses/1']}>
       <App />
     </MemoryRouter>,
   );

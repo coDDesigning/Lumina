@@ -27,8 +27,8 @@ export interface CoursesPageProps {
   error?: string | null;
   onRetry?: () => void;
   onCreate: (draft: WorkspaceDraft) => Promise<Workspace>;
-  onSelect: (workspaceId: string) => void;
-  onDelete: (workspaceId: string) => Promise<void>;
+  onSelect: (courseId: string) => void;
+  onDelete: (courseId: string) => Promise<void>;
 }
 
 const emptyDraft: WorkspaceDraft = {
@@ -187,7 +187,7 @@ export default function CoursesPage({
       const workspace = await onCreate({ ...draft, name: draft.name.trim() });
       setDraft(emptyDraft);
       setIsCreating(false);
-      navigate(`/workspaces/${workspace.id}`);
+      navigate(`/courses/${workspace.id}`);
     } catch (caught) {
       setCreateError(
         describeError(caught, "That course couldn't be created. Try again.").message,
@@ -302,7 +302,7 @@ export default function CoursesPage({
                 return (
                   <li key={workspace.id} className={styles.cardShell}>
                     <Link
-                      to={`/workspaces/${workspace.id}`}
+                      to={`/courses/${workspace.id}`}
                       className={styles.card}
                       onClick={() => onSelect(workspace.id)}
                     >
@@ -353,7 +353,7 @@ export default function CoursesPage({
                         label={`Settings for ${workspace.name}`}
                         size="sm"
                         icon={<Settings2 aria-hidden="true" />}
-                        onClick={() => navigate(`/workspaces/${workspace.id}/settings`)}
+                        onClick={() => navigate(`/courses/${workspace.id}/settings`)}
                       />
                       <IconButton
                         label={`Delete ${workspace.name}`}

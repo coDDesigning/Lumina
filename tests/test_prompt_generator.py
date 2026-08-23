@@ -86,7 +86,7 @@ def test_prompt_generator_endpoint_returns_generated_prompt(
     monkeypatch.setattr(
         prompt_generator_route,
         "get_text_generation_provider",
-        lambda: FakeProvider(),
+        lambda *args, **kwargs: FakeProvider(),
     )
 
     response = upload_api.client.post(
@@ -119,3 +119,63 @@ def test_prompt_generator_endpoint_requires_authentication(
     )
 
     assert response.status_code == 401
+
+
+def test_prompt_generator_endpoint_rejects_unavailable_model(
+    upload_api,
+) -> None:
+    from utils.ai_errors import ERROR_CODE_HEADER, PUBLIC_MESSAGES, AiErrorCode
+
+    response = upload_api.client.post(
+        "/api/prompt-generator",
+        json={
+            "description": "Generate a prompt.",
+            "model": "nonexistent:model",
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.headers.get(ERROR_CODE_HEADER) == AiErrorCode.UNAVAILABLE_MODEL.value
+    )
+    assert response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.UNAVAILABLE_MODEL]
+
+
+def test_prompt_generator_endpoint_rejects_json_incompatible_model(
+    upload_api, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+    import services.text_generation as text_gen
+    from utils.ai_errors import ERROR_CODE_HEADER, PUBLIC_MESSAGES, AiErrorCode
+
+    fake_settings = SimpleNamespace(
+        ai_provider="ollama",
+        ai_fallback_providers="",
+        ai_model_catalog={
+            "ollama": [
+                {
+                    "model": "text-only",
+                    "json_mode": False,
+                    "context_window": 8192,
+                    "vision": False,
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(text_gen, "settings", fake_settings)
+
+    response = upload_api.client.post(
+        "/api/prompt-generator",
+        json={
+            "description": "Generate a prompt.",
+            "model": "ollama:text-only",
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.headers.get(ERROR_CODE_HEADER) == AiErrorCode.INCOMPATIBLE_MODEL.value
+    )
+    assert response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.INCOMPATIBLE_MODEL]

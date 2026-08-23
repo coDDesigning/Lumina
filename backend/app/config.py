@@ -9,6 +9,7 @@ this file is the single source of truth for "what the environment says".
 import math
 import os
 import re
+import json
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,7 @@ IMPLEMENTED_AI_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
 DEFAULT_AI_PROVIDER = AI_PROVIDER_OLLAMA
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1"
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 OLLAMA_MODEL_PATTERN = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
 
 IMPLEMENTED_EMBEDDING_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
@@ -145,6 +147,7 @@ class Settings:
 
     # AI provider configuration
     ai_provider: str
+    ai_model_catalog: dict[str, list[dict[str, object]]]
     gemini_api_key: str | None
     ollama_base_url: str
     ollama_model: str
@@ -377,6 +380,7 @@ def load_settings() -> Settings:
             "OLLAMA_MODEL must contain 1-128 characters limited to letters, digits, "
             "dots, colons, slashes, dashes, or underscores."
         )
+    ai_model_catalog = _ai_model_catalog_setting(ollama_model)
     ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
     if ai_fallback_providers_raw:
         for fallback_token in (
@@ -729,6 +733,7 @@ def load_settings() -> Settings:
         bootstrap_admin_email=bootstrap_admin_email or None,
         bootstrap_admin_token=bootstrap_admin_token or None,
         ai_provider=ai_provider,
+        ai_model_catalog=ai_model_catalog,
         gemini_api_key=gemini_api_key,
         ollama_base_url=ollama_base_url,
         ollama_model=ollama_model,
@@ -785,6 +790,121 @@ def load_settings() -> Settings:
         credit_periodic_grant=credit_periodic_grant,
         credit_max_balance=credit_max_balance,
     )
+
+
+def _ai_model_catalog_setting(
+    ollama_model: str,
+) -> dict[str, list[dict[str, object]]]:
+    raw_value = os.getenv("AI_MODEL_CATALOG", "").strip()
+
+    if not raw_value:
+        return {
+            AI_PROVIDER_OLLAMA: [
+                {
+                    "model": ollama_model,
+                    "json_mode": True,
+                    "context_window": 128_000,
+                    "vision": False,
+                }
+            ],
+            AI_PROVIDER_GEMINI: [
+                {
+                    "model": DEFAULT_GEMINI_MODEL,
+                    "json_mode": True,
+                    "context_window": 1_048_576,
+                    "vision": True,
+                }
+            ],
+        }
+
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("AI_MODEL_CATALOG must be valid JSON.") from exc
+
+    if not isinstance(parsed, dict) or not parsed:
+        raise ValueError(
+            "AI_MODEL_CATALOG must be a non-empty JSON object keyed by provider."
+        )
+
+    for provider, models in parsed.items():
+        if provider not in IMPLEMENTED_AI_PROVIDERS:
+            raise ValueError(
+                "AI_MODEL_CATALOG provider must be one of the implemented providers: "
+                f"{', '.join(IMPLEMENTED_AI_PROVIDERS)}; got '{provider}'."
+            )
+
+        if not isinstance(models, list) or not models:
+            raise ValueError(
+                f"AI_MODEL_CATALOG provider '{provider}' must map to a non-empty "
+                "list of models."
+            )
+
+        required_fields = {"model", "json_mode", "context_window", "vision"}
+        seen_models: set[str] = set()
+
+        for entry in models:
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"AI_MODEL_CATALOG provider '{provider}' entries must be "
+                    "JSON objects."
+                )
+
+            missing_fields = required_fields - entry.keys()
+            if missing_fields:
+                missing = ", ".join(sorted(missing_fields))
+                raise ValueError(
+                    f"AI_MODEL_CATALOG provider '{provider}' model entry is "
+                    f"missing required fields: {missing}."
+                )
+
+            model = entry["model"]
+            json_mode = entry["json_mode"]
+            context_window = entry["context_window"]
+            vision = entry["vision"]
+
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError(
+                    f"AI_MODEL_CATALOG provider '{provider}' model must be a "
+                    "non-empty string."
+                )
+
+            if len(model) > 128:
+                raise ValueError(
+                    f"AI_MODEL_CATALOG provider '{provider}' model must be at "
+                    "most 128 characters."
+                )
+
+            if not isinstance(json_mode, bool):
+                raise ValueError(
+                    f"AI_MODEL_CATALOG provider '{provider}' json_mode must be "
+                    "a boolean."
+                )
+
+            if (
+                not isinstance(context_window, int)
+                or isinstance(context_window, bool)
+                or context_window <= 0
+            ):
+                raise ValueError(
+                    f"AI_MODEL_CATALOG provider '{provider}' context_window must "
+                    "be a positive integer."
+                )
+
+            if not isinstance(vision, bool):
+                raise ValueError(
+                    f"AI_MODEL_CATALOG provider '{provider}' vision must be a boolean."
+                )
+
+            if model in seen_models:
+                raise ValueError(
+                    f"AI_MODEL_CATALOG provider '{provider}' contains duplicate "
+                    f"model '{model}'."
+                )
+
+            seen_models.add(model)
+
+    return parsed
 
 
 def _positive_integer_setting(name: str, default: int) -> int:

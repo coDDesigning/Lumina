@@ -8,23 +8,16 @@
 .light::before {
   content: '';
   position: absolute;
-  inset: -60% -10% auto -10%;
-  height: 21.25rem;
+  inset: -70% 34% auto -6%;
+  height: 18rem;
   z-index: -1;
   pointer-events: none;
-  background:
-    radial-gradient(
-      58% 62% at 22% 46%,
-      hsl(var(--light-hue) var(--light-sat) var(--light-lum) / var(--light-alpha-a)),
-      transparent 68%
-    ),
-    radial-gradient(
-      48% 56% at 76% 30%,
-      hsl(calc(var(--light-hue) + 38) var(--light-sat) calc(var(--light-lum) + 4%) /
-        var(--light-alpha-b)),
-      transparent 70%
-    );
-  filter: blur(4px);
+  background: radial-gradient(
+    52% 58% at 18% 50%,
+    hsl(var(--light-hue) var(--light-sat) var(--light-lum) / var(--light-alpha-a)),
+    hsl(calc(var(--light-hue) + 16) var(--light-sat) var(--light-lum) / var(--light-alpha-b)) 46%,
+    transparent 72%
+  );
 }
 
 .chip {
@@ -32,10 +25,6 @@
   height: 0.6875rem;
   border-radius: 50%;
   flex: 0 0 auto;
-  background: radial-gradient(
-    circle at 32% 30%,
-    hsl(var(--light-hue) 90% 78%),
-    hsl(var(--light-hue) 68% 54%)
-  );
-  box-shadow: 0 0 0 0.1875rem hsl(var(--light-hue) 84% 70% / 0.18);
+  background: hsl(var(--light-hue) var(--light-sat) var(--light-lum));
+  box-shadow: 0 0 0 0.1875rem hsl(var(--light-hue) var(--light-sat) var(--light-lum) / 0.16);
 }

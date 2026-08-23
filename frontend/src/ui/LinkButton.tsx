@@ -17,10 +17,6 @@ export interface LinkButtonProps extends SharedProps {
   to: string;
 }
 
-/**
- * A navigation control that looks like a button. Kept separate from Button so a
- * link is never nested inside a button element.
- */
 export function LinkButton({
   to,
   variant = 'secondary',

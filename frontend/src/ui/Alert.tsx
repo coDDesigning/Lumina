@@ -19,10 +19,6 @@ export interface AlertProps {
   children?: ReactNode;
   actions?: ReactNode;
   className?: string;
-  /**
-   * Announce the alert to assistive technology. Use 'alert' for a failure the
-   * user must know about now, 'status' for a passive notice.
-   */
   live?: 'alert' | 'status' | 'none';
 }
 

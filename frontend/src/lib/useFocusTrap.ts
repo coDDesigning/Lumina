@@ -27,14 +27,6 @@ function focusableWithin(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(isReachable);
 }
 
-/**
- * Traps Tab within the container while active, moves focus in on open, and
- * restores it to whatever was focused before on close.
- *
- * Both effects depend on `active` alone. `onEscape` is held in a ref on purpose:
- * depending on its identity would re-run the trap whenever a parent re-rendered
- * with an inline handler, pulling focus back to the first control mid-keystroke.
- */
 export function useFocusTrap(
   containerRef: RefObject<HTMLElement | null>,
   active: boolean,
@@ -123,7 +115,6 @@ export function useFocusTrap(
   }, [active, containerRef]);
 }
 
-/** Prevents the page behind an overlay from scrolling while it is open. */
 export function useScrollLock(active: boolean) {
   useEffect(() => {
     if (!active) {

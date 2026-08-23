@@ -14,6 +14,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   fullWidth?: boolean;
   alignStart?: boolean;
   icon?: ReactNode;
+  iconAfter?: ReactNode;
 }
 
 export function Button({
@@ -24,6 +25,7 @@ export function Button({
   fullWidth = false,
   alignStart = false,
   icon,
+  iconAfter,
   className,
   children,
   disabled,
@@ -47,6 +49,7 @@ export function Button({
     >
       {isLoading ? <Spinner size="sm" label={loadingLabel} /> : icon}
       {children}
+      {isLoading ? null : iconAfter}
     </button>
   );
 }

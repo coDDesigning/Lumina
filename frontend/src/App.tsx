@@ -155,7 +155,9 @@ function mapCourseToWorkspace(
     educationLevel: course.education_level || 'unspecified',
     semester: course.semester || '',
     examDate: course.exam_date || '',
-    topics: course.topics ? course.topics.split(',').map((t) => t.trim()) : [],
+    topics: course.topics
+      ? course.topics.split(',').map((t) => t.trim()).filter(Boolean)
+      : [],
     syllabus: course.syllabus || '',
     progress,
     status,

@@ -17,10 +17,6 @@ export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   children: ReactNode;
 }
 
-/**
- * Status is never carried by colour alone: a badge always renders its label,
- * and status badges pass an icon as a third channel.
- */
 export function Badge({ tone = 'neutral', icon, className, children, ...rest }: BadgeProps) {
   return (
     <span {...rest} className={cx(styles.badge, styles[tone], className)}>

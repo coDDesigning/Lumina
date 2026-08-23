@@ -5,9 +5,7 @@ export type ThemePreference = 'light' | 'dark' | 'system';
 export const THEME_STORAGE_KEY = 'lumina.theme';
 
 export interface ThemeApi {
-  /** What the user chose. 'system' follows the operating system. */
   preference: ThemePreference;
-  /** What is actually rendering right now. */
   resolved: 'light' | 'dark';
   setPreference: (preference: ThemePreference) => void;
 }

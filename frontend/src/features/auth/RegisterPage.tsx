@@ -10,7 +10,6 @@ import { Input } from '@/ui/Input';
 import { AuthLayout } from './AuthLayout';
 import styles from './AuthLayout.module.css';
 
-/** bcrypt truncates beyond 72 bytes, and the backend rejects longer passwords. */
 const MAX_PASSWORD_BYTES = 72;
 
 function passwordByteLength(value: string): number {

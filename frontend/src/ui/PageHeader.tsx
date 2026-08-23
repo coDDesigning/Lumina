@@ -14,15 +14,10 @@ export interface PageHeaderProps {
   crumbs: Crumb[];
   badges?: ReactNode;
   actions?: ReactNode;
-  /** When set, the header carries the course light and chip. */
   courseId?: number | string;
   className?: string;
 }
 
-/**
- * The context bar every page renders. The last crumb is the current location
- * and is never a link, so the course a student is inside is always stated.
- */
 export function PageHeader({ crumbs, badges, actions, courseId, className }: PageHeaderProps) {
   const content = (
     <div className={cx(styles.header, className)}>

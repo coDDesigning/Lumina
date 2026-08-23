@@ -13,10 +13,6 @@ export interface EmptyStateProps {
   headingLevel?: 'h1' | 'h2' | 'h3';
 }
 
-/**
- * An empty screen is an invitation to act, not an apology. Actions belong here;
- * a control with nothing to act on should be absent, not disabled.
- */
 export function EmptyState({
   icon,
   title,

@@ -12,10 +12,6 @@ interface ErrorBoundaryState {
   hasError: boolean;
 }
 
-/**
- * Without this a render throw blanks the whole application. The message stays
- * generic on purpose: an exception string is not something to show a student.
- */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { hasError: false };
 

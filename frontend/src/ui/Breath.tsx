@@ -7,10 +7,6 @@ export interface BreathProps {
   label?: string;
 }
 
-/**
- * The calm progress signal: a slow pulse rather than a spinner, for work that
- * takes tens of seconds. Reduced motion turns it into a static dot.
- */
 export function Breath({ count = 1, className, label }: BreathProps) {
   const dots = count === 3 ? [0, 1, 2] : [0];
 

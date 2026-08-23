@@ -4,7 +4,6 @@ import styles from './IconButton.module.css';
 
 export interface IconButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
-  /** Required: an icon-only control has no visible text to name it. */
   label: string;
   icon: ReactNode;
   size?: 'sm' | 'md' | 'lg';

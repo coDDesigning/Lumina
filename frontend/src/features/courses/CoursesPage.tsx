@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { FolderOpen, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { FolderOpen, Plus, RefreshCw, Settings2, Trash2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { describeError } from '@/api/errors';
 import { EDUCATION_LEVEL_LABELS } from '@/api/types';
@@ -348,7 +348,13 @@ export default function CoursesPage({
                       </Card>
                     </Link>
 
-                    <span className={styles.deleteSlot}>
+                    <span className={styles.cardActions}>
+                      <IconButton
+                        label={`Settings for ${workspace.name}`}
+                        size="sm"
+                        icon={<Settings2 aria-hidden="true" />}
+                        onClick={() => navigate(`/workspaces/${workspace.id}/settings`)}
+                      />
                       <IconButton
                         label={`Delete ${workspace.name}`}
                         tone="destructive"

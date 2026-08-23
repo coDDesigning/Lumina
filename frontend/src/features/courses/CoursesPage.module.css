@@ -152,21 +152,23 @@
   background: linear-gradient(90deg, #9b6ff0, var(--accent));
 }
 
-.deleteSlot {
+.cardActions {
   position: absolute;
   top: var(--space-3);
   right: var(--space-3);
+  display: flex;
+  gap: var(--space-1);
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out);
 }
 
-.cardShell:hover .deleteSlot,
-.cardShell:focus-within .deleteSlot {
+.cardShell:hover .cardActions,
+.cardShell:focus-within .cardActions {
   opacity: 1;
 }
 
 @media (hover: none) {
-  .deleteSlot {
+  .cardActions {
     opacity: 1;
   }
 }

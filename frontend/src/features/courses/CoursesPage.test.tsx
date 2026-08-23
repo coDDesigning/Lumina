@@ -105,6 +105,13 @@ describe('CoursesPage', () => {
     expect(screen.queryByText(/sources/i)).not.toBeInTheDocument();
   });
 
+  it('gives every course a reachable settings control', () => {
+    renderPage();
+    expect(
+      screen.getByRole('button', { name: 'Settings for Operating Systems' }),
+    ).toBeInTheDocument();
+  });
+
   it('filters the list by name, term, or topic', async () => {
     const user = userEvent.setup();
     renderPage();

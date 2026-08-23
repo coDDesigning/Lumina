@@ -15,9 +15,8 @@ import {
 } from 'lucide-react'
 import { Navigate, Route, Routes, useParams } from 'react-router-dom'
 import type { Workspace, WorkspaceDraft } from './data/workspaces'
-import EditPage from './pages/EditPage'
+import CourseSettingsPage from './features/courses/CourseSettingsPage'
 import ProfilePage from './pages/ProfilePage'
-import SettingsPage from './pages/SettingsPage'
 import AdminPage from './pages/AdminPage'
 import CoursesPage from './features/courses/CoursesPage'
 import LoginPage from './features/auth/LoginPage'
@@ -902,16 +901,23 @@ function WorkspaceRoute({ workspaces, isLoading, onSelect, onUpdateProgress }: W
   )
 }
 
-type EditWorkspaceRouteProps = WorkspaceRouteProps & {
+type CourseSettingsRouteProps = WorkspaceRouteProps & {
   onSave: (workspace: Workspace) => Promise<void> | void
+  onDelete: (workspaceId: string) => Promise<void>
 }
 
-function EditWorkspaceRoute({
+function LegacyEditRedirect() {
+  const { workspaceId } = useParams()
+  return <Navigate to={`/workspaces/${workspaceId}/settings`} replace />
+}
+
+function CourseSettingsRoute({
   workspaces,
   isLoading,
   onSelect,
   onSave,
-}: EditWorkspaceRouteProps) {
+  onDelete,
+}: CourseSettingsRouteProps) {
   const { workspaceId } = useParams()
   const workspace = workspaces.find(({ id }) => id === workspaceId)
 
@@ -928,7 +934,14 @@ function EditWorkspaceRoute({
   }
 
   if (!workspace) return <Navigate to="/" replace />
-  return <EditPage key={workspace.id} workspace={workspace} onSave={onSave} />
+  return (
+    <CourseSettingsPage
+      key={workspace.id}
+      workspace={workspace}
+      onSave={onSave}
+      onDelete={onDelete}
+    />
+  )
 }
 
 function mapCourseToWorkspace(
@@ -1163,20 +1176,19 @@ function App() {
           }
         />
         <Route
-          path="/workspaces/:workspaceId/edit"
+          path="/workspaces/:workspaceId/settings"
           element={
-            <EditWorkspaceRoute
+            <CourseSettingsRoute
               workspaces={workspaces}
               isLoading={isLoadingWorkspaces}
               onSelect={selectWorkspace}
               onSave={updateWorkspace}
+              onDelete={deleteWorkspace}
             />
           }
         />
-        <Route
-          path="/settings"
-          element={<SettingsPage workspaceId={activeWorkspaceId} />}
-        />
+        <Route path="/workspaces/:workspaceId/edit" element={<LegacyEditRedirect />} />
+        <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
         <Route
           path="/profile"
           element={<ProfilePage workspaceId={activeWorkspaceId} />}

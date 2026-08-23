@@ -92,6 +92,15 @@ describe('DocumentRow', () => {
     expect(screen.getByText('PDF')).toBeInTheDocument();
   });
 
+  it('says nothing about the kind when the reader did not choose one', () => {
+    const row = entry('ready');
+    renderRow({ ...row, document: { ...row.document, material_kind: 'unspecified' } });
+
+    expect(screen.getByText('PDF')).toBeInTheDocument();
+    expect(screen.queryByText('Slides')).toBeNull();
+    expect(screen.queryByText('Unspecified')).toBeNull();
+  });
+
   it('says nothing about a lock once the source is ready', () => {
     renderRow(entry('ready'));
 

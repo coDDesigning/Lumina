@@ -47,6 +47,7 @@ export function createMockDocument(
     original_file_name: 'lecture1.pdf',
     file_type: 'pdf',
     mime_type: 'application/pdf',
+    material_kind: 'unspecified',
     file_size: 1048576,
     course_id: 1,
     status: 'uploaded',

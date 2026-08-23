@@ -1,0 +1,30 @@
+.light {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.light::before {
+  content: '';
+  position: absolute;
+  inset: -70% 34% auto -6%;
+  height: 18rem;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    52% 58% at 18% 50%,
+    hsl(var(--light-hue) var(--light-sat) var(--light-lum) / var(--light-alpha-a)),
+    hsl(calc(var(--light-hue) + 16) var(--light-sat) var(--light-lum) / var(--light-alpha-b)) 46%,
+    transparent 72%
+  );
+}
+
+.chip {
+  width: 0.6875rem;
+  height: 0.6875rem;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: hsl(var(--light-hue) var(--light-sat) var(--light-lum));
+  box-shadow: 0 0 0 0.1875rem hsl(var(--light-hue) var(--light-sat) var(--light-lum) / 0.16);
+}

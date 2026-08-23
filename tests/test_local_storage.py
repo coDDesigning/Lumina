@@ -213,3 +213,94 @@ def test_source_reset_failure_happens_before_installing_destination(
 
     assert storage.read(key) == b"existing destination"
     assert [path for path in tmp_path.rglob("*") if path.suffix == ".tmp"] == []
+
+
+def test_delete_removes_the_directories_the_upload_created(tmp_path: Path) -> None:
+    storage = LocalStorage(tmp_path)
+    key = storage.generate_key(7, uuid4(), "txt")
+    storage.save(key, BytesIO(b"payload"))
+
+    stored = tmp_path.joinpath(*key.split("/"))
+    assert stored.exists()
+
+    storage.delete(key)
+
+    assert not stored.exists()
+    assert not stored.parent.exists()
+    # The shared levels stay: an upload builds them one component at a time, so removing
+    # them here could make a concurrent upload fail.
+    assert stored.parent.parent.is_dir()
+    assert tmp_path.exists()
+
+
+def test_delete_keeps_a_directory_another_document_still_uses(tmp_path: Path) -> None:
+    storage = LocalStorage(tmp_path)
+    course = 7
+    first = storage.generate_key(course, uuid4(), "txt")
+    second = storage.generate_key(course, uuid4(), "txt")
+    storage.save(first, BytesIO(b"one"))
+    storage.save(second, BytesIO(b"two"))
+
+    storage.delete(first)
+
+    assert storage.exists(second) is True
+    shared = tmp_path / "courses" / str(course) / "documents"
+    assert shared.is_dir()
+
+
+def test_delete_never_removes_the_storage_root(tmp_path: Path) -> None:
+    root = tmp_path / "uploads"
+    root.mkdir()
+    storage = LocalStorage(root)
+    key = storage.generate_key(1, uuid4(), "txt")
+    storage.save(key, BytesIO(b"payload"))
+
+    storage.delete(key)
+
+    assert root.is_dir()
+
+
+def test_delete_of_a_missing_key_leaves_the_tree_alone(tmp_path: Path) -> None:
+    storage = LocalStorage(tmp_path)
+    kept = storage.generate_key(3, uuid4(), "txt")
+    storage.save(kept, BytesIO(b"payload"))
+    missing = storage.generate_key(3, uuid4(), "txt")
+
+    storage.delete(missing)
+
+    assert storage.exists(kept) is True
+    assert tmp_path.is_dir()
+
+
+def test_delete_stops_pruning_at_a_directory_holding_something_else(
+    tmp_path: Path,
+) -> None:
+    storage = LocalStorage(tmp_path)
+    key = storage.generate_key(9, uuid4(), "txt")
+    storage.save(key, BytesIO(b"payload"))
+
+    stored = tmp_path.joinpath(*key.split("/"))
+    sibling = stored.parent / "notes.txt"
+    sibling.write_bytes(b"kept")
+
+    storage.delete(key)
+
+    assert sibling.exists()
+    assert stored.parent.is_dir()
+
+
+def test_delete_leaves_the_shared_levels_for_concurrent_uploads(tmp_path: Path) -> None:
+    root = tmp_path / "uploads"
+    root.mkdir()
+    storage = LocalStorage(root, require_existing_root=True)
+    key = storage.generate_key(4, uuid4(), "txt")
+    storage.save(key, BytesIO(b"payload"))
+
+    storage.delete(key)
+
+    assert (root / "courses" / "4" / "documents").is_dir()
+
+    # A later upload into the same course must still succeed.
+    again = storage.generate_key(4, uuid4(), "txt")
+    storage.save(again, BytesIO(b"second"))
+    assert storage.exists(again) is True

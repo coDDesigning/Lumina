@@ -1,0 +1,61 @@
+.empty {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: var(--space-7) var(--space-5);
+  min-height: 15rem;
+}
+
+.inner {
+  max-width: 26rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mark {
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: var(--radius-xl);
+  display: grid;
+  place-items: center;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  margin-bottom: var(--space-2);
+}
+
+.mark svg {
+  width: var(--size-icon-lg);
+  height: var(--size-icon-lg);
+}
+
+.markDestructive {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+.title {
+  font-size: var(--text-2xl);
+}
+
+.description {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: center;
+  margin-top: var(--space-3);
+}
+
+.footnote {
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: var(--leading-normal);
+}

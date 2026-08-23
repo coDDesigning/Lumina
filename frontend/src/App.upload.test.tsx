@@ -13,7 +13,6 @@ import {
   MockErrors,
 } from './test/mocks/api';
 
-// These suites are not about credits; an unmetered account renders no credit UI.
 vi.mock('./context/CreditContext', () => ({
   useCredits: () => ({
     status: null,
@@ -25,7 +24,6 @@ vi.mock('./context/CreditContext', () => ({
     canAfford: () => true,
   }),
 }))
-
 
 vi.mock('./context/AuthContext', () => ({
   useAuth: () => ({
@@ -78,6 +76,16 @@ const mockGetDocumentStatus = vi.mocked(coursesAPI.getDocumentStatus);
 const mockUploadDocument = vi.mocked(coursesAPI.uploadDocument);
 const mockGetProgress = vi.mocked(progressAPI.get);
 
+function uploadAlertFor(fileName: string) {
+  const alert = screen
+    .getAllByRole('alert')
+    .find((node) => node.textContent?.includes(fileName));
+  if (!alert) {
+    throw new Error(`No upload alert found for ${fileName}`);
+  }
+  return alert;
+}
+
 describe('Document Upload UI in Workspace', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -108,7 +116,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );
@@ -123,7 +131,7 @@ describe('Document Upload UI in Workspace', () => {
 
     await user.upload(fileInput, file);
 
-    expect(mockUploadDocument).toHaveBeenCalledWith(1, file);
+    expect(mockUploadDocument).toHaveBeenCalledWith(1, file, 'unspecified');
     await waitFor(() => {
       expect(screen.getByText('syllabus.pdf')).toBeInTheDocument();
     });
@@ -142,7 +150,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );
@@ -157,7 +165,10 @@ describe('Document Upload UI in Workspace', () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(screen.getByText('lecture1.pdf is already in this course.')).toBeInTheDocument();
+      expect(
+        screen.getByText(/lecture1\.pdf is already in this course/),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/The original was kept/)).toBeInTheDocument();
     });
   });
 
@@ -170,7 +181,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );
@@ -185,11 +196,7 @@ describe('Document Upload UI in Workspace', () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          'busy.pdf: The document cannot be deleted while it is being processed.',
-        ),
-      ).toBeInTheDocument();
+      expect(uploadAlertFor('busy.pdf')).toHaveTextContent('The document cannot be deleted while it is being processed.');
     });
   });
 
@@ -202,7 +209,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );
@@ -217,11 +224,7 @@ describe('Document Upload UI in Workspace', () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          'large_video.pdf: The file exceeds the maximum allowed upload size of 50 MB.',
-        ),
-      ).toBeInTheDocument();
+      expect(uploadAlertFor('large_video.pdf')).toHaveTextContent('The file exceeds the maximum allowed upload size of 50 MB.');
     });
   });
 
@@ -234,7 +237,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );
@@ -249,11 +252,7 @@ describe('Document Upload UI in Workspace', () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          'unsupported.pdf: Unsupported file type. Please upload a PDF, TXT, or Markdown file.',
-        ),
-      ).toBeInTheDocument();
+      expect(uploadAlertFor('unsupported.pdf')).toHaveTextContent('Unsupported file type. Please upload a PDF, TXT, or Markdown file.');
     });
   });
 
@@ -266,7 +265,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );
@@ -281,9 +280,7 @@ describe('Document Upload UI in Workspace', () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(
-        screen.getByText('empty.txt: file: Empty file is not permitted'),
-      ).toBeInTheDocument();
+      expect(uploadAlertFor('empty.txt')).toHaveTextContent('file: Empty file is not permitted');
     });
   });
 });

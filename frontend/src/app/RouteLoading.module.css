@@ -1,0 +1,13 @@
+.wrap {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--space-3);
+  min-height: 60vh;
+  width: 100%;
+}
+
+.label {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}

@@ -1,0 +1,47 @@
+.spinner {
+  display: inline-block;
+  vertical-align: middle;
+  color: currentColor;
+  animation: spin 0.85s linear infinite;
+  transform-origin: center;
+}
+
+.sm {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.md {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.lg {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fade {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: fade 1.6s ease-in-out infinite;
+  }
+}

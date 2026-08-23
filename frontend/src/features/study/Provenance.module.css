@@ -1,0 +1,5 @@
+.provenance {
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+  line-height: var(--leading-relaxed);
+}

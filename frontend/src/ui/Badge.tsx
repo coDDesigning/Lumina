@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { HTMLAttributes, ReactNode } from 'react';
 import { cx } from '@/lib/cx';
 import styles from './Badge.module.css';
 
@@ -11,10 +11,9 @@ export type BadgeTone =
   | 'destructive'
   | 'info';
 
-export interface BadgeProps {
+export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: BadgeTone;
   icon?: ReactNode;
-  className?: string;
   children: ReactNode;
 }
 
@@ -22,9 +21,9 @@ export interface BadgeProps {
  * Status is never carried by colour alone: a badge always renders its label,
  * and status badges pass an icon as a third channel.
  */
-export function Badge({ tone = 'neutral', icon, className, children }: BadgeProps) {
+export function Badge({ tone = 'neutral', icon, className, children, ...rest }: BadgeProps) {
   return (
-    <span className={cx(styles.badge, styles[tone], className)}>
+    <span {...rest} className={cx(styles.badge, styles[tone], className)}>
       {icon}
       {children}
     </span>

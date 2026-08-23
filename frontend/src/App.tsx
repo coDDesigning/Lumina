@@ -5,7 +5,7 @@ import CourseSettingsPage from './features/courses/CourseSettingsPage'
 import CoursesPage from './features/courses/CoursesPage'
 import ProgressPage from './features/workspace/ProgressPage'
 import WorkspacePage from './features/workspace/WorkspacePage'
-import ProfilePage from './pages/ProfilePage'
+import AccountPage from './features/account/AccountPage'
 import AdminPage from './pages/AdminPage'
 import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
@@ -380,7 +380,7 @@ function App() {
         <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
         <Route
           path="/profile"
-          element={<ProfilePage workspaceId={activeWorkspaceId} />}
+          element={<AccountPage />}
         />
         <Route
           path="/admin"

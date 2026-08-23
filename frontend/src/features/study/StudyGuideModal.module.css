@@ -1,0 +1,18 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-4);
+}
+
+.footerRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.provenance {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: var(--border-width) solid var(--border);
+}

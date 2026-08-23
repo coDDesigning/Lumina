@@ -57,7 +57,7 @@
 }
 
 .control:focus {
-  background: var(--surface-raised);
+  background-color: var(--surface-raised);
 }
 
 .control:disabled {
@@ -67,7 +67,7 @@
 
 .control[aria-invalid='true'] {
   border-color: var(--destructive);
-  background: var(--destructive-subtle);
+  background-color: var(--destructive-subtle);
 }
 
 .textarea {

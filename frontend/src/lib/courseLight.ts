@@ -1,4 +1,4 @@
-const HUES = [266, 196, 32, 146, 334, 218, 12, 96, 288, 172, 52, 310];
+const HUES = [214, 232, 196, 258, 176, 280, 148, 32, 320, 104, 12, 52];
 
 export function courseHue(courseId: number | string): number {
   const raw = typeof courseId === 'number' ? courseId : hashString(courseId);

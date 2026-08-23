@@ -52,7 +52,6 @@
   gap: var(--space-2);
   font-size: var(--text-xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--text-muted);
 }
@@ -143,7 +142,6 @@
   display: block;
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--warning);
   margin-bottom: var(--space-1);
@@ -181,7 +179,6 @@
 .confidenceHeading {
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--text-subtle);
   margin-bottom: var(--space-2);

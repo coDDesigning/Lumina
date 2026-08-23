@@ -46,7 +46,7 @@
   flex-shrink: 0;
   width: 1.75rem;
   height: 1.75rem;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   background: var(--surface-sunken);
   color: var(--text-muted);
   font-size: var(--text-xs);
@@ -104,7 +104,7 @@
   place-items: center;
   width: 2.5rem;
   height: 2.5rem;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   background: var(--surface-sunken);
   color: var(--text-muted);
 }

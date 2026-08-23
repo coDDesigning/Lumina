@@ -48,7 +48,6 @@
 .heading {
   font-size: var(--text-xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--text-muted);
 }
@@ -84,14 +83,14 @@
 
 .bar {
   height: 0.375rem;
-  border-radius: var(--radius-full);
-  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  background: var(--border);
   overflow: hidden;
 }
 
 .barFill {
   height: 100%;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   background: var(--accent);
 }
 

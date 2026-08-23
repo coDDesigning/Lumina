@@ -78,14 +78,14 @@
 .bar {
   height: 0.1875rem;
   margin-top: var(--space-1);
-  border-radius: var(--radius-full);
-  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  background: var(--border);
   overflow: hidden;
 }
 
 .barFill {
   height: 100%;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   background: var(--processing);
   transition: width var(--duration-normal) var(--ease-out);
 }

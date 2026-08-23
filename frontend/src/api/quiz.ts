@@ -4,6 +4,7 @@ import type {
   QuizAttemptRequest,
   QuizAttemptResponse,
   QuizGenerationResult,
+  QuizHistoryItem,
   QuizRequest,
   QuizSummary,
   QuizView,
@@ -59,4 +60,30 @@ export const quizAPI = {
     );
     return unwrapData(res, 'Quiz attempt');
   },
+
+  listAttempts: async (
+    courseId: number,
+    quizId: number,
+    options?: RequestInit,
+  ): Promise<QuizHistoryItem[]> => {
+    const res = await apiClient.get<BaseResponse<QuizHistoryItem[]>>(
+      `/courses/${courseId}/quizzes/${quizId}/attempts`,
+      options,
+    );
+    return unwrapData(res, 'Quiz attempts');
+  },
+
+  getAttempt: async (
+    courseId: number,
+    quizId: number,
+    attemptId: number,
+    options?: RequestInit,
+  ): Promise<QuizAttemptResponse> => {
+    const res = await apiClient.get<BaseResponse<QuizAttemptResponse>>(
+      `/courses/${courseId}/quizzes/${quizId}/attempts/${attemptId}`,
+      options,
+    );
+    return unwrapData(res, 'Quiz attempt');
+  },
 };
+

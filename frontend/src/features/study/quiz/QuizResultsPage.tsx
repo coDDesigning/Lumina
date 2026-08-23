@@ -24,48 +24,70 @@ interface HandedIn {
 }
 
 export default function QuizResultsPage({ workspace }: QuizResultsPageProps) {
-  const { quizId } = useParams();
+  const { quizId, attemptId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
   const courseId = Number(workspace.id);
 
   // Handing a quiz in navigates here with the marked attempt already in hand; a cold
-  // load has only the URL, and the questions still have to be fetched to show a review.
+  // load has only the URL, and the questions and attempt are fetched to show a review.
   const handedIn = (location.state as HandedIn | null) ?? null;
 
   const [quiz, setQuiz] = useState<QuizView | null>(handedIn?.quiz ?? null);
+  const [attempt, setAttempt] = useState<QuizAttemptResponse | null>(
+    handedIn?.attempt ?? null,
+  );
+  const [isLoading, setIsLoading] = useState<boolean>(!handedIn);
   const [error, setError] = useState<string | null>(null);
 
   useDocumentTitle(`Quiz results · ${workspace.name}`);
 
   useEffect(() => {
-    if (quiz) {
+    if (handedIn?.quiz && handedIn?.attempt) {
       return;
     }
+
     const controller = new AbortController();
-    const id = Number(quizId);
+    const parsedQuizId = Number(quizId);
+    const parsedAttemptId = Number(attemptId);
 
-    if (!Number.isInteger(id) || id <= 0) {
-      setError('That is not a quiz address.');
+    if (
+      !Number.isInteger(parsedQuizId) ||
+      parsedQuizId <= 0 ||
+      !Number.isInteger(parsedAttemptId) ||
+      parsedAttemptId <= 0
+    ) {
+      setError('That is not a valid quiz attempt address.');
+      setIsLoading(false);
       return;
     }
 
-    quizAPI
-      .get(courseId, id, { signal: controller.signal })
-      .then((loaded) => {
+    setIsLoading(true);
+    setError(null);
+
+    Promise.all([
+      quizAPI.get(courseId, parsedQuizId, { signal: controller.signal }),
+      quizAPI.getAttempt(courseId, parsedQuizId, parsedAttemptId, {
+        signal: controller.signal,
+      }),
+    ])
+      .then(([loadedQuiz, loadedAttempt]) => {
         if (!controller.signal.aborted) {
-          setQuiz(loaded);
+          setQuiz(loadedQuiz);
+          setAttempt(loadedAttempt);
+          setIsLoading(false);
         }
       })
       .catch((caught: unknown) => {
         if (controller.signal.aborted || isAbortError(caught)) {
           return;
         }
-        setError(describeError(caught, 'This quiz could not be opened.').message);
+        setIsLoading(false);
+        setError(describeError(caught, 'This attempt could not be opened.').message);
       });
 
     return () => controller.abort();
-  }, [courseId, quiz, quizId]);
+  }, [courseId, handedIn, quizId, attemptId]);
 
   return (
     <div className={styles.page}>
@@ -97,24 +119,18 @@ export default function QuizResultsPage({ workspace }: QuizResultsPageProps) {
           </Alert>
         ) : null}
 
-        {!handedIn && !error ? (
-          <Alert tone="info" title="Opening a past attempt is not supported yet">
-            The score for this attempt is on your progress page. Reviewing an individual past
-            attempt question by question needs an endpoint the backend does not serve yet.
-          </Alert>
-        ) : null}
-
-        {handedIn && !quiz ? (
+        {isLoading && !error ? (
           <div className={styles.pending}>
             <Skeleton variant="heading" />
             <Skeleton variant="block" />
           </div>
         ) : null}
 
-        {handedIn && quiz ? (
-          <QuizResults attempt={handedIn.attempt} questions={quiz.questions} />
+        {!isLoading && !error && quiz && attempt ? (
+          <QuizResults attempt={attempt} questions={quiz.questions} />
         ) : null}
       </div>
     </div>
   );
 }
+

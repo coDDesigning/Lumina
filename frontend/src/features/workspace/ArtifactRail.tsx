@@ -2,14 +2,14 @@ import { BookOpen, Layers3, Target } from 'lucide-react';
 import { Button } from '@/ui/Button';
 import { Skeleton } from '@/ui/Skeleton';
 import { relativeDay } from './relativeDay';
-import type { CourseArtifact } from './useCourseArtifacts';
+import type { CourseArtifact, SavedArtifact } from './useCourseArtifacts';
 import styles from './ArtifactRail.module.css';
 
 export interface ArtifactRailProps {
   artifacts: CourseArtifact[];
   isLoading: boolean;
   onOpenAll: () => void;
-  onOpenOutput: (outputId: number) => void;
+  onOpen: (artifact: SavedArtifact) => void;
   onOpenProgress: () => void;
 }
 
@@ -63,7 +63,7 @@ export function ArtifactRail({
   artifacts,
   isLoading,
   onOpenAll,
-  onOpenOutput,
+  onOpen,
   onOpenProgress,
 }: ArtifactRailProps) {
   if (isLoading) {
@@ -95,7 +95,7 @@ export function ArtifactRail({
               type="button"
               className={styles.entry}
               onClick={() =>
-                artifact.kind === 'quiz' ? onOpenProgress() : onOpenOutput(artifact.outputId)
+                artifact.kind === 'quiz' ? onOpenProgress() : onOpen(artifact)
               }
             >
               <span className={styles.icon} aria-hidden="true">

@@ -1,0 +1,10 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.body {
+  padding: 0 var(--space-5) var(--space-7);
+  min-width: 0;
+}

@@ -211,7 +211,7 @@ describe('Workspace conversations', () => {
     await sendPrompt('What does a process own?');
     await screen.findByText('A process owns an address space.');
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Tutoring' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Tutor' }));
     expect(screen.queryByText('A process owns an address space.')).not.toBeInTheDocument();
     await sendPrompt('Teach me the process model.');
     await screen.findByText('Picture a process as a container for threads.');
@@ -230,7 +230,7 @@ describe('Workspace conversations', () => {
       include_profile_context: false,
     });
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Exam' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Ask' }));
     expect(screen.getByText('A process owns an address space.')).toBeInTheDocument();
     expect(
       screen.queryByText('Picture a process as a container for threads.'),
@@ -283,11 +283,11 @@ describe('Workspace conversations', () => {
     renderWorkspace();
     await screen.findByRole('button', { name: 'Add Sources' });
     expect(
-      screen.getByRole('button', { name: 'Generated history' }),
+      screen.getByRole('button', { name: 'Made for you' }),
     ).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole('button', { name: 'Conversation history' }),
+      screen.getByRole('button', { name: 'Past threads' }),
     );
     await userEvent.click(
       await screen.findByRole('button', { name: /Conversation 88/ }),
@@ -296,7 +296,7 @@ describe('Workspace conversations', () => {
       await screen.findByRole('button', { name: 'Resume conversation' }),
     );
 
-    expect(screen.getByRole('tab', { name: 'Tutoring' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: 'Tutor' })).toHaveAttribute(
       'aria-selected',
       'true',
     );

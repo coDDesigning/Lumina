@@ -29,7 +29,6 @@
   display: block;
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--accent);
   margin-bottom: var(--space-2);

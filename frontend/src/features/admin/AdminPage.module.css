@@ -60,7 +60,6 @@
   text-align: left;
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   color: var(--text-muted);
   font-weight: var(--weight-bold);
   padding: var(--space-3) var(--space-4);

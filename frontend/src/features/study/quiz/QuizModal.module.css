@@ -14,7 +14,6 @@
 .legend {
   font-size: var(--text-xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--text-muted);
   margin-bottom: var(--space-3);
@@ -61,7 +60,7 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   background: var(--surface-sunken);
   color: var(--text-muted);
   font-size: var(--text-sm);
@@ -132,7 +131,6 @@
   flex-wrap: wrap;
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--text-subtle);
 }

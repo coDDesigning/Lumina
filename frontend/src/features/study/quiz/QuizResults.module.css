@@ -45,7 +45,6 @@
 .tallyItem dt {
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--text-muted);
 }
@@ -82,7 +81,6 @@
 .reviewHeading {
   font-size: var(--text-xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--text-muted);
 }
@@ -170,7 +168,6 @@
 .answers dt {
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--text-muted);
   margin-bottom: 0.125rem;
@@ -197,7 +194,6 @@
   display: block;
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--text-subtle);
   margin-bottom: 0.125rem;

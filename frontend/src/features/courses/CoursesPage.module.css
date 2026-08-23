@@ -102,7 +102,6 @@
   gap: var(--space-2);
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--text-subtle);
   min-width: 0;
@@ -140,15 +139,15 @@
 
 .progressTrack {
   height: 0.3125rem;
-  background: var(--surface-sunken);
-  border-radius: var(--radius-full);
+  background: var(--border);
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .progressFill {
   display: block;
   height: 100%;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   background: linear-gradient(90deg, var(--brand-from), var(--accent));
 }
 

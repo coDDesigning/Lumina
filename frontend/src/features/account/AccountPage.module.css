@@ -29,7 +29,6 @@
   display: block;
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   font-weight: var(--weight-bold);
   color: var(--accent);
   margin-bottom: var(--space-2);
@@ -58,7 +57,7 @@
 .avatar {
   width: 3rem;
   height: 3rem;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
   background: var(--accent-subtle);

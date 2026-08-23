@@ -340,12 +340,9 @@ export function QuizModal({
 
     if (step === 'error') {
       return (
-        <>
-          <Button onClick={onClose}>Close</Button>
-          <Button variant="primary" onClick={backToSetup}>
-            Back to setup
-          </Button>
-        </>
+        <Button variant="primary" onClick={backToSetup}>
+          Back to setup
+        </Button>
       );
     }
 

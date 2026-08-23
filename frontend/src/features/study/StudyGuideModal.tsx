@@ -268,7 +268,7 @@ export function StudyGuideModal({
 
     return (
       <>
-        <Button onClick={onClose}>Close</Button>
+        <Button onClick={onClose}>Not now</Button>
         <div className={styles.footerRight}>
           <CreditBalance source="study_guide" />
           <Button

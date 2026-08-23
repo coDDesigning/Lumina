@@ -1,11 +1,11 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { generatedOutputsAPI } from '../../api/generatedOutputs';
-import type { GeneratedOutputDetail, GeneratedOutputSummary } from '../../api/types';
+import { generatedOutputsAPI } from '@/api/generatedOutputs';
+import type { GeneratedOutputDetail, GeneratedOutputSummary } from '@/api/types';
 import { StudyHistoryModal } from './StudyHistoryModal';
 
-vi.mock('../../api/generatedOutputs', () => ({
+vi.mock('@/api/generatedOutputs', () => ({
   generatedOutputsAPI: { list: vi.fn(), get: vi.fn() },
 }));
 
@@ -119,7 +119,8 @@ describe('StudyHistoryModal', () => {
 
     renderModal();
 
-    expect(await screen.findByText('Nothing generated yet')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Nothing saved yet' })).toBeInTheDocument();
+    expect(screen.getByText(/read them again without spending anything/)).toBeInTheDocument();
   });
 
   it('surfaces a failure to load the history', async () => {
@@ -128,7 +129,9 @@ describe('StudyHistoryModal', () => {
     renderModal();
 
     await waitFor(() =>
-      expect(screen.getByText('History unavailable')).toBeInTheDocument(),
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'The history could not be loaded.',
+      ),
     );
   });
 });

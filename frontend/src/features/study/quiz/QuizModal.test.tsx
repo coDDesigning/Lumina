@@ -103,7 +103,30 @@ beforeEach(() => {
   mockGenerate.mockResolvedValue(QUIZ as never);
 });
 
+function duplicateControlNames(): string[] {
+  const dialog = screen.getByRole('dialog');
+  const names = Array.from(dialog.querySelectorAll('button')).map(
+    (button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '',
+  );
+  const seen = new Set<string>();
+  const repeated = new Set<string>();
+  for (const name of names) {
+    if (seen.has(name)) {
+      repeated.add(name);
+    }
+    seen.add(name);
+  }
+  return Array.from(repeated);
+}
+
 describe('taking a quiz', () => {
+  it('gives every control in the setup step its own name', async () => {
+    renderQuiz();
+    await screen.findByRole('button', { name: /start the quiz/i });
+
+    expect(duplicateControlNames()).toEqual([]);
+  });
+
   it('never shows the answer while the question is still being answered', async () => {
     await startQuiz();
 

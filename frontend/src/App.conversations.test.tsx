@@ -290,10 +290,10 @@ describe('Workspace conversations', () => {
       screen.getByRole('button', { name: 'Past threads' }),
     );
     await userEvent.click(
-      await screen.findByRole('button', { name: /Conversation 88/ }),
+      await screen.findByRole('button', { name: /Tutoring 88/ }),
     );
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Resume conversation' }),
+      await screen.findByRole('button', { name: 'Pick this up' }),
     );
 
     expect(screen.getByRole('tab', { name: 'Tutor' })).toHaveAttribute(

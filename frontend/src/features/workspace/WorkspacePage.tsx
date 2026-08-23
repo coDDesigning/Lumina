@@ -51,6 +51,9 @@ import { PageHeader } from '@/ui/PageHeader';
 import { Spinner } from '@/ui/Spinner';
 import { Tabs } from '@/ui/Tabs';
 import { PromptGeneratorDialog } from './PromptGeneratorDialog';
+import { useNavigate } from 'react-router-dom';
+import { ArtifactRail } from './ArtifactRail';
+import { useCourseArtifacts } from './useCourseArtifacts';
 import { useCourseProgress } from './useCourseProgress';
 import styles from './WorkspacePage.module.css';
 
@@ -144,7 +147,13 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
     deleteDocument,
   } = useCourseDocuments(courseId);
 
+  const navigate = useNavigate();
   const { progress, reload: reloadProgress } = useCourseProgress(courseId);
+  const {
+    artifacts,
+    isLoading: areArtifactsLoading,
+    reload: reloadArtifacts,
+  } = useCourseArtifacts(courseId, progress);
 
   useEffect(() => {
     if (!onUpdateProgress || progress?.average_score == null) {
@@ -561,19 +570,17 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           <div className={styles.divider} />
 
           <div className={styles.panelHead}>
-            <span className={styles.panelLabel}>Already made</span>
+            <span className={styles.panelLabel}>
+              Made for you{artifacts.length > 0 ? ` · ${artifacts.length}` : ''}
+            </span>
           </div>
-          <div className={styles.actionList}>
-            <Button
-              alignStart
-              fullWidth
-              size="sm"
-              variant="ghost"
-              onClick={() => setIsMadeForYouOpen(true)}
-            >
-              Made for you
-            </Button>
-          </div>
+          <ArtifactRail
+            artifacts={artifacts}
+            isLoading={areArtifactsLoading}
+            onOpenAll={() => setIsMadeForYouOpen(true)}
+            onOpenOutput={() => setIsMadeForYouOpen(true)}
+            onOpenProgress={() => navigate(`/workspaces/${workspace.id}/progress`)}
+          />
 
           <p className={styles.sourceHint}>
             {canGenerate
@@ -589,7 +596,10 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           courseName={workspace.name}
           topics={workspace.topics}
           readyDocumentCount={readyCount}
-          onClose={() => setIsSummaryOpen(false)}
+          onClose={() => {
+            setIsSummaryOpen(false);
+            reloadArtifacts();
+          }}
         />
       ) : null}
 
@@ -616,7 +626,10 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           courseId={courseId}
           courseName={workspace.name}
           readyDocumentCount={readyCount}
-          onClose={() => setIsFlashcardOpen(false)}
+          onClose={() => {
+            setIsFlashcardOpen(false);
+            reloadArtifacts();
+          }}
         />
       ) : null}
 

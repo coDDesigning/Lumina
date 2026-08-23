@@ -6,6 +6,7 @@ import type {
   CourseUpdate,
   DocumentResponse,
   DocumentStatusResponse,
+  DocumentMaterialKind,
   DocumentUploadResponse,
 } from './types';
 
@@ -43,10 +44,12 @@ export const coursesAPI = {
   uploadDocument: async (
     courseId: number,
     file: File,
+    materialKind: DocumentMaterialKind = 'unspecified',
     options?: RequestInit,
   ): Promise<DocumentUploadResponse> => {
     const formData = new FormData();
     formData.append('document', file);
+    formData.append('material_kind', materialKind);
     return apiClient.postForm<DocumentUploadResponse>(
       `/courses/${courseId}/documents`,
       formData,

@@ -1,4 +1,5 @@
 import type {
+  DocumentMaterialKind,
   DocumentStatus,
   ProcessingJobResponse,
   ProcessingStage,
@@ -25,14 +26,161 @@ const STATUS_TONES: Record<DocumentStatus, BadgeTone> = {
 };
 
 const STAGE_LABELS: Record<ProcessingStage, string> = {
-  validating: 'Validating document',
-  extracting_text: 'Extracting text',
-  running_ocr: 'Reading scanned pages',
-  understanding_images: 'Analyzing diagrams and images',
-  cleaning_text: 'Preparing document text',
-  chunking: 'Preparing document for study',
-  generating_embeddings: 'Indexing document for study',
+  validating: 'Checking the file',
+  extracting_text: 'Pulling out the text',
+  running_ocr: 'Reading the scans',
+  understanding_images: 'Describing the figures',
+  cleaning_text: 'Tidying it up',
+  chunking: 'Splitting it up',
+  generating_embeddings: 'Indexing it',
 };
+
+const STAGE_REASONS: Partial<Record<ProcessingStage, string>> = {
+  running_ocr: 'Some pages are images, so the text is being read off them.',
+  understanding_images: 'There are diagrams here, so they are being described in words.',
+};
+
+export interface DocumentFailure {
+  headline: string;
+  what: string;
+  fix: string | null;
+}
+
+const FAILURES: Record<string, DocumentFailure> = {
+  PASSWORD_PROTECTED_PDF: {
+    headline: 'Locked file',
+    what: 'This PDF is password protected, so it cannot be opened.',
+    fix: 'Save an unlocked copy and upload that instead.',
+  },
+  CORRUPTED_PDF: {
+    headline: 'Damaged file',
+    what: 'This PDF could not be opened. Part of the file looks damaged.',
+    fix: 'Try downloading it again from wherever it came from.',
+  },
+  CORRUPTED_TEXT: {
+    headline: 'Unreadable text',
+    what: 'The text in this file is not in an encoding that could be read.',
+    fix: 'Re-saving it as UTF-8, or as a PDF, usually works.',
+  },
+  NO_PROCESSABLE_TEXT: {
+    headline: "Couldn't read it",
+    what: 'No readable text was found, even after trying to read the pages as images.',
+    fix: 'A clearer scan, or a photo taken straight on in good light, usually works.',
+  },
+  DOCUMENT_TOO_COMPLEX: {
+    headline: 'Too much at once',
+    what: 'This file has more going on in it than can be read in one pass.',
+    fix: 'Splitting it into a few smaller uploads works better.',
+  },
+  EXTRACTED_TEXT_LIMIT_EXCEEDED: {
+    headline: 'Too long',
+    what: 'There is more text in this file than one source can hold.',
+    fix: 'Upload it in parts — by chapter or by week.',
+  },
+  DOCUMENT_CHUNK_LIMIT_EXCEEDED: {
+    headline: 'Too long',
+    what: 'This file breaks down into more pieces than one source can hold.',
+    fix: 'Upload it in parts — by chapter or by week.',
+  },
+  UNSUPPORTED_FILE_TYPE: {
+    headline: 'Not a supported file',
+    what: 'This kind of file cannot be read.',
+    fix: 'PDF, plain text and Markdown all work.',
+  },
+  DOCUMENT_TOO_LARGE: {
+    headline: 'Too big',
+    what: 'This file is larger than the upload limit.',
+    fix: 'Upload it in parts, or export a smaller version.',
+  },
+  OCR_UNAVAILABLE: {
+    headline: 'Scans cannot be read right now',
+    what: 'This file needs its pages read as images, and that is unavailable at the moment.',
+    fix: null,
+  },
+};
+
+const GENERIC_FAILURE: DocumentFailure = {
+  headline: "Couldn't read it",
+  what: 'Something went wrong while reading this file.',
+  fix: null,
+};
+
+export function stageReason(stage: string | null | undefined): string | null {
+  if (!stage) {
+    return null;
+  }
+  return STAGE_REASONS[stage as ProcessingStage] ?? null;
+}
+
+export function describeFailure(job: ProcessingJobResponse | null): DocumentFailure {
+  const code = job?.last_error_code?.toUpperCase();
+  const known = code ? FAILURES[code] : undefined;
+  if (known) {
+    return known;
+  }
+  const message = job?.last_error_message;
+  return message ? { ...GENERIC_FAILURE, what: message } : GENERIC_FAILURE;
+}
+
+export function attemptsLabel(job: ProcessingJobResponse | null): string | null {
+  if (!job || job.max_attempts <= 1 || job.attempt_count < 1) {
+    return null;
+  }
+  return `attempt ${Math.min(job.attempt_count, job.max_attempts)} of ${job.max_attempts}`;
+}
+
+const MATERIAL_KIND_LABELS: Record<DocumentMaterialKind, string> = {
+  lecture_notes: 'Lecture notes',
+  slides: 'Slides',
+  textbook: 'Textbook',
+  syllabus: 'Syllabus',
+  assignment: 'Assignment',
+  past_exam: 'Past exam',
+  article: 'Article',
+  notes: 'Notes',
+  other: 'Other',
+  unspecified: '',
+};
+
+export const MATERIAL_KIND_CHOICES: { value: DocumentMaterialKind; label: string }[] = [
+  { value: 'unspecified', label: "I'd rather not say" },
+  { value: 'lecture_notes', label: 'Lecture notes' },
+  { value: 'slides', label: 'Slides' },
+  { value: 'textbook', label: 'Textbook' },
+  { value: 'syllabus', label: 'Syllabus' },
+  { value: 'assignment', label: 'Assignment' },
+  { value: 'past_exam', label: 'Past exam' },
+  { value: 'article', label: 'Article' },
+  { value: 'notes', label: 'My own notes' },
+  { value: 'other', label: 'Something else' },
+];
+
+const ORDERED_STAGES: ProcessingStage[] = [
+  'validating',
+  'extracting_text',
+  'running_ocr',
+  'understanding_images',
+  'cleaning_text',
+  'chunking',
+  'generating_embeddings',
+];
+
+export const TOTAL_STAGES = ORDERED_STAGES.length;
+
+export function materialKindLabel(kind: string | null | undefined): string {
+  if (!kind) {
+    return '';
+  }
+  return MATERIAL_KIND_LABELS[kind as DocumentMaterialKind] ?? humanizeToken(kind);
+}
+
+export function stageNumber(stage: string | null | undefined): number | null {
+  if (!stage) {
+    return null;
+  }
+  const index = ORDERED_STAGES.indexOf(stage as ProcessingStage);
+  return index === -1 ? null : index + 1;
+}
 
 const TERMINAL_DOCUMENT_STATUSES: ReadonlySet<string> = new Set(['ready', 'failed']);
 

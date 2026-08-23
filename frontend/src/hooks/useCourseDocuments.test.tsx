@@ -30,6 +30,7 @@ function document(
     original_file_name: 'lecture.pdf',
     file_type: 'pdf',
     mime_type: 'application/pdf',
+  material_kind: 'unspecified',
     file_size: 1024,
     course_id: 1,
     status,

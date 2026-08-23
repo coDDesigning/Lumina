@@ -151,11 +151,24 @@ export type ProcessingStage =
   | 'chunking'
   | 'generating_embeddings';
 
+export type DocumentMaterialKind =
+  | 'lecture_notes'
+  | 'slides'
+  | 'textbook'
+  | 'syllabus'
+  | 'assignment'
+  | 'past_exam'
+  | 'article'
+  | 'notes'
+  | 'other'
+  | 'unspecified';
+
 export interface DocumentResponse {
   id: string;
   original_file_name: string;
   file_type: string;
   mime_type: string;
+  material_kind: LooseUnion<DocumentMaterialKind>;
   file_size: number;
   course_id: number;
   status: LooseUnion<DocumentStatus>;

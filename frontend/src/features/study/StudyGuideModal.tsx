@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, Check, Copy, Download, Sparkles } from 'lucide-react';
 import { describeGenerationError, isAbortError, isInsufficientCredits } from '@/api/errors';
+import type { GenerationFailure } from '@/api/errors';
 import { settingsAPI } from '@/api/settings';
 import { studyGuideAPI } from '@/api/studyGuide';
 import type {
@@ -36,7 +37,7 @@ type GuideState =
   | { phase: 'idle' }
   | { phase: 'generating' }
   | { phase: 'success'; result: StudyGuideGenerationResult }
-  | { phase: 'error'; message: string; retryable: boolean };
+  | { phase: 'error'; failure: GenerationFailure };
 
 const FORMAT_OPTIONS: { value: SummaryFormat; label: string }[] = [
   { value: 'comprehensive', label: 'Full study guide' },
@@ -178,7 +179,7 @@ export function StudyGuideModal({
         setState(previous ? { phase: 'success', result: previous } : { phase: 'idle' });
         return;
       }
-      setState({ phase: 'error', message: described.message, retryable: described.retryable });
+      setState({ phase: 'error', failure: described });
     }
   }, [
     courseId,
@@ -271,7 +272,7 @@ export function StudyGuideModal({
           <Button
             variant="primary"
             onClick={() => void handleGenerate()}
-            disabled={!hasMaterial || exhausted || (state.phase === 'error' && !state.retryable)}
+            disabled={!hasMaterial || exhausted || (state.phase === 'error' && !state.failure.retryable)}
             icon={<Sparkles aria-hidden="true" />}
           >
             {state.phase === 'error' ? 'Try again' : 'Write my study guide'}
@@ -385,9 +386,13 @@ export function StudyGuideModal({
 
       {state.phase === 'error' ? (
         <GenerationError
-          message={state.message}
-          retryable={state.retryable}
+          failure={state.failure}
           onRetry={() => void handleGenerate()}
+          onBroadenTopic={() => {
+            setTopicFocus(ALL_TOPICS);
+            setState({ phase: 'idle' });
+          }}
+          onSeeSources={onClose}
         />
       ) : null}
 

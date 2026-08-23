@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Layers, Sparkles } from 'lucide-react';
 import { describeGenerationError, isAbortError, isInsufficientCredits } from '@/api/errors';
+import type { GenerationFailure } from '@/api/errors';
 import { flashcardsAPI } from '@/api/flashcards';
 import type { FlashcardGenerationResult } from '@/api/types';
 import CreditBalance from '@/components/credits/CreditBalance';
@@ -24,7 +25,7 @@ type FlashcardState =
   | { phase: 'idle' }
   | { phase: 'generating' }
   | { phase: 'success'; result: FlashcardGenerationResult }
-  | { phase: 'error'; message: string; retryable: boolean };
+  | { phase: 'error'; failure: GenerationFailure };
 
 export function FlashcardModal({
   courseId,
@@ -80,7 +81,7 @@ export function FlashcardModal({
         setState({ phase: 'idle' });
         return;
       }
-      setState({ phase: 'error', message: parsed.message, retryable: parsed.retryable });
+      setState({ phase: 'error', failure: parsed });
     }
   }, [courseId, includeProfileContext, refresh]);
 
@@ -161,9 +162,9 @@ export function FlashcardModal({
 
       {state.phase === 'error' ? (
         <GenerationError
-          message={state.message}
-          retryable={state.retryable}
+          failure={state.failure}
           onRetry={() => void handleGenerate()}
+          onSeeSources={onClose}
         />
       ) : null}
 

@@ -151,13 +151,36 @@ class LocalStorage(Storage):
             raise StorageError("Unable to read stored document.") from exc
 
     def delete(self, key: str) -> None:
-        """Delete a stored document if it exists."""
+        """Delete a stored document if it exists, and the directories it created."""
         try:
-            self._path_for_key(key).unlink(missing_ok=True)
+            path = self._path_for_key(key)
+            path.unlink(missing_ok=True)
         except StorageError:
             raise
         except OSError as exc:
             raise StorageError("Unable to delete stored document.") from exc
+
+        self._prune_empty_parents(path.parent)
+
+    def _prune_empty_parents(self, directory: Path) -> None:
+        """Remove now-empty directories up to, but never including, the root.
+
+        Upload creates one directory per document, so deleting only the file leaves an
+        empty directory behind for every document ever removed. Pruning is best effort:
+        a directory that is not empty, is gone already, or cannot be removed simply
+        stops the walk, and never fails the deletion that has already happened.
+        """
+        current = directory
+        while True:
+            try:
+                if current == self.root or not current.is_relative_to(self.root):
+                    return
+                if current.is_symlink() or not current.is_dir():
+                    return
+                current.rmdir()
+            except OSError:
+                return
+            current = current.parent
 
     def exists(self, key: str) -> bool:
         """Return whether a key identifies a regular stored file."""

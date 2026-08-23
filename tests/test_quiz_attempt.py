@@ -762,3 +762,321 @@ def test_transaction_rollback_on_failure_leaves_no_orphaned_state(
         assert session.scalars(select(QuizAttempt)).all() == []
         assert session.scalars(select(QuizAttemptAnswer)).all() == []
         assert session.scalars(select(Progress)).all() == []
+
+
+def test_list_quiz_attempts_chronological_order(upload_api) -> None:
+    quiz_id, question_ids = _quiz_with_question_ids(upload_api, ["Algebra", "Calculus"])
+
+    # First attempt: 1 correct out of 2 (score 0.5), time spent 60s
+    res1 = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}/attempts",
+        json={
+            "answers": [
+                {"question_id": question_ids[0], "selected_option_index": 0},
+                {"question_id": question_ids[1], "selected_option_index": 1},
+            ],
+            "time_spent_seconds": 60,
+        },
+        headers=upload_api.authorization,
+    )
+    assert res1.status_code == 201
+    att1 = res1.json()["data"]
+
+    # Second attempt: 2 correct out of 2 (score 1.0), time spent 45s
+    res2 = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}/attempts",
+        json={
+            "answers": [
+                {"question_id": question_ids[0], "selected_option_index": 0},
+                {"question_id": question_ids[1], "selected_option_index": 0},
+            ],
+            "time_spent_seconds": 45,
+        },
+        headers=upload_api.authorization,
+    )
+    assert res2.status_code == 201
+    att2 = res2.json()["data"]
+
+    # List attempts for this quiz
+    res = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}/attempts",
+        headers=upload_api.authorization,
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()["data"]
+
+    assert len(data) == 2
+    assert data[0]["attempt_id"] == att1["attempt_id"]
+    assert data[0]["quiz_id"] == quiz_id
+    assert data[0]["score"] == pytest.approx(0.5)
+    assert data[0]["correct_count"] == 1
+    assert data[0]["total_questions"] == 2
+    assert data[0]["time_spent_seconds"] == 60
+
+    assert data[1]["attempt_id"] == att2["attempt_id"]
+    assert data[1]["quiz_id"] == quiz_id
+    assert data[1]["score"] == pytest.approx(1.0)
+    assert data[1]["correct_count"] == 2
+    assert data[1]["total_questions"] == 2
+    assert data[1]["time_spent_seconds"] == 45
+
+
+def test_list_quiz_attempts_empty(upload_api) -> None:
+    quiz_id, _ = _quiz_with_question_ids(upload_api, ["Algebra"])
+
+    res = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}/attempts",
+        headers=upload_api.authorization,
+    )
+    assert res.status_code == 200
+    assert res.json()["data"] == []
+
+
+def test_list_quiz_attempts_mismatched_course_returns_404(upload_api) -> None:
+    quiz_id, _ = _quiz_with_question_ids(upload_api, ["Algebra"])
+
+    # Query using other_course_id where quiz does not belong
+    res = upload_api.client.get(
+        f"/api/courses/{upload_api.other_course_id}/quizzes/{quiz_id}/attempts",
+        headers=upload_api.authorization,
+    )
+    assert res.status_code == 404
+
+
+def test_get_attempt_detail_complete(upload_api) -> None:
+    quiz_id, question_ids = _quiz_with_question_ids(upload_api, ["Algebra", "Calculus"])
+
+    submit_res = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}/attempts",
+        json={
+            "answers": [
+                {
+                    "question_id": question_ids[0],
+                    "selected_option_index": 0,
+                    "time_spent_seconds": 15,
+                },
+                {
+                    "question_id": question_ids[1],
+                    "selected_option_index": 2,
+                    "time_spent_seconds": 25,
+                },
+            ],
+            "time_spent_seconds": 40,
+        },
+        headers=upload_api.authorization,
+    )
+    assert submit_res.status_code == 201
+    submitted_data = submit_res.json()["data"]
+    attempt_id = submitted_data["attempt_id"]
+
+    # Fetch detail
+    detail_res = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}/attempts/{attempt_id}",
+        headers=upload_api.authorization,
+    )
+    assert detail_res.status_code == 200, detail_res.text
+    data = detail_res.json()["data"]
+
+    assert data["attempt_id"] == attempt_id
+    assert data["quiz_id"] == quiz_id
+    assert data["score"] == pytest.approx(0.5)
+    assert data["correct_count"] == 1
+    assert data["graded_count"] == 2
+    assert data["total_questions"] == 2
+    assert data["time_spent_seconds"] == 40
+
+    answers = data["answers"]
+    assert len(answers) == 2
+
+    # First question (correct)
+    assert answers[0]["question_id"] == question_ids[0]
+    assert answers[0]["question_type"] == "multiple_choice"
+    assert answers[0]["selected_option_index"] == 0
+    assert answers[0]["correct_option_index"] == 0
+    assert answers[0]["is_correct"] is True
+    assert answers[0]["score"] == pytest.approx(1.0)
+    assert answers[0]["time_spent_seconds"] == 15
+    assert answers[0]["topic"] == "Algebra"
+
+    # Second question (incorrect)
+    assert answers[1]["question_id"] == question_ids[1]
+    assert answers[1]["question_type"] == "multiple_choice"
+    assert answers[1]["selected_option_index"] == 2
+    assert answers[1]["correct_option_index"] == 0
+    assert answers[1]["is_correct"] is False
+    assert answers[1]["score"] == pytest.approx(0.0)
+    assert answers[1]["time_spent_seconds"] == 25
+    assert answers[1]["topic"] == "Calculus"
+
+
+def test_get_attempt_detail_ungraded_answer_stays_null(upload_api, monkeypatch) -> None:
+    import routes.quiz as quiz_route
+    from services.text_generation import TextGenerationConnectionError
+
+    # Create quiz with an open-ended question
+    with upload_api.session_factory() as session:
+        quiz = Quiz(course_id=upload_api.course_id, title="Open-ended Quiz")
+        session.add(quiz)
+        session.flush()
+
+        session.add(
+            QuizQuestion(
+                quiz_id=quiz.id,
+                question_index=0,
+                question_type="open_ended",
+                difficulty="medium",
+                question_text="Explain recursion.",
+                topic="Algorithms",
+                correct_answer={
+                    "type": "open_ended",
+                    "reference_answer": "A function that calls itself.",
+                },
+                explanation="Recursion breaks problems down into base and recursive cases.",
+            )
+        )
+        session.commit()
+        quiz_id = quiz.id
+        question_id = quiz.questions[0].id
+
+    # Mock provider failure during grading so answer is ungradable (UNGRADABLE = (None, None))
+    class FailingProvider:
+        def generate_json_with_metadata(self, prompt: str):
+            raise TextGenerationConnectionError("AI provider unreachable")
+
+    monkeypatch.setattr(
+        quiz_route, "get_text_generation_provider", lambda **_: FailingProvider()
+    )
+
+    submit_res = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}/attempts",
+        json={
+            "answers": [
+                {
+                    "question_id": question_id,
+                    "text_response": "A function calling itself.",
+                }
+            ]
+        },
+        headers=upload_api.authorization,
+    )
+    assert submit_res.status_code == 201, submit_res.text
+    attempt_id = submit_res.json()["data"]["attempt_id"]
+
+    # Fetch detail
+    detail_res = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}/attempts/{attempt_id}",
+        headers=upload_api.authorization,
+    )
+    assert detail_res.status_code == 200
+    data = detail_res.json()["data"]
+
+    assert data["graded_count"] == 0
+    assert data["correct_count"] == 0
+    assert data["total_questions"] == 1
+    assert data["answers"][0]["is_correct"] is None
+    assert data["answers"][0]["score"] is None
+    assert data["answers"][0]["question_type"] == "open_ended"
+    assert data["answers"][0]["text_response"] == "A function calling itself."
+
+
+def test_get_attempt_detail_mismatched_quiz_returns_404(upload_api) -> None:
+    quiz1_id, q1_ids = _quiz_with_question_ids(upload_api, ["Algebra"])
+    quiz2_id, _ = _quiz_with_question_ids(upload_api, ["Geometry"])
+
+    submit_res = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz1_id}/attempts",
+        json={"answers": [{"question_id": q1_ids[0], "selected_option_index": 0}]},
+        headers=upload_api.authorization,
+    )
+    assert submit_res.status_code == 201
+    attempt_id = submit_res.json()["data"]["attempt_id"]
+
+    # Query attempt 1 under quiz 2 -> 404
+    res = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz2_id}/attempts/{attempt_id}",
+        headers=upload_api.authorization,
+    )
+    assert res.status_code == 404
+
+
+def test_get_attempt_detail_mismatched_course_returns_404(upload_api) -> None:
+    quiz_id, q_ids = _quiz_with_question_ids(upload_api, ["Algebra"])
+
+    submit_res = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}/attempts",
+        json={"answers": [{"question_id": q_ids[0], "selected_option_index": 0}]},
+        headers=upload_api.authorization,
+    )
+    assert submit_res.status_code == 201
+    attempt_id = submit_res.json()["data"]["attempt_id"]
+
+    # Query attempt under other_course_id -> 404
+    res = upload_api.client.get(
+        f"/api/courses/{upload_api.other_course_id}/quizzes/{quiz_id}/attempts/{attempt_id}",
+        headers=upload_api.authorization,
+    )
+    assert res.status_code == 404
+
+
+def test_attempt_endpoints_cross_user_isolation(authz_api) -> None:
+    with authz_api.session_factory() as session:
+        course = session.get(Course, authz_api.a_course_id)
+        assert course is not None
+        quiz = _create_quiz(session, course.id, ["Algebra"])
+        quiz_id = quiz.id
+        question_id = quiz.questions[0].id
+
+    submit_res = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/quizzes/{quiz_id}/attempts",
+        json={"answers": [{"question_id": question_id, "selected_option_index": 0}]},
+        headers=authz_api.authorization_a,
+    )
+    assert submit_res.status_code == 201
+    attempt_id = submit_res.json()["data"]["attempt_id"]
+
+    # User B tries to list attempts of User A's course -> 404
+    list_b = authz_api.client.get(
+        f"/api/courses/{authz_api.a_course_id}/quizzes/{quiz_id}/attempts",
+        headers=authz_api.authorization_b,
+    )
+    assert list_b.status_code == 404
+
+    # User B tries to get attempt detail of User A's course -> 404
+    detail_b = authz_api.client.get(
+        f"/api/courses/{authz_api.a_course_id}/quizzes/{quiz_id}/attempts/{attempt_id}",
+        headers=authz_api.authorization_b,
+    )
+    assert detail_b.status_code == 404
+
+
+def test_admin_can_read_attempt_list_and_detail(authz_api) -> None:
+    with authz_api.session_factory() as session:
+        course = session.get(Course, authz_api.a_course_id)
+        assert course is not None
+        quiz = _create_quiz(session, course.id, ["Algebra"])
+        quiz_id = quiz.id
+        question_id = quiz.questions[0].id
+
+    submit_res = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/quizzes/{quiz_id}/attempts",
+        json={"answers": [{"question_id": question_id, "selected_option_index": 0}]},
+        headers=authz_api.authorization_a,
+    )
+    assert submit_res.status_code == 201
+    attempt_id = submit_res.json()["data"]["attempt_id"]
+
+    # Admin lists User A's attempts -> 200
+    list_admin = authz_api.client.get(
+        f"/api/courses/{authz_api.a_course_id}/quizzes/{quiz_id}/attempts",
+        headers=authz_api.authorization_admin,
+    )
+    assert list_admin.status_code == 200
+    assert len(list_admin.json()["data"]) == 1
+
+    # Admin gets attempt detail of User A's course -> 200
+    detail_admin = authz_api.client.get(
+        f"/api/courses/{authz_api.a_course_id}/quizzes/{quiz_id}/attempts/{attempt_id}",
+        headers=authz_api.authorization_admin,
+    )
+    assert detail_admin.status_code == 200
+    assert detail_admin.json()["data"]["attempt_id"] == attempt_id

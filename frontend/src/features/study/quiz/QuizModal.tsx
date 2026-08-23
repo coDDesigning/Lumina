@@ -6,6 +6,7 @@ import {
   isAbortError,
   isInsufficientCredits,
 } from '@/api/errors';
+import type { GenerationFailure } from '@/api/errors';
 import { quizAPI } from '@/api/quiz';
 import { settingsAPI } from '@/api/settings';
 import type {
@@ -98,8 +99,7 @@ export function QuizModal({
   onAttemptRecorded,
 }: QuizModalProps) {
   const [step, setStep] = useState<QuizStep>('config');
-  const [errorMessage, setErrorMessage] = useState('');
-  const [retryable, setRetryable] = useState(true);
+  const [failure, setFailure] = useState<GenerationFailure | null>(null);
   const [setup, setSetup] = useState<QuizSetup>({
     questionTypes: ['multiple_choice'],
     questionCount: 5,
@@ -206,8 +206,7 @@ export function QuizModal({
         return;
       }
       const described = describeError(caught, 'Your answers could not be saved.');
-      setErrorMessage(described.message);
-      setRetryable(true);
+      setFailure({ ...described, title: 'Your answers were not saved', retryable: true, remedy: null });
       setStep('error');
     }
   }, [answers, courseId, onAttemptRecorded, quiz]);
@@ -274,8 +273,7 @@ export function QuizModal({
         setStep('config');
         return;
       }
-      setErrorMessage(described.message);
-      setRetryable(described.retryable);
+      setFailure(described);
       setStep('error');
     }
   }, [courseId, setup, refresh]);
@@ -286,7 +284,7 @@ export function QuizModal({
     setQuiz(null);
     setAttempt(null);
     setAnswers({});
-    setErrorMessage('');
+    setFailure(null);
     setStep('config');
   };
 
@@ -504,11 +502,15 @@ export function QuizModal({
         />
       ) : null}
 
-      {step === 'error' ? (
+      {step === 'error' && failure ? (
         <GenerationError
-          message={errorMessage}
-          retryable={retryable}
+          failure={failure}
           onRetry={() => void startQuiz()}
+          onBroadenTopic={() => {
+            setSetup((previous) => ({ ...previous, topic: ALL_TOPICS }));
+            setStep('config');
+          }}
+          onSeeSources={onClose}
         />
       ) : null}
 

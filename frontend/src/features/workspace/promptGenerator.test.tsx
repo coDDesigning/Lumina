@@ -133,7 +133,9 @@ describe('prompt generator', () => {
     await user.type(screen.getByLabelText('Prompt description'), 'anything');
     await user.click(screen.getByRole('button', { name: 'Write the prompt' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('The AI service is unavailable.');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/could not be reached/i);
+    expect(alert).toHaveTextContent(/nothing was charged/i);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });

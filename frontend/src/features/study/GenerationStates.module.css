@@ -47,3 +47,9 @@
   align-items: flex-start;
   gap: var(--space-4);
 }
+
+.remedies {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}

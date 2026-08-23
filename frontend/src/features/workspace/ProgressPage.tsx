@@ -1,4 +1,5 @@
 import { useDocumentTitle } from '@/app/useDocumentTitle';
+import { PastQuizzes } from './PastQuizzes';
 import { ProgressView } from './ProgressView';
 import type { Workspace } from '@/data/workspaces';
 import { useCourseDocuments } from '@/hooks/useCourseDocuments';
@@ -42,6 +43,8 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
             </LinkButton>
           }
         />
+
+        <PastQuizzes courseId={courseId} workspaceId={workspace.id} />
       </div>
     </div>
   );

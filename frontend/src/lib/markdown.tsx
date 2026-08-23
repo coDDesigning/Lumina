@@ -1,0 +1,213 @@
+import type { ReactNode } from 'react';
+import { cx } from './cx';
+import styles from './markdown.module.css';
+
+export interface MarkdownProps {
+  text: string;
+  className?: string;
+}
+
+const SAFE_LINK = /^(https?:\/\/|mailto:)/i;
+
+function inline(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let rest = text;
+  let index = 0;
+
+  // Code spans are matched first so that markers inside them stay literal.
+  const pattern =
+    /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(\*[^*\n]+\*)|(_[^_\n]+_)|(\[[^\]\n]*\]\([^)\s]+\))/;
+
+  while (rest.length > 0) {
+    const hit = pattern.exec(rest);
+    if (!hit || hit.index === undefined) {
+      nodes.push(rest);
+      break;
+    }
+
+    if (hit.index > 0) {
+      nodes.push(rest.slice(0, hit.index));
+    }
+
+    const token = hit[0];
+    const key = `${keyPrefix}-${index}`;
+    index += 1;
+
+    if (token.startsWith('`')) {
+      nodes.push(
+        <code className={styles.code} key={key}>
+          {token.slice(1, -1)}
+        </code>,
+      );
+    } else if (token.startsWith('**') || token.startsWith('__')) {
+      nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith('[')) {
+      const split = token.indexOf('](');
+      const label = token.slice(1, split);
+      const href = token.slice(split + 2, -1);
+      nodes.push(
+        SAFE_LINK.test(href) ? (
+          <a className={styles.link} href={href} key={key} rel="noreferrer noopener" target="_blank">
+            {label || href}
+          </a>
+        ) : (
+          <span key={key}>{label || href}</span>
+        ),
+      );
+    } else {
+      nodes.push(<em key={key}>{token.slice(1, -1)}</em>);
+    }
+
+    rest = rest.slice(hit.index + token.length);
+  }
+
+  return nodes;
+}
+
+// A single newline inside a paragraph is a soft wrap, not a line break — a model that
+// wraps its prose at some width should not produce ragged breaks on screen. Two trailing
+// spaces still force a break, which is how markdown says to ask for one.
+function withBreaks(lines: string[], keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+
+  lines.forEach((line, position) => {
+    const text = line.trimEnd();
+
+    if (position > 0) {
+      const previousForcedBreak = /\s{2,}$/.test(lines[position - 1]);
+      if (previousForcedBreak) {
+        nodes.push(<br key={`${keyPrefix}-br-${position}`} />);
+      } else {
+        nodes.push(' ');
+      }
+    }
+
+    nodes.push(...inline(text, `${keyPrefix}-${position}`));
+  });
+
+  return nodes;
+}
+
+export function Markdown({ text, className }: MarkdownProps) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const blocks: ReactNode[] = [];
+
+  let cursor = 0;
+  let key = 0;
+
+  const nextKey = () => `b${(key += 1)}`;
+
+  while (cursor < lines.length) {
+    const line = lines[cursor];
+
+    if (line.trim() === '') {
+      cursor += 1;
+      continue;
+    }
+
+    const fence = /^\s*```(\w*)\s*$/.exec(line);
+    if (fence) {
+      const body: string[] = [];
+      cursor += 1;
+      while (cursor < lines.length && !/^\s*```\s*$/.test(lines[cursor])) {
+        body.push(lines[cursor]);
+        cursor += 1;
+      }
+      cursor += 1;
+      blocks.push(
+        <pre className={styles.pre} key={nextKey()}>
+          <code>{body.join('\n')}</code>
+        </pre>,
+      );
+      continue;
+    }
+
+    const heading = /^(#{1,4})\s+(.*)$/.exec(line);
+    if (heading) {
+      const depth = heading[1].length;
+      const content = inline(heading[2], nextKey());
+      blocks.push(
+        depth <= 2 ? (
+          <h3 className={styles.heading} key={nextKey()}>
+            {content}
+          </h3>
+        ) : (
+          <h4 className={styles.subheading} key={nextKey()}>
+            {content}
+          </h4>
+        ),
+      );
+      cursor += 1;
+      continue;
+    }
+
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      blocks.push(<hr className={styles.rule} key={nextKey()} />);
+      cursor += 1;
+      continue;
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      const body: string[] = [];
+      while (cursor < lines.length && /^\s*>\s?/.test(lines[cursor])) {
+        body.push(lines[cursor].replace(/^\s*>\s?/, ''));
+        cursor += 1;
+      }
+      blocks.push(
+        <blockquote className={styles.quote} key={nextKey()}>
+          {withBreaks(body, nextKey())}
+        </blockquote>,
+      );
+      continue;
+    }
+
+    const bullet = /^\s*[-*+]\s+/;
+    const numbered = /^\s*\d+[.)]\s+/;
+
+    if (bullet.test(line) || numbered.test(line)) {
+      const ordered = numbered.test(line);
+      const marker = ordered ? numbered : bullet;
+      const items: string[] = [];
+      while (cursor < lines.length && marker.test(lines[cursor])) {
+        items.push(lines[cursor].replace(marker, ''));
+        cursor += 1;
+      }
+      const rendered = items.map((item, position) => (
+        <li key={`${position}-${item.slice(0, 12)}`}>{inline(item, `li${position}`)}</li>
+      ));
+      blocks.push(
+        ordered ? (
+          <ol className={styles.ordered} key={nextKey()}>
+            {rendered}
+          </ol>
+        ) : (
+          <ul className={styles.unordered} key={nextKey()}>
+            {rendered}
+          </ul>
+        ),
+      );
+      continue;
+    }
+
+    const paragraph: string[] = [];
+    while (
+      cursor < lines.length &&
+      lines[cursor].trim() !== '' &&
+      !/^\s*```/.test(lines[cursor]) &&
+      !/^#{1,4}\s/.test(lines[cursor]) &&
+      !/^\s*>\s?/.test(lines[cursor]) &&
+      !bullet.test(lines[cursor]) &&
+      !numbered.test(lines[cursor])
+    ) {
+      paragraph.push(lines[cursor]);
+      cursor += 1;
+    }
+    blocks.push(
+      <p className={styles.paragraph} key={nextKey()}>
+        {withBreaks(paragraph, nextKey())}
+      </p>,
+    );
+  }
+
+  return <div className={cx(styles.prose, className)}>{blocks}</div>;
+}

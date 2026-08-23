@@ -90,9 +90,6 @@
 
 .answer {
   font-size: var(--text-md);
-  line-height: var(--leading-relaxed);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .provenance {

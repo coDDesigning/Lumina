@@ -56,6 +56,7 @@ export default function CourseSettingsPage({
   const [courseError, setCourseError] = useState<string | null>(null);
 
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
+  const [loadedPreferences, setLoadedPreferences] = useState(DEFAULT_PREFERENCES);
   const [arePreferencesLoading, setArePreferencesLoading] = useState(true);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
   const [preferencesError, setPreferencesError] = useState<string | null>(null);
@@ -71,13 +72,15 @@ export default function CourseSettingsPage({
     setPreferencesError(null);
     try {
       const data = await settingsAPI.get(id);
-      setPreferences({
+      const stored = {
         studyMode: data.study_mode,
         difficulty: data.difficulty,
         questionCount: data.question_count,
         summaryLength: data.summary_length,
         detailLevel: data.detail_level,
-      });
+      };
+      setPreferences(stored);
+      setLoadedPreferences(stored);
     } catch (caught) {
       setPreferencesError(
         describeError(caught, "We couldn't load this course's defaults.").message,
@@ -138,6 +141,7 @@ export default function CourseSettingsPage({
         summary_length: preferences.summaryLength,
         detail_level: preferences.detailLevel,
       });
+      setLoadedPreferences(preferences);
       showToast({ tone: 'success', title: 'Defaults saved' });
     } catch (caught) {
       setPreferencesError(describeError(caught, "Those defaults couldn't be saved.").message);
@@ -267,7 +271,7 @@ export default function CourseSettingsPage({
                 Save details
               </Button>
               <Button variant="ghost" onClick={() => setCourse(toCourseForm(workspace))}>
-                Reset
+                Reset details
               </Button>
             </div>
           </form>
@@ -372,8 +376,8 @@ export default function CourseSettingsPage({
                 >
                   Save defaults
                 </Button>
-                <Button variant="ghost" onClick={() => setPreferences(DEFAULT_PREFERENCES)}>
-                  Reset
+                <Button variant="ghost" onClick={() => setPreferences(loadedPreferences)}>
+                  Reset defaults
                 </Button>
               </div>
             </form>

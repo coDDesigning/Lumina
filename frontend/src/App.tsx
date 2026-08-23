@@ -171,6 +171,7 @@ function App() {
   const { isAuthenticated } = useAuth()
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(true)
+  const [haveWorkspacesArrived, setHaveWorkspacesArrived] = useState(false)
   const [workspacesError, setWorkspacesError] = useState<string | null>(null)
 
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(
@@ -184,6 +185,7 @@ function App() {
         setWorkspacesError(null)
         return
       }
+      setHaveWorkspacesArrived(false)
       setIsLoadingWorkspaces(true)
       setWorkspacesError(null)
       try {
@@ -216,6 +218,7 @@ function App() {
         setWorkspacesError(described.message)
       } finally {
         setIsLoadingWorkspaces(false)
+        setHaveWorkspacesArrived(true)
       }
     },
     [isAuthenticated],
@@ -335,7 +338,7 @@ function App() {
           element={
             <CoursesPage
               workspaces={workspaces}
-              isLoading={isLoadingWorkspaces}
+              isLoading={!haveWorkspacesArrived}
               error={workspacesError}
               onRetry={() => fetchWorkspaces()}
               onCreate={createWorkspace}
@@ -349,7 +352,7 @@ function App() {
           element={
             <WorkspaceRoute
               workspaces={workspaces}
-              isLoading={isLoadingWorkspaces}
+              isLoading={!haveWorkspacesArrived}
               onSelect={selectWorkspace}
               onUpdateProgress={updateWorkspaceProgress}
             />
@@ -360,7 +363,7 @@ function App() {
           element={
             <CourseSettingsRoute
               workspaces={workspaces}
-              isLoading={isLoadingWorkspaces}
+              isLoading={!haveWorkspacesArrived}
               onSelect={selectWorkspace}
               onSave={updateWorkspace}
               onDelete={deleteWorkspace}
@@ -372,7 +375,7 @@ function App() {
           element={
             <ProgressRoute
               workspaces={workspaces}
-              isLoading={isLoadingWorkspaces}
+              isLoading={!haveWorkspacesArrived}
               onSelect={selectWorkspace}
             />
           }

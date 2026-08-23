@@ -134,6 +134,9 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
     };
 
     const applyStatus = (documentId: string, status: DocumentStatusResponse) => {
+      if (!status?.document?.updated_at) {
+        return;
+      }
       setEntries((previous) =>
         previous.map((entry) => {
           if (entry.document.id !== documentId) return entry;

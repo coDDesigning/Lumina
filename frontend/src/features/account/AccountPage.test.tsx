@@ -79,7 +79,7 @@ const mockGetCreditTransactions = vi.mocked(userAPI.getCreditTransactions)
 function renderAccountPage() {
   return render(
     <ThemeProvider>
-      <MemoryRouter initialEntries={['/profile']}>
+      <MemoryRouter initialEntries={['/account']}>
         <AccountPage />
       </MemoryRouter>
     </ThemeProvider>,

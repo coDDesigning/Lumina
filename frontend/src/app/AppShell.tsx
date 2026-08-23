@@ -20,7 +20,7 @@ export function AppShell() {
 
   const links: RailLink[] = [
     { to: '/dashboard', label: 'Courses', icon: LayoutGrid, end: true },
-    { to: '/profile', label: 'Account', icon: UserRound },
+    { to: '/account', label: 'Account', icon: UserRound },
   ];
 
   if (user?.role === 'admin') {

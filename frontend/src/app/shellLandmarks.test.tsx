@@ -80,6 +80,32 @@ beforeEach(() => {
   });
 });
 
+describe('links that were saved before the rename', () => {
+  it('takes an old course link to the same course', async () => {
+    renderAppAt('/workspaces/1');
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Add Sources' })).toBeInTheDocument();
+    });
+  });
+
+  it('takes an old course sub-page link to the same sub-page', async () => {
+    renderAppAt('/workspaces/1/progress');
+
+    await waitFor(() => {
+      expect(screen.getByText('Progress')).toBeInTheDocument();
+    });
+  });
+
+  it('takes an old profile link to the account page', async () => {
+    renderAppAt('/profile');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeInTheDocument();
+    });
+  });
+});
+
 describe('shell landmarks', () => {
   it('exposes exactly one main landmark on the course list', async () => {
     renderAppAt('/dashboard');
@@ -92,7 +118,7 @@ describe('shell landmarks', () => {
   });
 
   it('exposes exactly one main landmark inside a course workspace', async () => {
-    renderAppAt('/workspaces/1');
+    renderAppAt('/courses/1');
 
     await waitFor(() => {
       expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument();

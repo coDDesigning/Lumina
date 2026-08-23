@@ -24,7 +24,7 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
         courseId={workspace.id}
         crumbs={[
           { label: 'Courses', to: '/dashboard' },
-          { label: workspace.name, to: `/workspaces/${workspace.id}` },
+          { label: workspace.name, to: `/courses/${workspace.id}` },
           { label: 'Progress' },
         ]}
       />
@@ -37,7 +37,7 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
           isLoading={isLoading}
           error={error}
           actions={
-            <LinkButton variant="primary" to={`/workspaces/${workspace.id}`}>
+            <LinkButton variant="primary" to={`/courses/${workspace.id}`}>
               Back to the course
             </LinkButton>
           }

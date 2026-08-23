@@ -36,7 +36,7 @@ function renderShell(initialPath = '/dashboard') {
         <Routes>
           <Route element={<AppShell />}>
             <Route path="/dashboard" element={<h1>Courses</h1>} />
-            <Route path="/profile" element={<h1>Account</h1>} />
+            <Route path="/account" element={<h1>Account</h1>} />
           </Route>
           <Route path="/login" element={<h1>Sign in</h1>} />
         </Routes>
@@ -67,7 +67,7 @@ describe('AppShell', () => {
 
     const nav = within(screen.getByRole('navigation', { name: 'Main' }));
     expect(nav.getByRole('link', { name: 'Courses' })).toHaveAttribute('href', '/dashboard');
-    expect(nav.getByRole('link', { name: 'Account' })).toHaveAttribute('href', '/profile');
+    expect(nav.getByRole('link', { name: 'Account' })).toHaveAttribute('href', '/account');
   });
 
   it('hides the admin destination from a student', () => {
@@ -105,7 +105,7 @@ describe('AppShell', () => {
   });
 
   it('marks the destination matching the current route as current', () => {
-    renderShell('/profile');
+    renderShell('/account');
 
     const nav = within(screen.getByRole('navigation', { name: 'Main' }));
     expect(nav.getByRole('link', { name: 'Account' })).toHaveAttribute('aria-current', 'page');

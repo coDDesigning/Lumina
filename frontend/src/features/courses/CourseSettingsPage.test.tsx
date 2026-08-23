@@ -49,10 +49,10 @@ function renderPage(
 ) {
   return render(
     <ToastProvider>
-      <MemoryRouter initialEntries={['/workspaces/1/settings']}>
+      <MemoryRouter initialEntries={['/courses/1/settings']}>
         <Routes>
           <Route
-            path="/workspaces/:workspaceId/settings"
+            path="/courses/:courseId/settings"
             element={
               <CourseSettingsPage
                 workspace={workspace}

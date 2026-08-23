@@ -59,7 +59,7 @@ import styles from './WorkspacePage.module.css';
 
 export interface WorkspacePageProps {
   workspace: Workspace;
-  onUpdateProgress?: (workspaceId: string, progress: number) => void;
+  onUpdateProgress?: (courseId: string, progress: number) => void;
 }
 
 interface ThreadMessage {
@@ -320,12 +320,12 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
         }
         actions={
           <>
-            <Link to={`/workspaces/${workspace.id}/progress`} style={{ textDecoration: 'none' }}>
+            <Link to={`/courses/${workspace.id}/progress`} style={{ textDecoration: 'none' }}>
               <Button variant="ghost" size="sm" icon={<BarChart3 aria-hidden="true" />}>
                 Progress
               </Button>
             </Link>
-            <Link to={`/workspaces/${workspace.id}/settings`} style={{ textDecoration: 'none' }}>
+            <Link to={`/courses/${workspace.id}/settings`} style={{ textDecoration: 'none' }}>
               <Button variant="ghost" size="sm" icon={<Settings2 aria-hidden="true" />}>
                 Course settings
               </Button>
@@ -579,7 +579,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             isLoading={areArtifactsLoading}
             onOpenAll={() => setIsMadeForYouOpen(true)}
             onOpenOutput={() => setIsMadeForYouOpen(true)}
-            onOpenProgress={() => navigate(`/workspaces/${workspace.id}/progress`)}
+            onOpenProgress={() => navigate(`/courses/${workspace.id}/progress`)}
           />
 
           <p className={styles.sourceHint}>

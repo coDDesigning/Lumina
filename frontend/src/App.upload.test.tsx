@@ -116,7 +116,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );
@@ -150,7 +150,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );
@@ -178,7 +178,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );
@@ -206,7 +206,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );
@@ -234,7 +234,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );
@@ -262,7 +262,7 @@ describe('Document Upload UI in Workspace', () => {
     );
 
     const { container } = render(
-      <MemoryRouter initialEntries={['/workspaces/1']}>
+      <MemoryRouter initialEntries={['/courses/1']}>
         <App />
       </MemoryRouter>,
     );

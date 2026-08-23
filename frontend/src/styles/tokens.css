@@ -1,19 +1,19 @@
 :root {
-  --font-display: 'Bricolage Grotesque', 'Outfit', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Outfit', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-sans: 'Outfit', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 
-  --text-2xs: 0.6875rem;
-  --text-xs: 0.75rem;
-  --text-sm: 0.8125rem;
-  --text-base: 0.875rem;
-  --text-md: 0.9375rem;
-  --text-lg: 1.03125rem;
-  --text-xl: 1.25rem;
-  --text-2xl: 1.5rem;
-  --text-3xl: 1.75rem;
-  --text-4xl: 2.25rem;
-  --text-5xl: 3rem;
+  --text-2xs: 0.75rem;
+  --text-xs: 0.8125rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.0625rem;
+  --text-lg: 1.1875rem;
+  --text-xl: 1.4375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.125rem;
+  --text-4xl: 2.75rem;
+  --text-5xl: 3.5rem;
 
   --leading-tight: 1.15;
   --leading-snug: 1.35;
@@ -25,7 +25,7 @@
   --weight-semibold: 600;
   --weight-bold: 700;
 
-  --tracking-display: -0.028em;
+  --tracking-display: -0.035em;
   --tracking-normal: 0;
   --tracking-label: 0.01em;
 
@@ -41,13 +41,13 @@
   --space-7: 3rem;
   --space-8: 4rem;
 
-  --size-control-sm: 1.875rem;
-  --size-control-md: 2.375rem;
-  --size-control-lg: 2.75rem;
+  --size-control-sm: 2.125rem;
+  --size-control-md: 2.625rem;
+  --size-control-lg: 3rem;
   --size-touch-min: 2.75rem;
-  --size-icon-sm: 0.875rem;
-  --size-icon-md: 1.0625rem;
-  --size-icon-lg: 1.375rem;
+  --size-icon-sm: 1rem;
+  --size-icon-md: 1.1875rem;
+  --size-icon-lg: 1.5rem;
 
   --radius-sm: 2px;
   --radius-md: 3px;
@@ -60,10 +60,10 @@
 
   --width-prose: 46rem;
   --width-form: 41.25rem;
-  --width-page: 78rem;
-  --rail-width: 4.125rem;
-  --sources-width: 16.625rem;
-  --outputs-width: 15.875rem;
+  --width-page: 84rem;
+  --rail-width: 4.5rem;
+  --sources-width: 18.5rem;
+  --outputs-width: 17.5rem;
 
   --bp-sm: 30rem;
   --bp-md: 48rem;

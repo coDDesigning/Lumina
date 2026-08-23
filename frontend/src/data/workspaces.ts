@@ -1,9 +1,3 @@
-export type WorkspaceSource = {
-  id: string | number
-  name: string
-  description: string
-}
-
 import type { EducationLevel } from '../api/types'
 
 export type Workspace = {
@@ -20,7 +14,6 @@ export type Workspace = {
   status: string
   updatedAt: string
   accent: 'blue' | 'violet' | 'rose' | 'amber'
-  sources: WorkspaceSource[]
 }
 
 export type WorkspaceDraft = {

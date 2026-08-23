@@ -155,7 +155,6 @@ function mapCourseToWorkspace(
     status,
     updatedAt: new Date(course.updated_at).toLocaleDateString(),
     accent: workspaceAccents[index % workspaceAccents.length],
-    sources: [],
   }
 }
 

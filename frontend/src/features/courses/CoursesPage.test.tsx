@@ -52,7 +52,6 @@ const mockWorkspaces: Workspace[] = [
     status: 'In progress',
     updatedAt: 'Updated today',
     accent: 'blue',
-    sources: [],
   },
   {
     id: '2',
@@ -67,7 +66,6 @@ const mockWorkspaces: Workspace[] = [
     status: 'In progress',
     updatedAt: 'Updated yesterday',
     accent: 'violet',
-    sources: [],
   },
 ];
 

@@ -5,11 +5,6 @@ import { EmptyState } from './EmptyState';
 import { Spinner } from './Spinner';
 import styles from './MasterDetail.module.css';
 
-export type LoadPhase<T> =
-  | { phase: 'loading' }
-  | { phase: 'ready'; data: T }
-  | { phase: 'error'; message: string };
-
 export interface MasterDetailProps<T> {
   listLabel: string;
   items: T[];

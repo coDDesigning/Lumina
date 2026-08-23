@@ -1,21 +1,25 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import ProfilePage from './ProfilePage'
-import { modelsAPI } from '../api/models'
-import { profileKnowledgeAPI } from '../api/profileKnowledge'
-import { userAPI } from '../api/user'
+import type { CreditStatus } from '@/api/types'
+import { ThemeProvider } from '@/app/ThemeProvider'
+import AccountPage from './AccountPage'
+import { modelsAPI } from '@/api/models'
+import { profileKnowledgeAPI } from '@/api/profileKnowledge'
+import { userAPI } from '@/api/user'
 
 // These suites are not about credits; an unmetered account renders no credit UI.
-vi.mock('../context/CreditContext', () => ({
+const creditState: { status: CreditStatus | null } = { status: null }
+
+vi.mock('@/context/CreditContext', () => ({
   useCredits: () => ({
-    status: null,
+    status: creditState.status,
     isLoading: false,
     error: null,
     refresh: vi.fn(),
-    isMetered: false,
-    costOf: () => null,
+    isMetered: creditState.status != null && creditState.status.credits !== null,
+    costOf: (source: string) => creditState.status?.generation_costs?.[source] ?? null,
     canAfford: () => true,
   }),
 }))
@@ -24,7 +28,7 @@ vi.mock('../context/CreditContext', () => ({
 const mockLogout = vi.fn()
 const mockRefreshUser = vi.fn()
 
-vi.mock('../context/AuthContext', () => ({
+vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({
     user: {
       id: 1,
@@ -44,13 +48,13 @@ vi.mock('../context/AuthContext', () => ({
   }),
 }))
 
-vi.mock('../api/models', () => ({
+vi.mock('@/api/models', () => ({
   modelsAPI: {
     list: vi.fn(),
   },
 }))
 
-vi.mock('../api/profileKnowledge', () => ({
+vi.mock('@/api/profileKnowledge', () => ({
   profileKnowledgeAPI: {
     list: vi.fn(),
     create: vi.fn(),
@@ -60,7 +64,7 @@ vi.mock('../api/profileKnowledge', () => ({
   },
 }))
 
-vi.mock('../api/user', () => ({
+vi.mock('@/api/user', () => ({
   userAPI: {
     updatePreferredModel: vi.fn(),
     getCreditTransactions: vi.fn(),
@@ -74,15 +78,17 @@ const mockKnowledgeDelete = vi.mocked(profileKnowledgeAPI.delete)
 const mockUpdatePreferredModel = vi.mocked(userAPI.updatePreferredModel)
 const mockGetCreditTransactions = vi.mocked(userAPI.getCreditTransactions)
 
-function renderProfilePage() {
+function renderAccountPage() {
   return render(
-    <MemoryRouter initialEntries={['/profile']}>
-      <ProfilePage />
-    </MemoryRouter>,
+    <ThemeProvider>
+      <MemoryRouter initialEntries={['/profile']}>
+        <AccountPage />
+      </MemoryRouter>
+    </ThemeProvider>,
   )
 }
 
-describe('ProfilePage', () => {
+describe('AccountPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockModelsList.mockResolvedValue([
@@ -122,16 +128,20 @@ describe('ProfilePage', () => {
       },
     ])
     mockGetCreditTransactions.mockResolvedValue([])
+    creditState.status = null
   })
 
   it('renders real user info and excludes fake personal info form controls and fake save button', async () => {
-    renderProfilePage()
+    renderAccountPage()
 
     // Real user info is visible
     expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument()
     expect(screen.getByText('ada@example.com')).toBeInTheDocument()
     expect(screen.getByText('Student')).toBeInTheDocument()
-    expect(screen.getByText('42')).toBeInTheDocument()
+    // The balance is not read from the auth snapshot, and this mock is unmetered,
+    // so no credit figure may appear here at all.
+    expect(screen.queryByText('42')).not.toBeInTheDocument()
+    expect(screen.getByText('This account is not metered')).toBeInTheDocument()
 
     // Fake form elements must NOT be in the document
     expect(screen.queryByLabelText('First name')).not.toBeInTheDocument()
@@ -144,7 +154,7 @@ describe('ProfilePage', () => {
   })
 
   it('renders model capabilities and cost hints for the selected model', async () => {
-    renderProfilePage()
+    renderAccountPage()
 
     expect(await screen.findByTestId('model-details-card')).toBeInTheDocument()
     expect(screen.getByText('Metered (1-2 credits)')).toBeInTheDocument()
@@ -166,7 +176,7 @@ describe('ProfilePage', () => {
       education_level: 'unspecified',
     })
 
-    renderProfilePage()
+    renderAccountPage()
 
     const select = await screen.findByLabelText('Preferred AI Model')
     await user.selectOptions(select, 'gpt-4o-mini')
@@ -188,7 +198,7 @@ describe('ProfilePage', () => {
       updated_at: '2026-08-21T10:00:00Z',
     })
 
-    renderProfilePage()
+    renderAccountPage()
 
     expect(await screen.findByText('Linear Algebra')).toBeInTheDocument()
     expect(
@@ -222,11 +232,14 @@ describe('ProfilePage', () => {
     const user = userEvent.setup()
     mockKnowledgeDelete.mockResolvedValue(undefined)
 
-    renderProfilePage()
+    renderAccountPage()
 
     expect(await screen.findByText('Linear Algebra')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Delete Linear Algebra' }))
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }),
+    )
 
     await waitFor(() => {
       expect(mockKnowledgeDelete).toHaveBeenCalledWith(1)
@@ -239,7 +252,7 @@ describe('ProfilePage', () => {
   })
 
   it('confirms profile knowledge is structured-only and contains no file or document upload controls', async () => {
-    renderProfilePage()
+    renderAccountPage()
 
     expect(await screen.findByText('Profile Knowledge & Learning Background')).toBeInTheDocument()
     expect(screen.queryByLabelText(/upload/i)).not.toBeInTheDocument()
@@ -247,5 +260,57 @@ describe('ProfilePage', () => {
     expect(screen.queryByText(/drag and drop/i)).not.toBeInTheDocument()
     const fileInputs = document.querySelectorAll('input[type="file"]')
     expect(fileInputs.length).toBe(0)
+  })
+})
+
+describe('AccountPage credits', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockModelsList.mockResolvedValue([])
+    mockKnowledgeList.mockResolvedValue([])
+    mockGetCreditTransactions.mockResolvedValue([])
+  })
+
+  it('shows the balance the credits endpoint reports, not the auth snapshot', async () => {
+    creditState.status = {
+      credits: 7,
+      metering_enabled: true,
+      monthly_grant: 20,
+      balance_cap: 40,
+      next_grant_at: '2026-12-01T00:00:00Z',
+      generation_costs: { study_guide: 1, quiz: 1, quiz_open_ended: 2 },
+    }
+
+    renderAccountPage()
+
+    // The auth mock says 42; the credits endpoint says 7. The endpoint wins.
+    expect(await screen.findByText('7')).toBeInTheDocument()
+    expect(screen.queryByText('42')).not.toBeInTheDocument()
+  })
+
+  it('prices a quiz with written questions higher, from the served cost table', async () => {
+    creditState.status = {
+      credits: 7,
+      metering_enabled: true,
+      monthly_grant: 20,
+      balance_cap: 40,
+      next_grant_at: '2026-12-01T00:00:00Z',
+      generation_costs: { study_guide: 1, quiz: 1, quiz_open_ended: 2 },
+    }
+
+    renderAccountPage()
+
+    expect(await screen.findByText('Quiz including written questions')).toBeInTheDocument()
+    expect(screen.getByText('2')).toBeInTheDocument()
+  })
+
+  it('renders no credit UI whatsoever for an unmetered account', async () => {
+    creditState.status = null
+
+    renderAccountPage()
+
+    expect(await screen.findByText('This account is not metered')).toBeInTheDocument()
+    expect(screen.queryByText('Credits left')).not.toBeInTheDocument()
+    expect(screen.queryByText('What things cost')).not.toBeInTheDocument()
   })
 })

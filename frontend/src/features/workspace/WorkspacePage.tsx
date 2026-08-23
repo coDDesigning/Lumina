@@ -36,6 +36,7 @@ import { FlashcardModal } from '@/features/study/FlashcardModal';
 import { provenanceParts } from '@/features/study/provenanceParts';
 import { QuizModal } from '@/features/study/quiz/QuizModal';
 import { StudyHistoryModal } from '@/features/study/StudyHistoryModal';
+import { SavedDeckModal } from '@/features/study/SavedDeckModal';
 import { StudyGuideModal } from '@/features/study/StudyGuideModal';
 import { useCredits } from '@/context/CreditContext';
 import { useAuth } from '@/context/AuthContext';
@@ -138,6 +139,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   const [isQuizOpen, setIsQuizOpen] = useState(false);
   const [isFlashcardOpen, setIsFlashcardOpen] = useState(false);
   const [isMadeForYouOpen, setIsMadeForYouOpen] = useState(false);
+  const [openDeckId, setOpenDeckId] = useState<number | null>(null);
   const [materialKind, setMaterialKind] = useState<DocumentMaterialKind>('unspecified');
   const [isPastThreadsOpen, setIsPastThreadsOpen] = useState(false);
   const [isPromptHelperOpen, setIsPromptHelperOpen] = useState(false);
@@ -620,7 +622,13 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             artifacts={artifacts}
             isLoading={areArtifactsLoading}
             onOpenAll={() => setIsMadeForYouOpen(true)}
-            onOpenOutput={(outputId) => navigate(`/courses/${workspace.id}/guides/${outputId}`)}
+            onOpen={(artifact) => {
+              if (artifact.kind === 'flashcards') {
+                setOpenDeckId(artifact.outputId);
+                return;
+              }
+              navigate(`/courses/${workspace.id}/guides/${artifact.outputId}`);
+            }}
             onOpenProgress={() => navigate(`/courses/${workspace.id}/progress`)}
           />
 
@@ -647,6 +655,15 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             setIsSummaryOpen(false);
             reloadArtifacts();
           }}
+        />
+      ) : null}
+
+      {openDeckId !== null ? (
+        <SavedDeckModal
+          courseId={courseId}
+          outputId={openDeckId}
+          courseName={workspace.name}
+          onClose={() => setOpenDeckId(null)}
         />
       ) : null}
 

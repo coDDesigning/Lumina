@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactRail } from './ArtifactRail';
 import { relativeDay } from './relativeDay';
-import type { CourseArtifact } from './useCourseArtifacts';
+import type { CourseArtifact, SavedArtifact } from './useCourseArtifacts';
 
 const NOW = Date.parse('2026-08-23T12:00:00Z');
 
@@ -46,13 +46,19 @@ const ATTEMPT: CourseArtifact = {
   createdAt: daysAgo(1),
 };
 
-function renderRail(artifacts: CourseArtifact[], handlers: Partial<Record<string, () => void>> = {}) {
+interface Handlers {
+  all?: () => void;
+  output?: (artifact: SavedArtifact) => void;
+  progress?: () => void;
+}
+
+function renderRail(artifacts: CourseArtifact[], handlers: Handlers = {}) {
   return render(
     <ArtifactRail
       artifacts={artifacts}
       isLoading={false}
       onOpenAll={handlers.all ?? vi.fn()}
-      onOpenOutput={handlers.output ?? vi.fn()}
+      onOpen={handlers.output ?? vi.fn()}
       onOpenProgress={handlers.progress ?? vi.fn()}
     />,
   );
@@ -126,7 +132,7 @@ describe('ArtifactRail', () => {
     renderRail([GUIDE, ATTEMPT], { output, progress });
 
     await userEvent.click(screen.getByText('Caches and locality'));
-    expect(output).toHaveBeenCalledWith(1);
+    expect(output).toHaveBeenCalledWith(expect.objectContaining({ outputId: 1 }));
 
     await userEvent.click(screen.getByText('Quiz · 10 questions'));
     expect(progress).toHaveBeenCalled();
@@ -137,5 +143,15 @@ describe('ArtifactRail', () => {
 
     expect(screen.getByText(/Whatever you make from this course is kept here/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /see all/i })).toBeNull();
+  });
+
+  it('hands a deck and a guide over as themselves, so each can open its own way', async () => {
+    const opened: string[] = [];
+    renderRail([GUIDE, DECK], { output: (artifact) => opened.push(artifact.kind) });
+
+    await userEvent.click(screen.getByText('Caches and locality'));
+    await userEvent.click(screen.getByText('Flashcards'));
+
+    expect(opened).toEqual(['study_guide', 'flashcards']);
   });
 });

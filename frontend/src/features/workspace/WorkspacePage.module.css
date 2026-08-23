@@ -1,7 +1,11 @@
+/* The workspace fills the shell exactly and never scrolls as a page: its own panels
+   own their scrolling. Without min-height, a long answer stretches this past the
+   viewport and the whole layout slides up out of view. */
 .page {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   flex: 1;
 }
 

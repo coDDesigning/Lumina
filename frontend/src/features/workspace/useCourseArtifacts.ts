@@ -21,6 +21,8 @@ export type CourseArtifact =
       createdAt: string;
     };
 
+export type SavedArtifact = Extract<CourseArtifact, { outputId: number }>;
+
 export interface CourseArtifactsState {
   artifacts: CourseArtifact[];
   isLoading: boolean;

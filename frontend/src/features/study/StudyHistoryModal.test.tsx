@@ -134,4 +134,35 @@ describe('StudyHistoryModal', () => {
       ),
     );
   });
+
+  it('lets a saved deck be flipped through, not just listed', async () => {
+    mockList.mockResolvedValue([
+      { ...SUMMARY, id: 20, output_type: 'flashcards', generation_settings: null },
+    ]);
+    mockGet.mockResolvedValue({
+      ...SUMMARY,
+      id: 20,
+      output_type: 'flashcards',
+      generation_settings: null,
+      content: {
+        deck_title: 'Graph Traversals',
+        card_count: 2,
+        flashcards: [
+          { card_number: 1, front: 'What order does BFS settle in?', back: 'By distance.',
+            difficulty: 'Easy' },
+          { card_number: 2, front: 'What is a back edge?', back: 'A cycle.',
+            difficulty: 'Medium' },
+        ],
+      },
+    } as unknown as GeneratedOutputDetail);
+
+    renderModal();
+    await userEvent.click(await screen.findByRole('button', { name: /Flashcards/ }));
+
+    expect(await screen.findByText('What order does BFS settle in?')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show the answer' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Show the answer' }));
+    expect(screen.getByText('By distance.')).toBeInTheDocument();
+  });
 });

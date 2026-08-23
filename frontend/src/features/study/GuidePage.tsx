@@ -186,10 +186,33 @@ export default function GuidePage({ workspace }: GuidePageProps) {
         ) : null}
 
         {state.phase === 'unreadable' ? (
-          <Alert tone="warning" title="This result was saved in an older shape">
-            It is kept exactly as it was written, but this version cannot lay it out. You can
-            still read it from the course history.
-          </Alert>
+          state.output.output_type === 'flashcards' ? (
+            <Alert
+              tone="info"
+              title="This is a flashcard deck, not a study guide"
+              actions={
+                <Button size="sm" onClick={() => navigate(`/courses/${workspace.id}`)}>
+                  Open it on the course page
+                </Button>
+              }
+            >
+              Decks are flipped through in a window on the course page rather than read as a
+              document.
+            </Alert>
+          ) : (
+            <Alert
+              tone="warning"
+              title="This result was saved in an older shape"
+              actions={
+                <Button size="sm" onClick={() => navigate(`/courses/${workspace.id}`)}>
+                  Back to the course
+                </Button>
+              }
+            >
+              It is kept exactly as it was written, but this version cannot lay it out. You can
+              still read it from the course history.
+            </Alert>
+          )
         ) : null}
 
         {state.phase === 'ready' ? (

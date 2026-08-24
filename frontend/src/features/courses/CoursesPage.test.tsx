@@ -48,8 +48,7 @@ const mockWorkspaces: Workspace[] = [
     examDate: '2026-12-15',
     topics: ['Processes', 'Memory', 'Concurrency'],
     syllabus: 'Core CS syllabus',
-    progress: 45,
-    status: 'In progress',
+    progress: { averageScore: 45, lastActivity: '2026-08-22T10:00:00Z', status: 'In progress' },
     updatedAt: 'Updated today',
     accent: 'blue',
   },
@@ -62,8 +61,7 @@ const mockWorkspaces: Workspace[] = [
     examDate: '',
     topics: ['Graphs', 'Dynamic Programming'],
     syllabus: 'Advanced algorithms',
-    progress: 80,
-    status: 'In progress',
+    progress: { averageScore: 80, lastActivity: '2026-08-20T10:00:00Z', status: 'Mastered' },
     updatedAt: 'Updated yesterday',
     accent: 'violet',
   },
@@ -248,16 +246,32 @@ describe('CoursesPage', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('separates no quiz activity from a genuine zero score', () => {
+  it('separates no quiz activity from a genuine zero score and from unavailable data', () => {
     renderPage({
       workspaces: [
-        { ...mockWorkspaces[0], id: '10', name: 'Unstudied Course', progress: null },
-        { ...mockWorkspaces[1], id: '11', name: 'Zero Score Course', progress: 0 },
+        {
+          ...mockWorkspaces[0],
+          id: '10',
+          name: 'Unstudied Course',
+          progress: { averageScore: null, lastActivity: null, status: 'Not started' },
+        },
+        {
+          ...mockWorkspaces[1],
+          id: '11',
+          name: 'Zero Score Course',
+          progress: {
+            averageScore: 0,
+            lastActivity: '2026-08-22T10:00:00Z',
+            status: 'In progress',
+          },
+        },
+        { ...mockWorkspaces[0], id: '12', name: 'Unknown Course', progress: null },
       ],
     });
 
     expect(screen.getByText('No quiz activity yet')).toBeInTheDocument();
     expect(screen.getByText('0%')).toBeInTheDocument();
+    expect(screen.getByText('Progress unavailable')).toBeInTheDocument();
   });
 
   it('counts down to an upcoming exam and says so once, not twice', () => {

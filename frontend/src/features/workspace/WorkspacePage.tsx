@@ -40,7 +40,8 @@ import { SavedDeckModal } from '@/features/study/SavedDeckModal';
 import { StudyGuideModal } from '@/features/study/StudyGuideModal';
 import { useCredits } from '@/context/CreditContext';
 import { useAuth } from '@/context/AuthContext';
-import type { Workspace } from '@/data/workspaces';
+import { toWorkspaceProgress } from '@/data/workspaces';
+import type { Workspace, WorkspaceProgress } from '@/data/workspaces';
 import { useCourseDocuments } from '@/hooks/useCourseDocuments';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
@@ -63,7 +64,7 @@ import styles from './WorkspacePage.module.css';
 
 export interface WorkspacePageProps {
   workspace: Workspace;
-  onUpdateProgress?: (courseId: string, progress: number) => void;
+  onUpdateProgress?: (courseId: string, progress: WorkspaceProgress) => void;
 }
 
 interface ThreadMessage {
@@ -180,10 +181,19 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   } = useCourseArtifacts(courseId, progress);
 
   useEffect(() => {
-    if (!onUpdateProgress || progress?.average_score == null) {
+    if (!onUpdateProgress || !progress) {
       return;
     }
-    onUpdateProgress(workspace.id, Math.round(progress.average_score * 100));
+    onUpdateProgress(
+      workspace.id,
+      toWorkspaceProgress({
+        course_id: Number(workspace.id),
+        attempts_count: progress.attempts_count,
+        average_score: progress.average_score,
+        completion: progress.completion ?? null,
+        last_activity: null,
+      }),
+    );
   }, [onUpdateProgress, progress, workspace.id]);
 
   const processingCount = entries.filter(

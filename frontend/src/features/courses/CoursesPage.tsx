@@ -6,7 +6,12 @@ import { describeError } from '@/api/errors';
 import { EDUCATION_LEVEL_LABELS } from '@/api/types';
 import type { EducationLevel } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
-import type { Workspace, WorkspaceDraft } from '@/data/workspaces';
+import type {
+  Workspace,
+  WorkspaceDraft,
+  WorkspaceProgressStatus,
+} from '@/data/workspaces';
+import { relativeDay } from '@/lib/relativeDay';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
@@ -82,6 +87,16 @@ function examUrgency(days: number | null): 'destructive' | 'warning' | 'neutral'
   }
   if (days <= 30) {
     return 'warning';
+  }
+  return 'neutral';
+}
+
+function statusTone(status: WorkspaceProgressStatus): 'success' | 'processing' | 'neutral' {
+  if (status === 'Mastered') {
+    return 'success';
+  }
+  if (status === 'In progress') {
+    return 'processing';
   }
   return 'neutral';
 }
@@ -325,10 +340,17 @@ export default function CoursesPage({
 
                           <div className={styles.meta}>
                             <Badge tone={examUrgency(days)}>{examLabel(days, workspace.examDate)}</Badge>
+                            {workspace.progress !== null ? (
+                              <Badge tone={statusTone(workspace.progress.status)}>
+                                {workspace.progress.status}
+                              </Badge>
+                            ) : null}
                             <span className="tabular">
-                              {workspace.progress !== null ? (
+                              {workspace.progress === null ? (
+                                'Progress unavailable'
+                              ) : workspace.progress.averageScore !== null ? (
                                 <>
-                                  <strong>{workspace.progress}%</strong> average score
+                                  <strong>{workspace.progress.averageScore}%</strong> average score
                                 </>
                               ) : (
                                 'No quiz activity yet'
@@ -336,13 +358,21 @@ export default function CoursesPage({
                             </span>
                           </div>
 
-                          {workspace.progress !== null ? (
+                          {workspace.progress?.averageScore != null ? (
                             <span className={styles.progressTrack} aria-hidden="true">
                               <span
                                 className={styles.progressFill}
-                                style={{ width: `${workspace.progress}%` }}
+                                style={{ width: `${workspace.progress.averageScore}%` }}
                               />
                             </span>
+                          ) : null}
+
+                          {workspace.progress !== null ? (
+                            <p className={styles.activity}>
+                              {workspace.progress.lastActivity !== null
+                                ? `Last studied ${relativeDay(workspace.progress.lastActivity)}`
+                                : 'Not studied yet'}
+                            </p>
                           ) : null}
                         </CourseLight>
                       </Card>

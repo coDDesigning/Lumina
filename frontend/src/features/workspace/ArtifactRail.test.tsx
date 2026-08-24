@@ -1,8 +1,8 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { relativeDay } from '@/lib/relativeDay';
 import { ArtifactRail } from './ArtifactRail';
-import { relativeDay } from './relativeDay';
 import type { CourseArtifact, SavedArtifact } from './useCourseArtifacts';
 
 const NOW = Date.parse('2026-08-23T12:00:00Z');

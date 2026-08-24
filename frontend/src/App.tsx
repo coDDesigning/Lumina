@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Navigate, Route, Routes, useParams } from 'react-router-dom'
-import type { Workspace, WorkspaceDraft } from './data/workspaces'
+import { toWorkspaceProgress } from './data/workspaces'
+import type { Workspace, WorkspaceDraft, WorkspaceProgress } from './data/workspaces'
 import CourseSettingsPage from './features/courses/CourseSettingsPage'
 import CoursesPage from './features/courses/CoursesPage'
 import ProgressPage from './features/workspace/ProgressPage'
@@ -27,7 +28,7 @@ import { useAuth } from './context/AuthContext'
 import { coursesAPI } from './api/courses'
 import { progressAPI } from './api/progress'
 import { describeError } from './api/errors'
-import type { Course, CourseProgressResponse } from './api/types'
+import type { Course } from './api/types'
 
 const ACTIVE_WORKSPACE_STORAGE_KEY = 'lumina.activeWorkspaceId'
 const workspaceAccents: Workspace['accent'][] = [
@@ -45,7 +46,7 @@ type WorkspaceRouteProps = {
   workspaces: Workspace[]
   isLoading?: boolean
   onSelect: (courseId: string) => void
-  onUpdateProgress?: (courseId: string, progress: number) => void
+  onUpdateProgress?: (courseId: string, progress: WorkspaceProgress) => void
 }
 
 function WorkspaceRoute({ workspaces, isLoading, onSelect, onUpdateProgress }: WorkspaceRouteProps) {
@@ -149,27 +150,8 @@ function CourseSettingsRoute({
 function mapCourseToWorkspace(
   course: Course,
   index: number,
-  progressData?: CourseProgressResponse | null,
+  progress: WorkspaceProgress | null,
 ): Workspace {
-  let progress: number | null = null
-  let status = 'Not started'
-
-  if (progressData) {
-    if (progressData.average_score != null) {
-      progress = Math.round(
-        progressData.average_score <= 1
-          ? progressData.average_score * 100
-          : progressData.average_score,
-      )
-    } else if (progressData.completion != null && progressData.attempts_count > 0) {
-      progress = Math.round(progressData.completion)
-    }
-
-    if (progressData.attempts_count > 0) {
-      status = (progress ?? 0) >= 80 ? 'Mastered' : 'In progress'
-    }
-  }
-
   return {
     id: course.id.toString(),
     ownerId: course.owner_id,
@@ -183,7 +165,6 @@ function mapCourseToWorkspace(
       : [],
     syllabus: course.syllabus || '',
     progress,
-    status,
     updatedAt: new Date(course.updated_at).toLocaleDateString(),
     accent: workspaceAccents[index % workspaceAccents.length],
     isArchived: course.is_archived ?? false,
@@ -210,15 +191,23 @@ function App() {
       setWorkspacesError(null)
       try {
         const courses = await coursesAPI.list({ signal })
-        const progressResults = await Promise.allSettled(
-          courses.map((course) => progressAPI.get(course.id, { signal })),
+
+        let summaries: Map<number, WorkspaceProgress> | null = null
+        try {
+          const rows = await progressAPI.listAll({ signal })
+          summaries = new Map(
+            rows.map((row) => [row.course_id, toWorkspaceProgress(row)]),
+          )
+        } catch (error: unknown) {
+          if (error instanceof Error && error.name === 'AbortError') {
+            return
+          }
+          summaries = null
+        }
+
+        const mappedWorkspaces = courses.map((course, index) =>
+          mapCourseToWorkspace(course, index, summaries?.get(course.id) ?? null),
         )
-        const mappedWorkspaces = courses.map((course, index) => {
-          const progResult = progressResults[index]
-          const progData =
-            progResult?.status === 'fulfilled' ? progResult.value : null
-          return mapCourseToWorkspace(course, index, progData)
-        })
         setWorkspaces(mappedWorkspaces)
 
         setActiveWorkspaceId((current) => {
@@ -273,7 +262,11 @@ function App() {
         topics: draft.topics,
       })
 
-      const newWorkspace = mapCourseToWorkspace(newCourse, workspaces.length)
+      const newWorkspace = mapCourseToWorkspace(newCourse, workspaces.length, {
+        averageScore: null,
+        lastActivity: null,
+        status: 'Not started',
+      })
       setWorkspaces((current) => [newWorkspace, ...current])
       setActiveWorkspaceId(newWorkspace.id)
       return newWorkspace
@@ -317,6 +310,7 @@ function App() {
       const updatedMappedWorkspace = mapCourseToWorkspace(
         updatedCourse,
         workspaces.findIndex((w) => w.id === updatedWorkspace.id),
+        workspaces.find((w) => w.id === updatedWorkspace.id)?.progress ?? null,
       )
       setWorkspaces((current) =>
         current.map((workspace) =>
@@ -332,10 +326,10 @@ function App() {
   }
 
   const updateWorkspaceProgress = useCallback(
-    (courseId: string, progress: number) => {
+    (courseId: string, progress: WorkspaceProgress) => {
       setWorkspaces((current) => {
         const target = current.find((w) => w.id === courseId)
-        if (!target || target.progress === progress) return current
+        if (!target) return current
         return current.map((w) =>
           w.id === courseId ? { ...w, progress } : w,
         )

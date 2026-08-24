@@ -149,8 +149,18 @@ export default function CoursesPage({
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'active' | 'archived'>('active');
 
   const now = useMemo(() => Date.now(), []);
+
+  const activeWorkspaces = useMemo(
+    () => workspaces.filter((w) => !w.isArchived),
+    [workspaces],
+  );
+  const archivedWorkspaces = useMemo(
+    () => workspaces.filter((w) => w.isArchived),
+    [workspaces],
+  );
 
   const sorted = useMemo(() => {
     return [...workspaces].sort((left, right) => {
@@ -170,14 +180,18 @@ export default function CoursesPage({
   }, [workspaces, now]);
 
   const normalizedQuery = query.trim().toLowerCase();
-  const filtered = sorted.filter((workspace) =>
-    [workspace.name, workspace.semester, ...workspace.topics]
+  const filtered = sorted.filter((workspace) => {
+    const isArchived = Boolean(workspace.isArchived);
+    if (statusFilter === 'active' && isArchived) return false;
+    if (statusFilter === 'archived' && !isArchived) return false;
+    return [workspace.name, workspace.semester, ...workspace.topics]
       .join(' ')
       .toLowerCase()
-      .includes(normalizedQuery),
-  );
+      .includes(normalizedQuery);
+  });
 
   const nextExam = sorted.find((workspace) => {
+    if (workspace.isArchived) return false;
     const days = daysUntilExam(workspace.examDate, now);
     return days !== null && days >= 0;
   });
@@ -259,6 +273,17 @@ export default function CoursesPage({
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search courses"
             />
+            {archivedWorkspaces.length > 0 ? (
+              <Select
+                label="Status filter"
+                hideLabel
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as 'active' | 'archived')}
+              >
+                <option value="active">Active ({activeWorkspaces.length})</option>
+                <option value="archived">Archived ({archivedWorkspaces.length})</option>
+              </Select>
+            ) : null}
             <Button
               variant="primary"
               icon={<Plus aria-hidden="true" />}

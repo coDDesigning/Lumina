@@ -219,12 +219,18 @@ course therefore needs no administrator involvement and admits none.
 ### Course workspace fields
 
 A course workspace carries `title`, `description`, `semester`, `exam_date`,
-`topics`, `syllabus`, `subject_area`, `education_level`, `created_at` and
+`topics`, `syllabus`, `subject_area`, `education_level`, `is_archived`, `created_at` and
 `updated_at`. `syllabus` is nullable free
 text for the course outline; it is distinct from `topics`, which holds the
 comma-separated topic labels the study features consume. `updated_at` is
 maintained by the ORM through `onupdate`, so any course modification advances it
 while `created_at` stays fixed.
+
+`is_archived` is a boolean flag indicating whether the course is archived by its owner.
+Archiving is non-destructive and reversible: archived courses remain fully accessible for reads,
+settings updates, restoration, and permanent deletion, but are hidden from the primary active course
+list. Unlike permanent deletion, archiving preserves all associated documents, embeddings, quizzes,
+attempts, and progress.
 
 `education_level` is a `String(20)` constrained by a CHECK to `high_school`,
 `undergraduate`, `graduate`, `professional_other`, or `unspecified`, and it

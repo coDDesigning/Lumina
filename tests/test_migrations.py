@@ -37,7 +37,8 @@ CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
 TYPED_CONVERSATIONS_REVISION = "b9c1d4e7f2a6"
 LEARNER_CONTEXT_REVISION = "a3d9e5c17b48"
 REMOVE_NOTIFICATION_SETTINGS_REVISION = "e7c1d4a8b203"
-HEAD_REVISION = REMOVE_NOTIFICATION_SETTINGS_REVISION
+COURSE_ARCHIVE_STATE_REVISION = "f8b4c2d1e7a3"
+HEAD_REVISION = COURSE_ARCHIVE_STATE_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -65,7 +66,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: LEARNER_CONTEXT_REVISION,
+        HEAD_REVISION: REMOVE_NOTIFICATION_SETTINGS_REVISION,
+        REMOVE_NOTIFICATION_SETTINGS_REVISION: LEARNER_CONTEXT_REVISION,
         LEARNER_CONTEXT_REVISION: TYPED_CONVERSATIONS_REVISION,
         TYPED_CONVERSATIONS_REVISION: CREDIT_LEDGER_REVISION,
         CREDIT_LEDGER_REVISION: PGVECTOR_HARDENING_REVISION,
@@ -1907,6 +1909,53 @@ def test_remove_notification_settings_migration(tmp_path: Path) -> None:
         }
         assert "notifications" in columns
         assert "progress_reminders" in columns
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)
+
+
+def test_course_archive_state_migration(tmp_path: Path) -> None:
+    database_path = tmp_path / "course-archive-state.sqlite3"
+    run_alembic(
+        database_path, tmp_path, "upgrade", REMOVE_NOTIFICATION_SETTINGS_REVISION
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(courses)")}
+        assert "is_archived" not in columns
+
+        user_id = insert_legacy_user(
+            connection,
+            email="archive-owner@example.com",
+            credits=10.0,
+        )
+        course_id = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Archive test course", user_id),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(courses)")}
+        assert "is_archived" in columns
+        row = connection.execute(
+            "SELECT title, is_archived, is_deleted FROM courses WHERE id = ?",
+            (course_id,),
+        ).fetchone()
+        assert row == ("Archive test course", 0, 0)
+
+    run_alembic(
+        database_path, tmp_path, "downgrade", REMOVE_NOTIFICATION_SETTINGS_REVISION
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(courses)")}
+        assert "is_archived" not in columns
 
     run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
 

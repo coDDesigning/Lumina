@@ -14,6 +14,7 @@ export type Workspace = {
   status: string
   updatedAt: string
   accent: 'blue' | 'violet' | 'rose' | 'amber'
+  isArchived?: boolean
 }
 
 export type WorkspaceDraft = {

@@ -385,3 +385,63 @@ describe('CoursesPage deletion', () => {
     expect(screen.getByText('Organic Chemistry')).toBeInTheDocument();
   });
 });
+
+describe('CoursesPage archive filtering', () => {
+  it('filters active and archived courses when archived courses exist', async () => {
+    const user = userEvent.setup();
+    const mixedWorkspaces: Workspace[] = [
+      {
+        id: '1',
+        name: 'Active Biology',
+        subjectArea: '',
+        educationLevel: 'unspecified',
+        semester: 'Fall 2026',
+        examDate: '',
+        topics: ['Cells'],
+        syllabus: '',
+        progress: null,
+        status: 'Not started',
+        updatedAt: 'Today',
+        accent: 'blue',
+        isArchived: false,
+      },
+      {
+        id: '2',
+        name: 'Archived Chemistry',
+        subjectArea: '',
+        educationLevel: 'unspecified',
+        semester: 'Spring 2025',
+        examDate: '',
+        topics: ['Molecules'],
+        syllabus: '',
+        progress: null,
+        status: 'Not started',
+        updatedAt: 'Last year',
+        accent: 'violet',
+        isArchived: true,
+      },
+    ];
+
+    render(
+      <MemoryRouter>
+        <CoursesPage
+          workspaces={mixedWorkspaces}
+          onCreate={vi.fn()}
+          onSelect={vi.fn()}
+          onDelete={vi.fn().mockResolvedValue(undefined)}
+        />
+      </MemoryRouter>,
+    );
+
+    // Active view by default
+    expect(screen.getByText('Active Biology')).toBeInTheDocument();
+    expect(screen.queryByText('Archived Chemistry')).not.toBeInTheDocument();
+
+    // Switch to archived view
+    const filterSelect = screen.getByLabelText('Status filter');
+    await user.selectOptions(filterSelect, 'archived');
+
+    expect(screen.queryByText('Active Biology')).not.toBeInTheDocument();
+    expect(screen.getByText('Archived Chemistry')).toBeInTheDocument();
+  });
+});

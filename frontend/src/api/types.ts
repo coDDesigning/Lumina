@@ -109,6 +109,7 @@ export interface Course {
   exam_date: string | null;
   syllabus: string | null;
   topics: string | null;
+  is_archived?: boolean;
 }
 
 export interface CourseCreate {
@@ -120,6 +121,7 @@ export interface CourseCreate {
   exam_date?: string;
   syllabus?: string;
   topics?: string;
+  is_archived?: boolean;
 }
 
 export interface CourseUpdate {
@@ -131,6 +133,7 @@ export interface CourseUpdate {
   exam_date?: string;
   syllabus?: string;
   topics?: string;
+  is_archived?: boolean;
 }
 
 export type DocumentStatus =

@@ -1,7 +1,17 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlalchemy import select
 
-from backend.app.models import Quiz, QuizQuestion
+from backend.app.models import (
+    Conversation,
+    GeneratedOutput,
+    Quiz,
+    QuizAttempt,
+    QuizQuestion,
+)
+from schemas.conversation import ConversationType
+from services.conversation import ConversationService
 
 
 def _quiz_with_questions(session, course_id: int, count: int = 2) -> Quiz:
@@ -154,3 +164,156 @@ def test_administrator_sees_only_their_own_courses(authz_api) -> None:
 
 def test_progress_requires_authentication(upload_api) -> None:
     assert upload_api.client.get("/api/progress").status_code == 401
+
+
+def test_last_activity_is_the_latest_of_all_three_sources(upload_api) -> None:
+    base = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+
+    with upload_api.session_factory() as session:
+        quiz = _quiz_with_questions(session, upload_api.course_id)
+        question_ids = _question_ids(session, quiz.id)
+        session.add(
+            GeneratedOutput(
+                course_id=upload_api.course_id,
+                user_id=upload_api.user_id,
+                output_type="summary",
+                content="Study guide body",
+                created_at=base + timedelta(days=2),
+            )
+        )
+        session.add(
+            Conversation(
+                user_id=upload_api.user_id,
+                course_id=upload_api.course_id,
+                conversation_type=ConversationType.COURSE_QA.value,
+                created_at=base,
+                updated_at=base + timedelta(days=5),
+            )
+        )
+        session.commit()
+
+    _submit(upload_api, upload_api.course_id, quiz.id, question_ids, correct=1)
+
+    with upload_api.session_factory() as session:
+        attempt = session.scalars(select(QuizAttempt)).one()
+        attempt.created_at = base + timedelta(days=1)
+        session.commit()
+
+    summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.course_id
+    ]
+
+    assert summary["last_activity"] is not None
+    assert datetime.fromisoformat(summary["last_activity"]) == base + timedelta(days=5)
+
+
+def test_studied_but_never_quizzed_reports_activity_without_a_score(
+    upload_api,
+) -> None:
+    stamp = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+
+    with upload_api.session_factory() as session:
+        session.add(
+            GeneratedOutput(
+                course_id=upload_api.other_course_id,
+                user_id=upload_api.user_id,
+                output_type="summary",
+                content="Study guide body",
+                created_at=stamp,
+            )
+        )
+        session.commit()
+
+    summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.other_course_id
+    ]
+
+    assert summary["attempts_count"] == 0
+    assert summary["average_score"] is None
+    assert summary["completion"] is None
+    assert datetime.fromisoformat(summary["last_activity"]) == stamp
+
+
+def test_generated_output_without_an_owner_is_not_counted_as_activity(
+    upload_api,
+) -> None:
+    with upload_api.session_factory() as session:
+        session.add(
+            GeneratedOutput(
+                course_id=upload_api.other_course_id,
+                user_id=None,
+                output_type="summary",
+                content="Legacy row",
+                created_at=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            )
+        )
+        session.commit()
+
+    summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.other_course_id
+    ]
+
+    assert summary["last_activity"] is None
+
+
+def test_another_users_conversation_is_not_this_users_activity(authz_api) -> None:
+    stamp = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+
+    with authz_api.session_factory() as session:
+        session.add(
+            Conversation(
+                user_id=authz_api.user_b_id,
+                course_id=authz_api.a_course_id,
+                conversation_type=ConversationType.COURSE_QA.value,
+                created_at=stamp,
+                updated_at=stamp,
+            )
+        )
+        session.commit()
+
+    summary = _summaries(authz_api.client, authz_api.authorization_a)[
+        authz_api.a_course_id
+    ]
+
+    assert summary["last_activity"] is None
+
+
+def test_recording_an_exchange_moves_last_activity(upload_api) -> None:
+    stale = datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc)
+
+    with upload_api.session_factory() as session:
+        conversation = Conversation(
+            user_id=upload_api.user_id,
+            course_id=upload_api.course_id,
+            conversation_type=ConversationType.COURSE_QA.value,
+            created_at=stale,
+            updated_at=stale,
+        )
+        session.add(conversation)
+        session.commit()
+        conversation_id = conversation.id
+
+    before = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.course_id
+    ]["last_activity"]
+    assert datetime.fromisoformat(before) == stale
+
+    with upload_api.session_factory() as session:
+        stored = session.get(Conversation, conversation_id)
+        assert stored is not None
+        ConversationService.record_exchange(
+            session,
+            conversation=stored,
+            user_id=upload_api.user_id,
+            course_id=upload_api.course_id,
+            conversation_type=ConversationType.COURSE_QA,
+            question="What is a semaphore?",
+            answer="A synchronization primitive.",
+        )
+        session.commit()
+
+    after = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.course_id
+    ]["last_activity"]
+
+    assert datetime.fromisoformat(after) > stale

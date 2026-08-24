@@ -1,7 +1,13 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.app.models import Course, Quiz, QuizAttempt
+from backend.app.models import (
+    Conversation,
+    Course,
+    GeneratedOutput,
+    Quiz,
+    QuizAttempt,
+)
 from schemas.progress import CourseProgressSummary
 
 
@@ -42,10 +48,44 @@ class ProgressService:
             ).all()
         }
 
+        outputs = dict(
+            db.execute(
+                select(
+                    GeneratedOutput.course_id,
+                    func.max(GeneratedOutput.created_at),
+                )
+                .where(
+                    GeneratedOutput.course_id.in_(course_ids),
+                    GeneratedOutput.user_id == user_id,
+                )
+                .group_by(GeneratedOutput.course_id)
+            ).all()
+        )
+
+        conversations = dict(
+            db.execute(
+                select(Conversation.course_id, func.max(Conversation.updated_at))
+                .where(
+                    Conversation.course_id.in_(course_ids),
+                    Conversation.user_id == user_id,
+                )
+                .group_by(Conversation.course_id)
+            ).all()
+        )
+
         summaries: list[CourseProgressSummary] = []
         for course_id in course_ids:
             count, average, last_attempt = attempts.get(course_id, (0, None, None))
             average_score = float(average) if average is not None else None
+            stamps = [
+                stamp
+                for stamp in (
+                    last_attempt,
+                    outputs.get(course_id),
+                    conversations.get(course_id),
+                )
+                if stamp is not None
+            ]
             summaries.append(
                 CourseProgressSummary(
                     course_id=course_id,
@@ -56,7 +96,7 @@ class ProgressService:
                         if average_score is not None
                         else None
                     ),
-                    last_activity=last_attempt,
+                    last_activity=max(stamps) if stamps else None,
                 )
             )
 

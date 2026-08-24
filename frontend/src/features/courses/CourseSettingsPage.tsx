@@ -65,6 +65,9 @@ export default function CourseSettingsPage({
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+
   const courseId = Number(workspace.id);
 
   const loadPreferences = useCallback(async (id: number) => {
@@ -147,6 +150,36 @@ export default function CourseSettingsPage({
       setPreferencesError(describeError(caught, "Those defaults couldn't be saved.").message);
     } finally {
       setIsSavingPreferences(false);
+    }
+  }
+
+  async function toggleArchive() {
+    setArchiveError(null);
+    setIsArchiving(true);
+    const nextArchived = !workspace.isArchived;
+    try {
+      await onSave({
+        ...workspace,
+        isArchived: nextArchived,
+      });
+      showToast({
+        tone: 'success',
+        title: nextArchived ? 'Course archived' : 'Course restored',
+        message: nextArchived
+          ? `${workspace.name} has been archived.`
+          : `${workspace.name} is now active.`,
+      });
+    } catch (caught) {
+      setArchiveError(
+        describeError(
+          caught,
+          nextArchived
+            ? "That course couldn't be archived. Try again."
+            : "That course couldn't be restored. Try again.",
+        ).message,
+      );
+    } finally {
+      setIsArchiving(false);
     }
   }
 
@@ -382,6 +415,32 @@ export default function CourseSettingsPage({
               </div>
             </form>
           )}
+        </section>
+
+        <section className={styles.section}>
+          <h2 className={styles.sectionLabel}>
+            {workspace.isArchived ? 'Restore course' : 'Archive course'}
+          </h2>
+          <p className={styles.sectionLede}>
+            {workspace.isArchived
+              ? 'Restore this course to return it to your active courses list.'
+              : 'Archiving removes this course from your active courses list without deleting any documents, quizzes, or progress. You can restore it at any time.'}
+          </p>
+          {archiveError ? (
+            <Alert tone="destructive" live="alert" className={styles.spaced}>
+              {archiveError}
+            </Alert>
+          ) : null}
+          <div className={styles.actions}>
+            <Button
+              variant="secondary"
+              isLoading={isArchiving}
+              loadingLabel={workspace.isArchived ? 'Restoring' : 'Archiving'}
+              onClick={toggleArchive}
+            >
+              {workspace.isArchived ? 'Restore course' : 'Archive course'}
+            </Button>
+          </div>
         </section>
 
         <section className={styles.danger}>

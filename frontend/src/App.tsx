@@ -186,6 +186,7 @@ function mapCourseToWorkspace(
     status,
     updatedAt: new Date(course.updated_at).toLocaleDateString(),
     accent: workspaceAccents[index % workspaceAccents.length],
+    isArchived: course.is_archived ?? false,
   }
 }
 
@@ -309,6 +310,7 @@ function App() {
           semester: updatedWorkspace.semester.trim(),
           exam_date: updatedWorkspace.examDate,
           topics: updatedWorkspace.topics.join(', '),
+          is_archived: updatedWorkspace.isArchived,
         },
       )
 
@@ -325,6 +327,7 @@ function App() {
       )
     } catch (error) {
       console.error('Failed to update workspace', error)
+      throw error
     }
   }
 

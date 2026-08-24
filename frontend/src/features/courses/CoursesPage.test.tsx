@@ -2,9 +2,14 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
+import { activityAPI } from '@/api/activity';
 import { APIError } from '@/api/client';
 import type { Workspace } from '@/data/workspaces';
 import CoursesPage from './CoursesPage';
+
+vi.mock('@/api/activity', () => ({
+  activityAPI: { list: vi.fn().mockResolvedValue([]) },
+}));
 
 vi.mock('@/context/CreditContext', () => ({
   useCredits: () => ({
@@ -339,6 +344,32 @@ describe('CoursesPage', () => {
     expect(screen.getByText('Pick a course to carry on, or start a new one.')).toBeInTheDocument();
   });
 
+  it('previews recent activity and offers the full history', async () => {
+    vi.mocked(activityAPI.list).mockResolvedValueOnce([
+      {
+        kind: 'attempt',
+        action_type: 'quiz_attempt',
+        course_id: 4,
+        course_title: 'Organic Chemistry',
+        occurred_at: new Date().toISOString(),
+        output_id: null,
+        quiz_id: 3,
+        attempt_id: 9,
+        topic: null,
+        score: 0.6,
+      },
+    ]);
+
+    renderPage();
+
+    const activity = await screen.findByRole('link', { name: /Quiz attempt/ });
+    expect(activity).toHaveAttribute('href', '/courses/4/practice/3/attempts/9');
+    expect(screen.getByRole('link', { name: 'See all activity' })).toHaveAttribute(
+      'href',
+      '/activity',
+    );
+  });
+
   it('puts the nearest upcoming exam first', () => {
     renderPage({
       workspaces: [
@@ -347,7 +378,9 @@ describe('CoursesPage', () => {
       ],
     });
 
-    const titles = screen.getAllByRole('heading', { level: 2 }).map((node) => node.textContent);
+    const titles = within(screen.getByRole('list', { name: 'Your courses' }))
+      .getAllByRole('heading', { level: 2 })
+      .map((node) => node.textContent);
     expect(titles).toEqual(['Soon Exam', 'Far Exam']);
   });
 });

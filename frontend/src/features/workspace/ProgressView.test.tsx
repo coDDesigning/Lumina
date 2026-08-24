@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { CourseProgressResponse } from '@/api/types';
 import { ProgressView } from './ProgressView';
 
@@ -88,6 +89,67 @@ describe('ProgressView', () => {
     expect(attemptLinks).toHaveLength(2);
     expect(attemptLinks[0]).toHaveAttribute('href', '/courses/10/practice/5/attempts/101');
     expect(attemptLinks[1]).toHaveAttribute('href', '/courses/10/practice/5/attempts/102');
+  });
+
+  it('turns a weak topic into practice on that topic', async () => {
+    const onPractice = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <ProgressView
+          courseId="10"
+          documentCount={3}
+          readyDocumentCount={3}
+          progress={{ ...SAMPLE_PROGRESS, weak_topics: ['Graph Algorithms'] }}
+          isLoading={false}
+          error={null}
+          onPractice={onPractice}
+        />
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(
+      screen.getByRole('button', { name: /Practice Graph Algorithms/ }),
+    );
+
+    expect(onPractice).toHaveBeenCalledWith('Graph Algorithms');
+  });
+
+  it('offers no practice for questions that carried no topic', () => {
+    render(
+      <MemoryRouter>
+        <ProgressView
+          courseId="10"
+          documentCount={3}
+          readyDocumentCount={3}
+          progress={{ ...SAMPLE_PROGRESS, weak_topics: ['Untagged'] }}
+          isLoading={false}
+          error={null}
+          onPractice={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Untagged')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Practice/ })).not.toBeInTheDocument();
+  });
+
+  it('shows weak topics without an action when there is nowhere to send them', () => {
+    render(
+      <MemoryRouter>
+        <ProgressView
+          courseId="10"
+          documentCount={3}
+          readyDocumentCount={3}
+          progress={{ ...SAMPLE_PROGRESS, weak_topics: ['Graph Algorithms'] }}
+          isLoading={false}
+          error={null}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Graph Algorithms')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Practice/ })).not.toBeInTheDocument();
   });
 
   it('renders error alert when error prop is provided', () => {

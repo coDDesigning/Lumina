@@ -1,0 +1,29 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  padding: 0 var(--space-5) var(--space-7);
+  min-width: 0;
+}
+
+.intro {
+  display: flex;
+  flex-direction: column;
+}
+
+.title {
+  font-size: var(--text-3xl);
+}
+
+.subtitle {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin-top: var(--space-1);
+  max-width: var(--measure-prose);
+}

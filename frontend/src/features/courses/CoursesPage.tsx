@@ -11,6 +11,7 @@ import type {
   WorkspaceDraft,
   WorkspaceProgressStatus,
 } from '@/data/workspaces';
+import { RecentActivity } from '@/features/activity/RecentActivity';
 import { relativeDay } from '@/lib/relativeDay';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
@@ -22,6 +23,7 @@ import { Dialog } from '@/ui/Dialog';
 import { EmptyState } from '@/ui/EmptyState';
 import { IconButton } from '@/ui/IconButton';
 import { Input, Select, Textarea } from '@/ui/Input';
+import { LinkButton } from '@/ui/LinkButton';
 import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
 import styles from './CoursesPage.module.css';
@@ -334,7 +336,7 @@ export default function CoursesPage({
             <p className={styles.count}>
               {filtered.length} {filtered.length === 1 ? 'course' : 'courses'}
             </p>
-            <ul className={styles.grid}>
+            <ul className={styles.grid} aria-label="Your courses">
               {filtered.map((workspace) => {
                 const days = daysUntilExam(workspace.examDate, now);
                 const eyebrow = workspace.subjectArea || workspace.semester || 'Course';
@@ -449,6 +451,15 @@ export default function CoursesPage({
             }
           />
         )}
+
+        <RecentActivity
+          limit={5}
+          footer={
+            <LinkButton variant="ghost" size="sm" to="/activity">
+              See all activity
+            </LinkButton>
+          }
+        />
       </div>
 
       <Dialog

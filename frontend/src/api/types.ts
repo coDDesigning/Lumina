@@ -529,6 +529,21 @@ export interface CourseProgressSummary {
   last_activity: string | null;
 }
 
+export type ActivityKind = 'generation' | 'attempt';
+
+export interface ActivityItem {
+  kind: ActivityKind;
+  action_type: string;
+  course_id: number;
+  course_title: string;
+  occurred_at: string;
+  output_id: number | null;
+  quiz_id: number | null;
+  attempt_id: number | null;
+  topic: string | null;
+  score: number | null;
+}
+
 export interface ProfileKnowledgeItem {
   id: number;
   user_id: number;

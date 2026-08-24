@@ -5,6 +5,7 @@ import { toWorkspaceProgress } from './data/workspaces'
 import type { Workspace, WorkspaceDraft, WorkspaceProgress } from './data/workspaces'
 import CourseSettingsPage from './features/courses/CourseSettingsPage'
 import CoursesPage from './features/courses/CoursesPage'
+import ActivityPage from './features/activity/ActivityPage'
 import ProgressPage from './features/workspace/ProgressPage'
 import GuidePage from './features/study/GuidePage'
 import QuizAttemptPage from './features/study/quiz/QuizAttemptPage'
@@ -359,6 +360,7 @@ function App() {
             />
           }
         />
+        <Route path="/activity" element={<ActivityPage />} />
         <Route
           path="/courses/:courseId"
           element={

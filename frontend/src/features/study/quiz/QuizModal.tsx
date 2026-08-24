@@ -46,6 +46,7 @@ export interface QuizModalProps {
   courseId: number;
   topics: string[];
   readyDocumentCount: number;
+  initialTopic?: string;
   onClose: () => void;
   onAttemptRecorded?: () => void;
 }
@@ -96,6 +97,7 @@ export function QuizModal({
   courseId,
   topics,
   readyDocumentCount,
+  initialTopic,
   onClose,
   onAttemptRecorded,
   onQuizReady,
@@ -106,7 +108,7 @@ export function QuizModal({
     questionTypes: ['multiple_choice'],
     questionCount: 5,
     difficulty: 'medium',
-    topic: ALL_TOPICS,
+    topic: initialTopic ?? ALL_TOPICS,
     hasTimer: true,
     includeProfileContext: false,
   });
@@ -308,7 +310,7 @@ export function QuizModal({
   const question = questions[index];
   const answeredCount = questions.filter((row) => isAnswered(answers[row.question_id])).length;
   const unanswered = questions.length - answeredCount;
-  const topicChoices = topicOptions(topics);
+  const topicChoices = topicOptions(initialTopic ? [initialTopic, ...topics] : topics);
   const isLastQuestion = index === questions.length - 1;
 
   const footer = (() => {

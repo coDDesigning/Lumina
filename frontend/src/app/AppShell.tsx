@@ -1,4 +1,4 @@
-import { LayoutGrid, LogOut, Moon, Shield, Sun, UserRound } from 'lucide-react';
+import { History, LayoutGrid, LogOut, Moon, Shield, Sun, UserRound } from 'lucide-react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { cx } from '@/lib/cx';
@@ -20,6 +20,7 @@ export function AppShell() {
 
   const links: RailLink[] = [
     { to: '/dashboard', label: 'Courses', icon: LayoutGrid, end: true },
+    { to: '/activity', label: 'Activity', icon: History },
     { to: '/account', label: 'Account', icon: UserRound },
   ];
 

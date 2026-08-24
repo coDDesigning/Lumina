@@ -1557,6 +1557,46 @@ def test_quiz_request_overrides_course_settings(
     assert stored_settings["topic_focus"] == "Specific Topic"
 
 
+def test_generated_quiz_records_the_effective_topic_focus(
+    upload_api, retrieval_env, monkeypatch
+) -> None:
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["Topic focus attribution material"],
+            file_hash="ac" + "a" * 62,
+            retrieval_env=retrieval_env,
+        )
+
+    _install_provider(monkeypatch, CountingProvider())
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        json={**QUIZ_REQUEST, "topic_focus": "Graph Algorithms"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+
+    quizzes = _persisted_quizzes(upload_api.session_factory, upload_api.course_id)
+    assert json.loads(quizzes[0].generation_settings)["topic_focus"] == (
+        "Graph Algorithms"
+    )
+
+    with upload_api.session_factory() as session:
+        outputs = session.scalars(
+            select(GeneratedOutput).where(
+                GeneratedOutput.course_id == upload_api.course_id
+            )
+        ).all()
+
+    assert len(outputs) == 1
+    assert json.loads(outputs[0].generation_settings)["topic_focus"] == (
+        "Graph Algorithms"
+    )
+
+
 def test_quiz_defaults_to_system_when_no_course_settings(
     upload_api, retrieval_env, monkeypatch
 ) -> None:

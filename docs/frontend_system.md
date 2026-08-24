@@ -129,6 +129,7 @@ Rules that are not negotiable:
 
   ── everything below is inside ProtectedRoute > AppShell ──
 /dashboard                         course list
+/activity                          what you generated and attempted, every course
 /courses/:id                       course workspace (chat-first)
 /courses/:id/guides/:outputId      one study guide, its own page
 /courses/:id/practice/:quizId      taking a quiz

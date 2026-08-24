@@ -248,3 +248,55 @@ describe('CourseSettingsPage — deleting the course', () => {
     expect(screen.queryByRole('heading', { name: 'Courses' })).not.toBeInTheDocument();
   });
 });
+
+describe('CourseSettingsPage — archiving the course', () => {
+  it('allows archiving an active course', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    renderPage({ onSave });
+
+    const archiveButton = screen.getByRole('button', { name: 'Archive course' });
+    await user.click(archiveButton);
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: '1',
+        isArchived: true,
+      }),
+    );
+  });
+
+  it('allows restoring an archived course', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/courses/1/settings']}>
+          <Routes>
+            <Route
+              path="/courses/:courseId/settings"
+              element={
+                <CourseSettingsPage
+                  workspace={{ ...workspace, isArchived: true }}
+                  onSave={onSave}
+                  onDelete={vi.fn().mockResolvedValue(undefined)}
+                />
+              }
+            />
+            <Route path="/dashboard" element={<h1>Courses</h1>} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    const restoreButton = screen.getByRole('button', { name: 'Restore course' });
+    await user.click(restoreButton);
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: '1',
+        isArchived: false,
+      }),
+    );
+  });
+});

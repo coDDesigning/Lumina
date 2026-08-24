@@ -1,7 +1,7 @@
 import { BookOpen, Layers3, Target } from 'lucide-react';
+import { relativeDay } from '@/lib/relativeDay';
 import { Button } from '@/ui/Button';
 import { Skeleton } from '@/ui/Skeleton';
-import { relativeDay } from './relativeDay';
 import type { CourseArtifact, SavedArtifact } from './useCourseArtifacts';
 import styles from './ArtifactRail.module.css';
 

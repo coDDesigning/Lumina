@@ -62,7 +62,7 @@ vi.mock('./api/courses', () => ({
 }));
 
 vi.mock('./api/progress', () => ({
-  progressAPI: { get: vi.fn() },
+  progressAPI: { get: vi.fn(), listAll: vi.fn() },
 }));
 
 vi.mock('./api/courseQa', () => ({
@@ -80,6 +80,7 @@ vi.mock('./api/conversations', () => ({
 const mockCourseList = vi.mocked(coursesAPI.list);
 const mockDocumentList = vi.mocked(coursesAPI.listDocuments);
 const mockProgress = vi.mocked(progressAPI.get);
+const mockListProgress = vi.mocked(progressAPI.listAll);
 const mockQaAsk = vi.mocked(courseQaAPI.ask);
 const mockTutorAsk = vi.mocked(aiTutorAPI.ask);
 const mockConversationList = vi.mocked(conversationsAPI.list);
@@ -144,6 +145,7 @@ describe('Workspace conversations', () => {
       average_score: null,
       topic_mastery: [],
     });
+    mockListProgress.mockResolvedValue([]);
     mockConversationList.mockResolvedValue([]);
   });
 

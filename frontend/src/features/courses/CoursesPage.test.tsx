@@ -246,6 +246,47 @@ describe('CoursesPage', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
+  it('shows the derived status and when the course was last studied', () => {
+    renderPage({
+      workspaces: [
+        {
+          ...mockWorkspaces[0],
+          id: '20',
+          name: 'Mastered Course',
+          progress: {
+            averageScore: 91,
+            lastActivity: '2026-08-22T10:00:00Z',
+            status: 'Mastered',
+          },
+        },
+        {
+          ...mockWorkspaces[1],
+          id: '21',
+          name: 'Untouched Course',
+          progress: { averageScore: null, lastActivity: null, status: 'Not started' },
+        },
+      ],
+    });
+
+    expect(screen.getByText('Mastered')).toBeInTheDocument();
+    expect(screen.getByText(/Last studied/)).toBeInTheDocument();
+    expect(screen.getByText('Not started')).toBeInTheDocument();
+    expect(screen.getByText('Not studied yet')).toBeInTheDocument();
+  });
+
+  it('claims nothing about a course whose progress could not be loaded', () => {
+    renderPage({
+      workspaces: [
+        { ...mockWorkspaces[0], id: '22', name: 'Unknown Course', progress: null },
+      ],
+    });
+
+    expect(screen.getByText('Progress unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('Not started')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Last studied/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Not studied yet')).not.toBeInTheDocument();
+  });
+
   it('separates no quiz activity from a genuine zero score and from unavailable data', () => {
     renderPage({
       workspaces: [

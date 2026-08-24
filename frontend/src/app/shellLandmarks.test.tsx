@@ -54,7 +54,7 @@ vi.mock('@/api/courses', () => ({
 }));
 
 vi.mock('@/api/progress', () => ({
-  progressAPI: { get: vi.fn() },
+  progressAPI: { get: vi.fn(), listAll: vi.fn() },
 }));
 
 const mockList = vi.mocked(coursesAPI.list);
@@ -78,6 +78,7 @@ beforeEach(() => {
     average_score: null,
     topic_mastery: [],
   });
+  vi.mocked(progressAPI.listAll).mockResolvedValue([]);
 });
 
 describe('links that were saved before the rename', () => {

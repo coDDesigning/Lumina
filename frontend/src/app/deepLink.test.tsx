@@ -49,7 +49,9 @@ vi.mock('../api/courses', () => ({
   },
 }));
 
-vi.mock('../api/progress', () => ({ progressAPI: { get: vi.fn() } }));
+vi.mock('../api/progress', () => ({
+  progressAPI: { get: vi.fn(), listAll: vi.fn() },
+}));
 
 vi.mock('../api/generatedOutputs', () => ({
   generatedOutputsAPI: { list: vi.fn().mockResolvedValue([]), get: vi.fn() },
@@ -69,6 +71,7 @@ beforeEach(() => {
     average_score: null,
     topic_mastery: [],
   });
+  vi.mocked(progressAPI.listAll).mockResolvedValue([]);
 });
 
 describe('opening a course link directly', () => {

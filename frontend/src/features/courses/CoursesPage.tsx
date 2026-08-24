@@ -326,9 +326,11 @@ export default function CoursesPage({
                           <div className={styles.meta}>
                             <Badge tone={examUrgency(days)}>{examLabel(days, workspace.examDate)}</Badge>
                             <span className="tabular">
-                              {workspace.progress !== null ? (
+                              {workspace.progress === null ? (
+                                'Progress unavailable'
+                              ) : workspace.progress.averageScore !== null ? (
                                 <>
-                                  <strong>{workspace.progress}%</strong> average score
+                                  <strong>{workspace.progress.averageScore}%</strong> average score
                                 </>
                               ) : (
                                 'No quiz activity yet'
@@ -336,11 +338,11 @@ export default function CoursesPage({
                             </span>
                           </div>
 
-                          {workspace.progress !== null ? (
+                          {workspace.progress?.averageScore != null ? (
                             <span className={styles.progressTrack} aria-hidden="true">
                               <span
                                 className={styles.progressFill}
-                                style={{ width: `${workspace.progress}%` }}
+                                style={{ width: `${workspace.progress.averageScore}%` }}
                               />
                             </span>
                           ) : null}

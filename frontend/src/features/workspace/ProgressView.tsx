@@ -5,6 +5,7 @@ import { cx } from '@/lib/cx';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
 import type { BadgeTone } from '@/ui/Badge';
+import { Button } from '@/ui/Button';
 import { EmptyState } from '@/ui/EmptyState';
 import { Skeleton } from '@/ui/Skeleton';
 import styles from './ProgressView.module.css';
@@ -17,7 +18,10 @@ export interface ProgressViewProps {
   isLoading: boolean;
   error: string | null;
   actions?: React.ReactNode;
+  onPractice?: (topic: string) => void;
 }
+
+const UNTAGGED_TOPIC = 'Untagged';
 
 const MASTERY_TONE: Record<MasteryStatus, BadgeTone> = {
   Mastered: 'success',
@@ -55,6 +59,7 @@ export function ProgressView({
   isLoading,
   error,
   actions,
+  onPractice,
 }: ProgressViewProps) {
   const attempts = progress?.attempts_count ?? 0;
   const topicMastery = progress?.topic_mastery ?? [];
@@ -129,10 +134,20 @@ export function ProgressView({
           </h2>
           <ul className={styles.weakList}>
             {weakTopics.map((topic) => (
-              <li key={topic}>
+              <li key={topic} className={styles.weakItem}>
                 <Badge tone="warning" icon={<CircleDot aria-hidden="true" />}>
                   {topic}
                 </Badge>
+                {onPractice && topic !== UNTAGGED_TOPIC ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={<Target aria-hidden="true" />}
+                    onClick={() => onPractice(topic)}
+                  >
+                    Practice {topic}
+                  </Button>
+                ) : null}
               </li>
             ))}
           </ul>

@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { isAbortError } from '@/api/errors';
 import { quizAPI } from '@/api/quiz';
 import type { QuizSummary } from '@/api/types';
+import { relativeDay } from '@/lib/relativeDay';
 import { LinkButton } from '@/ui/LinkButton';
 import { Skeleton } from '@/ui/Skeleton';
-import { relativeDay } from './relativeDay';
 import styles from './PastQuizzes.module.css';
 
 export interface PastQuizzesProps {

@@ -256,6 +256,13 @@ These are product rules, not style preferences.
 - **No screen shows fabricated data.** If the backend cannot produce a number, the number
   is absent — not zero, not a placeholder. Every course card once read "0 sources" forever
   because the mapper hardcoded an empty array; that is the failure mode to avoid.
+- **Unavailable is not empty.** A course card reads progress from the single
+  `GET /api/progress` request and distinguishes three states, not two: progress that could
+  not be loaded says "Progress unavailable", a course with no graded attempt says "No quiz
+  activity yet", and a scored course shows its average score. A nullable number collapsed
+  the first two, so a network failure read as a course the student had never touched. The
+  status badge and the last-studied line come from the same response and are omitted
+  entirely when it is missing, because a card that cannot load progress must claim nothing.
 - **No control claims an outcome it does not produce.** A settings page that said
   "Preferences saved locally" while persisting nothing is worse than no message.
 - **Name what is not built.** The landing page lists unbuilt capabilities as prominently as

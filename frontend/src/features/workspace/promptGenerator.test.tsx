@@ -56,7 +56,9 @@ vi.mock('@/api/courses', () => ({
   },
 }));
 
-vi.mock('@/api/progress', () => ({ progressAPI: { get: vi.fn() } }));
+vi.mock('@/api/progress', () => ({
+  progressAPI: { get: vi.fn(), listAll: vi.fn() },
+}));
 
 vi.mock('@/api/promptGenerator', () => ({
   promptGeneratorAPI: { generate: vi.fn() },
@@ -84,6 +86,7 @@ beforeEach(() => {
     average_score: null,
     topic_mastery: [],
   });
+  vi.mocked(progressAPI.listAll).mockResolvedValue([]);
 });
 
 describe('prompt generator', () => {

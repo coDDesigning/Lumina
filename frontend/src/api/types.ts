@@ -524,6 +524,14 @@ export interface CourseProgressResponse {
   quiz_history?: QuizHistoryItem[];
 }
 
+export interface CourseProgressSummary {
+  course_id: number;
+  attempts_count: number;
+  average_score: number | null;
+  completion: number | null;
+  last_activity: string | null;
+}
+
 export interface ProfileKnowledgeItem {
   id: number;
   user_id: number;

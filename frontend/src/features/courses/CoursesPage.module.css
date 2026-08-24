@@ -151,6 +151,12 @@
   background: linear-gradient(90deg, var(--brand-from), var(--accent));
 }
 
+.activity {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  margin: 0;
+}
+
 .cardActions {
   position: absolute;
   top: var(--space-3);

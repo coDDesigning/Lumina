@@ -61,6 +61,7 @@ vi.mock('./api/courses', () => ({
 vi.mock('./api/progress', () => ({
   progressAPI: {
     get: vi.fn(),
+    listAll: vi.fn(),
   },
 }));
 
@@ -75,6 +76,7 @@ const mockListDocuments = vi.mocked(coursesAPI.listDocuments);
 const mockGetDocumentStatus = vi.mocked(coursesAPI.getDocumentStatus);
 const mockUploadDocument = vi.mocked(coursesAPI.uploadDocument);
 const mockGetProgress = vi.mocked(progressAPI.get);
+const mockListProgress = vi.mocked(progressAPI.listAll);
 
 function uploadAlertFor(fileName: string) {
   const alert = screen
@@ -101,6 +103,7 @@ describe('Document Upload UI in Workspace', () => {
       average_score: null,
       topic_mastery: [],
     });
+    mockListProgress.mockResolvedValue([]);
   });
 
   it('uploads a valid file successfully and adds it to the list', async () => {

@@ -32,7 +32,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import CreditService
+from services.credits import ChargeReceipt, CreditService
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -126,6 +126,7 @@ class StudyGuideGeneration:
     study_guide: StudyGuideResponse
     material: RetrievedCourseMaterial
     model_used: str
+    charge_receipt: ChargeReceipt | None = None
 
 
 class StudyGuideService:
@@ -213,21 +214,6 @@ class StudyGuideService:
 
         query = cls.build_retrieval_query(course, request)
 
-        try:
-            material = cls.get_course_material(db, course_id, query=query)
-        except MaterialNotIndexedError:
-            log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
-            raise
-        except NoRelevantMaterialError:
-            log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
-            raise
-        except MaterialRetrievalError:
-            log_failure(ErrorCategory.RETRIEVAL_ERROR)
-            raise
-
-        prompt = cls.build_prompt(material.text, request)
-        metadata = None
-
         receipt = None
         if resolved_user_id:
             receipt = CreditService.charge(
@@ -242,6 +228,27 @@ class StudyGuideService:
                     error_category=ErrorCategory.INSUFFICIENT_CREDITS,
                 )
                 raise InsufficientCreditsError("Insufficient credits.")
+
+        try:
+            material = cls.get_course_material(db, course_id, query=query)
+            prompt = cls.build_prompt(material.text, request)
+        except MaterialNotIndexedError:
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
+            raise
+        except NoRelevantMaterialError:
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
+            raise
+        except MaterialRetrievalError:
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.RETRIEVAL_ERROR)
+            raise
+        except Exception:
+            CreditService.refund(db, receipt)
+            raise
+
+        metadata = None
 
         try:
             if hasattr(provider, "generate_json_with_metadata"):
@@ -284,6 +291,7 @@ class StudyGuideService:
             study_guide=validated,
             material=material,
             model_used=model_identifier(metadata),
+            charge_receipt=receipt,
         )
 
     @staticmethod

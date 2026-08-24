@@ -119,6 +119,61 @@ function duplicateControlNames(): string[] {
   return Array.from(repeated);
 }
 
+describe('practising one topic', () => {
+  function renderPreset(initialTopic: string) {
+    return render(
+      <CreditProvider>
+        <QuizModal
+          courseId={1}
+          topics={['Sorting']}
+          readyDocumentCount={2}
+          initialTopic={initialTopic}
+          onClose={vi.fn()}
+        />
+      </CreditProvider>,
+    );
+  }
+
+  it('shows the topic it was opened for, even one the course never listed', async () => {
+    renderPreset('Graph Algorithms');
+
+    const select = await screen.findByLabelText(/Which topic/);
+    expect(select).toHaveValue('Graph Algorithms');
+    expect(
+      within(select).getByRole('option', { name: 'Graph Algorithms' }),
+    ).toBeInTheDocument();
+  });
+
+  it('generates against the preset topic', async () => {
+    renderPreset('Graph Algorithms');
+
+    await userEvent.click(await screen.findByRole('button', { name: /start the quiz/i }));
+
+    await waitFor(() => expect(mockGenerate).toHaveBeenCalled());
+    expect(mockGenerate.mock.calls[0][1]).toMatchObject({
+      topic_focus: 'Graph Algorithms',
+    });
+  });
+
+  it('lets the topic be changed before anything is generated', async () => {
+    renderPreset('Graph Algorithms');
+
+    const select = await screen.findByLabelText(/Which topic/);
+    await userEvent.selectOptions(select, 'Sorting');
+    await userEvent.click(screen.getByRole('button', { name: /start the quiz/i }));
+
+    await waitFor(() => expect(mockGenerate).toHaveBeenCalled());
+    expect(mockGenerate.mock.calls[0][1]).toMatchObject({ topic_focus: 'Sorting' });
+  });
+
+  it('lists a preset topic the course also lists only once', async () => {
+    renderPreset('Sorting');
+
+    const select = await screen.findByLabelText(/Which topic/);
+    expect(within(select).getAllByRole('option', { name: 'Sorting' })).toHaveLength(1);
+  });
+});
+
 describe('taking a quiz', () => {
   it('gives every control in the setup step its own name', async () => {
     renderQuiz();

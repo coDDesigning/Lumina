@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from backend.app.models import QuizQuestion
+from backend.app.models import Course, QuizQuestion
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.quiz import (
     OpenEndedAnswer,
@@ -32,14 +32,13 @@ from schemas.quiz_attempt import (
     QuizAnswerSubmission,
 )
 from services.ai_usage_logger import AiUsageLogger
+from schemas.prompt_context import PromptContext
+from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
 from services.quiz import parse_correct_answer
 from services.text_generation import TextGenerationProvider
-from services.credits import ChargeReceipt, CreditService
 
 logger = logging.getLogger(__name__)
-
-GRADING_CREDIT_COST = 1.0
 
 ProviderFactory = Callable[[], TextGenerationProvider]
 
@@ -109,7 +108,6 @@ class QuizGradingService:
         provider_factory: ProviderFactory | None = None,
         user_id: int | None = None,
         course_id: int | None = None,
-        charge_receipts: list[ChargeReceipt] | None = None,
     ) -> list[GradedAnswer]:
         """Score every question of a quiz, in the order the questions are given.
 
@@ -164,14 +162,16 @@ class QuizGradingService:
                 provider_factory=provider_factory,
                 user_id=user_id,
                 course_id=course_id,
-                charge_receipts=charge_receipts,
             )
 
         return graded
 
     @classmethod
     def build_prompt(
-        cls, pending: list[tuple[int, QuizQuestion, str, OpenEndedAnswer]]
+        cls,
+        pending: list[tuple[int, QuizQuestion, str, OpenEndedAnswer]],
+        *,
+        context: PromptContext,
     ) -> str:
         blocks = []
         for number, (_, question, written, answer) in enumerate(pending, start=1):
@@ -184,6 +184,7 @@ class QuizGradingService:
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {
+                **context.as_variables(),
                 "SUBMISSION_COUNT": str(len(pending)),
                 "SUBMISSIONS": "\n\n---\n\n".join(blocks),
             },
@@ -199,7 +200,6 @@ class QuizGradingService:
         provider_factory: ProviderFactory | None,
         user_id: int | None,
         course_id: int | None,
-        charge_receipts: list[ChargeReceipt] | None,
     ) -> list[GradedAnswer]:
         def log_failure(category: ErrorCategory, **extra) -> None:
             if user_id:
@@ -225,16 +225,9 @@ class QuizGradingService:
             log_failure(ErrorCategory.PROVIDER_ERROR)
             return graded
 
-        receipt = None
-        if user_id:
-            receipt = CreditService.charge(
-                db, user_id, GRADING_CREDIT_COST, source_type="quiz_grading"
-            )
-            if receipt is None:
-                log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
-                return graded
-
-        prompt = cls.build_prompt(pending)
+        course = db.get(Course, course_id) if course_id is not None else None
+        prompt_context = resolve_prompt_context(db, course=course, user_id=user_id)
+        prompt = cls.build_prompt(pending, context=prompt_context)
         metadata = None
 
         try:
@@ -243,24 +236,17 @@ class QuizGradingService:
             else:
                 result = provider.generate_json(prompt)
         except Exception as exc:
-            if user_id:
-                CreditService.refund(db, receipt)
             log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
             return graded
 
         try:
             verdicts = OpenEndedGradingResponse.model_validate(result)
         except ValidationError:
-            if user_id:
-                CreditService.refund(db, receipt)
             log_failure(
                 ErrorCategory.INVALID_STRUCTURE,
                 latency_ms=metadata.latency_ms if metadata else None,
             )
             return graded
-
-        if receipt is not None and charge_receipts is not None:
-            charge_receipts.append(receipt)
 
         by_number = {verdict.question_number: verdict for verdict in verdicts.verdicts}
 

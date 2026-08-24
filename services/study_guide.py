@@ -2,10 +2,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
-from backend.app.models import Course, GeneratedOutput
+from backend.app.models import Course, CourseSettings, GeneratedOutput
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.study_guide import (
     DetailLevel,
@@ -17,6 +18,14 @@ from schemas.study_guide import (
 )
 from services.ai_usage_logger import AiUsageLogger
 from services.generated_output import GeneratedOutputService
+from services.profile_knowledge import (
+    ProfileKnowledgeContext,
+    assemble_generation_context,
+    format_profile_context,
+)
+from schemas.prompt_context import PromptContext
+from services.document_lock import acquire_generation_locks
+from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
 from services.course_material import count_available_chunks
 from services.retrieval_query import build_retrieval_query
@@ -32,7 +41,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import ChargeReceipt, CreditService
+from services.credits import ChargeReceipt, CreditService, GENERATION_CREDIT_COSTS
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -79,7 +88,8 @@ DETAIL_LEVEL_DIRECTIVES: dict[DetailLevel, str] = {
     ),
     DetailLevel.DETAILED: (
         "Requested detail level: detailed. Cover mechanisms, relationships between "
-        "concepts, important caveats, and worked examples drawn from the lecture notes."
+        "concepts, important caveats, and worked examples drawn from the course "
+        "material."
     ),
 }
 
@@ -126,6 +136,8 @@ class StudyGuideGeneration:
     study_guide: StudyGuideResponse
     material: RetrievedCourseMaterial
     model_used: str
+    effective_request: StudyGuideRequest
+    profile_knowledge: ProfileKnowledgeContext | None = None
     charge_receipt: ChargeReceipt | None = None
 
 
@@ -162,11 +174,19 @@ class StudyGuideService:
         )
 
     @classmethod
-    def build_prompt(cls, course_material: str, options: StudyGuideRequest) -> str:
+    def build_prompt(
+        cls,
+        course_material: str,
+        options: StudyGuideRequest,
+        *,
+        profile_knowledge: ProfileKnowledgeContext | None = None,
+        context: PromptContext,
+    ) -> str:
         directive = SUMMARY_FORMAT_DIRECTIVES[options.summary_format]
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {
+                **context.as_variables(),
                 "SUMMARY_FORMAT": (
                     f"Requested summary format: {options.summary_format.value}. "
                     f"{directive}"
@@ -175,10 +195,76 @@ class StudyGuideService:
                 "DETAIL_LEVEL": DETAIL_LEVEL_DIRECTIVES[options.detail_level],
                 "SUMMARY_MODE": SUMMARY_MODE_DIRECTIVES[options.summary_mode],
                 "TOPIC_FOCUS": options.topic_focus,
-                # Rendered last so course material can never forge a placeholder
+                # Rendered last so course material and profile context can never forge a placeholder
                 # that a later substitution would then fill in.
                 "TEXT": course_material,
+                "PROFILE_CONTEXT": format_profile_context(profile_knowledge),
             },
+        )
+
+    @classmethod
+    def resolve_effective_request(
+        cls, db: Session, course_id: int, request: StudyGuideRequest
+    ) -> StudyGuideRequest:
+        settings_row = db.scalar(
+            select(CourseSettings).where(CourseSettings.course_id == course_id)
+        )
+        fields_set = request.model_fields_set
+
+        # 1. Summary format
+        summary_format = request.summary_format
+
+        # 2. Summary length: explicit request > CourseSettings > request.summary_length
+        if "summary_length" in fields_set:
+            summary_length = request.summary_length
+        elif settings_row is not None and settings_row.summary_length:
+            length_raw = settings_row.summary_length.strip().casefold()
+            if length_raw == "short":
+                summary_length = SummaryLength.SHORT
+            elif length_raw == "long":
+                summary_length = SummaryLength.LONG
+            else:
+                summary_length = SummaryLength.MEDIUM
+        else:
+            summary_length = request.summary_length
+
+        # 3. Detail level: explicit request > CourseSettings > request.detail_level
+        if "detail_level" in fields_set:
+            detail_level = request.detail_level
+        elif settings_row is not None and settings_row.detail_level:
+            detail_raw = settings_row.detail_level.strip().casefold()
+            if detail_raw in ("concise", "basic"):
+                detail_level = DetailLevel.BASIC
+            elif detail_raw in ("detailed",):
+                detail_level = DetailLevel.DETAILED
+            else:
+                detail_level = DetailLevel.STANDARD
+        else:
+            detail_level = request.detail_level
+
+        # 4. Summary mode: explicit request > CourseSettings (study_mode) > request.summary_mode
+        if "summary_mode" in fields_set:
+            summary_mode = request.summary_mode
+        elif settings_row is not None and settings_row.study_mode:
+            mode_raw = settings_row.study_mode.strip().casefold()
+            if mode_raw in ("exam", "exam_focused", "exam focused"):
+                summary_mode = SummaryMode.EXAM_FOCUSED
+            else:
+                summary_mode = SummaryMode.GENERAL
+        else:
+            summary_mode = request.summary_mode
+
+        # 5. Topic focus
+        topic_focus = request.topic_focus
+
+        return StudyGuideRequest(
+            summary_format=summary_format,
+            topic_focus=topic_focus,
+            summary_length=summary_length,
+            detail_level=detail_level,
+            summary_mode=summary_mode,
+            use_profile_knowledge=request.use_profile_knowledge,
+            model=request.model,
         )
 
     @classmethod
@@ -191,6 +277,7 @@ class StudyGuideService:
         *,
         user_id: int | None = None,
     ) -> StudyGuideGeneration:
+        effective_request = cls.resolve_effective_request(db, course_id, request)
         course = db.get(Course, course_id)
 
         resolved_user_id = user_id
@@ -207,92 +294,119 @@ class StudyGuideService:
                     error_category=category,
                     **extra,
                 )
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
 
         if count_available_chunks(db, course_id) == 0:
             log_failure(ErrorCategory.NO_READY_MATERIAL)
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
-        query = cls.build_retrieval_query(course, request)
+        query = cls.build_retrieval_query(course, effective_request)
 
         receipt = None
         if resolved_user_id:
             receipt = CreditService.charge(
-                db, resolved_user_id, 1.0, source_type="study_guide"
+                db,
+                resolved_user_id,
+                GENERATION_CREDIT_COSTS["study_guide"],
+                source_type="study_guide",
             )
             if receipt is None:
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.STUDY_GUIDE,
-                    error_category=ErrorCategory.INSUFFICIENT_CREDITS,
-                )
+                log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
                 raise InsufficientCreditsError("Insufficient credits.")
 
         try:
             material = cls.get_course_material(db, course_id, query=query)
-            prompt = cls.build_prompt(material.text, request)
         except MaterialNotIndexedError:
+            db.rollback()
             CreditService.refund(db, receipt)
             log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
             raise
         except NoRelevantMaterialError:
+            db.rollback()
             CreditService.refund(db, receipt)
             log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
             raise
         except MaterialRetrievalError:
+            db.rollback()
             CreditService.refund(db, receipt)
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
-        except Exception:
-            CreditService.refund(db, receipt)
-            raise
 
-        metadata = None
-
-        try:
-            if hasattr(provider, "generate_json_with_metadata"):
-                result, metadata = provider.generate_json_with_metadata(prompt)
-            else:
-                result = provider.generate_json(prompt)
-        except TextGenerationError as exc:
-            if resolved_user_id:
-                CreditService.refund(db, receipt)
-            log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
-            raise StudyGuideGenerationError("Text generation provider failed.") from exc
-        except Exception:
-            if resolved_user_id:
-                CreditService.refund(db, receipt)
-            raise
-
-        try:
-            validated = StudyGuideResponse.model_validate(result)
-        except ValidationError as exc:
-            if resolved_user_id:
-                CreditService.refund(db, receipt)
-            log_failure(
-                ErrorCategory.INVALID_STRUCTURE,
-                latency_ms=metadata.latency_ms if metadata else None,
-            )
-            raise InvalidStudyGuideStructureError(
-                "Generated study guide has an invalid structure."
-            ) from exc
-
-        if resolved_user_id:
-            AiUsageLogger.log_success(
+        with (
+            CreditService.refund_on_error(db, receipt),
+            acquire_generation_locks(material.document_ids),
+        ):
+            generation_ctx = assemble_generation_context(
                 db,
-                user_id=resolved_user_id,
                 course_id=course_id,
-                generation_type=GenerationType.STUDY_GUIDE,
-                metadata=metadata,
+                user_id=resolved_user_id,
+                course_material=material,
+                include_profile_context=effective_request.use_profile_knowledge,
             )
 
-        return StudyGuideGeneration(
-            study_guide=validated,
-            material=material,
-            model_used=model_identifier(metadata),
-            charge_receipt=receipt,
-        )
+            prompt_context = resolve_prompt_context(
+                db, course=course, user_id=resolved_user_id
+            )
+            prompt = cls.build_prompt(
+                generation_ctx.course_material.text,
+                effective_request,
+                profile_knowledge=generation_ctx.profile_knowledge,
+                context=prompt_context,
+            )
+            metadata = None
+
+            try:
+                if hasattr(provider, "generate_json_with_metadata"):
+                    result, metadata = provider.generate_json_with_metadata(prompt)
+                else:
+                    result = provider.generate_json(prompt)
+            except TextGenerationError as exc:
+                if resolved_user_id:
+                    CreditService.refund(db, receipt)
+                log_failure(
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
+                )
+                raise StudyGuideGenerationError(
+                    "Text generation provider failed."
+                ) from exc
+            except Exception:
+                if resolved_user_id:
+                    CreditService.refund(db, receipt)
+                raise
+
+            try:
+                validated = StudyGuideResponse.model_validate(result)
+            except ValidationError as exc:
+                if resolved_user_id:
+                    CreditService.refund(db, receipt)
+                log_failure(
+                    ErrorCategory.INVALID_STRUCTURE,
+                    latency_ms=metadata.latency_ms if metadata else None,
+                )
+                raise InvalidStudyGuideStructureError(
+                    "Generated study guide has an invalid structure."
+                ) from exc
+
+            if resolved_user_id:
+                AiUsageLogger.log_success(
+                    db,
+                    user_id=resolved_user_id,
+                    course_id=course_id,
+                    generation_type=GenerationType.STUDY_GUIDE,
+                    metadata=metadata,
+                )
+
+            return StudyGuideGeneration(
+                study_guide=validated,
+                material=material,
+                model_used=model_identifier(metadata),
+                effective_request=effective_request,
+                profile_knowledge=generation_ctx.profile_knowledge,
+                charge_receipt=receipt,
+            )
 
     @staticmethod
     def save_generated_output(

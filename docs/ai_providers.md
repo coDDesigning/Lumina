@@ -126,10 +126,50 @@ rather than at the first user click:
 | `OLLAMA_BASE_URL` | empty, whitespace, or not a valid `http://`/`https://` URL with a host (`banana` and `localhost:11434` both fail) |
 | `OLLAMA_MODEL` | empty, whitespace, longer than 128 characters, or containing characters outside letters, digits, `. : / - _` |
 | `AI_FALLBACK_PROVIDERS` | any token is unrecognized, or recognized but not implemented |
+| `AI_MODEL_CATALOG` | not valid JSON, empty, contains an unimplemented provider, contains duplicate model names, or a model entry is missing/invalid `model`, `json_mode`, `context_window`, or `vision` metadata |
 
 Configuration validation deliberately does **not** contact Ollama. Booting the
 API must not depend on a model server being up, so reachability is a
 generation-time concern.
+
+### Model Catalog
+
+`AI_MODEL_CATALOG` configures the available text-generation models for each
+implemented provider. The value is a JSON object keyed by provider name.
+
+Each model entry must provide its model identifier and capability metadata:
+
+```json
+{
+  "ollama": [
+    {
+      "model": "llama3.1",
+      "json_mode": true,
+      "context_window": 8192,
+      "vision": false
+    },
+    {
+      "model": "qwen3:8b",
+      "json_mode": true,
+      "context_window": 32768,
+      "vision": false
+    }
+  ]
+}
+
+Each entry requires:
+
+- `model` — non-empty model identifier
+- `json_mode` — whether structured JSON generation is supported
+- `context_window` — positive integer context-window size
+- `vision` — whether visual input is supported
+
+Invalid catalog configuration fails during application startup. Explicit model
+selections are validated against the catalog, and a selected model is passed to
+the provider request instead of always using the provider's default model.
+
+A model that does not support JSON mode is rejected when a generation path
+requires structured JSON output.
 
 ## Error Semantics
 
@@ -173,15 +213,14 @@ as Gemini:
 ## Course Material Context Budget
 
 Every AI feature bounds one request's material to a configured number of
-characters. Study guide, quiz, AI tutor, and course Q&A read **retrieved**
-material through `services/retrieval_material.py`; flashcard generation still
-reads **whole-corpus** material through `services/course_material.py`:
+characters. Study guide, quiz, flashcard, AI tutor, and course Q&A read **retrieved**
+material through `services/retrieval_material.py`:
 
 | Setting | Default | Bounds | Source |
 |---|---|---|---|
 | `STUDY_GUIDE_MATERIAL_MAX_CHARS` | `120000` | study guide generation | retrieval |
 | `QUIZ_MATERIAL_MAX_CHARS` | `120000` | quiz generation | retrieval |
-| `FLASHCARD_MATERIAL_MAX_CHARS` | `120000` | flashcard generation | whole corpus |
+| `FLASHCARD_MATERIAL_MAX_CHARS` | `120000` | flashcard generation | retrieval |
 | `AI_TUTOR_MATERIAL_MAX_CHARS` | `120000` | AI tutor answers | retrieval |
 | `COURSE_QA_MATERIAL_MAX_CHARS` | `120000` | course Q&A answers | retrieval |
 
@@ -246,10 +285,10 @@ different things:
   simply `chunks_used < chunks_available`; under retrieval that inequality holds
   on nearly every request and would make the flag noise.
 
-`services/course_material.py` remains the whole-corpus path for flashcard
-generation and the profile-knowledge assembly helper. Authorization, provider
-calls, schema validation, and persistence deliberately live outside both
-material modules so each remaining migration stays localized.
+`services/course_material.py` remains the whole-corpus path for the
+profile-knowledge assembly helper. Authorization, provider calls, schema
+validation, and persistence deliberately live outside both material modules so
+each remaining migration stays localized.
 
 ## Public Error Messages
 
@@ -273,6 +312,8 @@ condition for `ai_usage_logs`:
 
 ## Generated Output Attribution
 
+`GeneratedOutputService.record` is the single canonical writer for `generated_outputs` rows across all generation features (`study_guide`, `quiz`, `flashcards`). Feature services and routes persist through this entrypoint and never construct `GeneratedOutput` models directly.
+
 Rows in `generated_outputs` record `user_id` (the authenticated requester, never
 a client-supplied value and never inferred from course ownership) and
 `model_used` in `provider:model` form, taken from the metadata of the provider
@@ -280,6 +321,7 @@ that actually answered — so a fallback generation attributes the fallback, not
 the configured primary. Both columns are nullable only because rows written
 before this migration have no truthful value; they are never backfilled with a
 guess.
+
 
 `generation_settings` and `generation_context` record how a row was produced, as
 JSON documents carrying a `version` and an `output_type` so other output types can
@@ -325,6 +367,10 @@ tolerance for models that wrap output in a markdown code fence — so no
 per-provider cleanup logic exists. Schema validation stays in the feature
 services, above the provider, which is why malformed model output can never be
 persisted.
+
+## Model Catalog and Capability Routing
+
+`GET /api/models` exposes the active model catalog with capability and cost metadata (`capabilities`, `cost_hint`, `description`, `is_local`, and `supports_json`). `resolve_effective_model` resolves models by explicit request override, user preferred model, or deployment default, and validates that the resolved model supports the requested feature capability (e.g. `study_guide`, `quiz`, `flashcard`, `ai_tutor`, `course_qa`, `prompt_generator`). Unsupported task/model requests are rejected cleanly with a `400 Bad Request`. Provider factories (`get_text_generation_provider`) dynamically pass the requested model to concrete providers (`GeminiTextGenerationProvider`, `OllamaTextGenerationProvider`) rather than hardcoding a single static model.
 
 ## Telemetry and Privacy
 

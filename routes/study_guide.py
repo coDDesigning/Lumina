@@ -57,7 +57,9 @@ def generate_study_guide(
     generation = None
     try:
         effective_model = resolve_effective_model(
-            request.model, current_user.preferred_model
+            request.model,
+            current_user.preferred_model,
+            required_capability="study_guide",
         )
         try:
             provider = get_text_generation_provider(effective_model=effective_model)
@@ -71,7 +73,7 @@ def generate_study_guide(
             user_id=current_user.id,
         )
         applied_settings = StudyGuideGenerationSettings.from_request(
-            request,
+            generation.effective_request,
             retrieval_limit=settings.retrieval_chunk_limit,
             retrieval_min_similarity=settings.retrieval_min_similarity,
         )
@@ -83,7 +85,8 @@ def generate_study_guide(
             model_used=generation.model_used,
             generation_settings=applied_settings.model_dump_json(),
             generation_context=StudyGuideGenerationContext.from_material(
-                generation.material
+                generation.material,
+                profile_knowledge=generation.profile_knowledge,
             ).model_dump_json(),
         )
     except (
@@ -109,5 +112,14 @@ def generate_study_guide(
             retrieval_narrowed=generation.material.retrieval_narrowed,
             lowest_similarity=generation.material.lowest_similarity,
             highest_similarity=generation.material.highest_similarity,
+            profile_knowledge_used=bool(
+                generation.profile_knowledge
+                and not generation.profile_knowledge.is_empty
+            ),
+            profile_knowledge_items_used=(
+                generation.profile_knowledge.items_used
+                if generation.profile_knowledge
+                else 0
+            ),
         ),
     )

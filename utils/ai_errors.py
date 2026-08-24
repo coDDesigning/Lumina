@@ -5,9 +5,15 @@ from enum import Enum
 from fastapi import HTTPException, status
 
 from schemas.ai_usage import ErrorCategory
-from services.text_generation import TextGenerationConnectionError
+from services.text_generation import (
+    IncompatibleModelError,
+    TextGenerationConnectionError,
+    UnavailableModelError,
+)
 
 logger = logging.getLogger(__name__)
+
+ERROR_CODE_HEADER = "X-Error-Code"
 
 
 class CourseMaterialUnavailableError(RuntimeError):
@@ -61,6 +67,8 @@ class AiErrorCode(str, Enum):
     PROVIDER_RATE_LIMITED = "provider_rate_limited"
     INVALID_GENERATED_STRUCTURE = "invalid_generated_structure"
     INSUFFICIENT_CREDITS = "insufficient_credits"
+    UNAVAILABLE_MODEL = "unavailable_model"
+    INCOMPATIBLE_MODEL = "incompatible_model"
     GENERATION_FAILED = "generation_failed"
 
 
@@ -95,6 +103,10 @@ PUBLIC_MESSAGES: dict[AiErrorCode, str] = {
     AiErrorCode.INSUFFICIENT_CREDITS: (
         "You do not have enough credits to complete this generation."
     ),
+    AiErrorCode.UNAVAILABLE_MODEL: ("The requested AI model is not available."),
+    AiErrorCode.INCOMPATIBLE_MODEL: (
+        "The requested AI model does not support the required output format."
+    ),
     AiErrorCode.GENERATION_FAILED: (
         "The request could not be completed. Please try again later."
     ),
@@ -110,6 +122,8 @@ STATUS_CODES: dict[AiErrorCode, int] = {
     AiErrorCode.PROVIDER_RATE_LIMITED: status.HTTP_429_TOO_MANY_REQUESTS,
     AiErrorCode.INVALID_GENERATED_STRUCTURE: status.HTTP_500_INTERNAL_SERVER_ERROR,
     AiErrorCode.INSUFFICIENT_CREDITS: status.HTTP_402_PAYMENT_REQUIRED,
+    AiErrorCode.UNAVAILABLE_MODEL: status.HTTP_400_BAD_REQUEST,
+    AiErrorCode.INCOMPATIBLE_MODEL: status.HTTP_400_BAD_REQUEST,
     AiErrorCode.GENERATION_FAILED: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }
 
@@ -125,6 +139,10 @@ def _exception_chain(exc: BaseException) -> Iterator[BaseException]:
 
 def classify_generation_error(exc: BaseException) -> AiErrorCode:
     for error in _exception_chain(exc):
+        if isinstance(error, IncompatibleModelError):
+            return AiErrorCode.INCOMPATIBLE_MODEL
+        if isinstance(error, UnavailableModelError):
+            return AiErrorCode.UNAVAILABLE_MODEL
         if isinstance(error, InsufficientCreditsError):
             return AiErrorCode.INSUFFICIENT_CREDITS
         if isinstance(error, CourseMaterialUnavailableError):
@@ -166,4 +184,8 @@ def ai_generation_http_exception(exc: BaseException, *, feature: str) -> HTTPExc
     else:
         logger.warning("%s generation rejected with %s", feature, code.value)
 
-    return HTTPException(status_code=status_code, detail=PUBLIC_MESSAGES[code])
+    return HTTPException(
+        status_code=status_code,
+        detail=PUBLIC_MESSAGES[code],
+        headers={ERROR_CODE_HEADER: code.value},
+    )

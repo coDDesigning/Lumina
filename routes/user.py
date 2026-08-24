@@ -3,15 +3,19 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.models import User
-from schemas.credits import CreditTransactionResponse
+from schemas.credits import CreditStatusResponse, CreditTransactionResponse
+from schemas.prompt_context import EducationLevel
 from schemas.response import BaseResponse
 from schemas.user import UserResponse, UserUpdate
 from services.credits import (
     DEFAULT_HISTORY_LIMIT,
+    GENERATION_CREDIT_COSTS,
     MAX_HISTORY_LIMIT,
     CreditService,
+    next_grant_at,
 )
 from services.user import UserService
 from utils.deps import get_current_user
@@ -38,7 +42,23 @@ def update_preferred_model(
     )
 
 
-@router.get("/me/credits", response_model=BaseResponse[dict])
+@router.put("/me/education-level", response_model=BaseResponse[UserResponse])
+def update_education_level(
+    education_level: EducationLevel,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Changes the normalized education level recorded for the user."""
+    update_data = UserUpdate(education_level=education_level)
+    updated_user = UserService.update_user(db, current_user.email, update_data)
+    return BaseResponse(
+        success=True,
+        message=f"Education level changed to {education_level.value}",
+        data=updated_user,
+    )
+
+
+@router.get("/me/credits", response_model=BaseResponse[CreditStatusResponse])
 def get_my_credits(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
@@ -48,14 +68,26 @@ def get_my_credits(
     Replenishment is evaluated here rather than by a scheduler, so the balance a
     user reads is always the balance the policy says they should have. The
     authenticated snapshot predates that grant, so the balance is re-read.
+
+    The policy travels with the balance so a client can say what an exhausted
+    account should do next without hardcoding rules the server owns.
     """
     CreditService.ensure_current_period_grant(db, current_user.id)
     user = db.get(User, current_user.id)
     balance = CreditService.reported_balance(user) if user is not None else None
+    metered = balance is not None
+    status = CreditStatusResponse(
+        credits=balance,
+        metering_enabled=CreditService.metering_enabled(),
+        monthly_grant=settings.credit_periodic_grant if metered else None,
+        balance_cap=settings.credit_max_balance if metered else None,
+        next_grant_at=next_grant_at() if metered else None,
+        generation_costs=dict(GENERATION_CREDIT_COSTS) if metered else {},
+    )
     return BaseResponse(
         success=True,
         message="Credits retrieved",
-        data={"credits": balance},
+        data=status,
     )
 
 

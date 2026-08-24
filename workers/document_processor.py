@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.database import SessionLocal
+from backend.app.models import Course
 from backend.app.observability import configure_logging, emit_emf_metrics
 from backend.app.readiness import ReadinessError, check_readiness
 from services.document_embedding import (
@@ -23,6 +24,8 @@ from services.document_embedding import (
     classify_embedding_error,
     embed_document_chunks,
 )
+from schemas.prompt_context import PromptContext
+from services.prompt_context import resolve_prompt_context
 from services.document_extraction import (
     DocumentProcessingError,
     extract_document,
@@ -129,7 +132,12 @@ def _record_failure(
         )
 
 
-def _extraction_process(connection, storage: Storage, job: ClaimedJob) -> None:
+def _extraction_process(
+    connection,
+    storage: Storage,
+    job: ClaimedJob,
+    prompt_context: PromptContext | None = None,
+) -> None:
     # The parent owns graceful shutdown and the hard timeout for this child.
     for shutdown_signal in WORKER_SHUTDOWN_SIGNALS:
         signal.signal(shutdown_signal, signal.SIG_IGN)
@@ -154,6 +162,7 @@ def _extraction_process(connection, storage: Storage, job: ClaimedJob) -> None:
             file_type=job.file_type,
             stage_callback=report_stage,
             extraction_callback=report_extraction,
+            prompt_context=prompt_context,
         )
         connection.send(("succeeded", result.pages, result.chunks))
     except DocumentProcessingError as exc:
@@ -173,12 +182,14 @@ def _extract_with_timeout(
     timeout_seconds: int,
     stage_callback: Callable[[str], None] | None = None,
     extraction_callback: Callable[[list[PageData], float], None] | None = None,
+    *,
+    prompt_context: PromptContext | None = None,
 ):
     context = multiprocessing.get_context("spawn")
     parent_connection, child_connection = context.Pipe(duplex=True)
     process = context.Process(
         target=_extraction_process,
-        args=(child_connection, storage, job),
+        args=(child_connection, storage, job, prompt_context),
         daemon=True,
     )
     started = False
@@ -383,6 +394,15 @@ def process_next_job(
             storage.provider,
             lease_seconds,
         )
+        prompt_context = (
+            resolve_prompt_context(
+                session,
+                course=session.get(Course, job.course_id),
+                document_ids=[job.document_id],
+            )
+            if job is not None
+            else None
+        )
     if job is None:
         return False
     processing_started = time.monotonic()
@@ -449,6 +469,7 @@ def process_next_job(
             settings.processing_job_attempt_timeout_seconds,
             stage_callback=persist_stage,
             extraction_callback=persist_extraction,
+            prompt_context=prompt_context,
         )
         persist_stage(EMBEDDING_STAGE)
         embeddings = embed_document_chunks(

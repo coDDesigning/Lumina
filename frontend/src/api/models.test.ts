@@ -11,6 +11,11 @@ const SAMPLE_MODELS: AiModelInfo[] = [
     model: 'gemini-3.6-flash',
     display_name: 'Gemini (gemini-3.6-flash)',
     is_default: true,
+    cost_hint: 'Metered (1-2 credits)',
+    capabilities: ['study_guide', 'quiz', 'flashcard'],
+    description: 'Fast instruction model',
+    is_local: false,
+    supports_json: true,
   },
   {
     id: 'ollama:llama3.1',
@@ -18,6 +23,11 @@ const SAMPLE_MODELS: AiModelInfo[] = [
     model: 'llama3.1',
     display_name: 'Ollama (llama3.1)',
     is_default: false,
+    cost_hint: 'Local execution · Unmetered',
+    capabilities: ['study_guide', 'quiz', 'flashcard', 'ai_tutor'],
+    description: 'Self-hosted local model',
+    is_local: true,
+    supports_json: true,
   },
 ];
 
@@ -29,6 +39,7 @@ const SAMPLE_USER: User = {
   is_banned: false,
   credits: 49.0,
   preferred_model: 'gemini:gemini-3.6-flash',
+  education_level: 'unspecified',
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

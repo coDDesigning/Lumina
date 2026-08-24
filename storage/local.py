@@ -151,13 +151,38 @@ class LocalStorage(Storage):
             raise StorageError("Unable to read stored document.") from exc
 
     def delete(self, key: str) -> None:
-        """Delete a stored document if it exists."""
+        """Delete a stored document if it exists, and the directories it created."""
         try:
-            self._path_for_key(key).unlink(missing_ok=True)
+            path = self._path_for_key(key)
+            path.unlink(missing_ok=True)
         except StorageError:
             raise
         except OSError as exc:
             raise StorageError("Unable to delete stored document.") from exc
+
+        self._prune_document_directory(path.parent)
+
+    def _prune_document_directory(self, directory: Path) -> None:
+        """Remove the per-document directory this key owned, if it is now empty.
+
+        A key is courses/<course>/documents/<uuid>/<file>, so each document has a
+        directory of its own that nothing else writes to; leaving it behind accumulates
+        one empty directory per deleted document. Only that directory is removed. The
+        shared courses/ and documents/ levels are deliberately left alone: an upload
+        creates them one component at a time, so removing them here could make a
+        concurrent upload fail. Pruning is best effort and never fails a deletion that
+        has already happened.
+        """
+        try:
+            if directory == self.root or not directory.is_relative_to(self.root):
+                return
+            if directory.parent == self.root:
+                return
+            if directory.is_symlink() or not directory.is_dir():
+                return
+            directory.rmdir()
+        except OSError:
+            return
 
     def exists(self, key: str) -> bool:
         """Return whether a key identifies a regular stored file."""

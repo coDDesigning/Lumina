@@ -14,6 +14,7 @@ export interface User {
   is_banned: boolean;
   credits: number | null;
   preferred_model: string;
+  education_level: EducationLevel;
 }
 
 export type CreditReason =
@@ -55,14 +56,51 @@ export interface CreditMutation {
   transaction: CreditTransaction;
 }
 
+/** The credit-charging features, keyed as the backend names them. */
+export type CreditSource =
+  | 'study_guide'
+  | 'quiz'
+  | 'quiz_open_ended'
+  | 'flashcard'
+  | 'ai_tutor'
+  | 'course_qa'
+  | 'prompt_generator';
+
+export interface CreditStatus {
+  /** null means this account is not metered, so no credit UI applies. */
+  credits: number | null;
+  metering_enabled: boolean;
+  monthly_grant: number | null;
+  balance_cap: number | null;
+  next_grant_at: string | null;
+  generation_costs: Partial<Record<LooseUnion<CreditSource>, number>>;
+}
+
 export interface AuthResponse {
   access_token: string;
   token_type: string;
 }
 
+export type EducationLevel =
+  | 'high_school'
+  | 'undergraduate'
+  | 'graduate'
+  | 'professional_other'
+  | 'unspecified';
+
+export const EDUCATION_LEVEL_LABELS: Record<EducationLevel, string> = {
+  high_school: 'High school',
+  undergraduate: 'Undergraduate',
+  graduate: 'Graduate',
+  professional_other: 'Professional / other',
+  unspecified: 'Not specified',
+};
+
 export interface Course {
   id: number;
   title: string;
+  subject_area: string | null;
+  education_level: EducationLevel;
   description: string | null;
   owner_id: number;
   created_at: string;
@@ -71,24 +109,31 @@ export interface Course {
   exam_date: string | null;
   syllabus: string | null;
   topics: string | null;
+  is_archived?: boolean;
 }
 
 export interface CourseCreate {
   title: string;
+  subject_area?: string;
+  education_level?: EducationLevel;
   description?: string;
   semester?: string;
   exam_date?: string;
   syllabus?: string;
   topics?: string;
+  is_archived?: boolean;
 }
 
 export interface CourseUpdate {
   title?: string;
+  subject_area?: string;
+  education_level?: EducationLevel;
   description?: string;
   semester?: string;
   exam_date?: string;
   syllabus?: string;
   topics?: string;
+  is_archived?: boolean;
 }
 
 export type DocumentStatus =
@@ -109,11 +154,24 @@ export type ProcessingStage =
   | 'chunking'
   | 'generating_embeddings';
 
+export type DocumentMaterialKind =
+  | 'lecture_notes'
+  | 'slides'
+  | 'textbook'
+  | 'syllabus'
+  | 'assignment'
+  | 'past_exam'
+  | 'article'
+  | 'notes'
+  | 'other'
+  | 'unspecified';
+
 export interface DocumentResponse {
   id: string;
   original_file_name: string;
   file_type: string;
   mime_type: string;
+  material_kind: LooseUnion<DocumentMaterialKind>;
   file_size: number;
   course_id: number;
   status: LooseUnion<DocumentStatus>;
@@ -149,6 +207,8 @@ export interface BoundedContext {
   context_truncated: boolean;
   chunks_used: number;
   chunks_available: number;
+  profile_knowledge_used?: boolean;
+  profile_knowledge_items_used?: number;
 }
 
 /**
@@ -182,14 +242,21 @@ export interface AiModelInfo {
   model: string;
   display_name: string;
   is_default: boolean;
+  cost_hint?: string;
+  capabilities?: string[];
+  description?: string;
+  is_local?: boolean;
+  supports_json?: boolean;
 }
 
 export interface StudyGuideRequest {
-  summary_format: SummaryFormat;
-  topic_focus: string;
+  summary_format?: SummaryFormat;
+  topic_focus?: string;
   summary_length?: SummaryLength;
   detail_level?: DetailLevel;
   summary_mode?: SummaryMode;
+  use_profile_knowledge?: boolean;
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -249,6 +316,8 @@ export interface StudyGuideGenerationResult extends RetrievedContext {
 export interface GenerationSettings {
   version: number;
   output_type: string;
+  use_profile_knowledge?: boolean;
+  include_profile_context?: boolean;
   question_count?: number;
   question_types?: QuizQuestionType[];
   difficulty?: QuizDifficulty;
@@ -263,13 +332,17 @@ export interface GenerationSettings {
 
 export interface GenerationContext {
   version: number;
-  chunks_ranked: number;
-  chunks_retrieved: number;
+  chunks_ranked?: number;
+  chunks_retrieved?: number;
   chunks_used: number;
   chunks_available: number;
-  lowest_similarity: number | null;
-  highest_similarity: number | null;
+  lowest_similarity?: number | null;
+  highest_similarity?: number | null;
   truncated: boolean;
+  profile_knowledge_used?: boolean;
+  profile_knowledge_items_used?: number;
+  profile_knowledge_characters_used?: number;
+  profile_knowledge_truncated?: boolean;
 }
 
 export interface GeneratedOutputSummary {
@@ -309,10 +382,12 @@ export const isOptionBased = (questionType: QuizQuestionType): boolean =>
   OPTION_BASED_QUESTION_TYPES.includes(questionType);
 
 export interface QuizRequest {
-  question_count: number;
-  question_types: QuizQuestionType[];
-  difficulty: QuizDifficulty;
-  topic_focus: string;
+  question_count?: number;
+  question_types?: QuizQuestionType[];
+  difficulty?: QuizDifficulty;
+  topic_focus?: string;
+  use_profile_knowledge?: boolean;
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -358,6 +433,9 @@ export interface QuizSummary {
   course_id: number;
   title: string;
   question_count: number;
+  attempts_count?: number;
+  best_score?: number | null;
+  last_score?: number | null;
   created_at: string;
   user_id: number | null;
   model_used: string | null;
@@ -446,6 +524,29 @@ export interface CourseProgressResponse {
   quiz_history?: QuizHistoryItem[];
 }
 
+export interface CourseProgressSummary {
+  course_id: number;
+  attempts_count: number;
+  average_score: number | null;
+  completion: number | null;
+  last_activity: string | null;
+}
+
+export type ActivityKind = 'generation' | 'attempt';
+
+export interface ActivityItem {
+  kind: ActivityKind;
+  action_type: string;
+  course_id: number;
+  course_title: string;
+  occurred_at: string;
+  output_id: number | null;
+  quiz_id: number | null;
+  attempt_id: number | null;
+  topic: string | null;
+  score: number | null;
+}
+
 export interface ProfileKnowledgeItem {
   id: number;
   user_id: number;
@@ -470,6 +571,9 @@ export interface ProfileKnowledgeImport {
 }
 
 export interface FlashcardRequest {
+  topic_focus?: string;
+  use_profile_knowledge?: boolean;
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -502,6 +606,8 @@ export interface ConversationDetail extends ConversationSummary {
 export interface CourseQARequest {
   question: string;
   conversation_id?: number;
+  use_profile_knowledge?: boolean;
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -522,6 +628,8 @@ export interface PromptGenerationResponse {
 export interface AiTutorRequest {
   question: string;
   conversation_id?: number;
+  use_profile_knowledge?: boolean;
+  include_profile_context?: boolean;
   model?: string;
 }
 
@@ -543,8 +651,9 @@ export interface FlashcardGenerationResponse {
   flashcards: GeneratedFlashcard[];
 }
 
-export interface FlashcardGenerationResult extends BoundedContext {
+export interface FlashcardGenerationResult extends RetrievedContext {
   flashcards: FlashcardGenerationResponse;
+  generated_output_id?: number | null;
 }
 
 export interface CourseSettings {
@@ -553,8 +662,6 @@ export interface CourseSettings {
   question_count: number;
   summary_length: string;
   detail_level: string;
-  notifications: boolean;
-  progress_reminders: boolean;
 }
 
 export interface CourseSettingsUpdate {
@@ -563,6 +670,4 @@ export interface CourseSettingsUpdate {
   question_count?: number;
   summary_length?: string;
   detail_level?: string;
-  notifications?: boolean;
-  progress_reminders?: boolean;
 }

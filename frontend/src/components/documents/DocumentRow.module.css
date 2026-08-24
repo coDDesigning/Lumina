@@ -1,0 +1,140 @@
+.row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: var(--border-width) solid var(--border);
+  background: var(--surface-raised);
+}
+
+.row > *:not(.mark) {
+  grid-column: 2;
+}
+
+.mark {
+  grid-row: 1;
+  display: grid;
+  place-items: center;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin-top: 0.125rem;
+  border-radius: var(--radius-sm);
+}
+
+.markIcon {
+  width: 0.75rem;
+  height: 0.75rem;
+  stroke-width: 3;
+}
+
+.ready .mark {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.failed {
+  border-color: var(--destructive);
+  background: var(--destructive-subtle);
+}
+
+.failed .mark {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+.busy .mark {
+  background: none;
+}
+
+.name {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.facts,
+.stage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.dot {
+  margin: 0 0.25rem;
+  color: var(--text-subtle);
+}
+
+.stageName {
+  color: var(--processing);
+  font-weight: var(--weight-semibold);
+}
+
+.bar {
+  height: 0.1875rem;
+  margin-top: var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: var(--radius-sm);
+  background: var(--processing);
+  transition: width var(--duration-normal) var(--ease-out);
+}
+
+.locked {
+  font-size: var(--text-2xs);
+  color: var(--text-subtle);
+  line-height: var(--leading-snug);
+}
+
+.reason {
+  font-size: var(--text-xs);
+  color: var(--destructive);
+  line-height: var(--leading-snug);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .barFill {
+    transition: none;
+  }
+}
+
+.failure {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.failureHead {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.failureHeadline {
+  font-weight: var(--weight-semibold);
+  color: var(--destructive);
+}
+
+.fix {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: var(--leading-snug);
+}

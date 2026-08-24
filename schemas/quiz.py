@@ -17,7 +17,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+)
 
 from schemas.generation import RetrievalGenerationContext, RetrievedContext
 
@@ -64,18 +71,43 @@ OPTION_BASED_QUESTION_TYPES = frozenset(
 
 
 class QuizRequest(BaseModel):
-    question_count: int = Field(ge=MIN_QUIZ_QUESTIONS, le=MAX_QUIZ_QUESTIONS)
+    question_count: int = Field(
+        default=10,
+        ge=MIN_QUIZ_QUESTIONS,
+        le=MAX_QUIZ_QUESTIONS,
+        description="The number of questions to generate, or omit to use course settings/default",
+    )
     question_types: list[QuizQuestionType] = Field(
+        default_factory=lambda: [QuizQuestionType.MULTIPLE_CHOICE],
         min_length=1,
         max_length=len(QuizQuestionType),
-        description="The question types the generated quiz may use.",
+        description="The question types the generated quiz may use, or omit to use default",
     )
-    difficulty: QuizDifficulty
-    topic_focus: str = Field(min_length=1, max_length=MAX_TOPIC_CHARS)
+    difficulty: QuizDifficulty = Field(
+        default=QuizDifficulty.MEDIUM,
+        description="The difficulty level, or omit to use course settings/default",
+    )
+    topic_focus: str = Field(
+        default="All Topics",
+        min_length=1,
+        max_length=MAX_TOPIC_CHARS,
+        description="The topic focus, or omit to use 'All Topics'",
+    )
+    use_profile_knowledge: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "use_profile_knowledge", "include_profile_context"
+        ),
+        description="Whether to include student profile knowledge context (opt-in)",
+    )
     model: str | None = Field(
         default=None,
         description="Explicit model override, or omit to use preferred/default model",
     )
+
+    @property
+    def include_profile_context(self) -> bool:
+        return self.use_profile_knowledge
 
     @field_validator("question_types")
     @classmethod
@@ -270,7 +302,7 @@ class QuizGenerationResponse(BaseModel):
 class QuizGenerationSettings(BaseModel):
     """The options a stored quiz was generated with."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     version: Literal[1] = 1
     output_type: Literal["quiz"] = "quiz"
@@ -278,8 +310,18 @@ class QuizGenerationSettings(BaseModel):
     question_types: list[QuizQuestionType]
     difficulty: QuizDifficulty
     topic_focus: str
+    use_profile_knowledge: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "use_profile_knowledge", "include_profile_context"
+        ),
+    )
     retrieval_limit: int
     retrieval_min_similarity: float
+
+    @property
+    def include_profile_context(self) -> bool:
+        return self.use_profile_knowledge
 
     @classmethod
     def from_request(
@@ -290,10 +332,19 @@ class QuizGenerationSettings(BaseModel):
         retrieval_min_similarity: float,
     ) -> "QuizGenerationSettings":
         return cls(
-            question_count=request.question_count,
-            question_types=list(request.question_types),
-            difficulty=request.difficulty,
-            topic_focus=request.topic_focus,
+            question_count=request.question_count
+            if request.question_count is not None
+            else 10,
+            question_types=list(request.question_types)
+            if request.question_types
+            else [QuizQuestionType.MULTIPLE_CHOICE],
+            difficulty=request.difficulty
+            if request.difficulty is not None
+            else QuizDifficulty.MEDIUM,
+            topic_focus=request.topic_focus
+            if request.topic_focus is not None
+            else "All Topics",
+            use_profile_knowledge=request.use_profile_knowledge,
             retrieval_limit=retrieval_limit,
             retrieval_min_similarity=retrieval_min_similarity,
         )
@@ -337,6 +388,9 @@ class QuizSummary(BaseModel):
     course_id: int
     title: str
     question_count: int
+    attempts_count: int = 0
+    best_score: float | None = None
+    last_score: float | None = None
     created_at: datetime
     user_id: int | None = None
     model_used: str | None = None

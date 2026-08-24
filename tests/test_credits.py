@@ -1,15 +1,17 @@
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
-from backend.app.models import Course, DocumentChunk, UploadedDocument, User
+from backend.app.models import Course, DocumentChunk, Quiz, UploadedDocument, User
 from schemas.credits import CreditReason
 from services import credits as credits_service
 from services.text_generation import (
     GenerationMetadata,
     TextGenerationConnectionError,
 )
-from services.credits import CreditService
+from services.credits import GENERATION_CREDIT_COSTS, CreditService
+from services.retrieval_material import MaterialRetrievalError
 from tests.conftest import assert_balance_is_derivable, rows, set_balance
 
 
@@ -193,6 +195,87 @@ def test_failed_generation_refunds_credits(
     with authz_api.session_factory() as session:
         user = session.get(User, authz_api.user_a_id)
         assert user.credits == 10.0
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "provider_dependency", "material_dependency", "payload"),
+    [
+        (
+            "qa",
+            "routes.course_qa.get_text_generation_provider",
+            "services.course_qa.CourseQAService.get_course_material",
+            {"question": "What is sorting?"},
+        ),
+        (
+            "ai-tutor",
+            "routes.ai_tutor.get_text_generation_provider",
+            "services.ai_tutor.AiTutorService.get_course_material",
+            {"question": "What is sorting?"},
+        ),
+        (
+            "flashcards",
+            "routes.flashcard.get_text_generation_provider",
+            "services.flashcard.FlashcardService.get_course_material",
+            {"topic_focus": "Sorting"},
+        ),
+        (
+            "quiz",
+            "routes.quiz.get_text_generation_provider",
+            "services.quiz.QuizService.get_course_material",
+            {
+                "question_count": 1,
+                "question_types": ["multiple_choice"],
+                "difficulty": "medium",
+                "topic_focus": "Sorting",
+            },
+        ),
+        (
+            "study-guide",
+            "routes.study_guide.get_text_generation_provider",
+            "services.study_guide.StudyGuideService.get_course_material",
+            {"summary_format": "overview", "topic_focus": "Sorting"},
+        ),
+    ],
+)
+def test_retrieval_failure_refunds_generation_charge(
+    authz_api,
+    retrieval_env,
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    provider_dependency: str,
+    material_dependency: str,
+    payload: dict,
+):
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 10.0)
+    provider = StubProvider()
+    monkeypatch.setattr(provider_dependency, lambda **kwargs: provider)
+
+    def fail_retrieval(*args, **kwargs):
+        raise MaterialRetrievalError("Vector store unavailable")
+
+    monkeypatch.setattr(material_dependency, fail_retrieval)
+
+    response = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/{endpoint}",
+        json=payload,
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 503
+    assert provider.call_count == 0
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 10.0
+        transactions = rows(session, authz_api.user_a_id)
+        assert [row.reason for row in transactions[-2:]] == [
+            CreditReason.GENERATION_CHARGE.value,
+            CreditReason.GENERATION_REFUND.value,
+        ]
 
 
 @pytest.mark.parametrize(
@@ -386,3 +469,216 @@ def test_an_exhausted_account_recovers_when_the_next_month_grants(
         assert history[-2].delta == settings.credit_periodic_grant
         assert history[-2].grant_period == "2099-01"
         assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
+class QuizProvider:
+    """Returns a quiz whose shape matches whatever question types were asked for."""
+
+    def __init__(self, *question_types: str):
+        self.question_types = question_types
+
+    def generate_json_with_metadata(self, prompt: str):
+        questions = []
+        for index, question_type in enumerate(self.question_types, start=1):
+            question: dict = {
+                "question_number": index,
+                "question_type": question_type,
+                "topic": f"Topic {index}",
+                "question": f"Question {index}?",
+                "difficulty": "medium",
+                "explanation": "Because the material says so.",
+            }
+            if question_type == "multiple_choice":
+                question |= {
+                    "options": ["A", "B", "C", "D"],
+                    "correct_option_index": 0,
+                }
+            else:
+                question |= {
+                    "reference_answer": "Ordering lets half the range be discarded."
+                }
+            questions.append(question)
+        return {"title": "Example Quiz", "questions": questions}, GenerationMetadata(
+            provider="ollama",
+            model="qwen3:8b",
+            latency_ms=5,
+        )
+
+
+def _generate_quiz(authz_api, monkeypatch, *question_types: str):
+    monkeypatch.setattr(
+        "routes.quiz.get_text_generation_provider",
+        lambda **kwargs: QuizProvider(*question_types),
+    )
+    return authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/quiz",
+        json={
+            "question_count": len(question_types),
+            "question_types": list(question_types),
+            "difficulty": "medium",
+            "topic_focus": "All Topics",
+        },
+        headers=authz_api.authorization_a,
+    )
+
+
+def test_a_quiz_without_open_ended_questions_costs_one_credit(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+):
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
+
+    response = _generate_quiz(authz_api, monkeypatch, "multiple_choice")
+
+    assert response.status_code == 200, response.text
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 49.0
+        charge = rows(session, authz_api.user_a_id, CreditReason.GENERATION_CHARGE)[-1]
+        assert charge.delta == -1.0
+        assert charge.source_type == "quiz"
+        assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
+def test_quiz_history_persistence_failure_rolls_back_quiz_and_refunds_credit(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+):
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 10.0)
+    monkeypatch.setattr(
+        "routes.quiz.get_text_generation_provider",
+        lambda **kwargs: QuizProvider("multiple_choice"),
+    )
+
+    def fail_history_write(*args, **kwargs):
+        raise RuntimeError("Generated output persistence failed")
+
+    monkeypatch.setattr("routes.quiz.GeneratedOutputService.record", fail_history_write)
+
+    response = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/quiz",
+        json={
+            "question_count": 1,
+            "question_types": ["multiple_choice"],
+            "difficulty": "medium",
+            "topic_focus": "All Topics",
+        },
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 500
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 10.0
+        assert (
+            session.scalars(
+                select(Quiz).where(Quiz.course_id == authz_api.a_course_id)
+            ).all()
+            == []
+        )
+
+
+def test_an_open_ended_quiz_costs_two_credits_because_grading_is_prepaid(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+):
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
+
+    response = _generate_quiz(authz_api, monkeypatch, "open_ended")
+
+    assert response.status_code == 200, response.text
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 48.0
+        charge = rows(session, authz_api.user_a_id, CreditReason.GENERATION_CHARGE)[-1]
+        assert charge.delta == -2.0
+        assert charge.source_type == "quiz"
+        assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
+def test_an_open_ended_quiz_is_refused_when_only_one_credit_remains(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+):
+    """One credit buys a plain quiz but not an open-ended one."""
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 1.0)
+
+    response = _generate_quiz(authz_api, monkeypatch, "open_ended")
+
+    assert response.status_code == 402
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 1.0
+        assert rows(session, authz_api.user_a_id, CreditReason.GENERATION_CHARGE) == []
+        assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
+def test_a_refused_generation_names_its_reason_in_a_header(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+):
+    """The status alone cannot stay specific if 402 ever covers another state."""
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 0.0)
+    monkeypatch.setattr(
+        "routes.course_qa.get_text_generation_provider",
+        lambda **kwargs: StubProvider(),
+    )
+
+    response = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/qa",
+        json={"question": "What are algorithms?"},
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 402
+    assert response.headers["X-Error-Code"] == "insufficient_credits"
+    assert isinstance(response.json()["detail"], str)
+
+
+def test_the_balance_travels_with_the_policy_that_explains_it(authz_api):
+    response = authz_api.client.get(
+        "/api/users/me/credits", headers=authz_api.authorization_a
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["credits"] == 50.0
+    assert data["metering_enabled"] is True
+    assert data["monthly_grant"] == settings.credit_periodic_grant
+    assert data["balance_cap"] == settings.credit_max_balance
+    assert data["generation_costs"] == GENERATION_CREDIT_COSTS
+    assert data["generation_costs"]["quiz_open_ended"] == 2.0
+    assert data["next_grant_at"] is not None
+
+
+def test_an_unmetered_account_reports_no_balance_and_no_policy(authz_api):
+    response = authz_api.client.get(
+        "/api/users/me/credits", headers=authz_api.authorization_admin
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["credits"] is None
+    assert data["monthly_grant"] is None
+    assert data["balance_cap"] is None
+    assert data["next_grant_at"] is None
+    assert data["generation_costs"] == {}

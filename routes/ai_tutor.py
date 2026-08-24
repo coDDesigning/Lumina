@@ -7,8 +7,10 @@ from backend.app.database import get_db
 from schemas.ai_tutor import AiTutorGenerationResult, AiTutorRequest
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
-from services.ai_tutor import AiTutorService
+from services.ai_tutor import AiTutorError, AiTutorService
+from services.retrieval_material import RetrievalMaterialError
 from services.text_generation import (
+    TextGenerationError,
     get_text_generation_provider,
     resolve_effective_model,
 )
@@ -44,7 +46,9 @@ def ask_ai_tutor(
 ):
     try:
         effective_model = resolve_effective_model(
-            request.model, current_user.preferred_model
+            request.model,
+            current_user.preferred_model,
+            required_capability="ai_tutor",
         )
         try:
             provider = get_text_generation_provider(effective_model=effective_model)
@@ -58,11 +62,17 @@ def ask_ai_tutor(
             provider,
             user_id=current_user.id,
             conversation_id=request.conversation_id,
+            use_profile_knowledge=request.use_profile_knowledge,
         )
 
     except HTTPException:
         raise
-    except Exception as exc:
+    except (
+        TextGenerationError,
+        AiTutorError,
+        RetrievalMaterialError,
+        Exception,
+    ) as exc:
         raise ai_generation_http_exception(exc, feature="ai_tutor") from exc
 
     return BaseResponse(
@@ -77,5 +87,14 @@ def ask_ai_tutor(
             retrieval_narrowed=generation.material.retrieval_narrowed,
             lowest_similarity=generation.material.lowest_similarity,
             highest_similarity=generation.material.highest_similarity,
+            profile_knowledge_used=bool(
+                generation.profile_knowledge
+                and not generation.profile_knowledge.is_empty
+            ),
+            profile_knowledge_items_used=(
+                generation.profile_knowledge.items_used
+                if generation.profile_knowledge
+                else 0
+            ),
         ),
     )

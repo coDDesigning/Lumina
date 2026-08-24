@@ -21,7 +21,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.config import settings
-from backend.app.models import Course, Quiz, QuizQuestion
+from backend.app.models import (
+    Course,
+    CourseSettings,
+    Quiz,
+    QuizAttempt,
+    QuizQuestion,
+)
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.quiz import (
     MULTIPLE_CHOICE_OPTION_COUNT,
@@ -36,6 +42,14 @@ from schemas.quiz import (
 )
 from services.ai_usage_logger import AiUsageLogger
 from services.course_material import count_available_chunks
+from services.profile_knowledge import (
+    ProfileKnowledgeContext,
+    assemble_generation_context,
+    format_profile_context,
+)
+from schemas.prompt_context import PromptContext
+from services.document_lock import acquire_generation_locks
+from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
 from services.retrieval_material import (
     MaterialNotIndexedError,
@@ -50,7 +64,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import ChargeReceipt, CreditService
+from services.credits import ChargeReceipt, CreditService, GENERATION_CREDIT_COSTS
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -143,15 +157,15 @@ QUESTION_TYPE_SCHEMAS: dict[QuizQuestionType, str] = {
 DIFFICULTY_DIRECTIVES: dict[QuizDifficulty, str] = {
     QuizDifficulty.EASY: (
         "Every question must be easy: direct recall or straightforward comprehension "
-        "of the lecture material."
+        "of the course material."
     ),
     QuizDifficulty.MEDIUM: (
         "Every question must be of medium difficulty: applying or comparing ideas from "
-        "the lecture material."
+        "the course material."
     ),
     QuizDifficulty.HARD: (
         "Every question must be hard: analysis, synthesis, or reasoning that combines "
-        "several parts of the lecture material."
+        "several parts of the course material."
     ),
 }
 
@@ -177,6 +191,8 @@ class QuizGeneration:
     quiz: QuizGenerationResponse
     material: RetrievedCourseMaterial
     model_used: str
+    effective_request: QuizRequest
+    profile_knowledge: ProfileKnowledgeContext | None = None
     charge_receipt: ChargeReceipt | None = None
 
 
@@ -216,12 +232,18 @@ class QuizService:
         )
 
     @staticmethod
+    def credit_cost(request: QuizRequest) -> float:
+        if QuizQuestionType.OPEN_ENDED in request.question_types:
+            return GENERATION_CREDIT_COSTS["quiz_open_ended"]
+        return GENERATION_CREDIT_COSTS["quiz"]
+
+    @staticmethod
     def build_retrieval_query(course: Course | None, request: QuizRequest) -> str:
         """Turn a generation request into the query retrieval should rank against."""
         return build_retrieval_query(course, request.topic_focus)
 
-    @staticmethod
-    def question_types_directive(request: QuizRequest) -> str:
+    @classmethod
+    def question_types_directive(cls, request: QuizRequest) -> str:
         allowed = ", ".join(
             question_type.value for question_type in request.question_types
         )
@@ -235,28 +257,89 @@ class QuizService:
             f"{directives}"
         )
 
-    @staticmethod
-    def question_schemas(request: QuizRequest) -> str:
+    @classmethod
+    def question_schemas(cls, request: QuizRequest) -> str:
         return "\n\n".join(
             QUESTION_TYPE_SCHEMAS[question_type]
             for question_type in request.question_types
         )
 
     @classmethod
-    def build_prompt(cls, course_material: str, request: QuizRequest) -> str:
+    def build_prompt(
+        cls,
+        course_material: str,
+        request: QuizRequest,
+        *,
+        profile_knowledge: ProfileKnowledgeContext | None = None,
+        context: PromptContext,
+    ) -> str:
         return PromptLoader.render(
             cls.PROMPT_TEMPLATE_NAME,
             {
+                **context.as_variables(),
                 "QUESTION_COUNT": str(request.question_count),
                 "QUESTION_TYPES_DIRECTIVE": cls.question_types_directive(request),
                 "QUESTION_SCHEMAS": cls.question_schemas(request),
                 "DIFFICULTY_DIRECTIVE": DIFFICULTY_DIRECTIVES[request.difficulty],
                 "REQUESTED_DIFFICULTY": request.difficulty.value,
                 "TOPIC_FOCUS": request.topic_focus,
-                # Rendered last so course material can never forge a placeholder
+                # Rendered last so course material and profile context can never forge a placeholder
                 # that a later substitution would then fill in.
                 "TEXT": course_material,
+                "PROFILE_CONTEXT": format_profile_context(profile_knowledge),
             },
+        )
+
+    @classmethod
+    def resolve_effective_request(
+        cls, db: Session, course_id: int, request: QuizRequest
+    ) -> QuizRequest:
+        settings_row = db.scalar(
+            select(CourseSettings).where(CourseSettings.course_id == course_id)
+        )
+        fields_set = request.model_fields_set
+
+        # 1. Question count: explicit request > CourseSettings > default 10
+        if "question_count" in fields_set:
+            question_count = request.question_count
+        elif settings_row is not None and settings_row.question_count is not None:
+            question_count = min(max(settings_row.question_count, 1), 20)
+        else:
+            question_count = request.question_count
+
+        # 2. Difficulty: explicit request > CourseSettings > default MEDIUM
+        if "difficulty" in fields_set:
+            difficulty = request.difficulty
+        elif settings_row is not None and settings_row.difficulty:
+            diff_raw = settings_row.difficulty.strip().casefold()
+            if diff_raw == "easy":
+                difficulty = QuizDifficulty.EASY
+            elif diff_raw == "hard":
+                difficulty = QuizDifficulty.HARD
+            else:
+                difficulty = QuizDifficulty.MEDIUM
+        else:
+            difficulty = request.difficulty
+
+        # 3. Question types: explicit request > default [MULTIPLE_CHOICE]
+        if "question_types" in fields_set:
+            question_types = request.question_types
+        else:
+            question_types = request.question_types
+
+        # 4. Topic focus: explicit request > default "All Topics"
+        if "topic_focus" in fields_set:
+            topic_focus = request.topic_focus
+        else:
+            topic_focus = request.topic_focus
+
+        return QuizRequest(
+            question_count=question_count,
+            question_types=question_types,
+            difficulty=difficulty,
+            topic_focus=topic_focus,
+            use_profile_knowledge=request.use_profile_knowledge,
+            model=request.model,
         )
 
     @classmethod
@@ -269,6 +352,7 @@ class QuizService:
         *,
         user_id: int | None = None,
     ) -> QuizGeneration:
+        effective_request = cls.resolve_effective_request(db, course_id, request)
         course = db.get(Course, course_id)
 
         resolved_user_id = user_id
@@ -285,17 +369,24 @@ class QuizService:
                     error_category=category,
                     **extra,
                 )
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
 
         if count_available_chunks(db, course_id) == 0:
             log_failure(ErrorCategory.NO_READY_MATERIAL)
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
-        query = cls.build_retrieval_query(course, request)
+        query = cls.build_retrieval_query(course, effective_request)
 
         receipt = None
         if resolved_user_id:
             receipt = CreditService.charge(
-                db, resolved_user_id, 1.0, source_type="quiz"
+                db,
+                resolved_user_id,
+                cls.credit_cost(effective_request),
+                source_type="quiz",
             )
             if receipt is None:
                 log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
@@ -303,46 +394,61 @@ class QuizService:
 
         try:
             material = cls.get_course_material(db, course_id, query=query)
-            prompt = cls.build_prompt(material.text, request)
+            with acquire_generation_locks(material.document_ids):
+                generation_ctx = assemble_generation_context(
+                    db,
+                    course_id=course_id,
+                    user_id=resolved_user_id,
+                    course_material=material,
+                    include_profile_context=effective_request.use_profile_knowledge,
+                )
+
+                prompt_context = resolve_prompt_context(
+                    db, course=course, user_id=resolved_user_id
+                )
+                prompt = cls.build_prompt(
+                    generation_ctx.course_material.text,
+                    effective_request,
+                    profile_knowledge=generation_ctx.profile_knowledge,
+                    context=prompt_context,
+                )
+                metadata = None
+
+                if hasattr(provider, "generate_json_with_metadata"):
+                    result, metadata = provider.generate_json_with_metadata(prompt)
+                else:
+                    result = provider.generate_json(prompt)
         except MaterialNotIndexedError:
+            db.rollback()
             CreditService.refund(db, receipt)
             log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
             raise
         except NoRelevantMaterialError:
+            db.rollback()
             CreditService.refund(db, receipt)
             log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
             raise
         except MaterialRetrievalError:
+            db.rollback()
             CreditService.refund(db, receipt)
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
-        except Exception:
-            CreditService.refund(db, receipt)
-            raise
-
-        metadata = None
-
-        try:
-            if hasattr(provider, "generate_json_with_metadata"):
-                result, metadata = provider.generate_json_with_metadata(prompt)
-            else:
-                result = provider.generate_json(prompt)
         except TextGenerationError as exc:
-            if resolved_user_id:
-                CreditService.refund(db, receipt)
+            db.rollback()
+            CreditService.refund(db, receipt)
             log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
             raise QuizGenerationError("Text generation provider failed.") from exc
         except Exception:
-            if resolved_user_id:
-                CreditService.refund(db, receipt)
+            db.rollback()
+            CreditService.refund(db, receipt)
             raise
 
         try:
             validated = QuizGenerationResponse.model_validate(result)
-            cls.assert_matches_request(validated, request)
+            cls.assert_matches_request(validated, effective_request)
         except (ValidationError, ValueError) as exc:
-            if resolved_user_id:
-                CreditService.refund(db, receipt)
+            db.rollback()
+            CreditService.refund(db, receipt)
             log_failure(
                 ErrorCategory.INVALID_STRUCTURE,
                 latency_ms=metadata.latency_ms if metadata else None,
@@ -364,6 +470,8 @@ class QuizService:
             quiz=validated,
             material=material,
             model_used=model_identifier(metadata),
+            effective_request=effective_request,
+            profile_knowledge=generation_ctx.profile_knowledge,
             charge_receipt=receipt,
         )
 
@@ -403,6 +511,7 @@ class QuizService:
         model_used: str | None = None,
         generation_settings: str | None = None,
         generation_context: str | None = None,
+        commit: bool = True,
     ) -> Quiz:
         """Write the quiz and all of its questions in one transaction.
 
@@ -440,7 +549,8 @@ class QuizService:
                 )
 
             db.flush()
-            db.commit()
+            if commit:
+                db.commit()
         except Exception:
             db.rollback()
             raise
@@ -449,19 +559,38 @@ class QuizService:
         return quiz
 
     @staticmethod
-    def list_course_quizzes(db: Session, course_id: int) -> Sequence[tuple[Quiz, int]]:
-        """List an already authorized course's quizzes, newest first, with counts."""
+    def list_course_quizzes(
+        db: Session, course_id: int
+    ) -> Sequence[tuple[Quiz, int, int, float | None, float | None]]:
+        """List an already authorized course's quizzes, newest first, with counts and attempt stats."""
         question_count = (
             select(func.count(QuizQuestion.id))
             .where(QuizQuestion.quiz_id == Quiz.id)
             .scalar_subquery()
         )
+        attempts_count = (
+            select(func.count(QuizAttempt.id))
+            .where(QuizAttempt.quiz_id == Quiz.id)
+            .scalar_subquery()
+        )
+        best_score = (
+            select(func.max(QuizAttempt.score))
+            .where(QuizAttempt.quiz_id == Quiz.id)
+            .scalar_subquery()
+        )
+        last_score = (
+            select(QuizAttempt.score)
+            .where(QuizAttempt.quiz_id == Quiz.id)
+            .order_by(QuizAttempt.created_at.desc(), QuizAttempt.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
         rows = db.execute(
-            select(Quiz, question_count)
+            select(Quiz, question_count, attempts_count, best_score, last_score)
             .where(Quiz.course_id == course_id)
             .order_by(Quiz.created_at.desc(), Quiz.id.desc())
         ).all()
-        return [(row[0], row[1]) for row in rows]
+        return [(row[0], row[1], row[2], row[3], row[4]) for row in rows]
 
     @staticmethod
     def get_course_quiz(db: Session, course_id: int, quiz_id: int) -> Quiz:
@@ -512,12 +641,23 @@ class QuizService:
         )
 
     @classmethod
-    def build_quiz_summary(cls, quiz: Quiz, question_count: int) -> QuizSummary:
+    def build_quiz_summary(
+        cls,
+        quiz: Quiz,
+        question_count: int,
+        *,
+        attempts_count: int = 0,
+        best_score: float | None = None,
+        last_score: float | None = None,
+    ) -> QuizSummary:
         return QuizSummary(
             quiz_id=quiz.id,
             course_id=quiz.course_id,
             title=quiz.title,
             question_count=question_count,
+            attempts_count=attempts_count,
+            best_score=best_score,
+            last_score=last_score,
             created_at=quiz.created_at,
             user_id=quiz.user_id,
             model_used=quiz.model_used,

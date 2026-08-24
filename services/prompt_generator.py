@@ -6,9 +6,11 @@ from sqlalchemy.orm import Session
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.prompt_generator import PromptGenerationResponse
 from services.ai_usage_logger import AiUsageLogger
+from schemas.prompt_context import PromptContext
+from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
 from services.text_generation import TextGenerationError, TextGenerationProvider
-from services.credits import CreditService
+from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from utils.ai_errors import InsufficientCreditsError
 
 
@@ -29,8 +31,14 @@ class PromptGeneratorService:
     def build_prompt(
         cls,
         description: str,
+        *,
+        context: PromptContext | None = None,
     ) -> str:
-        return PromptLoader.render(cls.PROMPT_TEMPLATE_NAME, {"TEXT": description})
+        resolved = context or PromptContext()
+        return PromptLoader.render(
+            cls.PROMPT_TEMPLATE_NAME,
+            {**resolved.as_variables(), "TEXT": description},
+        )
 
     @classmethod
     def generate(
@@ -40,13 +48,21 @@ class PromptGeneratorService:
         db: Session | None = None,
         user_id: int | None = None,
     ) -> PromptGenerationResponse:
-        prompt = cls.build_prompt(description)
+        prompt_context = (
+            resolve_prompt_context(db, course=None, user_id=user_id)
+            if db is not None and user_id is not None
+            else PromptContext()
+        )
+        prompt = cls.build_prompt(description, context=prompt_context)
         metadata = None
 
         receipt = None
         if db is not None and user_id is not None:
             receipt = CreditService.charge(
-                db, user_id, 1.0, source_type="prompt_generator"
+                db,
+                user_id,
+                GENERATION_CREDIT_COSTS["prompt_generator"],
+                source_type="prompt_generator",
             )
             if receipt is None:
                 AiUsageLogger.log_failure(

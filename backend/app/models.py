@@ -20,7 +20,6 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     false,
-    true,
     func,
 )
 from sqlalchemy.engine import Dialect
@@ -34,6 +33,31 @@ QUESTION_TYPE_MULTIPLE_CHOICE = "multiple_choice"
 
 CONVERSATION_TYPES = ("course_qa", "ai_tutor")
 _CONVERSATION_TYPES_SQL = ", ".join(f"'{kind}'" for kind in CONVERSATION_TYPES)
+
+EDUCATION_LEVELS = (
+    "high_school",
+    "undergraduate",
+    "graduate",
+    "professional_other",
+    "unspecified",
+)
+_EDUCATION_LEVELS_SQL = ", ".join(f"'{level}'" for level in EDUCATION_LEVELS)
+
+DOCUMENT_MATERIAL_KINDS = (
+    "lecture_notes",
+    "slides",
+    "textbook",
+    "syllabus",
+    "assignment",
+    "past_exam",
+    "article",
+    "notes",
+    "other",
+    "unspecified",
+)
+_DOCUMENT_MATERIAL_KINDS_SQL = ", ".join(
+    f"'{kind}'" for kind in DOCUMENT_MATERIAL_KINDS
+)
 
 JOB_TYPE_EXTRACT_DOCUMENT = "extract_document"
 JOB_STATUS_QUEUED = "queued"
@@ -134,7 +158,13 @@ class Role(Base):
 
 class User(Base):
     __tablename__ = "users"
-    __table_args__ = (CheckConstraint("email = lower(email)", name="email_lowercase"),)
+    __table_args__ = (
+        CheckConstraint("email = lower(email)", name="email_lowercase"),
+        CheckConstraint(
+            f"education_level IN ({_EDUCATION_LEVELS_SQL})",
+            name="education_level_valid",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
@@ -147,6 +177,9 @@ class User(Base):
     credits: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_banned: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
+    )
+    education_level: Mapped[str] = mapped_column(
+        String(20), default="unspecified", server_default="unspecified"
     )
     preferred_model: Mapped[str] = mapped_column(
         String(100),
@@ -209,15 +242,28 @@ class User(Base):
 
 class Course(Base):
     __tablename__ = "courses"
+    __table_args__ = (
+        CheckConstraint(
+            f"education_level IN ({_EDUCATION_LEVELS_SQL})",
+            name="education_level_valid",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
+    subject_area: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    education_level: Mapped[str] = mapped_column(
+        String(20), default="unspecified", server_default="unspecified"
+    )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     semester: Mapped[str | None] = mapped_column(String(100), nullable=True)
     exam_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
     topics: Mapped[str | None] = mapped_column(Text, nullable=True)
     syllabus: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    is_archived: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )
     owner_id: Mapped[int] = mapped_column(
@@ -308,12 +354,6 @@ class CourseSettings(Base):
     detail_level: Mapped[str] = mapped_column(
         String(50), default="Balanced", server_default="Balanced"
     )
-    notifications: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default=true()
-    )
-    progress_reminders: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default=true()
-    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )
@@ -343,6 +383,10 @@ class UploadedDocument(Base):
             "status IN ('uploaded', 'processing', 'ready', 'failed', 'deleting')",
             name="status_valid",
         ),
+        CheckConstraint(
+            f"material_kind IN ({_DOCUMENT_MATERIAL_KINDS_SQL})",
+            name="material_kind_valid",
+        ),
         Index(
             "uq_uploaded_documents_storage_provider_storage_key",
             "storage_provider",
@@ -357,6 +401,9 @@ class UploadedDocument(Base):
     original_file_name: Mapped[str] = mapped_column(String(255))
     file_type: Mapped[str] = mapped_column(String(50))
     mime_type: Mapped[str] = mapped_column(String(255))
+    material_kind: Mapped[str] = mapped_column(
+        String(20), default="unspecified", server_default="unspecified"
+    )
     file_size: Mapped[int] = mapped_column(BigInteger)
     file_hash: Mapped[str] = mapped_column(String(64))
     user_id: Mapped[int] = mapped_column(

@@ -7,6 +7,7 @@ from backend.app.models import (
     ConversationMessage,
     Course,
     DocumentChunk,
+    ProfileKnowledge,
     Role,
     UploadedDocument,
     User,
@@ -20,6 +21,9 @@ from services.course_qa import (
 )
 from services.retrieval_material import (
     MaterialNotIndexedError,
+    MaterialRetrievalError,
+    MaterialRetrievalRateLimitError,
+    MaterialRetrievalTimeoutError,
     NoRelevantMaterialError,
 )
 from services.text_generation import (
@@ -33,6 +37,15 @@ from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     PUBLIC_MESSAGES,
     AiErrorCode,
+)
+
+from schemas.prompt_context import EducationLevel, MaterialKind, PromptContext
+
+PROMPT_CONTEXT = PromptContext(
+    education_level=EducationLevel.HIGH_SCHOOL,
+    course_title="AP Biology",
+    subject_area="Biology",
+    material_kind=MaterialKind.TEXTBOOK,
 )
 
 
@@ -169,6 +182,7 @@ def test_build_prompt_inserts_material_and_question() -> None:
     prompt = CourseQAService.build_prompt(
         "Photosynthesis converts light energy into chemical energy.",
         "What does photosynthesis do?",
+        context=PROMPT_CONTEXT,
     )
 
     assert "{{COURSE_MATERIAL}}" not in prompt
@@ -1033,3 +1047,191 @@ def test_course_qa_rejects_nonpositive_conversation_id(
     )
 
     assert response.status_code == 422
+
+
+def test_course_qa_with_profile_knowledge_opt_in(
+    upload_api,
+    retrieval_env,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        assert user is not None and course is not None
+
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="q" * 64,
+            text="Computer Architecture: Pipelining and Hazard Detection.",
+            retrieval_env=retrieval_env,
+        )
+        session.add(
+            ProfileKnowledge(
+                user_id=upload_api.user_id,
+                topic="Architecture Knowledge",
+                detail="Student knows 5-stage RISC pipeline.",
+            )
+        )
+        session.commit()
+
+    captured_prompts: list[str] = []
+
+    class FakeProvider:
+        def generate_text_with_metadata(self, prompt: str):
+            captured_prompts.append(prompt)
+            return (
+                "Pipelining overlaps instruction execution.",
+                GenerationMetadata(provider="ollama", model="llama3"),
+            )
+
+    monkeypatch.setattr(
+        course_qa_route,
+        "get_text_generation_provider",
+        lambda: FakeProvider(),
+    )
+
+    # 1. Opt-in True
+    res_opt_in = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "What is data hazard?", "use_profile_knowledge": True},
+        headers=upload_api.authorization,
+    )
+    assert res_opt_in.status_code == 200
+    assert "SUPPLEMENTARY PROFILE CONTEXT" in captured_prompts[-1]
+    assert "Architecture Knowledge" in captured_prompts[-1]
+    assert res_opt_in.json()["data"]["profile_knowledge_used"] is True
+    assert res_opt_in.json()["data"]["profile_knowledge_items_used"] == 1
+
+    # 2. Opt-in False (default)
+    res_opt_out = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "What is control hazard?"},
+        headers=upload_api.authorization,
+    )
+    assert res_opt_out.status_code == 200
+    assert "SUPPLEMENTARY PROFILE CONTEXT" not in captured_prompts[-1]
+    assert "Architecture Knowledge" not in captured_prompts[-1]
+    assert res_opt_out.json()["data"]["profile_knowledge_used"] is False
+    assert res_opt_out.json()["data"]["profile_knowledge_items_used"] == 0
+
+
+def test_course_qa_retrieval_failure_status_codes(
+    upload_api,
+    retrieval_env,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="88" + "8" * 62,
+            text="Course material ready for retrieval failure tests",
+            retrieval_env=retrieval_env,
+        )
+
+    # 503 Retrieval Unavailable
+    monkeypatch.setattr(
+        CourseQAService,
+        "get_course_material",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            MaterialRetrievalError("Retrieval unavailable")
+        ),
+    )
+    res_503 = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "Test question"},
+        headers=upload_api.authorization,
+    )
+    assert res_503.status_code == 503
+    assert res_503.headers.get("x-error-code") == "retrieval_unavailable"
+
+    # 504 Retrieval Timeout
+    monkeypatch.setattr(
+        CourseQAService,
+        "get_course_material",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            MaterialRetrievalTimeoutError("Retrieval timed out")
+        ),
+    )
+    res_504 = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "Test question"},
+        headers=upload_api.authorization,
+    )
+    assert res_504.status_code == 504
+    assert res_504.headers.get("x-error-code") == "provider_timeout"
+
+    # 429 Retrieval Rate Limited
+    monkeypatch.setattr(
+        CourseQAService,
+        "get_course_material",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            MaterialRetrievalRateLimitError("Retrieval rate limited")
+        ),
+    )
+    res_429 = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "Test question"},
+        headers=upload_api.authorization,
+    )
+    assert res_429.status_code == 429
+    assert res_429.headers.get("x-error-code") == "provider_rate_limited"
+
+
+def test_course_qa_response_diagnostics_never_expose_private_material_content(
+    upload_api,
+    retrieval_env,
+    monkeypatch,
+) -> None:
+    secret_material = "TOP_SECRET_EXAM_ANSWER_42"
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="77" + "7" * 62,
+            text=secret_material,
+            retrieval_env=retrieval_env,
+        )
+
+    class FakeProvider:
+        def generate_text_with_metadata(self, prompt: str):
+            return "The answer is grounded in course materials.", GenerationMetadata(
+                provider="ollama", model="llama3.1", latency_ms=50
+            )
+
+    monkeypatch.setattr(
+        course_qa_route,
+        "get_text_generation_provider",
+        lambda: FakeProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/qa",
+        json={"question": "What is the secret?"},
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    data = payload["data"]
+
+    # Diagnostic fields must be present
+    assert "chunks_used" in data
+    assert "chunks_available" in data
+    assert "context_truncated" in data
+    assert "retrieval_narrowed" in data
+    assert "lowest_similarity" in data
+    assert "highest_similarity" in data
+
+    # No raw chunk content or text in response
+    assert secret_material not in str(data)
+    assert "text" not in data
+    assert "raw_material" not in data
+    assert "chunk_text" not in data

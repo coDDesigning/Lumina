@@ -8,6 +8,8 @@ from backend.app.models import (
     ConversationMessage,
     Course,
     DocumentChunk,
+    ProfileKnowledge,
+    Role,
     UploadedDocument,
     User,
 )
@@ -20,13 +22,28 @@ from services.ai_tutor import (
 )
 from services.retrieval_material import (
     MaterialNotIndexedError,
+    MaterialRetrievalError,
+    MaterialRetrievalRateLimitError,
+    MaterialRetrievalTimeoutError,
     NoRelevantMaterialError,
 )
 from services.text_generation import GenerationMetadata, TextGenerationError
 from utils.ai_errors import PUBLIC_MESSAGES, AiErrorCode
 
+from schemas.prompt_context import EducationLevel, MaterialKind, PromptContext
 
+PROMPT_CONTEXT = PromptContext(
+    education_level=EducationLevel.HIGH_SCHOOL,
+    course_title="AP Biology",
+    subject_area="Biology",
+    material_kind=MaterialKind.TEXTBOOK,
+)
 IRRELEVANT_SEED = 4.0
+
+
+class UncalledTextProvider:
+    def generate_text(self, prompt: str) -> str:
+        raise AssertionError("Provider should not be called")
 
 
 def _add_ready_document(
@@ -154,17 +171,32 @@ def test_build_prompt_inserts_course_material_and_question() -> None:
     prompt = AiTutorService.build_prompt(
         "Example lecture material",
         "What is an operating system?",
+        context=PROMPT_CONTEXT,
     )
 
     assert "{{COURSE_MATERIAL}}" not in prompt
     assert "{{QUESTION}}" not in prompt
     assert "Example lecture material" in prompt
     assert "What is an operating system?" in prompt
-    assert (
-        "Begin with a concise helpful hint or guiding question before giving the full "
-        "explanation." in prompt
-    )
+    lowered = prompt.lower()
+    assert "open with a targeted hint or a guiding question" in lowered
+    assert "never open with the bare result" in lowered
+    assert "if the student is still stuck, escalate one step at a time" in lowered
+    assert "walk through the key intermediate steps" in lowered
+    assert "for a conceptual question" in lowered
+    for contradiction in (
+        "answer the student's question directly",
+        "provide the direct answer",
+        "give the answer immediately",
+        "answer directly",
+    ):
+        assert contradiction not in lowered, contradiction
     assert "When appropriate, guide the student with a helpful hint" not in prompt
+    assert "apparent level" not in prompt
+    assert "high_school" in prompt
+    assert "AP Biology" in prompt
+    assert "Biology" in prompt
+    assert "textbook" in prompt
 
 
 def test_generate_returns_tutor_response(
@@ -640,3 +672,319 @@ def test_ai_tutor_rejects_nonpositive_conversation_id(upload_api) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_ai_tutor_with_profile_knowledge_opt_in(
+    upload_api,
+    retrieval_env,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        assert user is not None and course is not None
+
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="p" * 64,
+            text="Operating Systems Virtual Memory and Page Tables.",
+            retrieval_env=retrieval_env,
+        )
+        session.add(
+            ProfileKnowledge(
+                user_id=upload_api.user_id,
+                topic="OS Background",
+                detail="Student knows 32-bit paging.",
+            )
+        )
+        session.commit()
+
+    captured_prompts: list[str] = []
+
+    class FakeProvider:
+        def generate_text_with_metadata(self, prompt: str):
+            captured_prompts.append(prompt)
+            return (
+                "Hint: Think about pages.\n\nVirtual memory maps virtual addresses.",
+                GenerationMetadata(provider="ollama", model="llama3"),
+            )
+
+    monkeypatch.setattr(
+        ai_tutor_route,
+        "get_text_generation_provider",
+        lambda: FakeProvider(),
+    )
+
+    # 1. Opt-in True
+    res_opt_in = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "What is paging?", "use_profile_knowledge": True},
+        headers=upload_api.authorization,
+    )
+    assert res_opt_in.status_code == 200
+    assert "SUPPLEMENTARY PROFILE CONTEXT" in captured_prompts[-1]
+    assert "OS Background" in captured_prompts[-1]
+    assert res_opt_in.json()["data"]["profile_knowledge_used"] is True
+    assert res_opt_in.json()["data"]["profile_knowledge_items_used"] == 1
+
+    # 2. Opt-in False (default)
+    res_opt_out = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "What is TLB?"},
+        headers=upload_api.authorization,
+    )
+    assert res_opt_out.status_code == 200
+    assert "SUPPLEMENTARY PROFILE CONTEXT" not in captured_prompts[-1]
+    assert "OS Background" not in captured_prompts[-1]
+    assert res_opt_out.json()["data"]["profile_knowledge_used"] is False
+    assert res_opt_out.json()["data"]["profile_knowledge_items_used"] == 0
+
+
+def test_ai_tutor_retrieval_failure_status_codes(
+    upload_api,
+    retrieval_env,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="88" + "8" * 62,
+            text="Course material ready for AI tutor retrieval failure tests",
+            retrieval_env=retrieval_env,
+        )
+
+    # 503 Retrieval Unavailable
+    monkeypatch.setattr(
+        AiTutorService,
+        "get_course_material",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            MaterialRetrievalError("Retrieval unavailable")
+        ),
+    )
+    res_503 = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "Test question"},
+        headers=upload_api.authorization,
+    )
+    assert res_503.status_code == 503
+    assert res_503.headers.get("x-error-code") == "retrieval_unavailable"
+
+    # 504 Retrieval Timeout
+    monkeypatch.setattr(
+        AiTutorService,
+        "get_course_material",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            MaterialRetrievalTimeoutError("Retrieval timed out")
+        ),
+    )
+    res_504 = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "Test question"},
+        headers=upload_api.authorization,
+    )
+    assert res_504.status_code == 504
+    assert res_504.headers.get("x-error-code") == "provider_timeout"
+
+    # 429 Retrieval Rate Limited
+    monkeypatch.setattr(
+        AiTutorService,
+        "get_course_material",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            MaterialRetrievalRateLimitError("Retrieval rate limited")
+        ),
+    )
+    res_429 = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "Test question"},
+        headers=upload_api.authorization,
+    )
+    assert res_429.status_code == 429
+    assert res_429.headers.get("x-error-code") == "provider_rate_limited"
+
+
+def test_ai_tutor_response_diagnostics_never_expose_private_material_content(
+    upload_api,
+    retrieval_env,
+    monkeypatch,
+) -> None:
+    secret_material = "TOP_SECRET_EXAM_ANSWER_AI_TUTOR_42"
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="76" + "7" * 62,
+            text=secret_material,
+            retrieval_env=retrieval_env,
+        )
+
+    class FakeProvider:
+        def generate_text_with_metadata(self, prompt: str):
+            return (
+                "Here is a hint about your question without revealing secrets.",
+                GenerationMetadata(provider="ollama", model="llama3.1", latency_ms=50),
+            )
+
+    monkeypatch.setattr(
+        ai_tutor_route,
+        "get_text_generation_provider",
+        lambda: FakeProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "What is the secret?"},
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    data = payload["data"]
+
+    # Diagnostic fields must be present
+    assert "chunks_used" in data
+    assert "chunks_available" in data
+    assert "context_truncated" in data
+    assert "retrieval_narrowed" in data
+    assert "lowest_similarity" in data
+    assert "highest_similarity" in data
+
+    # No raw chunk content or text in response
+    assert secret_material not in str(data)
+    assert "text" not in data
+    assert "raw_material" not in data
+    assert "chunk_text" not in data
+
+
+def test_ai_tutor_rejects_conversation_from_another_course(
+    upload_api,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        conversation = Conversation(
+            user_id=upload_api.user_id,
+            course_id=upload_api.other_course_id,
+            conversation_type=ConversationType.AI_TUTOR.value,
+        )
+        session.add(conversation)
+        session.commit()
+        conversation_id = conversation.id
+
+    monkeypatch.setattr(
+        ai_tutor_route,
+        "get_text_generation_provider",
+        lambda: UncalledTextProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "Continue", "conversation_id": conversation_id},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Conversation not found"}
+
+
+def test_ai_tutor_rejects_another_users_conversation(
+    upload_api,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        role = session.query(Role).filter_by(name="user").first()
+        other_user = User(
+            name="Tutor Intruder",
+            email="tutor-intruder@example.com",
+            password_hash="hash",
+            role=role,
+        )
+        session.add(other_user)
+        session.flush()
+        conversation = Conversation(
+            user_id=other_user.id,
+            course_id=upload_api.course_id,
+            conversation_type=ConversationType.AI_TUTOR.value,
+        )
+        session.add(conversation)
+        session.commit()
+        conversation_id = conversation.id
+
+    monkeypatch.setattr(
+        ai_tutor_route,
+        "get_text_generation_provider",
+        lambda: UncalledTextProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "Continue", "conversation_id": conversation_id},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Conversation not found"}
+
+
+def test_ai_tutor_provider_failure_does_not_create_conversation(
+    upload_api,
+    retrieval_env,
+    monkeypatch,
+) -> None:
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        course = session.get(Course, upload_api.course_id)
+        assert user is not None and course is not None
+
+        _add_ready_document(
+            session,
+            user=user,
+            course=course,
+            file_hash="f" * 64,
+            text="Ready course material for tutor failure test",
+            retrieval_env=retrieval_env,
+        )
+
+        conversations_before = (
+            session.query(Conversation)
+            .filter_by(
+                user_id=upload_api.user_id,
+                course_id=upload_api.course_id,
+            )
+            .count()
+        )
+
+    class FailingProvider:
+        def generate_text(self, prompt: str) -> str:
+            raise TextGenerationError("Generation failed")
+
+    monkeypatch.setattr(
+        ai_tutor_route,
+        "get_text_generation_provider",
+        lambda: FailingProvider(),
+    )
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/ai-tutor",
+        json={"question": "This generation should fail"},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code >= 400
+
+    with upload_api.session_factory() as session:
+        conversations_after = (
+            session.query(Conversation)
+            .filter_by(
+                user_id=upload_api.user_id,
+                course_id=upload_api.course_id,
+            )
+            .count()
+        )
+        assert conversations_after == conversations_before

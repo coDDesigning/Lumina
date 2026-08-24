@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from schemas.generation import RetrievalGenerationContext, RetrievedContext
 
@@ -36,10 +36,21 @@ class StudyGuideRequest(BaseModel):
     summary_length: SummaryLength = SummaryLength.MEDIUM
     detail_level: DetailLevel = DetailLevel.STANDARD
     summary_mode: SummaryMode = SummaryMode.GENERAL
+    use_profile_knowledge: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "use_profile_knowledge", "include_profile_context"
+        ),
+        description="Whether to include student profile knowledge context (opt-in)",
+    )
     model: str | None = Field(
         default=None,
         description="Explicit model override, or omit to use preferred/default model",
     )
+
+    @property
+    def include_profile_context(self) -> bool:
+        return self.use_profile_knowledge
 
 
 class StudyGuideGenerationSettings(BaseModel):
@@ -49,7 +60,7 @@ class StudyGuideGenerationSettings(BaseModel):
     so other generated output types can share the same column later.
     """
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     version: Literal[1] = 1
     output_type: Literal["study_guide"] = "study_guide"
@@ -58,8 +69,18 @@ class StudyGuideGenerationSettings(BaseModel):
     summary_length: SummaryLength
     detail_level: DetailLevel
     summary_mode: SummaryMode
+    use_profile_knowledge: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "use_profile_knowledge", "include_profile_context"
+        ),
+    )
     retrieval_limit: int
     retrieval_min_similarity: float
+
+    @property
+    def include_profile_context(self) -> bool:
+        return self.use_profile_knowledge
 
     @classmethod
     def from_request(
@@ -70,11 +91,22 @@ class StudyGuideGenerationSettings(BaseModel):
         retrieval_min_similarity: float,
     ) -> "StudyGuideGenerationSettings":
         return cls(
-            summary_format=request.summary_format,
-            topic_focus=request.topic_focus,
-            summary_length=request.summary_length,
-            detail_level=request.detail_level,
-            summary_mode=request.summary_mode,
+            summary_format=request.summary_format
+            if request.summary_format is not None
+            else SummaryFormat.COMPREHENSIVE,
+            topic_focus=request.topic_focus
+            if request.topic_focus is not None
+            else "All Topics",
+            summary_length=request.summary_length
+            if request.summary_length is not None
+            else SummaryLength.MEDIUM,
+            detail_level=request.detail_level
+            if request.detail_level is not None
+            else DetailLevel.STANDARD,
+            summary_mode=request.summary_mode
+            if request.summary_mode is not None
+            else SummaryMode.GENERAL,
+            use_profile_knowledge=request.use_profile_knowledge,
             retrieval_limit=retrieval_limit,
             retrieval_min_similarity=retrieval_min_similarity,
         )

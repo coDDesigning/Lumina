@@ -119,7 +119,7 @@ immutable `pgvector/pgvector` image digest; the pgvector extension is required
 because the schema declares a `vector` column and an HNSW index. The live job
 verifies the complete Alembic upgrade/downgrade/re-upgrade cycle, schema drift,
 role seeds, readiness, UUID and timezone round trips, unloaded database cascades
-across all 17 tables, pgvector provisioning and cosine ranking, and
+across all 21 tables, pgvector provisioning and cosine ranking, and
 `SKIP LOCKED` worker claims. Tests marked `database_contract` run unchanged
 against copies of an Alembic-migrated SQLite database and the disposable
 PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other
@@ -219,11 +219,30 @@ course therefore needs no administrator involvement and admits none.
 ### Course workspace fields
 
 A course workspace carries `title`, `description`, `semester`, `exam_date`,
-`topics`, `syllabus`, `created_at` and `updated_at`. `syllabus` is nullable free
+`topics`, `syllabus`, `subject_area`, `education_level`, `is_archived`, `created_at` and
+`updated_at`. `syllabus` is nullable free
 text for the course outline; it is distinct from `topics`, which holds the
 comma-separated topic labels the study features consume. `updated_at` is
 maintained by the ORM through `onupdate`, so any course modification advances it
 while `created_at` stays fixed.
+
+`is_archived` is a boolean flag indicating whether the course is archived by its owner.
+Archiving is non-destructive and reversible: archived courses remain fully accessible for reads,
+settings updates, restoration, and permanent deletion, but are hidden from the primary active course
+list. Unlike permanent deletion, archiving preserves all associated documents, embeddings, quizzes,
+attempts, and progress.
+
+`education_level` is a `String(20)` constrained by a CHECK to `high_school`,
+`undergraduate`, `graduate`, `professional_other`, or `unspecified`, and it
+defaults to `unspecified` at the database level so a course written before the
+column existed reads back as neutral rather than as a guess. `users` carries the
+same column as a fallback, and `uploaded_documents.material_kind` records what
+kind of material a document is; `mixed` is rejected there because it is only ever
+a resolved aggregate across several documents. These three columns exist to feed
+the shared prompt variables described in `docs/prompt_templates.md`; nothing else
+reads them.
+
+`subject_area` is nullable and is never inferred from the title.
 
 `owner_id` is immutable. It is absent from both the create and update payloads,
 so neither an owner nor an administrator can transfer a workspace through the
@@ -397,7 +416,11 @@ NULL` because a quiz outlives the account that generated it; the course cascade
 still removes it with its course.
 
 Generation also writes a `generated_outputs` row of `output_type` `quiz`, so a
-course's generation history is one list regardless of feature.
+course's generation history is one list regardless of feature. Across all generation
+features (`study_guide`, `quiz`, `flashcards`), `GeneratedOutputService.record` is the
+enforced canonical single writer for `generated_outputs` rows. Feature services and routes
+delegate persistence to this entrypoint and never instantiate `GeneratedOutput` models directly.
+
 
 ### Question types
 
@@ -568,13 +591,38 @@ Profile knowledge is user-scoped rather than course-scoped:
 ### Retrieval priority rules
 
 When assembling context for course-scoped AI features:
-1. **Course material is primary and authoritative**: Extracted document chunks for the
+1. **Consent is explicit and off by default**: Profile knowledge is read only when the
+   request opts in through `use_profile_knowledge`. When the opt-in is absent or false, no
+   `profile_knowledge` query is issued at all.
+2. **Course material is primary and authoritative**: Extracted document chunks for the
    target course are loaded first up to the configured per-feature character budget. If no
    ready course material is available, generation fails with `NoReadyCourseMaterialError`.
-2. **Profile knowledge is supplementary**: Relevant profile knowledge entries for the
-   authenticated user are loaded up to their separate budget and appended as supplementary
-   student background context.
-3. **Precedence under conflict**: If course material and profile knowledge contain
+   Profile knowledge is never a substitute for missing course material.
+3. **Profile knowledge is supplementary**: Eligible profile knowledge entries for the
+   authenticated user are loaded up to their own separate character budget and appended as
+   supplementary student background context. An entry carrying neither a topic nor a detail
+   is not eligible and is counted in neither `items_available` nor `items_used`. The course
+   and profile budgets are independent, so profile knowledge can never displace course
+   material; a profile that exceeds its budget is truncated within that budget alone.
+4. **Precedence under conflict**: If course material and profile knowledge contain
    conflicting statements, course material is authoritative.
-4. **Isolation**: A user's profile knowledge is never exposed to or included in another
+5. **Isolation**: A user's profile knowledge is never exposed to or included in another
    user's generation context.
+6. **Recorded use**: The persisted `generation_context` document reports what actually
+   reached the provider (`profile_knowledge_used`, `profile_knowledge_items_used`,
+   `profile_knowledge_characters_used`, `profile_knowledge_truncated`). The request's
+   intent is recorded separately as `use_profile_knowledge` in `generation_settings`, so an
+   opted-in request by a user holding no entries records requested-but-unused.
+
+### Scope and document upload deferral decision
+
+- **MVP Scope**: In Lumina MVP, profile knowledge operates exclusively through structured
+  text entries (`topic` and `detail`) created and managed by the student. These provide
+  deterministic, low-overhead background context for prompt personalization across courses.
+- **Post-MVP Deferral**: Full profile-level document and file upload (requiring user-scoped
+  file storage, per-user document extraction/OCR pipelines, user-isolated chunking, and
+  cross-course personal semantic vector search) is **explicitly deferred to post-MVP**.
+- **UI and API Boundaries**: Course-scoped documents (`POST /api/courses/{course_id}/documents`)
+  remain the sole file ingestion pipeline in MVP. The user profile UI and API endpoints
+  do not provide or imply document upload capabilities for user profiles.
+

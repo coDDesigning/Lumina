@@ -5,6 +5,9 @@ import type { FlashcardGenerationResult } from './types';
 
 const FLASHCARD_RESULT: FlashcardGenerationResult = {
   context_truncated: false,
+  retrieval_narrowed: true,
+  lowest_similarity: 0.45,
+  highest_similarity: 0.85,
   chunks_used: 2,
   chunks_available: 4,
   flashcards: {
@@ -55,6 +58,7 @@ describe('flashcardsAPI.generate', () => {
 
     const result = await flashcardsAPI.generate(10, {
       model: 'gemini:gemini-3.6-flash',
+      include_profile_context: true,
     });
 
     expect(result).toEqual(FLASHCARD_RESULT);
@@ -67,6 +71,7 @@ describe('flashcardsAPI.generate', () => {
     expect(init?.method).toBe('POST');
     expect(JSON.parse(init?.body as string)).toEqual({
       model: 'gemini:gemini-3.6-flash',
+      include_profile_context: true,
     });
   });
 

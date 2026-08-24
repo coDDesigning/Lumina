@@ -16,6 +16,18 @@ import type {
 } from './api/types';
 import { createMockCourse } from './test/mocks/api';
 
+vi.mock('./context/CreditContext', () => ({
+  useCredits: () => ({
+    status: null,
+    isLoading: false,
+    error: null,
+    refresh: vi.fn(),
+    isMetered: false,
+    costOf: () => null,
+    canAfford: () => true,
+  }),
+}))
+
 vi.mock('./context/AuthContext', () => ({
   useAuth: () => ({
     user: {
@@ -50,7 +62,7 @@ vi.mock('./api/courses', () => ({
 }));
 
 vi.mock('./api/progress', () => ({
-  progressAPI: { get: vi.fn() },
+  progressAPI: { get: vi.fn(), listAll: vi.fn() },
 }));
 
 vi.mock('./api/courseQa', () => ({
@@ -68,6 +80,7 @@ vi.mock('./api/conversations', () => ({
 const mockCourseList = vi.mocked(coursesAPI.list);
 const mockDocumentList = vi.mocked(coursesAPI.listDocuments);
 const mockProgress = vi.mocked(progressAPI.get);
+const mockListProgress = vi.mocked(progressAPI.listAll);
 const mockQaAsk = vi.mocked(courseQaAPI.ask);
 const mockTutorAsk = vi.mocked(aiTutorAPI.ask);
 const mockConversationList = vi.mocked(conversationsAPI.list);
@@ -107,7 +120,7 @@ function tutorResult(
 
 function renderWorkspace() {
   return render(
-    <MemoryRouter initialEntries={['/workspaces/1']}>
+    <MemoryRouter initialEntries={['/courses/1']}>
       <App />
     </MemoryRouter>,
   );
@@ -132,6 +145,7 @@ describe('Workspace conversations', () => {
       average_score: null,
       topic_mastery: [],
     });
+    mockListProgress.mockResolvedValue([]);
     mockConversationList.mockResolvedValue([]);
   });
 
@@ -150,6 +164,8 @@ describe('Workspace conversations', () => {
     ).toBeInTheDocument();
     expect(mockQaAsk).toHaveBeenNthCalledWith(1, 1, {
       question: 'What is virtual memory?',
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
 
     await sendPrompt('How does paging relate?');
@@ -159,6 +175,8 @@ describe('Workspace conversations', () => {
     expect(mockQaAsk).toHaveBeenNthCalledWith(2, 1, {
       question: 'How does paging relate?',
       conversation_id: 31,
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
 
     await userEvent.click(
@@ -170,6 +188,8 @@ describe('Workspace conversations', () => {
     await screen.findByText('A page fault loads a missing page.');
     expect(mockQaAsk).toHaveBeenNthCalledWith(3, 1, {
       question: 'Why does a page fault happen?',
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
   }, 15_000);
 
@@ -191,12 +211,14 @@ describe('Workspace conversations', () => {
     await sendPrompt('What does a process own?');
     await screen.findByText('A process owns an address space.');
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Tutoring' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Tutor' }));
     expect(screen.queryByText('A process owns an address space.')).not.toBeInTheDocument();
     await sendPrompt('Teach me the process model.');
     await screen.findByText('Picture a process as a container for threads.');
     expect(mockTutorAsk).toHaveBeenCalledWith(1, {
       question: 'Teach me the process model.',
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
 
     await sendPrompt('How do threads fit into that model?');
@@ -204,9 +226,11 @@ describe('Workspace conversations', () => {
     expect(mockTutorAsk).toHaveBeenNthCalledWith(2, 1, {
       question: 'How do threads fit into that model?',
       conversation_id: 72,
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Exam' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Ask' }));
     expect(screen.getByText('A process owns an address space.')).toBeInTheDocument();
     expect(
       screen.queryByText('Picture a process as a container for threads.'),
@@ -217,6 +241,8 @@ describe('Workspace conversations', () => {
     expect(mockQaAsk).toHaveBeenNthCalledWith(2, 1, {
       question: 'What do threads share?',
       conversation_id: 41,
+      use_profile_knowledge: false,
+      include_profile_context: false,
     });
   }, 15_000);
 
@@ -256,21 +282,19 @@ describe('Workspace conversations', () => {
 
     renderWorkspace();
     await screen.findByRole('button', { name: 'Add Sources' });
-    expect(
-      screen.getByRole('button', { name: 'Generated history' }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/^Made for you/)).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole('button', { name: 'Conversation history' }),
+      screen.getByRole('button', { name: 'Past threads' }),
     );
     await userEvent.click(
-      await screen.findByRole('button', { name: /Conversation 88/ }),
+      await screen.findByRole('button', { name: /Tutoring 88/ }),
     );
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Resume conversation' }),
+      await screen.findByRole('button', { name: 'Pick this up' }),
     );
 
-    expect(screen.getByRole('tab', { name: 'Tutoring' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: 'Tutor' })).toHaveAttribute(
       'aria-selected',
       'true',
     );
@@ -284,6 +308,8 @@ describe('Workspace conversations', () => {
       expect(mockTutorAsk).toHaveBeenCalledWith(1, {
         question: 'How does round robin work?',
         conversation_id: 88,
+        use_profile_knowledge: false,
+        include_profile_context: false,
       }),
     );
   }, 15_000);
@@ -302,4 +328,62 @@ describe('Workspace conversations', () => {
       'Explain virtual memory.',
     );
   }, 15_000);
+
+  it('sends questions containing summary, quiz, or Turkish keywords directly to chat without unexpected modal redirection', async () => {
+    mockQaAsk.mockResolvedValue(
+      qaResult('Here is a summary of the main points.', 99),
+    );
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+
+    await sendPrompt('Please summarize the key algorithms and quiz me.');
+
+    await waitFor(() =>
+      expect(mockQaAsk).toHaveBeenCalledWith(1, {
+        question: 'Please summarize the key algorithms and quiz me.',
+        use_profile_knowledge: false,
+        include_profile_context: false,
+      }),
+    );
+    expect(
+      await screen.findByText('Here is a summary of the main points.'),
+    ).toBeInTheDocument();
+  }, 15_000);
+
+  it('toggles profile context opt-in and sends use_profile_knowledge: true when enabled', async () => {
+    mockQaAsk.mockResolvedValue(
+      qaResult('Here is a personalized explanation.', 101),
+    );
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+
+    const toggle = screen.getByRole('checkbox', {
+      name: /use my study profile/i,
+    });
+    expect(toggle).not.toBeChecked();
+    expect(
+      screen.getByText(
+        /supporting context\. Your course material stays primary\./i,
+      ),
+    ).toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(toggle).toBeChecked();
+
+    await sendPrompt('Explain deadlock conditions.');
+
+    await waitFor(() =>
+      expect(mockQaAsk).toHaveBeenCalledWith(1, {
+        question: 'Explain deadlock conditions.',
+        use_profile_knowledge: true,
+        include_profile_context: true,
+      }),
+    );
+    expect(
+      await screen.findByText('Here is a personalized explanation.'),
+    ).toBeInTheDocument();
+  }, 15_000);
 });
+

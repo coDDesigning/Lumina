@@ -3,12 +3,19 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.database import get_db
-from schemas.flashcard import FlashcardGenerationResult, FlashcardRequest
+from schemas.flashcard import (
+    FlashcardGenerationContext,
+    FlashcardGenerationResult,
+    FlashcardGenerationSettings,
+    FlashcardRequest,
+)
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.credits import CreditService
 from services.flashcard import FlashcardGenerationError, FlashcardService
+from services.retrieval_material import RetrievalMaterialError
 from services.text_generation import (
     TextGenerationError,
     get_text_generation_provider,
@@ -32,8 +39,14 @@ router = APIRouter(
         401: {"description": "Authentication required"},
         402: {"description": "Insufficient credits"},
         404: {"description": "Course not found"},
+        409: {
+            "description": (
+                "No course material matched the request, or the course material "
+                "is not searchable yet"
+            )
+        },
         429: {"description": "AI provider rate limited"},
-        503: {"description": "AI provider unreachable"},
+        503: {"description": "AI provider or course search unreachable"},
         504: {"description": "AI provider timed out"},
     },
 )
@@ -48,28 +61,47 @@ def generate_flashcards(
         effective_model = resolve_effective_model(
             request.model if request else None,
             current_user.preferred_model,
+            required_capability="flashcard",
         )
-        try:
-            provider = get_text_generation_provider(effective_model=effective_model)
-        except TypeError:
-            provider = get_text_generation_provider()
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            require_json_mode=True,
+        )
 
         generation = FlashcardService.generate(
             db,
             course.id,
             provider,
+            request=request,
             user_id=current_user.id,
         )
 
-        FlashcardService.save_generated_flashcards(
+        applied_settings = FlashcardGenerationSettings.from_request(
+            generation.effective_request,
+            retrieval_limit=settings.retrieval_chunk_limit,
+            retrieval_min_similarity=settings.retrieval_min_similarity,
+        ).model_dump_json()
+        applied_context = FlashcardGenerationContext.from_material(
+            generation.material,
+            profile_knowledge=generation.profile_knowledge,
+        ).model_dump_json()
+
+        persisted = FlashcardService.save_generated_flashcards(
             db,
             course.id,
             generation.flashcards,
             user_id=current_user.id,
             model_used=generation.model_used,
+            generation_settings=applied_settings,
+            generation_context=applied_context,
         )
 
-    except (TextGenerationError, FlashcardGenerationError, Exception) as exc:
+    except (
+        TextGenerationError,
+        FlashcardGenerationError,
+        RetrievalMaterialError,
+        Exception,
+    ) as exc:
         if generation is not None:
             db.rollback()
             CreditService.refund(db, generation.charge_receipt)
@@ -80,8 +112,21 @@ def generate_flashcards(
         message="Flashcards generated successfully",
         data=FlashcardGenerationResult(
             flashcards=generation.flashcards,
+            generated_output_id=persisted.id,
+            retrieval_narrowed=generation.material.retrieval_narrowed,
+            lowest_similarity=generation.material.lowest_similarity,
+            highest_similarity=generation.material.highest_similarity,
             context_truncated=generation.material.truncated,
             chunks_used=generation.material.chunks_used,
             chunks_available=generation.material.chunks_available,
+            profile_knowledge_used=bool(
+                generation.profile_knowledge
+                and not generation.profile_knowledge.is_empty
+            ),
+            profile_knowledge_items_used=(
+                generation.profile_knowledge.items_used
+                if generation.profile_knowledge
+                else 0
+            ),
         ),
     )

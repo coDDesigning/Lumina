@@ -6,6 +6,7 @@ import {
   describeGenerationError,
   describeUploadError,
   isAbortError,
+  isInsufficientCredits,
 } from './errors';
 import { MockErrors } from '../test/mocks/api';
 
@@ -25,6 +26,50 @@ describe('error description helpers', () => {
     it('returns false for regular errors', () => {
       expect(isAbortError(new Error('Network error'))).toBe(false);
       expect(isAbortError(null)).toBe(false);
+    });
+  });
+
+  describe('insufficient credits', () => {
+    it('recognises a 402 even when the server sent no error code', () => {
+      const described = describeGenerationError(
+        new APIError(402, { detail: 'You do not have enough credits.' }),
+        'Fallback',
+      );
+      expect(isInsufficientCredits(described)).toBe(true);
+      expect(described.message).toBe('You do not have enough credits.');
+    });
+
+    it('recognises the stable code from the X-Error-Code header', () => {
+      const described = describeGenerationError(
+        new APIError(402, { detail: 'Nope' }, 'insufficient_credits'),
+        'Fallback',
+      );
+      expect(described.code).toBe('insufficient_credits');
+      expect(isInsufficientCredits(described)).toBe(true);
+    });
+
+    it('is never retryable, because retrying cannot create credits', () => {
+      const described = describeGenerationError(
+        new APIError(402, { detail: 'Out of credits' }),
+        'Fallback',
+      );
+      expect(described.retryable).toBe(false);
+    });
+
+    it('does not add the "add a source" advice meant for an empty course', () => {
+      const described = describeGenerationError(
+        new APIError(402, { detail: 'Out of credits' }),
+        'Fallback',
+      );
+      expect(described.message).not.toContain('Add a source');
+    });
+
+    it('leaves other generation failures alone', () => {
+      const described = describeGenerationError(
+        new APIError(409, { detail: 'No material matched.' }),
+        'Fallback',
+      );
+      expect(isInsufficientCredits(described)).toBe(false);
     });
   });
 
@@ -125,29 +170,75 @@ describe('error description helpers', () => {
       expect(described.message).toBe('This source is no longer available.');
     });
 
-    it('formats 400 for generation errors when material is needed', () => {
-      const described = describeGenerationError(
-        new APIError(400, { detail: 'Course has no ready material.' }),
+    it('tells the two failures that share a 409 apart', () => {
+      const missed = describeGenerationError(
+        new APIError(409, { detail: 'No course material matched.' }, 'no_relevant_material'),
         'Generation failed',
       );
-      expect(described.message).toBe(
-        'Course has no ready material. Add a source and wait until it shows Ready.',
+      const unindexed = describeGenerationError(
+        new APIError(409, { detail: 'Not searchable yet.' }, 'material_not_indexed'),
+        'Generation failed',
       );
+
+      expect(missed.title).not.toBe(unindexed.title);
+      expect(missed.message).not.toBe(unindexed.message);
+      expect(missed.remedy).toBe('broaden_topic');
+      expect(unindexed.remedy).toBeNull();
     });
 
-    it('leaves a 409 relevance miss with the backend message and no source advice', () => {
-      const described = describeGenerationError(
-        new APIError(409, {
-          detail: 'No course material matched this request. Try a broader topic focus.',
-        }),
+    it('lets a reader retry an indexing failure but not a relevance miss', () => {
+      const missed = describeGenerationError(
+        new APIError(409, { detail: 'No match.' }, 'no_relevant_material'),
+        'Generation failed',
+      );
+      const unindexed = describeGenerationError(
+        new APIError(409, { detail: 'Not searchable yet.' }, 'material_not_indexed'),
         'Generation failed',
       );
 
-      expect(described.message).toBe(
-        'No course material matched this request. Try a broader topic focus.',
+      expect(missed.retryable).toBe(false);
+      expect(unindexed.retryable).toBe(true);
+    });
+
+    it('points someone with nothing processed at their sources', () => {
+      const described = describeGenerationError(
+        new APIError(400, { detail: 'Course has no ready material.' }, 'no_ready_material'),
+        'Generation failed',
       );
-      expect(described.message).not.toContain('Add a source');
+
+      expect(described.title).toBe('Nothing is ready yet');
+      expect(described.remedy).toBe('see_sources');
       expect(described.retryable).toBe(false);
+    });
+
+    it('says a refund happened when the model returned something unreadable', () => {
+      const described = describeGenerationError(
+        new APIError(502, { detail: 'Bad structure.' }, 'invalid_generated_structure'),
+        'Generation failed',
+      );
+
+      expect(described.message).toMatch(/refunded/i);
+      expect(described.retryable).toBe(true);
+    });
+
+    it('says nothing was charged when the provider could not be reached', () => {
+      const described = describeGenerationError(
+        new APIError(503, { detail: 'Unavailable.' }, 'provider_unavailable'),
+        'Generation failed',
+      );
+
+      expect(described.message).toMatch(/nothing was charged/i);
+      expect(described.retryable).toBe(true);
+    });
+
+    it('keeps whatever the server said for a code it has never seen', () => {
+      const described = describeGenerationError(
+        new APIError(400, { detail: 'Course has no ready material.' }, 'brand_new_code'),
+        'Generation failed',
+      );
+
+      expect(described.message).toBe('Course has no ready material.');
+      expect(described.title).toBe('That did not work');
     });
   });
 });

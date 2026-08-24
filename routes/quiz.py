@@ -17,6 +17,7 @@ from schemas.quiz_attempt import (
     CourseProgressResponse,
     QuizAttemptRequest,
     QuizAttemptResponse,
+    QuizHistoryItem,
 )
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
@@ -41,11 +42,13 @@ router = APIRouter(
 
 
 def _provider_for(model: str | None, preferred_model: str | None):
-    effective_model = resolve_effective_model(model, preferred_model)
-    try:
-        return get_text_generation_provider(effective_model=effective_model)
-    except TypeError:
-        return get_text_generation_provider()
+    effective_model = resolve_effective_model(
+        model, preferred_model, required_capability="quiz"
+    )
+    return get_text_generation_provider(
+        effective_model=effective_model,
+        require_json_mode=True,
+    )
 
 
 @router.post(
@@ -87,12 +90,13 @@ def generate_quiz(
         )
 
         applied_settings = QuizGenerationSettings.from_request(
-            request,
+            generation.effective_request,
             retrieval_limit=settings.retrieval_chunk_limit,
             retrieval_min_similarity=settings.retrieval_min_similarity,
         ).model_dump_json()
         applied_context = QuizGenerationContext.from_material(
-            generation.material
+            generation.material,
+            profile_knowledge=generation.profile_knowledge,
         ).model_dump_json()
 
         quiz = QuizService.save_generated_quiz(
@@ -103,6 +107,7 @@ def generate_quiz(
             model_used=generation.model_used,
             generation_settings=applied_settings,
             generation_context=applied_context,
+            commit=False,
         )
 
         view = QuizService.build_quiz_view(quiz)
@@ -141,6 +146,15 @@ def generate_quiz(
             retrieval_narrowed=generation.material.retrieval_narrowed,
             lowest_similarity=generation.material.lowest_similarity,
             highest_similarity=generation.material.highest_similarity,
+            profile_knowledge_used=bool(
+                generation.profile_knowledge
+                and not generation.profile_knowledge.is_empty
+            ),
+            profile_knowledge_items_used=(
+                generation.profile_knowledge.items_used
+                if generation.profile_knowledge
+                else 0
+            ),
         ),
     )
 
@@ -164,8 +178,14 @@ def list_quizzes(
         success=True,
         message="Quizzes retrieved successfully",
         data=[
-            QuizService.build_quiz_summary(quiz, question_count)
-            for quiz, question_count in rows
+            QuizService.build_quiz_summary(
+                quiz,
+                question_count,
+                attempts_count=attempts_count,
+                best_score=best_score,
+                last_score=last_score,
+            )
+            for quiz, question_count, attempts_count, best_score, last_score in rows
         ],
     )
 
@@ -228,6 +248,64 @@ def submit_quiz_attempt(
 
 
 @router.get(
+    "/{course_id}/quizzes/{quiz_id}/attempts",
+    response_model=BaseResponse[list[QuizHistoryItem]],
+    responses={
+        401: {"description": "Authentication required"},
+        404: {"description": "Course or quiz not found"},
+    },
+)
+def list_quiz_attempts(
+    quiz_id: int,
+    course: AuthorizedCourse,
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[list[QuizHistoryItem]]:
+    """List attempts for one quiz in an authorized course."""
+    items = QuizAttemptService.list_quiz_attempts(
+        db,
+        course.id,
+        quiz_id,
+        user_id=course.owner_id,
+    )
+
+    return BaseResponse(
+        success=True,
+        message="Quiz attempts retrieved successfully",
+        data=items,
+    )
+
+
+@router.get(
+    "/{course_id}/quizzes/{quiz_id}/attempts/{attempt_id}",
+    response_model=BaseResponse[QuizAttemptResponse],
+    responses={
+        401: {"description": "Authentication required"},
+        404: {"description": "Course, quiz, or attempt not found"},
+    },
+)
+def get_quiz_attempt(
+    quiz_id: int,
+    attempt_id: int,
+    course: AuthorizedCourse,
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[QuizAttemptResponse]:
+    """Retrieve full per-question review for one stored quiz attempt."""
+    attempt = QuizAttemptService.get_attempt_detail(
+        db,
+        course.id,
+        quiz_id,
+        attempt_id,
+        user_id=course.owner_id,
+    )
+
+    return BaseResponse(
+        success=True,
+        message="Quiz attempt retrieved successfully",
+        data=attempt,
+    )
+
+
+@router.get(
     "/{course_id}/progress",
     response_model=BaseResponse[CourseProgressResponse],
     responses={
@@ -237,13 +315,12 @@ def submit_quiz_attempt(
 )
 def get_course_progress(
     course: AuthorizedCourse,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
     progress = QuizAttemptService.get_course_progress(
         db,
         course.id,
-        user_id=current_user.id,
+        user_id=course.owner_id,
     )
 
     return BaseResponse(

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.app.models import ProfileKnowledge
@@ -29,17 +29,44 @@ class ProfileKnowledgeContext:
         return not self.text
 
 
+EMPTY_PROFILE_KNOWLEDGE = ProfileKnowledgeContext(
+    text="", items_used=0, items_available=0, truncated=False
+)
+
+
 @dataclass(frozen=True)
 class GenerationContext:
     """Assembled AI context enforcing course-primary, profile-supplementary rules."""
 
     course_material: CourseMaterial
     profile_knowledge: ProfileKnowledgeContext
-    combined_text: str
 
     @property
     def is_empty(self) -> bool:
         return self.course_material.is_empty
+
+
+PROFILE_CONTEXT_HEADER = (
+    "==================================================\n"
+    "SUPPLEMENTARY PROFILE CONTEXT\n"
+    "=================================================="
+)
+
+PROFILE_CONTEXT_DIRECTIVE = (
+    "The following background knowledge is student-provided supplementary context. "
+    "Course material is primary and authoritative; profile context must NEVER override "
+    "or contradict course material."
+)
+
+
+def format_profile_context(context: ProfileKnowledgeContext | None) -> str:
+    """Format profile knowledge into a clearly delimited supplementary prompt block.
+
+    Returns an empty string when profile knowledge is absent or empty.
+    """
+    if context is None or context.is_empty:
+        return ""
+    return f"{PROFILE_CONTEXT_HEADER}\n\n{PROFILE_CONTEXT_DIRECTIVE}\n\n{context.text}"
 
 
 class ProfileKnowledgeService:
@@ -146,15 +173,6 @@ class ProfileKnowledgeService:
         return created_entries
 
 
-def count_available_profile_knowledge(db: Session, user_id: int) -> int:
-    statement = (
-        select(func.count())
-        .select_from(ProfileKnowledge)
-        .where(ProfileKnowledge.user_id == user_id)
-    )
-    return db.scalar(statement) or 0
-
-
 def load_profile_knowledge(
     db: Session,
     user_id: int,
@@ -171,20 +189,19 @@ def load_profile_knowledge(
         .order_by(ProfileKnowledge.created_at.asc(), ProfileKnowledge.id.asc())
     )
 
-    items = db.execute(statement).all()
-    total_available = len(items)
+    eligible: list[str] = []
+    for topic, detail in db.execute(statement).all():
+        topic_str = (topic or "").strip()
+        detail_str = (detail or "").strip()
+        if not topic_str and not detail_str:
+            continue
+        eligible.append(f"Topic: {topic_str}\nDetail: {detail_str}")
 
     parts: list[str] = []
     length = 0
     truncated = False
 
-    for topic, detail in items:
-        topic_str = (topic or "").strip()
-        detail_str = (detail or "").strip()
-        if not topic_str and not detail_str:
-            continue
-
-        formatted = f"Topic: {topic_str}\nDetail: {detail_str}"
+    for formatted in eligible:
         addition = len(formatted) + (len(ITEM_SEPARATOR) if parts else 0)
         if length + addition > max_characters:
             truncated = True
@@ -195,9 +212,22 @@ def load_profile_knowledge(
     return ProfileKnowledgeContext(
         text=ITEM_SEPARATOR.join(parts),
         items_used=len(parts),
-        items_available=total_available,
+        items_available=len(eligible),
         truncated=truncated,
     )
+
+
+def load_profile_knowledge_for_generation(
+    db: Session,
+    user_id: int | None,
+    *,
+    opted_in: bool,
+    max_characters: int = DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
+) -> ProfileKnowledgeContext:
+    """Single consent gate: profile knowledge is queried only for an opted-in owner."""
+    if user_id is None or not opted_in:
+        return EMPTY_PROFILE_KNOWLEDGE
+    return load_profile_knowledge(db, user_id, max_characters=max_characters)
 
 
 def assemble_generation_context(
@@ -205,45 +235,40 @@ def assemble_generation_context(
     course_id: int,
     user_id: int | None,
     *,
-    course_max_characters: int,
+    course_material: CourseMaterial | None = None,
+    course_max_characters: int | None = None,
     profile_max_characters: int = DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
+    include_profile_context: bool = False,
+    use_profile_knowledge: bool | None = None,
 ) -> GenerationContext:
     """Assembles course material and profile knowledge under strict priority rules.
 
     Course material is primary and authoritative. Profile knowledge is supplementary
-    context isolated strictly to the requesting user.
+    context isolated strictly to the requesting user and queried only when
+    opted in (defaults to False).
     """
-    course_material = load_course_material(
-        db,
-        course_id,
-        max_characters=course_max_characters,
-    )
+    if use_profile_knowledge is not None:
+        include_profile_context = use_profile_knowledge
 
-    profile_context = (
-        load_profile_knowledge(
+    if course_material is None:
+        if course_max_characters is None:
+            raise ValueError(
+                "Either course_material or course_max_characters must be provided."
+            )
+        course_material = load_course_material(
             db,
-            user_id,
-            max_characters=profile_max_characters,
+            course_id,
+            max_characters=course_max_characters,
         )
-        if user_id is not None
-        else ProfileKnowledgeContext(
-            text="", items_used=0, items_available=0, truncated=False
-        )
-    )
 
-    if course_material.is_empty:
-        combined = ""
-    elif profile_context.is_empty:
-        combined = course_material.text
-    else:
-        combined = (
-            f"{course_material.text}\n\n"
-            f"[Supplementary Student Knowledge Profile]\n"
-            f"{profile_context.text}"
-        )
+    profile_context = load_profile_knowledge_for_generation(
+        db,
+        user_id,
+        opted_in=include_profile_context,
+        max_characters=profile_max_characters,
+    )
 
     return GenerationContext(
         course_material=course_material,
         profile_knowledge=profile_context,
-        combined_text=combined,
     )

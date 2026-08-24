@@ -69,6 +69,7 @@ CONFIGURATION_KEYS = (
     "APP_DEBUG",
     "DEPLOYMENT_MODE",
     "AI_PROVIDER",
+    "AI_MODEL_CATALOG",
     "DATABASE_URL",
     "DATABASE_POOL_SIZE",
     "DATABASE_MAX_OVERFLOW",
@@ -909,6 +910,38 @@ def test_ollama_settings_are_configurable(monkeypatch: pytest.MonkeyPatch) -> No
     assert loaded.ollama_model == "qwen3:8b"
 
 
+def test_ai_model_catalog_supports_multiple_models_per_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AI_MODEL_CATALOG",
+        """
+        {
+          "ollama": [
+            {
+              "model": "llama3.1",
+              "json_mode": true,
+              "context_window": 8192,
+              "vision": false
+            },
+            {
+              "model": "qwen3:8b",
+              "json_mode": true,
+              "context_window": 32768,
+              "vision": false
+            }
+          ]
+        }
+        """,
+    )
+
+    loaded = load_settings()
+
+    assert len(loaded.ai_model_catalog["ollama"]) == 2
+    assert loaded.ai_model_catalog["ollama"][0]["model"] == "llama3.1"
+    assert loaded.ai_model_catalog["ollama"][1]["model"] == "qwen3:8b"
+
+
 def test_ollama_base_url_trailing_slash_is_normalized(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1371,4 +1404,132 @@ def test_image_understanding_max_bytes_is_bounded(
     monkeypatch.setenv("IMAGE_UNDERSTANDING_MAX_BYTES", value)
 
     with pytest.raises(ValueError, match="IMAGE_UNDERSTANDING_MAX_BYTES"):
+        load_settings()
+
+
+def test_ai_model_catalog_rejects_invalid_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_MODEL_CATALOG", "{not-valid-json")
+
+    with pytest.raises(ValueError, match="AI_MODEL_CATALOG must be valid JSON"):
+        load_settings()
+
+
+def test_ai_model_catalog_rejects_unknown_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AI_MODEL_CATALOG",
+        """
+        {
+          "unknown-provider": [
+            {
+              "model": "example-model",
+              "json_mode": true,
+              "context_window": 8192,
+              "vision": false
+            }
+          ]
+        }
+        """,
+    )
+
+    with pytest.raises(ValueError, match="AI_MODEL_CATALOG"):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    "catalog",
+    [
+        '{"ollama": {}}',
+        '{"ollama": []}',
+    ],
+)
+def test_ai_model_catalog_requires_nonempty_model_lists(
+    monkeypatch: pytest.MonkeyPatch,
+    catalog: str,
+) -> None:
+    monkeypatch.setenv("AI_MODEL_CATALOG", catalog)
+
+    with pytest.raises(ValueError, match="AI_MODEL_CATALOG"):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    "catalog",
+    [
+        '{"ollama": [{}]}',
+        '{"ollama": [{"model": "llama3.1"}]}',
+        '{"ollama": [{"model": "llama3.1", "json_mode": true, "context_window": 8192}]}',
+    ],
+)
+def test_ai_model_catalog_requires_capability_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    catalog: str,
+) -> None:
+    monkeypatch.setenv("AI_MODEL_CATALOG", catalog)
+
+    with pytest.raises(ValueError, match="AI_MODEL_CATALOG"):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    "catalog",
+    [
+        '{"ollama": [{"model": "", "json_mode": true, "context_window": 8192, "vision": false}]}',
+        '{"ollama": [{"model": "llama3.1", "json_mode": "yes", "context_window": 8192, "vision": false}]}',
+        '{"ollama": [{"model": "llama3.1", "json_mode": true, "context_window": 0, "vision": false}]}',
+        '{"ollama": [{"model": "llama3.1", "json_mode": true, "context_window": 8192, "vision": "no"}]}',
+        '{"ollama": [{"model": "llama3.1", "json_mode": true, "context_window": true, "vision": false}]}',
+    ],
+)
+def test_ai_model_catalog_validates_model_metadata_types(
+    monkeypatch: pytest.MonkeyPatch,
+    catalog: str,
+) -> None:
+    monkeypatch.setenv("AI_MODEL_CATALOG", catalog)
+
+    with pytest.raises(ValueError, match="AI_MODEL_CATALOG"):
+        load_settings()
+
+
+def test_ai_model_catalog_rejects_duplicate_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AI_MODEL_CATALOG",
+        """
+        {
+          "ollama": [
+            {
+              "model": "llama3.1",
+              "json_mode": true,
+              "context_window": 8192,
+              "vision": false
+            },
+            {
+              "model": "llama3.1",
+              "json_mode": true,
+              "context_window": 32768,
+              "vision": false
+            }
+          ]
+        }
+        """,
+    )
+
+    with pytest.raises(ValueError, match="AI_MODEL_CATALOG"):
+        load_settings()
+
+
+def test_ai_model_catalog_rejects_non_object_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AI_MODEL_CATALOG",
+        '{"ollama": ["llama3.1"]}',
+    )
+
+    with pytest.raises(ValueError, match="AI_MODEL_CATALOG"):
         load_settings()

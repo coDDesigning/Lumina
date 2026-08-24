@@ -70,33 +70,125 @@ export function describeDocumentError(error: unknown, fallback: string): Describ
   return described;
 }
 
-export function describeGenerationError(
-  error: unknown,
-  fallback: string,
-): DescribedError {
-  const described = describeError(error, fallback);
+export const INSUFFICIENT_CREDITS_CODE = 'insufficient_credits';
 
-  if (described.status === 400) {
+/** True when the backend refused this request for want of credits. */
+export function isInsufficientCredits(described: DescribedError): boolean {
+  return described.status === 402 || described.code === INSUFFICIENT_CREDITS_CODE;
+}
+
+export type GenerationRemedy = 'broaden_topic' | 'add_source' | 'see_sources' | 'shorten' | null;
+
+export interface GenerationFailure extends DescribedError {
+  title: string;
+  remedy: GenerationRemedy;
+}
+
+interface FailureCopy {
+  title: string;
+  message: string;
+  retryable: boolean;
+  remedy: GenerationRemedy;
+}
+
+const GENERATION_FAILURES: Record<string, FailureCopy> = {
+  no_ready_material: {
+    title: 'Nothing is ready yet',
+    message:
+      'Your sources are still being read. Once at least one of them is ready, this will work.',
+    retryable: false,
+    remedy: 'see_sources',
+  },
+  no_relevant_material: {
+    title: 'Nothing on that topic',
+    message:
+      'Nothing in your material covers this. Try a broader topic, or upload the material that covers it.',
+    retryable: false,
+    remedy: 'broaden_topic',
+  },
+  material_not_indexed: {
+    title: 'Your material is not searchable yet',
+    message:
+      'Your sources are ready but have not been indexed yet. This one is on our side, not yours.',
+    retryable: true,
+    remedy: null,
+  },
+  retrieval_unavailable: {
+    title: 'Search is unavailable',
+    message: 'Your material could not be searched just now. Nothing was charged.',
+    retryable: true,
+    remedy: null,
+  },
+  provider_unavailable: {
+    title: 'The AI service is down',
+    message: 'The model could not be reached. Nothing was charged.',
+    retryable: true,
+    remedy: null,
+  },
+  provider_timeout: {
+    title: 'That took too long',
+    message:
+      'The model did not answer in time. Asking for something shorter, or narrowing the topic, usually goes through.',
+    retryable: true,
+    remedy: 'shorten',
+  },
+  provider_rate_limited: {
+    title: 'Too many requests right now',
+    message: 'The model is busy. Try again in about a minute — nothing was charged.',
+    retryable: true,
+    remedy: null,
+  },
+  invalid_generated_structure: {
+    title: 'The answer came back unreadable',
+    message:
+      'The model returned something that could not be read, so nothing was saved and your credit was refunded.',
+    retryable: true,
+    remedy: null,
+  },
+  generation_failed: {
+    title: 'That did not work',
+    message: 'The request could not be completed. Nothing was saved.',
+    retryable: true,
+    remedy: null,
+  },
+};
+
+export function describeGenerationError(error: unknown, fallback: string): GenerationFailure {
+  const described = describeError(error, fallback);
+  const known = described.code ? GENERATION_FAILURES[described.code] : undefined;
+
+  if (known) {
     return {
       ...described,
-      message: `${described.message} Add a source and wait until it shows Ready.`,
-      retryable: false,
+      title: known.title,
+      message: known.message,
+      retryable: known.retryable,
+      remedy: known.remedy,
     };
   }
 
-  if (described.status === 409) {
-    // The course has material, it just did not match this request. The backend
-    // message already says what to do, so the "add a source" advice would be wrong.
-    return { ...described, retryable: false };
+  if (isInsufficientCredits(described)) {
+    return { ...described, title: 'Not enough credits', retryable: false, remedy: null };
   }
 
   if (described.status === 404) {
     return {
       ...described,
-      message: 'This course is no longer available.',
+      title: 'This course is gone',
+      message: 'It may have been deleted, or the link may belong to someone else.',
       retryable: false,
+      remedy: null,
     };
   }
 
-  return described;
+  if (described.status === null) {
+    return {
+      ...described,
+      title: 'You are offline',
+      retryable: true,
+      remedy: null,
+    };
+  }
+
+  return { ...described, title: 'That did not work', remedy: null };
 }

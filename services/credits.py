@@ -17,6 +17,8 @@ transaction; a mistake is corrected by recording an opposing one.
 See docs/credits.md for the policy these mechanics implement.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -36,6 +38,16 @@ from utils.exceptions import BadRequestException, NotFoundException
 
 DEFAULT_HISTORY_LIMIT = 50
 MAX_HISTORY_LIMIT = 200
+
+GENERATION_CREDIT_COSTS: dict[str, float] = {
+    "study_guide": 1.0,
+    "quiz": 1.0,
+    "quiz_open_ended": 2.0,
+    "flashcard": 1.0,
+    "ai_tutor": 1.0,
+    "course_qa": 1.0,
+    "prompt_generator": 1.0,
+}
 
 
 @dataclass(frozen=True)
@@ -78,6 +90,13 @@ class CreditActor:
 
 def current_grant_period() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def next_grant_at() -> datetime:
+    now = datetime.now(timezone.utc)
+    if now.month == 12:
+        return datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+    return datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
 
 
 class CreditService:
@@ -205,6 +224,17 @@ class CreditService:
             db.commit()
         except IntegrityError:
             db.rollback()
+
+    @staticmethod
+    @contextmanager
+    def refund_on_error(db: Session, receipt: "ChargeReceipt | None") -> Iterator[None]:
+        """Refund a completed charge if later request work raises."""
+        try:
+            yield
+        except Exception:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            raise
 
     @staticmethod
     def ensure_current_period_grant(db: Session, user_id: int) -> None:

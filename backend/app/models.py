@@ -263,6 +263,9 @@ class Course(Base):
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
     owner_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )

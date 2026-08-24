@@ -20,6 +20,7 @@ class CourseBase(BaseModel):
     exam_date: str | None = Field(default=None, max_length=20)
     syllabus: str | None = None
     topics: str | None = None
+    is_archived: bool = False
 
 
 class CourseCreate(CourseBase):
@@ -50,6 +51,7 @@ class CourseUpdate(BaseModel):
     exam_date: str | None = Field(default=None, max_length=20)
     syllabus: str | None = None
     topics: str | None = None
+    is_archived: bool | None = None
 
     @field_validator(
         "title",
@@ -81,3 +83,4 @@ class CourseResponse(CourseBase):
     created_at: datetime
     updated_at: datetime
     is_deleted: bool = False
+    is_archived: bool = False

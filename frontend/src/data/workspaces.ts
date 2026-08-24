@@ -37,6 +37,7 @@ export type Workspace = {
   progress: WorkspaceProgress | null
   updatedAt: string
   accent: 'blue' | 'violet' | 'rose' | 'amber'
+  isArchived?: boolean
 }
 
 export type WorkspaceDraft = {

@@ -116,6 +116,15 @@ DEFAULT_CREDIT_PERIODIC_GRANT = 50.0
 DEFAULT_CREDIT_MAX_BALANCE = 100.0
 MAX_CREDIT_BALANCE_CEILING = 1_000_000.0
 
+DEFAULT_RATE_LIMIT_LOGIN_MAX_ATTEMPTS = 10
+DEFAULT_RATE_LIMIT_LOGIN_WINDOW_SECONDS = 300
+DEFAULT_RATE_LIMIT_REGISTER_MAX_ATTEMPTS = 5
+DEFAULT_RATE_LIMIT_REGISTER_WINDOW_SECONDS = 3600
+DEFAULT_RATE_LIMIT_GENERATION_MAX_ATTEMPTS = 30
+DEFAULT_RATE_LIMIT_GENERATION_WINDOW_SECONDS = 3600
+DEFAULT_RATE_LIMIT_LOCKOUT_BASE_SECONDS = 30
+DEFAULT_RATE_LIMIT_LOCKOUT_MAX_SECONDS = 1800
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -226,6 +235,16 @@ class Settings:
     credit_initial_grant: float
     credit_periodic_grant: float
     credit_max_balance: float
+
+    # Abuse controls. See docs/rate_limiting.md.
+    rate_limit_login_max_attempts: int
+    rate_limit_login_window_seconds: int
+    rate_limit_register_max_attempts: int
+    rate_limit_register_window_seconds: int
+    rate_limit_generation_max_attempts: int
+    rate_limit_generation_window_seconds: int
+    rate_limit_lockout_base_seconds: int
+    rate_limit_lockout_max_seconds: int
 
     @property
     def is_hosted(self) -> bool:
@@ -765,6 +784,39 @@ def load_settings() -> Settings:
     if credit_max_balance < credit_periodic_grant:
         raise ValueError("CREDIT_MAX_BALANCE must be at least CREDIT_PERIODIC_GRANT.")
 
+    rate_limit_login_max_attempts = _positive_integer_setting(
+        "RATE_LIMIT_LOGIN_MAX_ATTEMPTS", DEFAULT_RATE_LIMIT_LOGIN_MAX_ATTEMPTS
+    )
+    rate_limit_login_window_seconds = _positive_integer_setting(
+        "RATE_LIMIT_LOGIN_WINDOW_SECONDS", DEFAULT_RATE_LIMIT_LOGIN_WINDOW_SECONDS
+    )
+    rate_limit_register_max_attempts = _positive_integer_setting(
+        "RATE_LIMIT_REGISTER_MAX_ATTEMPTS", DEFAULT_RATE_LIMIT_REGISTER_MAX_ATTEMPTS
+    )
+    rate_limit_register_window_seconds = _positive_integer_setting(
+        "RATE_LIMIT_REGISTER_WINDOW_SECONDS",
+        DEFAULT_RATE_LIMIT_REGISTER_WINDOW_SECONDS,
+    )
+    rate_limit_generation_max_attempts = _positive_integer_setting(
+        "RATE_LIMIT_GENERATION_MAX_ATTEMPTS",
+        DEFAULT_RATE_LIMIT_GENERATION_MAX_ATTEMPTS,
+    )
+    rate_limit_generation_window_seconds = _positive_integer_setting(
+        "RATE_LIMIT_GENERATION_WINDOW_SECONDS",
+        DEFAULT_RATE_LIMIT_GENERATION_WINDOW_SECONDS,
+    )
+    rate_limit_lockout_base_seconds = _positive_integer_setting(
+        "RATE_LIMIT_LOCKOUT_BASE_SECONDS", DEFAULT_RATE_LIMIT_LOCKOUT_BASE_SECONDS
+    )
+    rate_limit_lockout_max_seconds = _positive_integer_setting(
+        "RATE_LIMIT_LOCKOUT_MAX_SECONDS", DEFAULT_RATE_LIMIT_LOCKOUT_MAX_SECONDS
+    )
+    if rate_limit_lockout_max_seconds < rate_limit_lockout_base_seconds:
+        raise ValueError(
+            "RATE_LIMIT_LOCKOUT_MAX_SECONDS must be at least "
+            "RATE_LIMIT_LOCKOUT_BASE_SECONDS."
+        )
+
     return Settings(
         app_env=app_env,
         app_debug=app_debug,
@@ -851,6 +903,14 @@ def load_settings() -> Settings:
         credit_initial_grant=credit_initial_grant,
         credit_periodic_grant=credit_periodic_grant,
         credit_max_balance=credit_max_balance,
+        rate_limit_login_max_attempts=rate_limit_login_max_attempts,
+        rate_limit_login_window_seconds=rate_limit_login_window_seconds,
+        rate_limit_register_max_attempts=rate_limit_register_max_attempts,
+        rate_limit_register_window_seconds=rate_limit_register_window_seconds,
+        rate_limit_generation_max_attempts=rate_limit_generation_max_attempts,
+        rate_limit_generation_window_seconds=rate_limit_generation_window_seconds,
+        rate_limit_lockout_base_seconds=rate_limit_lockout_base_seconds,
+        rate_limit_lockout_max_seconds=rate_limit_lockout_max_seconds,
     )
 
 

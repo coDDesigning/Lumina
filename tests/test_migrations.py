@@ -40,7 +40,8 @@ REMOVE_NOTIFICATION_SETTINGS_REVISION = "e7c1d4a8b203"
 COURSE_ARCHIVE_STATE_REVISION = "f8b4c2d1e7a3"
 PROCESSING_JOB_CORRELATION_ID_REVISION = "3e8b1a4c7f20"
 AI_USAGE_COST_REVISION = "c2a6e9f4d817"
-HEAD_REVISION = AI_USAGE_COST_REVISION
+RATE_LIMIT_BUCKETS_REVISION = "784a1eb8fba0"
+HEAD_REVISION = RATE_LIMIT_BUCKETS_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -68,6 +69,7 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        RATE_LIMIT_BUCKETS_REVISION: AI_USAGE_COST_REVISION,
         AI_USAGE_COST_REVISION: PROCESSING_JOB_CORRELATION_ID_REVISION,
         PROCESSING_JOB_CORRELATION_ID_REVISION: COURSE_ARCHIVE_STATE_REVISION,
         COURSE_ARCHIVE_STATE_REVISION: REMOVE_NOTIFICATION_SETTINGS_REVISION,
@@ -2157,6 +2159,10 @@ def test_ai_usage_cost_downgrade_rejects_long_model_identifiers(tmp_path: Path) 
     assert completed.returncode != 0
     assert "model identifiers longer than 100 characters" in completed.stderr
     with sqlite3.connect(database_path) as connection:
+        # The rate-limit-buckets downgrade above this one is a plain table
+        # drop with no guard, so it completes before the walk reaches (and
+        # is rejected by) the guarded ai-usage-cost downgrade -- the DB lands
+        # one revision below head, not back at head itself.
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
-        ).fetchone() == (HEAD_REVISION,)
+        ).fetchone() == (AI_USAGE_COST_REVISION,)

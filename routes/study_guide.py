@@ -24,6 +24,7 @@ from services.text_generation import (
 from utils.ai_errors import ai_generation_http_exception
 from utils.authorization import OwnedCourse
 from utils.deps import get_current_user
+from utils.rate_limit import rate_limit_generation
 
 router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
 
@@ -31,6 +32,7 @@ router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
 @router.post(
     "/{course_id}/study-guide",
     response_model=BaseResponse[StudyGuideGenerationResult],
+    dependencies=[Depends(rate_limit_generation("study_guide"))],
     responses={
         400: {"description": "No processed course material is available"},
         401: {"description": "Authentication required"},
@@ -43,7 +45,7 @@ router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
             )
         },
         422: {"description": "Invalid study guide request"},
-        429: {"description": "AI provider rate limited"},
+        429: {"description": "AI provider or per-user generation rate limited"},
         503: {"description": "AI provider or course search unreachable"},
         504: {"description": "AI provider timed out"},
     },

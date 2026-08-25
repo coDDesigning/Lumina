@@ -25,7 +25,12 @@ const SAMPLE_WORKSPACE: Workspace = {
   examDate: '2026-12-01',
   topics: ['Matrices', 'Eigenvalues'],
   syllabus: 'Vectors and linear transformations.',
-  progress: { averageScore: 50, lastActivity: '2026-08-22T10:00:00Z', status: 'In progress' },
+  progress: {
+    averageScore: 50,
+    timeSpentSeconds: null,
+    lastActivity: '2026-08-22T10:00:00Z',
+    status: 'practiced',
+  },
   updatedAt: 'Updated today',
   accent: 'blue',
 };

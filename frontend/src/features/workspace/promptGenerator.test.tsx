@@ -82,6 +82,7 @@ beforeEach(() => {
   mockList.mockResolvedValue([createMockCourse({ id: 1, title: 'Operating Systems' })]);
   mockListDocuments.mockResolvedValue([]);
   mockProgress.mockResolvedValue({
+    status: 'no_documents',
     attempts_count: 0,
     average_score: null,
     topic_mastery: [],

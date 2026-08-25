@@ -1,9 +1,10 @@
-import type { CourseProgressSummary, EducationLevel } from '../api/types'
+import type { CourseProgressSummary, CourseStatus, EducationLevel } from '../api/types'
 
-export type WorkspaceProgressStatus = 'Not started' | 'In progress' | 'Mastered'
+export type WorkspaceProgressStatus = CourseStatus
 
 export type WorkspaceProgress = {
   averageScore: number | null
+  timeSpentSeconds: number | null
   lastActivity: string | null
   status: WorkspaceProgressStatus
 }
@@ -11,17 +12,13 @@ export type WorkspaceProgress = {
 export function toWorkspaceProgress(
   summary: CourseProgressSummary,
 ): WorkspaceProgress {
-  const averageScore =
-    summary.average_score === null ? null : Math.round(summary.average_score * 100)
-
-  let status: WorkspaceProgressStatus = 'In progress'
-  if (summary.attempts_count === 0 && summary.last_activity === null) {
-    status = 'Not started'
-  } else if (averageScore !== null && averageScore >= 80) {
-    status = 'Mastered'
+  return {
+    averageScore:
+      summary.average_score === null ? null : Math.round(summary.average_score * 100),
+    timeSpentSeconds: summary.total_time_spent_seconds ?? null,
+    lastActivity: summary.last_activity,
+    status: summary.status as WorkspaceProgressStatus,
   }
-
-  return { averageScore, lastActivity: summary.last_activity, status }
 }
 
 export type Workspace = {

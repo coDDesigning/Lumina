@@ -1,5 +1,5 @@
 import { render, renderHook, screen, waitFor, act } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import { StrictMode, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CreditProvider, useCredits } from './CreditContext';
 import CreditBalance from '../components/credits/CreditBalance';
@@ -7,6 +7,8 @@ import CreditExhaustedNotice from '../components/credits/CreditExhaustedNotice';
 import { userAPI } from '../api/user';
 import { APIError } from '../api/client';
 import type { CreditStatus } from '../api/types';
+
+const authState = vi.hoisted(() => ({ userId: 1 as number | null }));
 
 vi.mock('../api/user', () => ({
   userAPI: {
@@ -17,7 +19,10 @@ vi.mock('../api/user', () => ({
 }));
 
 vi.mock('./AuthContext', () => ({
-  useAuth: () => ({ isAuthenticated: true }),
+  useAuth: () => ({
+    isAuthenticated: authState.userId !== null,
+    user: authState.userId === null ? null : { id: authState.userId },
+  }),
 }));
 
 const mockGetCredits = vi.mocked(userAPI.getCredits);
@@ -47,6 +52,7 @@ const wrapper = ({ children }: { children: ReactNode }) => (
 );
 
 beforeEach(() => {
+  authState.userId = 1;
   mockGetCredits.mockReset();
 });
 
@@ -107,6 +113,99 @@ describe('CreditProvider', () => {
 
     await waitFor(() => expect(result.current.status?.credits).toBe(20));
     expect(result.current.canAfford('study_guide')).toBe(true);
+  });
+
+  it('queues a trailing refresh when another refresh is already in flight', async () => {
+    let resolveFirst: (value: CreditStatus) => void = () => {};
+    mockGetCredits
+      .mockReturnValueOnce(
+        new Promise<CreditStatus>((resolve) => {
+          resolveFirst = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(status({ credits: 8 }));
+    const { result } = renderHook(() => useCredits(), { wrapper });
+    await waitFor(() => expect(mockGetCredits).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      void result.current.refresh();
+    });
+    expect(mockGetCredits).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirst(status({ credits: 12 }));
+    });
+
+    await waitFor(() => expect(mockGetCredits).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.status?.credits).toBe(8));
+  });
+
+  it('does not duplicate the initial balance request in Strict Mode', async () => {
+    let resolve: (value: CreditStatus) => void = () => {};
+    mockGetCredits.mockReturnValue(
+      new Promise<CreditStatus>((done) => {
+        resolve = done;
+      }),
+    );
+    const strictWrapper = ({ children }: { children: ReactNode }) => (
+      <StrictMode>
+        <CreditProvider>{children}</CreditProvider>
+      </StrictMode>
+    );
+    const { result } = renderHook(() => useCredits(), { wrapper: strictWrapper });
+
+    await waitFor(() => expect(mockGetCredits).toHaveBeenCalledTimes(1));
+    await act(async () => resolve(status({ credits: 9 })));
+    await waitFor(() => expect(result.current.status?.credits).toBe(9));
+    expect(mockGetCredits).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not apply an in-flight balance after the authenticated account changes', async () => {
+    let resolveFirst: (value: CreditStatus) => void = () => {};
+    mockGetCredits
+      .mockReturnValueOnce(
+        new Promise<CreditStatus>((resolve) => {
+          resolveFirst = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(status({ credits: 7 }));
+    const { result, rerender } = renderHook(() => useCredits(), { wrapper });
+    await waitFor(() => expect(mockGetCredits).toHaveBeenCalledTimes(1));
+
+    authState.userId = 2;
+    rerender();
+    await waitFor(() => expect(mockGetCredits).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.status?.credits).toBe(7));
+
+    await act(async () => {
+      resolveFirst(status({ credits: 99 }));
+    });
+
+    expect(result.current.status?.credits).toBe(7);
+  });
+
+  it('clears a settled balance while a different account is loading', async () => {
+    let resolveSecond: (value: CreditStatus) => void = () => {};
+    mockGetCredits
+      .mockResolvedValueOnce(status({ credits: 12 }))
+      .mockReturnValueOnce(
+        new Promise<CreditStatus>((resolve) => {
+          resolveSecond = resolve;
+        }),
+      );
+    const { result, rerender } = renderHook(() => useCredits(), { wrapper });
+    await waitFor(() => expect(result.current.status?.credits).toBe(12));
+
+    authState.userId = 2;
+    rerender();
+    expect(result.current.status).toBeNull();
+    await waitFor(() => expect(mockGetCredits).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      resolveSecond(status({ credits: 7 }));
+    });
+
+    await waitFor(() => expect(result.current.status?.credits).toBe(7));
   });
 });
 

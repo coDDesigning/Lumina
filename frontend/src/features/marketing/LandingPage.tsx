@@ -13,7 +13,7 @@ const PIPELINE = [
   {
     label: 'First',
     lead: 'You upload.',
-    body: 'PDF, text or Markdown, up to 50 MB. Drop in ten files at once if you like.',
+    body: 'PDF, text or Markdown. Drop in ten files at once if you like.',
   },
   {
     label: 'Then',
@@ -35,7 +35,7 @@ const PIPELINE = [
 const CAPABILITIES = [
   {
     title: 'Reading your files',
-    body: 'PDF, TXT and Markdown up to 50 MB. Scanned pages go through OCR automatically. Duplicates are caught by content, not filename.',
+    body: 'PDF, TXT and Markdown. Scanned pages go through OCR automatically. Duplicates are caught by content, not filename.',
   },
   {
     title: 'Study guides',

@@ -56,6 +56,29 @@ export interface CreditMutation {
   transaction: CreditTransaction;
 }
 
+export interface AiCostTotals {
+  successful_generations: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  estimated_cost_usd: number;
+  unpriced_generations: number;
+}
+
+export interface AiCostDailyRow extends AiCostTotals {
+  date: string;
+  provider: string;
+  model: string;
+  pricing_version: string | null;
+}
+
+export interface AiCostReport {
+  timezone: 'UTC';
+  start_date: string;
+  end_date: string;
+  totals: AiCostTotals;
+  daily: AiCostDailyRow[];
+}
+
 /** The credit-charging features, keyed as the backend names them. */
 export type CreditSource =
   | 'study_guide'

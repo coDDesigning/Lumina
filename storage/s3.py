@@ -17,6 +17,8 @@ from storage.base import (
 )
 
 _BUCKET_PATTERN = re.compile(r"(?!.*\.\.)[a-z0-9][a-z0-9.-]{2,62}")
+_MAX_PROBE_VERSIONS = 10
+_NOT_FOUND_CODES = {"404", "NoSuchKey", "NotFound"}
 
 
 def _error_code(exc: ClientError) -> str:
@@ -73,12 +75,17 @@ class S3Storage(Storage):
     def check_ready(self) -> None:
         """Verify that the bucket supports durable writes."""
         probe_key = f"_readiness/{self._namespace}/{uuid4().hex}.probe"
+        probe_attempted = False
+        probe_version_id = None
+        probe_failed = False
         try:
-            self._client.put_object(
+            probe_attempted = True
+            put_response = self._client.put_object(
                 Bucket=self._bucket,
                 Key=probe_key,
                 Body=READINESS_PAYLOAD,
             )
+            probe_version_id = put_response.get("VersionId")
             response = self._client.get_object(Bucket=self._bucket, Key=probe_key)
             try:
                 content = response["Body"].read()
@@ -86,11 +93,50 @@ class S3Storage(Storage):
                 response["Body"].close()
             if content != READINESS_PAYLOAD:
                 raise StorageError("Document storage is not ready.")
-            self._client.delete_object(Bucket=self._bucket, Key=probe_key)
         except StorageError:
+            probe_failed = True
             raise
         except Exception as exc:
+            probe_failed = True
             raise StorageError("Document storage is not ready.") from exc
+        finally:
+            if probe_attempted:
+                try:
+                    self._delete_readiness_probe(probe_key, probe_version_id)
+                except Exception as exc:
+                    if not probe_failed:
+                        raise StorageError("Document storage is not ready.") from exc
+
+    def _delete_readiness_probe(self, probe_key: str, version_id: str | None) -> None:
+        for _ in range(_MAX_PROBE_VERSIONS):
+            if version_id is None:
+                try:
+                    head_response = self._client.head_object(
+                        Bucket=self._bucket, Key=probe_key
+                    )
+                except ClientError as exc:
+                    if _error_code(exc) in _NOT_FOUND_CODES:
+                        return
+                    raise
+                version_id = head_response.get("VersionId")
+
+            delete_args = {"Bucket": self._bucket, "Key": probe_key}
+            if version_id is not None:
+                delete_args["VersionId"] = version_id
+            self._client.delete_object(**delete_args)
+            if version_id is None:
+                return
+            version_id = None
+
+        try:
+            self._client.head_object(Bucket=self._bucket, Key=probe_key)
+        except ClientError as exc:
+            if _error_code(exc) in _NOT_FOUND_CODES:
+                return
+            raise
+        raise StorageError(
+            "Document storage readiness cleanup exceeded its version limit."
+        )
 
     def generate_key(
         self,

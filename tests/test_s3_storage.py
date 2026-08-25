@@ -22,7 +22,13 @@ class FakeS3Client:
         self.objects: dict[tuple[str, str], bytes] = {}
         self.put_object_calls: list[tuple[str, str]] = []
         self.delete_object_calls: list[tuple[str, str]] = []
+        self.delete_object_versions: list[str | None] = []
         self.fail_put_object_with: str | None = None
+        self.fail_put_object_after_write_with: str | None = None
+        self.fail_get_object_with: str | None = None
+        self.return_wrong_content = False
+        self.version_id: str | None = None
+        self.version_ids: list[str] = []
 
     def put_object(self, *, Bucket: str, Key: str, Body: object) -> dict:
         self.put_object_calls.append((Bucket, Key))
@@ -36,22 +42,35 @@ class FakeS3Client:
         if not isinstance(content, bytes):
             raise TypeError("Body must be bytes or a binary stream")
         self.objects[(Bucket, Key)] = content
-        return {}
+        if self.fail_put_object_after_write_with is not None:
+            raise _client_error(self.fail_put_object_after_write_with)
+        version_id = self.version_ids[-1] if self.version_ids else self.version_id
+        return {"VersionId": version_id} if version_id is not None else {}
 
     def get_object(self, *, Bucket: str, Key: str) -> dict:
+        if self.fail_get_object_with is not None:
+            raise _client_error(self.fail_get_object_with)
         try:
             content = self.objects[(Bucket, Key)]
         except KeyError as exc:
             raise _client_error("NoSuchKey") from exc
-        return {"Body": BytesIO(content)}
+        return {"Body": BytesIO(b"wrong" if self.return_wrong_content else content)}
 
     def head_object(self, *, Bucket: str, Key: str) -> dict:
         if (Bucket, Key) not in self.objects:
             raise _client_error("404")
-        return {}
+        version_id = self.version_ids[-1] if self.version_ids else self.version_id
+        return {"VersionId": version_id} if version_id is not None else {}
 
-    def delete_object(self, *, Bucket: str, Key: str) -> dict:
+    def delete_object(
+        self, *, Bucket: str, Key: str, VersionId: str | None = None
+    ) -> dict:
         self.delete_object_calls.append((Bucket, Key))
+        self.delete_object_versions.append(VersionId)
+        if self.version_ids and VersionId in self.version_ids:
+            self.version_ids.remove(VersionId)
+            if self.version_ids:
+                return {}
         self.objects.pop((Bucket, Key), None)
         return {}
 
@@ -147,6 +166,65 @@ def test_check_ready_failure_is_wrapped() -> None:
 
     with pytest.raises(StorageError, match="not ready"):
         storage.check_ready()
+
+
+def test_check_ready_cleans_up_after_an_ambiguous_write_failure() -> None:
+    client = FakeS3Client()
+    client.version_id = "ambiguous-version"
+    client.fail_put_object_after_write_with = "RequestTimeout"
+    storage = _s3_storage(client)
+
+    with pytest.raises(StorageError, match="not ready"):
+        storage.check_ready()
+
+    assert len(client.delete_object_calls) == 1
+    assert client.delete_object_versions == ["ambiguous-version"]
+    assert not client.objects
+
+
+def test_check_ready_deletes_the_written_object_version() -> None:
+    client = FakeS3Client()
+    client.version_id = "probe-version"
+    storage = _s3_storage(client)
+
+    storage.check_ready()
+
+    assert client.delete_object_versions == ["probe-version"]
+
+
+def test_check_ready_deletes_every_version_committed_by_retries() -> None:
+    client = FakeS3Client()
+    client.version_ids = ["first-attempt", "retry-attempt"]
+    storage = _s3_storage(client)
+
+    storage.check_ready()
+
+    assert client.delete_object_versions == ["retry-attempt", "first-attempt"]
+    assert not client.objects
+
+
+def test_check_ready_deletes_probe_when_read_fails() -> None:
+    client = FakeS3Client()
+    client.fail_get_object_with = "ServiceUnavailable"
+    storage = _s3_storage(client)
+
+    with pytest.raises(StorageError, match="not ready"):
+        storage.check_ready()
+
+    assert len(client.delete_object_calls) == 1
+    assert not client.objects
+
+
+def test_check_ready_deletes_probe_when_content_mismatches() -> None:
+    client = FakeS3Client()
+    client.return_wrong_content = True
+    storage = _s3_storage(client)
+
+    with pytest.raises(StorageError, match="not ready"):
+        storage.check_ready()
+
+    assert len(client.delete_object_calls) == 1
+    assert not client.objects
 
 
 def test_save_failure_is_wrapped_and_source_reset() -> None:

@@ -123,6 +123,7 @@ module "ecs" {
   runtime_database_url_secret_arn   = module.rds_proxy.runtime_database_url_secret_arn
   migration_database_url_secret_arn = module.rds.database_url_secret_arn
   bootstrap_admin_email             = var.bootstrap_admin_email
+  ai_model_cost_rates               = var.ai_model_cost_rates
   cors_allowed_origins              = var.cors_allowed_origins
   api_cpu                           = var.api_cpu
   api_memory                        = var.api_memory

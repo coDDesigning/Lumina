@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -75,6 +77,115 @@ def test_log_success_persists_structured_event(
         assert persisted.success is True
         assert persisted.error_category is None
         assert persisted.created_at is not None
+
+
+def test_log_success_persists_the_versioned_cost_estimate(
+    monkeypatch,
+    session_factory: sessionmaker[Session],
+) -> None:
+    monkeypatch.setattr(
+        ai_usage_logger,
+        "settings",
+        SimpleNamespace(
+            ai_pricing_version="2026-08-24",
+            ai_model_cost_rates={
+                "gemini:gemini-2.5-flash": {
+                    "prompt_usd_per_million_tokens": 1.0,
+                    "completion_usd_per_million_tokens": 2.0,
+                }
+            },
+        ),
+    )
+    with session_factory() as session:
+        user, _ = _create_user_and_course(session)
+        log = AiUsageLogger.log_success(
+            session,
+            user_id=user.id,
+            generation_type=GenerationType.STUDY_GUIDE,
+            metadata=GenerationMetadata(
+                provider="gemini",
+                model="gemini-2.5-flash",
+                prompt_tokens=100_000,
+                completion_tokens=200_000,
+            ),
+        )
+        session.commit()
+
+        assert log is not None
+        assert log.estimated_cost_usd == 0.5
+        assert log.pricing_version == "2026-08-24"
+
+
+def test_nonfinite_calculated_cost_is_left_unpriced(
+    monkeypatch,
+    session_factory: sessionmaker[Session],
+) -> None:
+    monkeypatch.setattr(
+        ai_usage_logger,
+        "settings",
+        SimpleNamespace(
+            ai_pricing_version="overflow-test",
+            ai_model_cost_rates={
+                "gemini:model": {
+                    "prompt_usd_per_million_tokens": 1e308,
+                    "completion_usd_per_million_tokens": 1e308,
+                }
+            },
+        ),
+    )
+    with session_factory() as session:
+        user, _ = _create_user_and_course(session)
+        log = AiUsageLogger.log_success(
+            session,
+            user_id=user.id,
+            generation_type=GenerationType.QUIZ,
+            metadata=GenerationMetadata(
+                provider="gemini",
+                model="model",
+                prompt_tokens=100,
+                completion_tokens=100,
+            ),
+        )
+
+        assert log is not None
+        assert log.estimated_cost_usd is None
+        assert log.pricing_version is None
+
+
+def test_failed_event_with_token_counts_is_left_unpriced(
+    monkeypatch,
+    session_factory: sessionmaker[Session],
+) -> None:
+    monkeypatch.setattr(
+        ai_usage_logger,
+        "settings",
+        SimpleNamespace(
+            ai_pricing_version="2026-08-24",
+            ai_model_cost_rates={
+                "gemini:model": {
+                    "prompt_usd_per_million_tokens": 1.0,
+                    "completion_usd_per_million_tokens": 2.0,
+                }
+            },
+        ),
+    )
+    with session_factory() as session:
+        user, _ = _create_user_and_course(session)
+        log = AiUsageLogger.log_usage(
+            session,
+            user_id=user.id,
+            generation_type=GenerationType.QUIZ,
+            provider="gemini",
+            model="model",
+            prompt_tokens=100_000,
+            completion_tokens=200_000,
+            success=False,
+            error_category=ErrorCategory.PROVIDER_ERROR,
+        )
+
+        assert log is not None
+        assert log.estimated_cost_usd is None
+        assert log.pricing_version is None
 
 
 def test_log_failure_persists_categorical_error(

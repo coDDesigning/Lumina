@@ -23,6 +23,7 @@ locals {
     { name = "EMBEDDING_PROVIDER", value = "gemini" },
     { name = "GEMINI_EMBEDDING_MODEL", value = "text-embedding-004" },
     { name = "AI_PROVIDER", value = "gemini" },
+    { name = "AI_MODEL_COST_RATES", value = var.ai_model_cost_rates },
     { name = "EMBEDDING_BATCH_SIZE", value = "32" },
     { name = "EMBEDDING_TIMEOUT_SECONDS", value = "10" },
     { name = "MAX_UPLOAD_SIZE_BYTES", value = "52428800" },

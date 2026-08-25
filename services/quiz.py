@@ -64,7 +64,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import GENERATION_CREDIT_COSTS, CreditService
+from services.credits import ChargeReceipt, CreditService, GENERATION_CREDIT_COSTS
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -193,6 +193,7 @@ class QuizGeneration:
     model_used: str
     effective_request: QuizRequest
     profile_knowledge: ProfileKnowledgeContext | None = None
+    charge_receipt: ChargeReceipt | None = None
 
 
 def parse_correct_answer(row: QuizQuestion) -> QuizCorrectAnswer | None:
@@ -368,6 +369,10 @@ class QuizService:
                     error_category=category,
                     **extra,
                 )
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
 
         if count_available_chunks(db, course_id) == 0:
             log_failure(ErrorCategory.NO_READY_MATERIAL)
@@ -375,97 +380,100 @@ class QuizService:
 
         query = cls.build_retrieval_query(course, effective_request)
 
+        receipt = None
+        if resolved_user_id:
+            receipt = CreditService.charge(
+                db,
+                resolved_user_id,
+                cls.credit_cost(effective_request),
+                source_type="quiz",
+            )
+            if receipt is None:
+                log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
+                raise InsufficientCreditsError("Insufficient credits.")
+
         try:
             material = cls.get_course_material(db, course_id, query=query)
-        except MaterialNotIndexedError:
-            log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
-            raise
-        except NoRelevantMaterialError:
-            log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
-            raise
-        except MaterialRetrievalError:
-            log_failure(ErrorCategory.RETRIEVAL_ERROR)
-            raise
-
-        with acquire_generation_locks(material.document_ids):
-            generation_ctx = assemble_generation_context(
-                db,
-                course_id=course_id,
-                user_id=resolved_user_id,
-                course_material=material,
-                include_profile_context=effective_request.use_profile_knowledge,
-            )
-
-            prompt_context = resolve_prompt_context(
-                db, course=course, user_id=resolved_user_id
-            )
-            prompt = cls.build_prompt(
-                generation_ctx.course_material.text,
-                effective_request,
-                profile_knowledge=generation_ctx.profile_knowledge,
-                context=prompt_context,
-            )
-            metadata = None
-
-            receipt = None
-            if resolved_user_id:
-                receipt = CreditService.charge(
+            with acquire_generation_locks(material.document_ids):
+                generation_ctx = assemble_generation_context(
                     db,
-                    resolved_user_id,
-                    cls.credit_cost(effective_request),
-                    source_type="quiz",
+                    course_id=course_id,
+                    user_id=resolved_user_id,
+                    course_material=material,
+                    include_profile_context=effective_request.use_profile_knowledge,
                 )
-                if receipt is None:
-                    log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
-                    raise InsufficientCreditsError("Insufficient credits.")
 
-            try:
+                prompt_context = resolve_prompt_context(
+                    db, course=course, user_id=resolved_user_id
+                )
+                prompt = cls.build_prompt(
+                    generation_ctx.course_material.text,
+                    effective_request,
+                    profile_knowledge=generation_ctx.profile_knowledge,
+                    context=prompt_context,
+                )
+                metadata = None
+
                 if hasattr(provider, "generate_json_with_metadata"):
                     result, metadata = provider.generate_json_with_metadata(prompt)
                 else:
                     result = provider.generate_json(prompt)
-            except TextGenerationError as exc:
-                if resolved_user_id:
-                    CreditService.refund(db, receipt)
-                log_failure(
-                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
-                )
-                raise QuizGenerationError("Text generation provider failed.") from exc
-            except Exception:
-                if resolved_user_id:
-                    CreditService.refund(db, receipt)
-                raise
+        except MaterialNotIndexedError:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
+            raise
+        except NoRelevantMaterialError:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
+            raise
+        except MaterialRetrievalError:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.RETRIEVAL_ERROR)
+            raise
+        except TextGenerationError as exc:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
+            raise QuizGenerationError("Text generation provider failed.") from exc
+        except Exception:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            raise
 
-            try:
-                validated = QuizGenerationResponse.model_validate(result)
-                cls.assert_matches_request(validated, effective_request)
-            except (ValidationError, ValueError) as exc:
-                if resolved_user_id:
-                    CreditService.refund(db, receipt)
-                log_failure(
-                    ErrorCategory.INVALID_STRUCTURE,
-                    latency_ms=metadata.latency_ms if metadata else None,
-                )
-                raise InvalidQuizStructureError(
-                    "Generated quiz has an invalid structure."
-                ) from exc
-
-            if resolved_user_id:
-                AiUsageLogger.log_success(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.QUIZ,
-                    metadata=metadata,
-                )
-
-            return QuizGeneration(
-                quiz=validated,
-                material=material,
-                model_used=model_identifier(metadata),
-                effective_request=effective_request,
-                profile_knowledge=generation_ctx.profile_knowledge,
+        try:
+            validated = QuizGenerationResponse.model_validate(result)
+            cls.assert_matches_request(validated, effective_request)
+        except (ValidationError, ValueError) as exc:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            log_failure(
+                ErrorCategory.INVALID_STRUCTURE,
+                latency_ms=metadata.latency_ms if metadata else None,
             )
+            raise InvalidQuizStructureError(
+                "Generated quiz has an invalid structure."
+            ) from exc
+
+        if resolved_user_id:
+            AiUsageLogger.log_success(
+                db,
+                user_id=resolved_user_id,
+                course_id=course_id,
+                generation_type=GenerationType.QUIZ,
+                metadata=metadata,
+            )
+
+        return QuizGeneration(
+            quiz=validated,
+            material=material,
+            model_used=model_identifier(metadata),
+            effective_request=effective_request,
+            profile_knowledge=generation_ctx.profile_knowledge,
+            charge_receipt=receipt,
+        )
 
     @staticmethod
     def assert_matches_request(
@@ -503,6 +511,7 @@ class QuizService:
         model_used: str | None = None,
         generation_settings: str | None = None,
         generation_context: str | None = None,
+        commit: bool = True,
     ) -> Quiz:
         """Write the quiz and all of its questions in one transaction.
 
@@ -540,7 +549,8 @@ class QuizService:
                 )
 
             db.flush()
-            db.commit()
+            if commit:
+                db.commit()
         except Exception:
             db.rollback()
             raise

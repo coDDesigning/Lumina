@@ -40,6 +40,10 @@ those parameters; tasks retry until they exist.
 - A private `terraform.tfvars` (never committed) holding
   `bootstrap_admin_email` and any non-default variables.
 
+To persist operational provider-cost estimates, set `ai_model_cost_rates` to
+the same versioned JSON contract documented in `docs/ai_providers.md`. Leaving
+it empty keeps generations explicitly unpriced.
+
 ## Apply
 
 ```bash

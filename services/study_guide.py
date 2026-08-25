@@ -41,7 +41,7 @@ from services.text_generation import (
     TextGenerationProvider,
     model_identifier,
 )
-from services.credits import GENERATION_CREDIT_COSTS, CreditService
+from services.credits import ChargeReceipt, CreditService, GENERATION_CREDIT_COSTS
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
     CourseMaterialUnavailableError,
@@ -138,6 +138,7 @@ class StudyGuideGeneration:
     model_used: str
     effective_request: StudyGuideRequest
     profile_knowledge: ProfileKnowledgeContext | None = None
+    charge_receipt: ChargeReceipt | None = None
 
 
 class StudyGuideService:
@@ -293,6 +294,10 @@ class StudyGuideService:
                     error_category=category,
                     **extra,
                 )
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
 
         if count_available_chunks(db, course_id) == 0:
             log_failure(ErrorCategory.NO_READY_MATERIAL)
@@ -300,19 +305,44 @@ class StudyGuideService:
 
         query = cls.build_retrieval_query(course, effective_request)
 
+        receipt = None
+        if resolved_user_id:
+            receipt = CreditService.charge(
+                db,
+                resolved_user_id,
+                GENERATION_CREDIT_COSTS["study_guide"],
+                source_type="study_guide",
+            )
+            if receipt is None:
+                log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
+                raise InsufficientCreditsError("Insufficient credits.")
+
         try:
             material = cls.get_course_material(db, course_id, query=query)
         except MaterialNotIndexedError:
+            db.rollback()
+            CreditService.refund(db, receipt)
             log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
             raise
         except NoRelevantMaterialError:
+            db.rollback()
+            CreditService.refund(db, receipt)
             log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
             raise
         except MaterialRetrievalError:
+            db.rollback()
+            CreditService.refund(db, receipt)
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
+        except Exception:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            raise
 
-        with acquire_generation_locks(material.document_ids):
+        with (
+            CreditService.refund_on_error(db, receipt),
+            acquire_generation_locks(material.document_ids),
+        ):
             generation_ctx = assemble_generation_context(
                 db,
                 course_id=course_id,
@@ -331,24 +361,6 @@ class StudyGuideService:
                 context=prompt_context,
             )
             metadata = None
-
-            receipt = None
-            if resolved_user_id:
-                receipt = CreditService.charge(
-                    db,
-                    resolved_user_id,
-                    GENERATION_CREDIT_COSTS["study_guide"],
-                    source_type="study_guide",
-                )
-                if receipt is None:
-                    AiUsageLogger.log_failure(
-                        db,
-                        user_id=resolved_user_id,
-                        course_id=course_id,
-                        generation_type=GenerationType.STUDY_GUIDE,
-                        error_category=ErrorCategory.INSUFFICIENT_CREDITS,
-                    )
-                    raise InsufficientCreditsError("Insufficient credits.")
 
             try:
                 if hasattr(provider, "generate_json_with_metadata"):
@@ -397,6 +409,7 @@ class StudyGuideService:
                 model_used=model_identifier(metadata),
                 effective_request=effective_request,
                 profile_knowledge=generation_ctx.profile_knowledge,
+                charge_receipt=receipt,
             )
 
     @staticmethod

@@ -23,7 +23,7 @@ vi.mock('@/api/settings', () => ({
 vi.mock('@/api/user', () => ({ userAPI: { getCredits: vi.fn() } }));
 
 vi.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ isAuthenticated: true }),
+  useAuth: () => ({ isAuthenticated: true, user: { id: 1 } }),
 }));
 
 vi.mock('@/hooks/useCourseDocuments', () => ({

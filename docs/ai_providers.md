@@ -506,9 +506,33 @@ persisted.
 
 `services/ai_usage_logger.py` records provider, model, token counts, latency,
 success, and a stable error category. It never persists prompts, course
-material, or generated text. Provider and model default to whatever
-`AI_PROVIDER` selects, so failure telemetry attributes errors to the provider
-that actually ran.
+material, or generated text. Successful resilient-provider calls carry the
+provider and model that actually ran. Prompt generation also supplies its
+resolved model identity when a failed call has no provider metadata.
+
+`AI_MODEL_COST_RATES` optionally adds an immutable estimated USD cost to a
+token-bearing event. The value is a JSON object with one `version` and exact
+`provider:model` entries:
+
+```json
+{
+  "version": "2026-08-24",
+  "models": {
+    "gemini:gemini-2.5-flash": {
+      "prompt_usd_per_million_tokens": 0.3,
+      "completion_usd_per_million_tokens": 2.5
+    }
+  }
+}
+```
+
+The estimate and version are saved with the event, so changing rates never
+rewrites history. Events without both token splits or an exact configured rate
+remain unpriced. `GET /api/admin/ai-costs` reports successful generations in
+UTC day buckets by provider, model, and pricing version, including the number of
+unpriced generations. These operational estimates are not invoices and retain
+the telemetry privacy lifecycle: deleting the related user or course deletes
+its usage events.
 
 ## Embedding Providers
 

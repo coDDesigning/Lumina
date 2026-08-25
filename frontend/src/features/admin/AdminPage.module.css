@@ -19,6 +19,80 @@
   margin-top: var(--space-1);
 }
 
+.sectionTitle {
+  font-size: var(--text-xl);
+}
+
+.costSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+
+.costHeading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.costMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.costMetric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.costMetric span {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+.costMetric strong {
+  font-size: var(--text-xl);
+  font-variant-numeric: tabular-nums;
+}
+
+.costTableWrap {
+  overflow-x: auto;
+}
+
+.costTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+
+.costTable th,
+.costTable td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--border-width) solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.costTable th {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+.costTable .numeric {
+  text-align: right;
+}
+
 .filters {
   display: flex;
   gap: var(--space-3);
@@ -39,6 +113,10 @@
   .search,
   .filter {
     width: 100%;
+  }
+
+  .costMetrics {
+    grid-template-columns: 1fr;
   }
 }
 

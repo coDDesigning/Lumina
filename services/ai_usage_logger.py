@@ -1,6 +1,9 @@
 import logging
+import math
+
 from sqlalchemy.orm import Session
 
+from backend.app.config import MAX_AI_EVENT_ESTIMATED_COST_USD, settings
 from backend.app.models import AiUsageLog
 from schemas.ai_usage import ErrorCategory, GenerationType
 from services.text_generation import (
@@ -9,6 +12,39 @@ from services.text_generation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _estimate_cost(
+    provider: str,
+    model: str,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+) -> tuple[float | None, str | None]:
+    if (
+        prompt_tokens is None
+        or completion_tokens is None
+        or prompt_tokens < 0
+        or completion_tokens < 0
+        or settings.ai_pricing_version is None
+    ):
+        return None, None
+
+    rates = settings.ai_model_cost_rates.get(f"{provider}:{model}")
+    if rates is None:
+        return None, None
+    try:
+        estimated_cost = (
+            prompt_tokens * rates["prompt_usd_per_million_tokens"]
+            + completion_tokens * rates["completion_usd_per_million_tokens"]
+        ) / 1_000_000
+    except OverflowError:
+        return None, None
+    if (
+        not math.isfinite(estimated_cost)
+        or estimated_cost > MAX_AI_EVENT_ESTIMATED_COST_USD
+    ):
+        return None, None
+    return round(estimated_cost, 12), settings.ai_pricing_version
 
 
 class AiUsageLogger:
@@ -62,6 +98,23 @@ class AiUsageLogger:
             if error_category is not None
             else None
         )
+        estimated_cost_usd, pricing_version = None, None
+        if success:
+            try:
+                estimated_cost_usd, pricing_version = _estimate_cost(
+                    provider,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to estimate AI usage cost",
+                    extra={
+                        "event": "ai_usage_cost_estimate_failed",
+                        "exception_type": type(exc).__name__,
+                    },
+                )
 
         log_entry = AiUsageLog(
             user_id=user_id,
@@ -75,6 +128,8 @@ class AiUsageLogger:
             latency_ms=latency_ms,
             success=success,
             error_category=err_cat_str,
+            estimated_cost_usd=estimated_cost_usd,
+            pricing_version=pricing_version,
         )
         try:
             with db.begin_nested():

@@ -7,10 +7,11 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Barrier
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine, inspect, select, text
+from sqlalchemy import Engine, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
@@ -20,6 +21,7 @@ from backend.app.database_engine import create_database_engine
 from backend.app.models import (
     EMBEDDING_DIMENSIONS,
     ChunkEmbedding,
+    CreditTransaction,
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
@@ -33,6 +35,10 @@ from backend.app.models import (
     User,
 )
 from backend.app.readiness import ReadinessError, check_readiness
+from schemas.credits import CreditReason
+from schemas.user import Role as UserRole
+from schemas.user import UserUpdate
+from services.credits import CreditActor, CreditService
 from services.processing_jobs import (
     ChunkData,
     PageData,
@@ -45,7 +51,9 @@ from services.processing_jobs import (
     update_job_stage,
 )
 from services.vector_store import PgVectorStore
+from services.user import UserService
 from storage.local import LocalStorage
+from utils.exceptions import BadRequestException
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
@@ -57,7 +65,7 @@ VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
-HEAD_REVISION = "3e8b1a4c7f20"
+HEAD_REVISION = "c2a6e9f4d817"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -693,6 +701,21 @@ def test_postgresql_schema_readiness_and_role_seeds(
         column["name"]: column for column in inspector.get_columns("conversations")
     }
     assert not conversation_columns["conversation_type"]["nullable"]
+    usage_columns = {
+        column["name"]: column for column in inspector.get_columns("ai_usage_logs")
+    }
+    assert usage_columns["model"]["type"].length == 128
+    assert {"estimated_cost_usd", "pricing_version"} <= set(usage_columns)
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("ai_usage_logs")
+    } >= {
+        "ck_ai_usage_logs_estimated_cost_range",
+        "ck_ai_usage_logs_pricing_pair",
+    }
+    assert {index["name"] for index in inspector.get_indexes("ai_usage_logs")} >= {
+        "ix_ai_usage_logs_success_created"
+    }
     assert {
         constraint["name"]
         for constraint in inspector.get_check_constraints("conversations")
@@ -778,6 +801,54 @@ def test_postgresql_schema_readiness_and_role_seeds(
         session.execute(text("SET TRANSACTION READ ONLY"))
         with pytest.raises(ReadinessError):
             check_readiness(session, storage)
+
+
+def test_postgresql_cost_migration_resumes_after_partial_commit(
+    postgresql_engine: Engine,
+) -> None:
+    _run_alembic("downgrade", "3e8b1a4c7f20")
+    try:
+        with postgresql_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE ai_usage_logs ALTER COLUMN model TYPE VARCHAR(128)"
+                )
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE ai_usage_logs ADD COLUMN estimated_cost_usd "
+                    "DOUBLE PRECISION"
+                )
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE ai_usage_logs ADD COLUMN pricing_version VARCHAR(100)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX ix_ai_usage_logs_success_created "
+                    "ON ai_usage_logs (success, created_at)"
+                )
+            )
+
+        _run_alembic("upgrade", HEAD_REVISION)
+        inspector = inspect(postgresql_engine)
+        assert {
+            column["name"] for column in inspector.get_columns("ai_usage_logs")
+        } >= {"estimated_cost_usd", "pricing_version"}
+        assert {
+            constraint["name"]
+            for constraint in inspector.get_check_constraints("ai_usage_logs")
+        } >= {
+            "ck_ai_usage_logs_estimated_cost_range",
+            "ck_ai_usage_logs_pricing_pair",
+        }
+        assert {
+            index["name"] for index in inspector.get_indexes("ai_usage_logs")
+        } >= {"ix_ai_usage_logs_success_created"}
+    finally:
+        _run_alembic("upgrade", HEAD_REVISION)
 
 
 def test_postgresql_uuid_timestamps_and_loaded_cascades(
@@ -959,6 +1030,137 @@ def test_postgresql_parallel_workers_claim_every_job_once(
         assert statuses == [JOB_STATUS_RUNNING] * len(job_ids)
         user = session.get(User, user_id)
         assert user is not None
+        session.delete(user)
+        session.commit()
+
+
+def test_postgresql_parallel_credit_debits_never_go_negative(
+    postgresql_sessions: sessionmaker[Session],
+) -> None:
+    with postgresql_sessions() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Parallel credit user",
+            email=f"parallel-credit-{uuid4().hex}@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+            credits=10.0,
+        )
+        initial = CreditService.build_initial_grant(user)
+        assert initial is not None
+        user.credit_transactions.append(initial)
+        session.add(user)
+        session.commit()
+        user_id = user.id
+
+    barrier = Barrier(2)
+
+    def debit(_index: int) -> bool:
+        with postgresql_sessions() as session:
+            barrier.wait()
+            try:
+                CreditService.apply_admin_change(
+                    session,
+                    user_id,
+                    -7.0,
+                    reason=CreditReason.ADMIN_ADJUSTMENT,
+                    actor=CreditActor.admin(user_id, "parallel@example.com"),
+                    note="Parallel PostgreSQL debit",
+                )
+            except BadRequestException:
+                session.rollback()
+                return False
+            return True
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(debit, range(2)))
+
+    assert sorted(outcomes) == [False, True]
+    with postgresql_sessions() as session:
+        user = session.get(User, user_id)
+        assert user is not None
+        assert user.credits == 3.0
+        assert (
+            session.scalar(
+                select(func.sum(CreditTransaction.delta)).where(
+                    CreditTransaction.user_id == user_id
+                )
+            )
+            == 3.0
+        )
+        debits = session.scalars(
+            select(CreditTransaction).where(
+                CreditTransaction.user_id == user_id,
+                CreditTransaction.note == "Parallel PostgreSQL debit",
+            )
+        ).all()
+        assert len(debits) == 1
+        assert debits[0].balance_after == 3.0
+        session.delete(user)
+        session.commit()
+
+
+def test_postgresql_parallel_role_demotion_records_one_metering_reset(
+    postgresql_sessions: sessionmaker[Session],
+) -> None:
+    email = f"parallel-role-{uuid4().hex}@example.com"
+    with postgresql_sessions() as session:
+        user_role = session.scalar(select(Role).where(Role.name == "user"))
+        admin_role = session.scalar(select(Role).where(Role.name == "admin"))
+        assert user_role is not None
+        assert admin_role is not None
+        user = User(
+            name="Parallel role user",
+            email=email,
+            password_hash="not-a-real-hash",
+            role=user_role,
+            credits=47.0,
+        )
+        initial = CreditService.build_initial_grant(user)
+        assert initial is not None
+        user.credit_transactions.append(initial)
+        session.add(user)
+        session.flush()
+        user.role = admin_role
+        user.credits = None
+        session.commit()
+        user_id = user.id
+
+    barrier = Barrier(2)
+
+    def demote(_index: int) -> None:
+        with postgresql_sessions() as session:
+            barrier.wait()
+            UserService.update_user(
+                session,
+                email,
+                UserUpdate(role=UserRole.USER),
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(demote, range(2)))
+
+    with postgresql_sessions() as session:
+        user = session.get(User, user_id)
+        assert user is not None
+        assert user.credits == settings.credit_initial_grant
+        resets = session.scalars(
+            select(CreditTransaction).where(
+                CreditTransaction.user_id == user_id,
+                CreditTransaction.reason == CreditReason.METERING_RESET.value,
+            )
+        ).all()
+        assert len(resets) == 1
+        assert resets[0].delta == settings.credit_initial_grant - 47.0
+        assert (
+            session.scalar(
+                select(func.sum(CreditTransaction.delta)).where(
+                    CreditTransaction.user_id == user_id
+                )
+            )
+            == settings.credit_initial_grant
+        )
         session.delete(user)
         session.commit()
 

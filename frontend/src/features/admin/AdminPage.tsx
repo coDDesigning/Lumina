@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { adminAPI } from '@/api/admin';
 import {
@@ -9,7 +9,7 @@ import {
   transactionLabel,
 } from '@/api/creditLabels';
 import { describeError } from '@/api/errors';
-import type { AdminCreditReason, CreditTransaction, User } from '@/api/types';
+import type { AdminCreditReason, AiCostReport, CreditTransaction, User } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import { useAuth } from '@/context/AuthContext';
 import { Alert } from '@/ui/Alert';
@@ -27,6 +27,15 @@ import styles from './AdminPage.module.css';
 type RoleFilter = 'all' | 'admin' | 'user';
 type StatusFilter = 'all' | 'active' | 'banned';
 
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 6,
+  }).format(value);
+}
+
 export default function AdminPage() {
   const { user: currentUser } = useAuth();
   const { showToast } = useToast();
@@ -37,6 +46,9 @@ export default function AdminPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
+  const [costReport, setCostReport] = useState<AiCostReport | null>(null);
+  const [costError, setCostError] = useState<string | null>(null);
+  const [isCostLoading, setIsCostLoading] = useState(true);
 
   const [query, setQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
@@ -45,6 +57,8 @@ export default function AdminPage() {
   const [ledgerEmail, setLedgerEmail] = useState<string | null>(null);
   const [ledger, setLedger] = useState<CreditTransaction[]>([]);
   const [isLedgerLoading, setIsLedgerLoading] = useState(false);
+  const ledgerEmailRef = useRef<string | null>(null);
+  const ledgerRequest = useRef(0);
 
   const [creditTarget, setCreditTarget] = useState<User | null>(null);
   const [creditDelta, setCreditDelta] = useState('');
@@ -67,9 +81,22 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadCosts = useCallback(async () => {
+    setIsCostLoading(true);
+    setCostError(null);
+    try {
+      setCostReport(await adminAPI.getAiCostReport());
+    } catch (caught) {
+      setCostError(describeError(caught, "We couldn't load provider costs.").message);
+    } finally {
+      setIsCostLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadCosts();
+  }, [load, loadCosts]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -129,18 +156,31 @@ export default function AdminPage() {
 
   async function toggleLedger(account: User) {
     if (ledgerEmail === account.email) {
+      ledgerRequest.current += 1;
+      ledgerEmailRef.current = null;
       setLedgerEmail(null);
+      setIsLedgerLoading(false);
       return;
     }
+    const request = ledgerRequest.current + 1;
+    ledgerRequest.current = request;
+    ledgerEmailRef.current = account.email;
     setLedgerEmail(account.email);
     setLedger([]);
     setIsLedgerLoading(true);
     try {
-      setLedger(await adminAPI.listUserCreditTransactions(account.email));
+      const transactions = await adminAPI.listUserCreditTransactions(account.email);
+      if (ledgerRequest.current === request) {
+        setLedger(transactions);
+      }
     } catch (caught) {
-      setActionError(describeError(caught, "That ledger couldn't be loaded.").message);
+      if (ledgerRequest.current === request) {
+        setActionError(describeError(caught, "That ledger couldn't be loaded.").message);
+      }
     } finally {
-      setIsLedgerLoading(false);
+      if (ledgerRequest.current === request) {
+        setIsLedgerLoading(false);
+      }
     }
   }
 
@@ -160,6 +200,7 @@ export default function AdminPage() {
     if (!creditTarget) {
       return;
     }
+    const target = creditTarget;
     setCreditError(null);
 
     if (!deltaIsNumber || parsedDelta === 0) {
@@ -176,17 +217,26 @@ export default function AdminPage() {
     setIsApplying(true);
     try {
       const result = await adminAPI.changeCredits(
-        creditTarget.email,
+        target.email,
         parsedDelta,
         creditReason,
         creditNote.trim() || undefined,
       );
       replaceUser(result.user);
+      if (ledgerEmailRef.current === target.email) {
+        ledgerRequest.current += 1;
+        setIsLedgerLoading(false);
+        setLedger((current) =>
+          current.some((entry) => entry.id === result.transaction.id)
+            ? current
+            : [result.transaction, ...current],
+        );
+      }
       setCreditTarget(null);
       showToast({
         tone: 'success',
         title: `Balance now ${result.transaction.balance_after}`,
-        message: creditTarget.name,
+        message: target.name,
       });
     } catch (caught) {
       setCreditError(describeError(caught, "That change couldn't be applied.").message);
@@ -214,6 +264,92 @@ export default function AdminPage() {
           Credit changes are permanent ledger entries. A mistake is corrected by another entry,
           never by editing a balance.
         </p>
+
+        <section className={styles.costSection} aria-labelledby="provider-cost-title">
+          <div className={styles.costHeading}>
+            <div>
+              <h2 id="provider-cost-title" className={styles.sectionTitle}>
+                AI provider usage
+              </h2>
+              <p className={styles.subtitle}>
+                Successful generations over the last 30 UTC days. Estimates use the rate version
+                saved with each event and are not provider invoices.
+              </p>
+            </div>
+            <Badge tone="neutral">UTC</Badge>
+          </div>
+
+          {isCostLoading ? (
+            <Skeleton variant="block" />
+          ) : costError ? (
+            <Alert
+              tone="destructive"
+              actions={
+                <Button size="sm" onClick={() => void loadCosts()}>
+                  Try again
+                </Button>
+              }
+            >
+              {costError}
+            </Alert>
+          ) : costReport ? (
+            <>
+              <div className={styles.costMetrics}>
+                <div className={styles.costMetric}>
+                  <span>Estimated cost</span>
+                  <strong>{formatUsd(costReport.totals.estimated_cost_usd)}</strong>
+                </div>
+                <div className={styles.costMetric}>
+                  <span>Successful generations</span>
+                  <strong>{costReport.totals.successful_generations}</strong>
+                </div>
+                <div className={styles.costMetric}>
+                  <span>Unpriced generations</span>
+                  <strong>{costReport.totals.unpriced_generations}</strong>
+                </div>
+              </div>
+
+              {costReport.daily.length > 0 ? (
+                <div className={styles.costTableWrap}>
+                  <table className={styles.costTable}>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Provider / model</th>
+                        <th>Rate version</th>
+                        <th className={styles.numeric}>Generations</th>
+                        <th className={styles.numeric}>Tokens</th>
+                        <th className={styles.numeric}>Estimated USD</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {costReport.daily.map((row) => (
+                        <tr
+                          key={`${row.date}-${row.provider}-${row.model}-${row.pricing_version ?? 'unpriced'}`}
+                        >
+                          <td>{row.date}</td>
+                          <td>
+                            {row.provider} / {row.model}
+                          </td>
+                          <td>{row.pricing_version ?? 'Unpriced'}</td>
+                          <td className={styles.numeric}>{row.successful_generations}</td>
+                          <td className={styles.numeric}>
+                            {row.prompt_tokens + row.completion_tokens}
+                          </td>
+                          <td className={styles.numeric}>
+                            {row.pricing_version ? formatUsd(row.estimated_cost_usd) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className={styles.accountEmail}>No successful generations in this period.</p>
+              )}
+            </>
+          ) : null}
+        </section>
 
         {loadError ? (
           <Alert

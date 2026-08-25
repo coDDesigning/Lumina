@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { User } from '../api/types';
 import { authAPI } from '../api/auth';
 
@@ -16,22 +16,37 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const requestGeneration = useRef(0);
 
   const fetchUser = async () => {
+    const request = requestGeneration.current + 1;
+    requestGeneration.current = request;
     const token = localStorage.getItem('token');
     if (!token) {
-      setIsLoading(false);
+      if (requestGeneration.current === request) {
+        setUser(null);
+        setIsLoading(false);
+      }
       return;
     }
 
     try {
       const userData = await authAPI.me();
+      if (requestGeneration.current !== request || localStorage.getItem('token') !== token) {
+        return;
+      }
       setUser(userData);
     } catch (error) {
+      if (requestGeneration.current !== request || localStorage.getItem('token') !== token) {
+        return;
+      }
       console.error('Failed to fetch user', error);
       localStorage.removeItem('token');
+      setUser(null);
     } finally {
-      setIsLoading(false);
+      if (requestGeneration.current === request) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -40,7 +55,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     
     // Listen for unauthorized events from API client
     const handleUnauthorized = () => {
+      requestGeneration.current += 1;
       setUser(null);
+      setIsLoading(false);
     };
     
     window.addEventListener('auth:unauthorized', handleUnauthorized);
@@ -49,12 +66,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const login = async (token: string) => {
     localStorage.setItem('token', token);
+    setIsLoading(true);
     await fetchUser();
   };
 
   const logout = () => {
+    requestGeneration.current += 1;
     localStorage.removeItem('token');
     setUser(null);
+    setIsLoading(false);
   };
 
   return (

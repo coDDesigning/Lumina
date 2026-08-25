@@ -33,6 +33,12 @@ variable "bootstrap_admin_email" {
   type        = string
 }
 
+variable "ai_model_cost_rates" {
+  description = "Versioned provider:model USD-per-million-token rates serialized as AI_MODEL_COST_RATES JSON. Empty leaves generations explicitly unpriced."
+  type        = string
+  default     = ""
+}
+
 variable "api_cpu" {
   description = "Fargate CPU units for the API service."
   type        = number

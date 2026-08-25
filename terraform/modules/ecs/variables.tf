@@ -50,6 +50,10 @@ variable "bootstrap_admin_email" {
   type = string
 }
 
+variable "ai_model_cost_rates" {
+  type = string
+}
+
 variable "cors_allowed_origins" {
   description = "Origins accepted by the API CORS middleware."
   type        = list(string)

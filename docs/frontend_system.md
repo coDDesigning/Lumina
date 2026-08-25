@@ -408,7 +408,7 @@ reached without a mouse.
 
 `src/lib/query/` is a ~450-line cache: keyed entries, one in-flight request per key,
 trailing refresh, staleness, focus revalidation, prefix invalidation and optimistic writes.
-It was adopted by explicit team decision in SCRUM-135 in place of TanStack Query, so the
+It was adopted by explicit team decision in place of TanStack Query, so the
 frontend still ships no data-fetching dependency.
 
 - **Keys come from `src/api/queryKeys.ts` and nowhere else.** `lib/query/keyDiscipline.test.ts`

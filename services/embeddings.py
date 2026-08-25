@@ -12,7 +12,7 @@ from typing import Protocol
 
 import httpx
 from google import genai
-from google.genai import errors as genai_errors
+from google.genai import types
 
 from backend.app.config import (
     AI_PROVIDER_GEMINI,
@@ -241,7 +241,11 @@ class OllamaEmbeddingProvider:
 class GeminiEmbeddingProvider:
     PROVIDER_NAME = AI_PROVIDER_GEMINI
 
-    def __init__(self, client: object | None = None) -> None:
+    def __init__(
+        self,
+        client: object | None = None,
+        timeout_seconds: int | None = None,
+    ) -> None:
         api_key = settings.gemini_api_key
         if client is None and not api_key:
             raise EmbeddingConfigurationError(
@@ -249,9 +253,20 @@ class GeminiEmbeddingProvider:
             )
         self._model = settings.gemini_embedding_model
         self._batch_size = settings.embedding_batch_size
-        self._client = client or genai.Client(api_key=api_key)
+        timeout_sec = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else settings.embedding_timeout_seconds
+        )
+        http_options = types.HttpOptions(timeout=int(timeout_sec * 1000))
+        self._client = client or genai.Client(
+            api_key=api_key,
+            http_options=http_options,
+        )
 
     def _handle_client_error(self, exc: Exception) -> None:
+        if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+            raise EmbeddingTimeoutError("Gemini embedding request timed out.") from exc
         status = getattr(exc, "code", None)
         if status == 429:
             raise EmbeddingRateLimitError("Gemini rate limit exceeded.") from exc
@@ -272,10 +287,8 @@ class GeminiEmbeddingProvider:
                 contents=texts,
                 config={"output_dimensionality": EMBEDDING_DIMENSIONS},
             )
-        except genai_errors.APIError as exc:
-            self._handle_client_error(exc)
         except Exception as exc:
-            raise EmbeddingProviderError("Gemini failed to return embeddings.") from exc
+            self._handle_client_error(exc)
 
         raw = getattr(response, "embeddings", None)
         if not isinstance(raw, list):

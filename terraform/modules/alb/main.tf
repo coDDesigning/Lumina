@@ -42,7 +42,7 @@ resource "aws_lb" "this" {
   security_groups            = [aws_security_group.this.id]
   subnets                    = var.public_subnet_ids
   enable_deletion_protection = true
-  idle_timeout               = 60
+  idle_timeout               = 120
   tags                       = var.tags
 }
 
@@ -94,10 +94,10 @@ resource "aws_lb_listener" "http_redirect" {
   }
 }
 
-resource "aws_route53_record" "app" {
+resource "aws_route53_record" "api_origin" {
   count   = var.route53_zone_id == "" ? 0 : 1
   zone_id = var.route53_zone_id
-  name    = var.dns_record_name
+  name    = var.api_origin_domain_name
   type    = "A"
   alias {
     name                   = aws_lb.this.dns_name

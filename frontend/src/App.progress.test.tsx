@@ -80,16 +80,20 @@ describe('Course card progress loading', () => {
     mockListProgress.mockResolvedValue([
       {
         course_id: 1,
+        status: 'practiced',
         attempts_count: 2,
         average_score: 0.72,
         completion: 0.72,
+        total_time_spent_seconds: 4320,
         last_activity: '2026-08-22T10:00:00Z',
       },
       {
         course_id: 2,
+        status: 'ready',
         attempts_count: 0,
         average_score: null,
         completion: null,
+        total_time_spent_seconds: null,
         last_activity: null,
       },
     ]);
@@ -100,6 +104,64 @@ describe('Course card progress loading', () => {
     await waitFor(() => expect(mockListProgress).toHaveBeenCalledTimes(1));
     expect(mockGetProgress).not.toHaveBeenCalled();
     expect(screen.getByText('No quiz activity yet')).toBeInTheDocument();
+  });
+
+  it('shows the status the backend sent rather than deriving one', async () => {
+    mockListProgress.mockResolvedValue([
+      {
+        course_id: 1,
+        status: 'processing',
+        attempts_count: 0,
+        average_score: null,
+        completion: null,
+        total_time_spent_seconds: null,
+        last_activity: null,
+      },
+      {
+        course_id: 2,
+        status: 'mastered',
+        attempts_count: 3,
+        average_score: 0.91,
+        completion: 0.91,
+        total_time_spent_seconds: 600,
+        last_activity: '2026-08-22T10:00:00Z',
+      },
+    ]);
+
+    renderCourses();
+
+    expect(await screen.findByText('Processing')).toBeInTheDocument();
+    expect(screen.getByText('Sources still processing')).toBeInTheDocument();
+    expect(screen.getByText('Mastered')).toBeInTheDocument();
+    expect(screen.getByText('10m spent practising')).toBeInTheDocument();
+  });
+
+  it('reports time spent only for the courses that recorded it', async () => {
+    mockListProgress.mockResolvedValue([
+      {
+        course_id: 1,
+        status: 'practiced',
+        attempts_count: 2,
+        average_score: 0.72,
+        completion: 0.72,
+        total_time_spent_seconds: 4320,
+        last_activity: '2026-08-22T10:00:00Z',
+      },
+      {
+        course_id: 2,
+        status: 'practiced',
+        attempts_count: 1,
+        average_score: 0.4,
+        completion: 0.4,
+        total_time_spent_seconds: null,
+        last_activity: '2026-08-22T10:00:00Z',
+      },
+    ]);
+
+    renderCourses();
+
+    expect(await screen.findByText('1h 12m spent practising')).toBeInTheDocument();
+    expect(screen.getAllByText(/spent practising/)).toHaveLength(1);
   });
 
   it('shows progress as unavailable when the progress request fails', async () => {

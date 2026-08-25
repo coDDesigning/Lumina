@@ -47,7 +47,7 @@ type WorkspaceRouteProps = {
   workspaces: Workspace[]
   isLoading?: boolean
   onSelect: (courseId: string) => void
-  onUpdateProgress?: (courseId: string, progress: WorkspaceProgress) => void
+  onUpdateProgress?: (courseId: string, progress: Partial<WorkspaceProgress>) => void
 }
 
 function WorkspaceRoute({ workspaces, isLoading, onSelect, onUpdateProgress }: WorkspaceRouteProps) {
@@ -265,8 +265,9 @@ function App() {
 
       const newWorkspace = mapCourseToWorkspace(newCourse, workspaces.length, {
         averageScore: null,
+        timeSpentSeconds: null,
         lastActivity: null,
-        status: 'Not started',
+        status: 'no_documents',
       })
       setWorkspaces((current) => [newWorkspace, ...current])
       setActiveWorkspaceId(newWorkspace.id)
@@ -327,12 +328,14 @@ function App() {
   }
 
   const updateWorkspaceProgress = useCallback(
-    (courseId: string, progress: WorkspaceProgress) => {
+    (courseId: string, progress: Partial<WorkspaceProgress>) => {
       setWorkspaces((current) => {
         const target = current.find((w) => w.id === courseId)
-        if (!target) return current
+        if (!target || !target.progress) return current
         return current.map((w) =>
-          w.id === courseId ? { ...w, progress } : w,
+          w.id === courseId && w.progress
+            ? { ...w, progress: { ...w.progress, ...progress } }
+            : w,
         )
       })
     },

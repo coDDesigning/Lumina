@@ -71,6 +71,7 @@ beforeEach(() => {
   ]);
   vi.mocked(coursesAPI.listDocuments).mockResolvedValue([]);
   vi.mocked(progressAPI.get).mockResolvedValue({
+    status: 'no_documents',
     attempts_count: 0,
     average_score: null,
     topic_mastery: [],

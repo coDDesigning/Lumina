@@ -5,10 +5,12 @@ from sqlalchemy import select
 
 from backend.app.models import (
     Conversation,
+    Course,
     GeneratedOutput,
     Quiz,
     QuizAttempt,
     QuizQuestion,
+    UploadedDocument,
 )
 from schemas.conversation import ConversationType
 from services.conversation import ConversationService
@@ -48,7 +50,14 @@ def _question_ids(session, quiz_id: int) -> list[int]:
     ]
 
 
-def _submit(api, course_id: int, quiz_id: int, question_ids: list[int], correct: int):
+def _submit(
+    api,
+    course_id: int,
+    quiz_id: int,
+    question_ids: list[int],
+    correct: int,
+    time_spent_seconds: int | None = None,
+):
     answers = [
         {
             "question_id": question_id,
@@ -56,13 +65,33 @@ def _submit(api, course_id: int, quiz_id: int, question_ids: list[int], correct:
         }
         for position, question_id in enumerate(question_ids)
     ]
+    payload: dict = {"answers": answers}
+    if time_spent_seconds is not None:
+        payload["time_spent_seconds"] = time_spent_seconds
     response = api.client.post(
         f"/api/courses/{course_id}/quizzes/{quiz_id}/attempts",
-        json={"answers": answers},
+        json=payload,
         headers=api.authorization,
     )
     assert response.status_code == 201, response.text
     return response.json()["data"]
+
+
+def _add_document(session, course, *, status: str, marker: str) -> None:
+    session.add(
+        UploadedDocument(
+            original_file_name=f"{marker}.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=10,
+            file_hash=marker * 64,
+            user_id=course.owner_id,
+            course=course,
+            storage_provider="local:test",
+            storage_key=f"{marker}.txt",
+            status=status,
+        )
+    )
 
 
 def _summaries(client, headers) -> dict[int, dict]:
@@ -122,6 +151,8 @@ def test_summary_matches_the_single_course_endpoint(upload_api) -> None:
     assert summary["attempts_count"] == single["attempts_count"]
     assert summary["average_score"] == pytest.approx(single["average_score"])
     assert summary["completion"] == pytest.approx(single["completion"])
+    assert summary["status"] == single["status"]
+    assert summary["total_time_spent_seconds"] == single["total_time_spent_seconds"]
 
 
 def test_another_owner_sees_neither_the_course_nor_its_progress(authz_api) -> None:
@@ -317,3 +348,139 @@ def test_recording_an_exchange_moves_last_activity(upload_api) -> None:
     ]["last_activity"]
 
     assert datetime.fromisoformat(after) > stale
+
+
+def test_a_course_without_material_reports_no_documents(upload_api) -> None:
+    summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.course_id
+    ]
+
+    assert summary["status"] == "no_documents"
+
+
+def test_a_document_still_being_read_reports_processing(upload_api) -> None:
+    with upload_api.session_factory() as session:
+        course = session.get(Course, upload_api.course_id)
+        _add_document(session, course, status="processing", marker="1")
+        session.commit()
+
+    summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.course_id
+    ]
+
+    assert summary["status"] == "processing"
+
+
+def test_a_read_document_and_no_attempt_reports_ready(upload_api) -> None:
+    with upload_api.session_factory() as session:
+        course = session.get(Course, upload_api.course_id)
+        _add_document(session, course, status="ready", marker="2")
+        session.commit()
+
+    summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.course_id
+    ]
+
+    assert summary["status"] == "ready"
+
+
+def test_an_attempt_below_the_threshold_reports_practiced(upload_api) -> None:
+    with upload_api.session_factory() as session:
+        course = session.get(Course, upload_api.course_id)
+        _add_document(session, course, status="ready", marker="3")
+        quiz = _quiz_with_questions(session, upload_api.course_id, count=4)
+        question_ids = _question_ids(session, quiz.id)
+        session.commit()
+
+    _submit(upload_api, upload_api.course_id, quiz.id, question_ids, correct=3)
+
+    summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.course_id
+    ]
+
+    assert summary["average_score"] == pytest.approx(0.75)
+    assert summary["status"] == "practiced"
+
+
+def test_an_attempt_at_the_threshold_reports_mastered(upload_api) -> None:
+    with upload_api.session_factory() as session:
+        course = session.get(Course, upload_api.course_id)
+        _add_document(session, course, status="ready", marker="4")
+        quiz = _quiz_with_questions(session, upload_api.course_id, count=5)
+        question_ids = _question_ids(session, quiz.id)
+        session.commit()
+
+    _submit(upload_api, upload_api.course_id, quiz.id, question_ids, correct=4)
+
+    summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.course_id
+    ]
+
+    assert summary["average_score"] == pytest.approx(0.8)
+    assert summary["status"] == "mastered"
+
+
+def test_a_fresh_upload_does_not_demote_a_mastered_course(upload_api) -> None:
+    with upload_api.session_factory() as session:
+        course = session.get(Course, upload_api.course_id)
+        _add_document(session, course, status="ready", marker="5")
+        quiz = _quiz_with_questions(session, upload_api.course_id, count=5)
+        question_ids = _question_ids(session, quiz.id)
+        session.commit()
+
+    _submit(upload_api, upload_api.course_id, quiz.id, question_ids, correct=5)
+
+    with upload_api.session_factory() as session:
+        course = session.get(Course, upload_api.course_id)
+        _add_document(session, course, status="uploaded", marker="6")
+        session.commit()
+
+    summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.course_id
+    ]
+
+    assert summary["status"] == "mastered"
+
+
+def test_time_spent_sums_the_attempts_that_recorded_it(upload_api) -> None:
+    with upload_api.session_factory() as session:
+        quiz = _quiz_with_questions(session, upload_api.course_id)
+        question_ids = _question_ids(session, quiz.id)
+
+    _submit(
+        upload_api,
+        upload_api.course_id,
+        quiz.id,
+        question_ids,
+        correct=1,
+        time_spent_seconds=90,
+    )
+    _submit(
+        upload_api,
+        upload_api.course_id,
+        quiz.id,
+        question_ids,
+        correct=2,
+        time_spent_seconds=45,
+    )
+
+    summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.course_id
+    ]
+
+    assert summary["total_time_spent_seconds"] == 135
+
+
+def test_time_spent_is_absent_when_no_attempt_recorded_it(upload_api) -> None:
+    with upload_api.session_factory() as session:
+        quiz = _quiz_with_questions(session, upload_api.course_id)
+        question_ids = _question_ids(session, quiz.id)
+
+    _submit(upload_api, upload_api.course_id, quiz.id, question_ids, correct=1)
+
+    summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.course_id
+    ]
+
+    assert summary["attempts_count"] == 1
+    assert summary["total_time_spent_seconds"] is None

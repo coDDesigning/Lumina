@@ -259,11 +259,28 @@ These are product rules, not style preferences.
   because the mapper hardcoded an empty array; that is the failure mode to avoid.
 - **Unavailable is not empty.** A course card reads progress from the single
   `GET /api/progress` request and distinguishes three states, not two: progress that could
-  not be loaded says "Progress unavailable", a course with no graded attempt says "No quiz
-  activity yet", and a scored course shows its average score. A nullable number collapsed
-  the first two, so a network failure read as a course the student had never touched. The
-  status badge and the last-studied line come from the same response and are omitted
-  entirely when it is missing, because a card that cannot load progress must claim nothing.
+  not be loaded says "Progress unavailable", a course with no graded attempt says what it
+  is still waiting for, and a scored course shows its average score. A nullable number
+  collapsed the first two, so a network failure read as a course the student had never
+  touched. The status badge, the time-spent line and the last-studied line come from the
+  same response and are omitted entirely when it is missing, because a card that cannot
+  load progress must claim nothing.
+- **The client derives no course status.** `status` arrives on the progress response and
+  `services/course_status.py` is its only owner; `COURSE_STATUS_LABELS` in `api/types.ts`
+  maps it to a label and `CoursesPage` to a `BadgeTone`. Five values, furthest-along wins:
+  `no_documents` reads "No sources ready", `processing` reads "Processing", `ready` reads
+  "Ready to study", `practiced` reads "Practiced", `mastered` reads "Mastered". The backend
+  compares the average score rounded the way this client prints it, so the badge can never
+  read "Practiced" beside the number 80. The badge label is deliberately "No sources ready"
+  rather than "No documents", because that state also covers a course whose uploads all
+  failed to process. The line beneath follows the same signal: a course with nothing to
+  study says "No sources to study yet" and one still being read says "Sources still
+  processing", so "No quiz activity yet" is only ever shown to a student who actually has
+  material to be quizzed on.
+- **Time spent is absent, never zero.** `total_time_spent_seconds` on the progress reads
+  and `time_spent_seconds` on each `quiz_history` item are null when no attempt recorded a
+  duration, and `formatStudyTime` returns null for anything at or below zero, so the card
+  line and the attempt-history column disappear rather than reading "0m".
 - **No control claims an outcome it does not produce.** A settings page that said
   "Preferences saved locally" while persisting nothing is worse than no message.
 - **Name what is not built.** The landing page lists unbuilt capabilities as prominently as

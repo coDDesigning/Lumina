@@ -597,6 +597,110 @@ jobs:
       - name: Reject tracked-file mutations
         run: git diff --exit-code
 
+  infrastructure-quality:
+    name: Infrastructure quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TERRAFORM_VERSION: 1.12.2
+      HASHICORP_RELEASE_KEY_FINGERPRINT: C874011F0AB405110D02105534365D9472D7468F
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+
+      - name: Install verified Terraform
+        run: |
+          set -euo pipefail
+          release="terraform_${TERRAFORM_VERSION}"
+          release_url="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}"
+          install_dir="$RUNNER_TEMP/terraform-bin"
+          mkdir -p "$install_dir" "$RUNNER_TEMP/terraform-download"
+          curl --fail --location --silent --show-error \
+            https://keybase.io/hashicorp/pgp_keys.asc \
+            --output "$RUNNER_TEMP/terraform-download/hashicorp.asc"
+          gpg --batch --import "$RUNNER_TEMP/terraform-download/hashicorp.asc"
+          fingerprint="$(gpg --batch --show-keys --with-colons \
+            "$RUNNER_TEMP/terraform-download/hashicorp.asc" \
+            | awk -F: '$1 == "fpr" { print $10; exit }')"
+          test "$fingerprint" = "$HASHICORP_RELEASE_KEY_FINGERPRINT"
+          curl --fail --location --silent --show-error \
+            "$release_url/${release}_SHA256SUMS" \
+            --output "$RUNNER_TEMP/terraform-download/SHA256SUMS"
+          curl --fail --location --silent --show-error \
+            "$release_url/${release}_SHA256SUMS.sig" \
+            --output "$RUNNER_TEMP/terraform-download/SHA256SUMS.sig"
+          curl --fail --location --silent --show-error \
+            "$release_url/${release}_linux_amd64.zip" \
+            --output "$RUNNER_TEMP/terraform-download/terraform.zip"
+          verification="$(gpg --batch --status-fd=1 --verify \
+            "$RUNNER_TEMP/terraform-download/SHA256SUMS.sig" \
+            "$RUNNER_TEMP/terraform-download/SHA256SUMS" 2>&1)"
+          printf '%s\n' "$verification"
+          signature_primary="$(printf '%s\n' "$verification" \
+            | awk '/^\[GNUPG:\] VALIDSIG / { print $NF; exit }')"
+          test "$signature_primary" = "$HASHICORP_RELEASE_KEY_FINGERPRINT"
+          grep " ${release}_linux_amd64.zip$" \
+            "$RUNNER_TEMP/terraform-download/SHA256SUMS" \
+            | sed "s#${release}_linux_amd64.zip#terraform.zip#" \
+            | (cd "$RUNNER_TEMP/terraform-download" && sha256sum --check -)
+          unzip -q "$RUNNER_TEMP/terraform-download/terraform.zip" -d "$install_dir"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive terraform
+
+      - name: Initialize Terraform without a backend
+        run: terraform -chdir=terraform init -backend=false -input=false -lockfile=readonly
+
+      - name: Validate Terraform
+        run: terraform -chdir=terraform validate
+
+      - name: Run Terraform tests
+        run: |
+          set -euo pipefail
+          terraform -chdir=terraform test
+          if [ -d terraform/modules ]; then
+            mapfile -t module_directories < <(
+              find terraform/modules -type f -name '*.tftest.hcl' -printf '%h\n' \
+                | sort -u \
+                | sed 's#/tests$##'
+            )
+            for index in "${!module_directories[@]}"; do
+              module_directory="${module_directories[$index]}"
+              module_data_dir="$RUNNER_TEMP/terraform-module-$index"
+              TF_DATA_DIR="$module_data_dir" terraform -chdir="$module_directory" \
+                init -backend=false -input=false -lockfile=readonly
+              TF_DATA_DIR="$module_data_dir" terraform -chdir="$module_directory" validate
+              TF_DATA_DIR="$module_data_dir" terraform -chdir="$module_directory" test
+            done
+          fi
+
+      - name: Run CloudFront function tests
+        run: |
+          set -euo pipefail
+          mapfile -t node_tests < <(
+            find terraform -type f \
+              \( -name '*.test.js' -o -name '*_test.js' -o \
+                 -name '*.test.mjs' -o -name '*_test.mjs' -o \
+                 -name '*.test.cjs' -o -name '*_test.cjs' \) \
+              | sort
+          )
+          if [ "${#node_tests[@]}" -eq 0 ]; then
+            echo "No Terraform CloudFront function tests are present yet."
+          else
+            node --test "${node_tests[@]}"
+          fi
+
+      - name: Infrastructure checks leave the repository unchanged
+        run: git diff --exit-code
+
   frontend-quality:
     name: Frontend quality and build
     runs-on: ubuntu-24.04

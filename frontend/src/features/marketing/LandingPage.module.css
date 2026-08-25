@@ -118,7 +118,7 @@
   list-style: none;
 }
 
-@media (max-width: 52rem) {
+@media (max-width: 64rem) {
   .flow {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -185,7 +185,7 @@
   min-height: 11rem;
 }
 
-@media (max-width: 52rem) {
+@media (max-width: 64rem) {
   .previewBody {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -195,23 +195,49 @@
   display: none;
 }
 
-@media (max-width: 68rem) {
+@media (max-width: 64rem) {
   .columns {
     grid-template-columns: var(--sources-width) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
   }
 
   .outputs {
-    display: none;
+    grid-column: 1 / -1;
+  }
+
+  .outputs .actionList {
+    flex-direction: row;
+    flex-wrap: wrap;
   }
 }
 
-@media (max-width: 52rem) {
+@media (max-width: 48rem) {
   .columns {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    flex: none;
+    padding: 0 var(--space-3) var(--space-3);
+  }
+
+  .conversation {
+    order: 1;
+    min-height: 60vh;
   }
 
   .sources {
-    display: none;
+    order: 2;
+  }
+
+  .outputs {
+    order: 3;
+  }
+
+  .sources .scrollArea {
+    max-height: 22rem;
+  }
+
+  .panelHead {
+    padding: var(--space-3) var(--space-3) var(--space-2);
   }
 }
 

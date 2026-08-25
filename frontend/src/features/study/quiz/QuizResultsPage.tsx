@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { RotateCcw } from 'lucide-react';
-import { describeError, isAbortError } from '@/api/errors';
 import { quizAPI } from '@/api/quiz';
+import { queryKeys } from '@/api/queryKeys';
+import { useQuery } from '@/lib/query/useQuery';
 import type { QuizAttemptResponse, QuizView } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import type { Workspace } from '@/data/workspaces';
@@ -42,52 +43,61 @@ export default function QuizResultsPage({ workspace }: QuizResultsPageProps) {
 
   useDocumentTitle(`Quiz results · ${workspace.name}`);
 
+  const parsedQuizId = Number(quizId);
+  const parsedAttemptId = Number(attemptId);
+  const isValidAddress =
+    Number.isInteger(parsedQuizId) &&
+    parsedQuizId > 0 &&
+    Number.isInteger(parsedAttemptId) &&
+    parsedAttemptId > 0;
+  const wasHandedIn = Boolean(handedIn?.quiz && handedIn?.attempt);
+
+  const attemptQuery = useQuery<{ quiz: QuizView; attempt: QuizAttemptResponse }>({
+    key:
+      !wasHandedIn && isValidAddress
+        ? queryKeys.courseQuizAttempt(courseId, parsedQuizId, parsedAttemptId)
+        : null,
+    fetcher: async ({ signal }) => {
+      const [loadedQuiz, loadedAttempt] = await Promise.all([
+        quizAPI.get(courseId, parsedQuizId, { signal }),
+        quizAPI.getAttempt(courseId, parsedQuizId, parsedAttemptId, { signal }),
+      ]);
+      return { quiz: loadedQuiz, attempt: loadedAttempt };
+    },
+    fallbackMessage: 'This attempt could not be opened.',
+    staleTime: 5 * 60_000,
+  });
+
   useEffect(() => {
-    if (handedIn?.quiz && handedIn?.attempt) {
+    if (wasHandedIn) {
       return;
     }
-
-    const controller = new AbortController();
-    const parsedQuizId = Number(quizId);
-    const parsedAttemptId = Number(attemptId);
-
-    if (
-      !Number.isInteger(parsedQuizId) ||
-      parsedQuizId <= 0 ||
-      !Number.isInteger(parsedAttemptId) ||
-      parsedAttemptId <= 0
-    ) {
+    if (!isValidAddress) {
       setError('That is not a valid quiz attempt address.');
       setIsLoading(false);
       return;
     }
-
-    setIsLoading(true);
-    setError(null);
-
-    Promise.all([
-      quizAPI.get(courseId, parsedQuizId, { signal: controller.signal }),
-      quizAPI.getAttempt(courseId, parsedQuizId, parsedAttemptId, {
-        signal: controller.signal,
-      }),
-    ])
-      .then(([loadedQuiz, loadedAttempt]) => {
-        if (!controller.signal.aborted) {
-          setQuiz(loadedQuiz);
-          setAttempt(loadedAttempt);
-          setIsLoading(false);
-        }
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted || isAbortError(caught)) {
-          return;
-        }
-        setIsLoading(false);
-        setError(describeError(caught, 'This attempt could not be opened.').message);
-      });
-
-    return () => controller.abort();
-  }, [courseId, handedIn, quizId, attemptId]);
+    if (attemptQuery.status === 'pending' || attemptQuery.status === 'idle') {
+      setIsLoading(true);
+      return;
+    }
+    setIsLoading(false);
+    if (attemptQuery.status === 'error') {
+      setError(attemptQuery.error?.message ?? 'This attempt could not be opened.');
+      return;
+    }
+    if (attemptQuery.data) {
+      setError(null);
+      setQuiz(attemptQuery.data.quiz);
+      setAttempt(attemptQuery.data.attempt);
+    }
+  }, [
+    wasHandedIn,
+    isValidAddress,
+    attemptQuery.status,
+    attemptQuery.data,
+    attemptQuery.error,
+  ]);
 
   return (
     <div className={styles.page}>

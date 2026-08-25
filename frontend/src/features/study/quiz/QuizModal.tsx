@@ -8,7 +8,8 @@ import {
 } from '@/api/errors';
 import type { GenerationFailure } from '@/api/errors';
 import { quizAPI } from '@/api/quiz';
-import { settingsAPI } from '@/api/settings';
+import { afterQuizAttempt, afterQuizGenerated } from '@/api/invalidations';
+import { useCourseSettings } from '@/features/courses/useCourseSettings';
 import type {
   CreditSource,
   QuizAttemptResponse,
@@ -125,34 +126,24 @@ export function QuizModal({
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  const settings = useCourseSettings(courseId);
+  const defaults = settings.status === 'success' ? settings.data : undefined;
+
   useEffect(() => {
-    let active = true;
-    settingsAPI
-      .get(courseId)
-      .then((data) => {
-        if (!active) {
-          return;
-        }
-        const rawDifficulty = data.difficulty?.toLowerCase();
-        const difficulty: QuizDifficulty =
-          rawDifficulty === 'easy' ? 'easy' : rawDifficulty === 'hard' ? 'hard' : 'medium';
+    if (!defaults) {
+      return;
+    }
+    const rawDifficulty = defaults.difficulty?.toLowerCase();
+    const difficulty: QuizDifficulty =
+      rawDifficulty === 'easy' ? 'easy' : rawDifficulty === 'hard' ? 'hard' : 'medium';
 
-        const stored = data.question_count ?? 10;
-        const questionCount =
-          QUESTION_COUNTS.find((option) => stored <= option) ??
-          QUESTION_COUNTS[QUESTION_COUNTS.length - 1];
+    const stored = defaults.question_count ?? 10;
+    const questionCount =
+      QUESTION_COUNTS.find((option) => stored <= option) ??
+      QUESTION_COUNTS[QUESTION_COUNTS.length - 1];
 
-        setSetup((previous) => ({ ...previous, difficulty, questionCount }));
-      })
-      .catch(() => {
-        if (active) {
-          setSetup((previous) => ({ ...previous, difficulty: 'medium', questionCount: 10 }));
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [courseId]);
+    setSetup((previous) => ({ ...previous, difficulty, questionCount }));
+  }, [defaults]);
 
   useEffect(() => {
     if (step !== 'generating') {
@@ -204,6 +195,7 @@ export function QuizModal({
       }
       setAttempt(recorded);
       setStep('results');
+      afterQuizAttempt(courseId);
       onAttemptRecorded?.();
     } catch (caught) {
       if (controller.signal.aborted || isAbortError(caught)) {
@@ -259,6 +251,7 @@ export function QuizModal({
         return;
       }
 
+      afterQuizGenerated(courseId);
       if (onQuizReady) {
         onQuizReady(generated.quiz.quiz_id);
         void refresh();

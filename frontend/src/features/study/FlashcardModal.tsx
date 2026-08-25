@@ -3,6 +3,7 @@ import { Layers, Sparkles } from 'lucide-react';
 import { describeGenerationError, isAbortError, isInsufficientCredits } from '@/api/errors';
 import type { GenerationFailure } from '@/api/errors';
 import { flashcardsAPI } from '@/api/flashcards';
+import { afterFlashcardsGenerated } from '@/api/invalidations';
 import type { FlashcardGenerationResult } from '@/api/types';
 import CreditBalance from '@/components/credits/CreditBalance';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
@@ -70,6 +71,7 @@ export function FlashcardModal({
         { signal: controller.signal },
       );
       setState({ phase: 'success', result });
+      afterFlashcardsGenerated(courseId);
       void refresh();
     } catch (caught) {
       if (isAbortError(caught)) {

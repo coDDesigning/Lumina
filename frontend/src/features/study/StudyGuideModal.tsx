@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, Check, Copy, Download, Sparkles } from 'lucide-react';
 import { describeGenerationError, isAbortError, isInsufficientCredits } from '@/api/errors';
 import type { GenerationFailure } from '@/api/errors';
-import { settingsAPI } from '@/api/settings';
 import { studyGuideAPI } from '@/api/studyGuide';
+import { afterStudyGuideGenerated } from '@/api/invalidations';
+import { useCourseSettings } from '@/features/courses/useCourseSettings';
 import type {
   DetailLevel,
   StudyGuideGenerationResult,
@@ -85,41 +86,28 @@ export function StudyGuideModal({
   const abortRef = useRef<AbortController | null>(null);
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  const settings = useCourseSettings(courseId);
+  const defaults = settings.status === 'success' ? settings.data : undefined;
+
   useEffect(() => {
-    let active = true;
-    settingsAPI
-      .get(courseId)
-      .then((data) => {
-        if (!active) {
-          return;
-        }
-        const rawLength = data.summary_length?.toLowerCase();
-        setSummaryLength(rawLength === 'short' ? 'short' : rawLength === 'long' ? 'long' : 'medium');
+    if (!defaults) {
+      return;
+    }
+    const rawLength = defaults.summary_length?.toLowerCase();
+    setSummaryLength(rawLength === 'short' ? 'short' : rawLength === 'long' ? 'long' : 'medium');
 
-        const rawDetail = data.detail_level?.toLowerCase();
-        setDetailLevel(
-          rawDetail === 'concise' || rawDetail === 'basic'
-            ? 'basic'
-            : rawDetail === 'detailed'
-              ? 'detailed'
-              : 'standard',
-        );
+    const rawDetail = defaults.detail_level?.toLowerCase();
+    setDetailLevel(
+      rawDetail === 'concise' || rawDetail === 'basic'
+        ? 'basic'
+        : rawDetail === 'detailed'
+          ? 'detailed'
+          : 'standard',
+    );
 
-        const rawMode = data.study_mode?.toLowerCase();
-        setSummaryMode(rawMode === 'exam' || rawMode === 'exam_focused' ? 'exam_focused' : 'general');
-      })
-      .catch(() => {
-        if (!active) {
-          return;
-        }
-        setSummaryLength('medium');
-        setDetailLevel('standard');
-        setSummaryMode('general');
-      });
-    return () => {
-      active = false;
-    };
-  }, [courseId]);
+    const rawMode = defaults.study_mode?.toLowerCase();
+    setSummaryMode(rawMode === 'exam' || rawMode === 'exam_focused' ? 'exam_focused' : 'general');
+  }, [defaults]);
 
   useEffect(() => {
     if (state.phase !== 'generating') {
@@ -169,6 +157,7 @@ export function StudyGuideModal({
       }
       lastResultRef.current = result;
       setState({ phase: 'success', result });
+      afterStudyGuideGenerated(courseId);
       void refresh();
       if (onGenerated && result.generated_output_id) {
         onGenerated(result.generated_output_id);

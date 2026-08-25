@@ -105,3 +105,25 @@
   display: flex;
   justify-content: flex-start;
 }
+
+@media (max-width: 48rem) {
+  .link {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    row-gap: var(--space-1);
+  }
+
+  .score,
+  .topic,
+  .when {
+    grid-column: 2;
+  }
+
+  .topic {
+    max-width: none;
+  }
+
+  .when {
+    white-space: normal;
+  }
+}

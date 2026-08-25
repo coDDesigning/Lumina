@@ -15,7 +15,7 @@ export const authAPI = {
     return apiClient.post<User>('/auth/register', { name, email, password });
   },
   
-  me: async (): Promise<User> => {
-    return apiClient.get<User>('/auth/me');
+  me: async (options?: RequestInit): Promise<User> => {
+    return apiClient.get<User>('/auth/me', options);
   }
 };

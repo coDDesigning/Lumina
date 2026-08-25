@@ -116,8 +116,12 @@ export function FlashcardDeck({ cards, onEscape }: FlashcardDeckProps) {
       <div className={styles.controls}>
         <Button
           variant="ghost"
-          onClick={() => goTo(index - 1)}
-          disabled={isFirst}
+          onClick={() => {
+            if (!isFirst) {
+              goTo(index - 1);
+            }
+          }}
+          aria-disabled={isFirst || undefined}
           icon={<ArrowLeft aria-hidden="true" />}
         >
           Previous
@@ -136,8 +140,12 @@ export function FlashcardDeck({ cards, onEscape }: FlashcardDeckProps) {
 
         <Button
           variant="ghost"
-          onClick={() => goTo(index + 1)}
-          disabled={isLast}
+          onClick={() => {
+            if (!isLast) {
+              goTo(index + 1);
+            }
+          }}
+          aria-disabled={isLast || undefined}
           iconAfter={<ArrowRight aria-hidden="true" />}
         >
           Next

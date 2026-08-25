@@ -154,7 +154,7 @@ describe('CourseSettingsPage — generation defaults', () => {
     renderPage();
 
     await waitFor(() => {
-      expect(mockGet).toHaveBeenCalledWith(1);
+      expect(mockGet).toHaveBeenCalledWith(1, expect.anything());
     });
     expect(await screen.findByLabelText('Questions per quiz')).toHaveValue(12);
   });

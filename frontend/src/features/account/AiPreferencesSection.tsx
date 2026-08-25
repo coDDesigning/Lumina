@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { describeError } from '@/api/errors';
 import { modelsAPI } from '@/api/models';
+import { queryKeys } from '@/api/queryKeys';
+import { useQuery } from '@/lib/query/useQuery';
 import { userAPI } from '@/api/user';
 import type { AiModelInfo, CreditTransaction } from '@/api/types';
 import { formatDelta, transactionLabel } from '@/api/creditLabels';
@@ -34,77 +36,47 @@ function formatDate(value: string | null): string | null {
   return new Intl.DateTimeFormat('en', { day: 'numeric', month: 'long' }).format(parsed);
 }
 
+const LEDGER_LIMIT = 20;
+
 export function AiPreferencesSection() {
   const { user, refreshUser } = useAuth();
   const { status, isMetered } = useCredits();
 
-  const [models, setModels] = useState<AiModelInfo[]>([]);
-  const [areModelsLoading, setAreModelsLoading] = useState(true);
-  const [modelError, setModelError] = useState<string | null>(null);
   const [modelNotice, setModelNotice] = useState<string | null>(null);
-  const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
-  const [transactionError, setTransactionError] = useState<string | null>(null);
+  const [modelActionError, setModelActionError] = useState<string | null>(null);
+
+  const modelsQuery = useQuery<AiModelInfo[]>({
+    key: queryKeys.models(),
+    fetcher: ({ signal }) => modelsAPI.list({ signal }),
+    fallbackMessage: "We couldn't load the model list.",
+    staleTime: 5 * 60_000,
+  });
+
+  const transactionsQuery = useQuery<CreditTransaction[]>({
+    key: isMetered && user ? queryKeys.creditTransactions(user.id, LEDGER_LIMIT) : null,
+    fetcher: ({ signal }) => userAPI.getCreditTransactions(LEDGER_LIMIT, { signal }),
+    fallbackMessage: "We couldn't refresh your credit history.",
+  });
+
+  const models = useMemo(() => modelsQuery.data ?? [], [modelsQuery.data]);
+  const areModelsLoading = modelsQuery.status === 'pending' || modelsQuery.status === 'idle';
+  const modelError = modelActionError ?? modelsQuery.error?.message ?? null;
+  const transactions = useMemo(() => transactionsQuery.data ?? [], [transactionsQuery.data]);
+  const transactionError = transactionsQuery.error?.message ?? null;
 
   const selectedId = user?.preferred_model ?? '';
   const selected = models.find((model) => model.id === selectedId) ?? null;
 
-  useEffect(() => {
-    let cancelled = false;
-
-    modelsAPI
-      .list()
-      .then((result) => {
-        if (cancelled) return;
-        setModels(result);
-        setAreModelsLoading(false);
-      })
-      .catch((caught: unknown) => {
-        if (cancelled) return;
-        setAreModelsLoading(false);
-        setModelError(describeError(caught, "We couldn't load the model list.").message);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isMetered) {
-      setTransactions([]);
-      setTransactionError(null);
-      return;
-    }
-
-    let cancelled = false;
-    setTransactions([]);
-    setTransactionError(null);
-    userAPI
-      .getCreditTransactions(20)
-      .then((result) => {
-        if (!cancelled) setTransactions(result);
-      })
-      .catch((caught: unknown) => {
-        if (cancelled) return;
-        setTransactionError(
-          describeError(caught, "We couldn't refresh your credit history.").message,
-        );
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isMetered, status?.credits]);
 
   async function handleModelChange(modelId: string) {
-    setModelError(null);
+    setModelActionError(null);
     setModelNotice(null);
     try {
       await userAPI.updatePreferredModel(modelId);
       await refreshUser();
       setModelNotice(`Preferred AI model updated to ${modelId}`);
     } catch (caught) {
-      setModelError(describeError(caught, "That model couldn't be selected.").message);
+      setModelActionError(describeError(caught, "That model couldn't be selected.").message);
     }
   }
 

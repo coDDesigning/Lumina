@@ -1,6 +1,7 @@
 import { BookOpen, Layers3, Target } from 'lucide-react';
 import { relativeDay } from '@/lib/relativeDay';
 import { Button } from '@/ui/Button';
+import { ErrorState } from '@/ui/ErrorState';
 import { Skeleton } from '@/ui/Skeleton';
 import type { CourseArtifact, SavedArtifact } from './useCourseArtifacts';
 import styles from './ArtifactRail.module.css';
@@ -8,6 +9,8 @@ import styles from './ArtifactRail.module.css';
 export interface ArtifactRailProps {
   artifacts: CourseArtifact[];
   isLoading: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   onOpenAll: () => void;
   onOpen: (artifact: SavedArtifact) => void;
   onOpenProgress: () => void;
@@ -68,6 +71,8 @@ function iconOf(artifact: CourseArtifact) {
 export function ArtifactRail({
   artifacts,
   isLoading,
+  error,
+  onRetry,
   onOpenAll,
   onOpen,
   onOpenProgress,
@@ -78,6 +83,14 @@ export function ArtifactRail({
         <Skeleton variant="text" />
         <Skeleton variant="text" />
       </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <ErrorState title="What you made could not be loaded" onRetry={onRetry}>
+        {error}
+      </ErrorState>
     );
   }
 

@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Plus } from 'lucide-react';
 import { describeError } from '@/api/errors';
 import { profileKnowledgeAPI } from '@/api/profileKnowledge';
+import { queryKeys } from '@/api/queryKeys';
+import { queryCache } from '@/lib/query/cache';
+import { useQuery } from '@/lib/query/useQuery';
 import type { ProfileKnowledgeItem } from '@/api/types';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
@@ -36,13 +39,10 @@ function parseImport(raw: string): { topic: string; detail: string }[] {
 }
 
 export function ProfileKnowledgeSection() {
-  const [items, setItems] = useState<ProfileKnowledgeItem[]>([]);
   const [isImporting, setIsImporting] = useState(false);
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState<string | null>(null);
   const [isSavingImport, setIsSavingImport] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<ProfileKnowledgeItem | null>(null);
@@ -55,21 +55,25 @@ export function ProfileKnowledgeSection() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError(null);
-    try {
-      setItems(await profileKnowledgeAPI.list());
-    } catch (caught) {
-      setLoadError(describeError(caught, "We couldn't load your background notes.").message);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  const query = useQuery<ProfileKnowledgeItem[]>({
+    key: queryKeys.profileKnowledge(),
+    fetcher: ({ signal }) => profileKnowledgeAPI.list({ signal }),
+    fallbackMessage: "We couldn't load your background notes.",
+  });
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const items = useMemo(() => query.data ?? [], [query.data]);
+  const isLoading = query.status === 'pending' || query.status === 'idle';
+  const loadError = query.error?.message ?? null;
+  const load = query.refetch;
+
+  const setItems = useCallback(
+    (updater: (previous: ProfileKnowledgeItem[]) => ProfileKnowledgeItem[]) => {
+      queryCache.setData<ProfileKnowledgeItem[]>(queryKeys.profileKnowledge(), (previous) =>
+        updater(previous ?? []),
+      );
+    },
+    [],
+  );
 
   async function handleImport() {
     const parsed = parseImport(importText);
@@ -109,6 +113,9 @@ export function ProfileKnowledgeSection() {
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSaving) {
+      return;
+    }
     setSaveError(null);
     setIsSaving(true);
 

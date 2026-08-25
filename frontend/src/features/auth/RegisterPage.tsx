@@ -30,6 +30,9 @@ export default function RegisterPage() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
     setError(null);
     setPasswordError(null);
 

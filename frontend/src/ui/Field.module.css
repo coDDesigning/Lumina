@@ -106,3 +106,10 @@
   justify-content: space-between;
   gap: var(--space-3);
 }
+
+@media (pointer: coarse) {
+  .control {
+    font-size: var(--text-base);
+    min-height: var(--size-touch-min);
+  }
+}

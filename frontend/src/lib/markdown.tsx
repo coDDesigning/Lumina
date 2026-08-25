@@ -116,7 +116,7 @@ export function Markdown({ text, className }: MarkdownProps) {
       }
       cursor += 1;
       blocks.push(
-        <pre className={styles.pre} key={nextKey()}>
+        <pre className={styles.pre} key={nextKey()} tabIndex={0}>
           <code>{body.join('\n')}</code>
         </pre>,
       );

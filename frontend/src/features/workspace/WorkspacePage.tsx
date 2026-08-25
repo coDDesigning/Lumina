@@ -14,10 +14,12 @@ import {
 import { Link } from 'react-router-dom';
 import { coursesAPI } from '@/api/courses';
 import { aiTutorAPI } from '@/api/aiTutor';
+import { conversationsAPI } from '@/api/conversations';
 import { courseQaAPI } from '@/api/courseQa';
 import {
   describeGenerationError,
   describeUploadError,
+  isAbortError,
   isInsufficientCredits,
 } from '@/api/errors';
 import type {
@@ -111,6 +113,36 @@ function uploadedOn(value: string): string | null {
   return `on ${new Intl.DateTimeFormat('en', { day: 'numeric', month: 'long' }).format(parsed)}`;
 }
 
+function getStoredConversationId(courseId: number, type: ConversationType): number | null {
+  try {
+    const raw = localStorage.getItem(`lumina:course:${courseId}:conversation:${type}`);
+    if (!raw) {
+      return null;
+    }
+    const parsed = Number(raw);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function setStoredConversationId(
+  courseId: number,
+  type: ConversationType,
+  id: number | null,
+): void {
+  try {
+    const key = `lumina:course:${courseId}:conversation:${type}`;
+    if (id !== null) {
+      localStorage.setItem(key, String(id));
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage errors in restricted contexts
+  }
+}
+
 export default function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const { user } = useAuth();
   const {
@@ -129,6 +161,61 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
     course_qa: EMPTY_THREAD,
     ai_tutor: EMPTY_THREAD,
   });
+
+  useEffect(() => {
+    if (!Number.isInteger(courseId) || courseId <= 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    (['course_qa', 'ai_tutor'] as const).forEach((type) => {
+      const storedId = getStoredConversationId(courseId, type);
+      if (!storedId) {
+        return;
+      }
+
+      setThreads((state) => ({
+        ...state,
+        [type]: { ...state[type], isLoading: true, error: null },
+      }));
+
+      conversationsAPI
+        .get(courseId, storedId, { signal: controller.signal })
+        .then((detail) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          setThreads((state) => ({
+            ...state,
+            [type]: {
+              conversationId: detail.id,
+              messages: detail.messages.map(({ role, content }) => ({ role, content })),
+              isLoading: false,
+              error: null,
+            },
+          }));
+        })
+        .catch((caught: unknown) => {
+          if (controller.signal.aborted || isAbortError(caught)) {
+            return;
+          }
+          setStoredConversationId(courseId, type, null);
+          setThreads((state) => ({
+            ...state,
+            [type]: {
+              ...state[type],
+              conversationId: null,
+              isLoading: false,
+            },
+          }));
+        });
+    });
+
+    return () => {
+      controller.abort();
+    };
+  }, [courseId]);
 
   const [uploadErrors, setUploadErrors] = useState<{ fileName: string; message: string }[]>([]);
   const [uploadNotices, setUploadNotices] = useState<string[]>([]);
@@ -271,6 +358,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           ? await aiTutorAPI.ask(courseId, request)
           : await courseQaAPI.ask(courseId, request);
 
+      setStoredConversationId(courseId, threadType, result.conversation_id);
       setThreads((state) => ({
         ...state,
         [threadType]: {
@@ -322,10 +410,12 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   }
 
   function startNewConversation() {
+    setStoredConversationId(courseId, threadType, null);
     setThreads((state) => ({ ...state, [threadType]: EMPTY_THREAD }));
   }
 
   function resumeConversation(conversation: ConversationDetail) {
+    setStoredConversationId(courseId, conversation.conversation_type, conversation.id);
     setThreads((state) => ({
       ...state,
       [conversation.conversation_type]: {
@@ -734,6 +824,24 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           canResume={workspace.ownerId == null || workspace.ownerId === user?.id}
           onClose={() => setIsPastThreadsOpen(false)}
           onResume={resumeConversation}
+          onDelete={(conversationId) => {
+            (['course_qa', 'ai_tutor'] as const).forEach((type) => {
+              if (getStoredConversationId(courseId, type) === conversationId) {
+                setStoredConversationId(courseId, type, null);
+              }
+            });
+            setThreads((state) => {
+              let changed = false;
+              const next = { ...state };
+              for (const type of ['course_qa', 'ai_tutor'] as const) {
+                if (next[type].conversationId === conversationId) {
+                  next[type] = EMPTY_THREAD;
+                  changed = true;
+                }
+              }
+              return changed ? next : state;
+            });
+          }}
         />
       ) : null}
 

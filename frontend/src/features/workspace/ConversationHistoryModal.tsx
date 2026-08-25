@@ -20,6 +20,7 @@ export interface ConversationHistoryModalProps {
   canResume?: boolean;
   onClose: () => void;
   onResume: (conversation: ConversationDetail) => void;
+  onDelete?: (conversationId: number) => void;
 }
 
 type ListState =
@@ -49,6 +50,7 @@ export function ConversationHistoryModal({
   canResume = true,
   onClose,
   onResume,
+  onDelete,
 }: ConversationHistoryModalProps) {
   const [listState, setListState] = useState<ListState>({ phase: 'loading' });
   const [detailState, setDetailState] = useState<DetailState>({ phase: 'empty' });
@@ -116,19 +118,21 @@ export function ConversationHistoryModal({
     if (!removing) {
       return;
     }
+    const removedId = removing.id;
     setIsRemoving(true);
     setRemoveError(null);
     try {
-      await conversationsAPI.delete(courseId, removing.id);
+      await conversationsAPI.delete(courseId, removedId);
+      onDelete?.(removedId);
       setListState((current) =>
         current.phase === 'ready'
           ? {
               phase: 'ready',
-              conversations: current.conversations.filter((row) => row.id !== removing.id),
+              conversations: current.conversations.filter((row) => row.id !== removedId),
             }
           : current,
       );
-      if (selectedId === removing.id) {
+      if (selectedId === removedId) {
         setSelectedId(null);
         setDetailState({ phase: 'empty' });
       }

@@ -74,7 +74,7 @@ vi.mock('./api/aiTutor', () => ({
 }));
 
 vi.mock('./api/conversations', () => ({
-  conversationsAPI: { list: vi.fn(), get: vi.fn() },
+  conversationsAPI: { list: vi.fn(), get: vi.fn(), delete: vi.fn() },
 }));
 
 const mockCourseList = vi.mocked(coursesAPI.list);
@@ -85,6 +85,7 @@ const mockQaAsk = vi.mocked(courseQaAPI.ask);
 const mockTutorAsk = vi.mocked(aiTutorAPI.ask);
 const mockConversationList = vi.mocked(conversationsAPI.list);
 const mockConversationGet = vi.mocked(conversationsAPI.get);
+const mockConversationDelete = vi.mocked(conversationsAPI.delete);
 
 function qaResult(
   answer: string,
@@ -136,6 +137,7 @@ async function sendPrompt(prompt: string) {
 
 describe('Workspace conversations', () => {
   beforeEach(() => {
+    localStorage.clear();
     mockCourseList.mockResolvedValue([
       createMockCourse({ id: 1, title: 'Operating Systems' }),
     ]);
@@ -384,6 +386,124 @@ describe('Workspace conversations', () => {
     expect(
       await screen.findByText('Here is a personalized explanation.'),
     ).toBeInTheDocument();
+  }, 15_000);
+
+  it('deletes a conversation from past threads modal and resets active thread if loaded', async () => {
+    const summary: ConversationSummary = {
+      id: 55,
+      course_id: 1,
+      user_id: 1,
+      conversation_type: 'course_qa',
+      preview: 'What is a mutex?',
+      message_count: 2,
+      created_at: '2026-08-20T10:00:00Z',
+      updated_at: '2026-08-20T10:05:00Z',
+    };
+    const detail: ConversationDetail = {
+      ...summary,
+      messages: [
+        {
+          id: 61,
+          role: 'user',
+          content: 'What is a mutex?',
+          created_at: '2026-08-20T10:00:00Z',
+        },
+        {
+          id: 62,
+          role: 'assistant',
+          content: 'A mutex provides mutual exclusion for critical sections.',
+          created_at: '2026-08-20T10:00:01Z',
+        },
+      ],
+    };
+
+    mockConversationList.mockResolvedValue([summary]);
+    mockConversationGet.mockResolvedValue(detail);
+    mockConversationDelete.mockResolvedValue({ id: 55 });
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+
+    // Open past threads and resume the conversation
+    await userEvent.click(screen.getByRole('button', { name: 'Past threads' }));
+    await userEvent.click(await screen.findByRole('button', { name: /Question 55/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Pick this up' }));
+
+    expect(screen.getByText('What is a mutex?')).toBeInTheDocument();
+    expect(
+      screen.getByText('A mutex provides mutual exclusion for critical sections.'),
+    ).toBeInTheDocument();
+
+    // Reopen past threads and delete the conversation
+    await userEvent.click(screen.getByRole('button', { name: 'Past threads' }));
+    await userEvent.click(await screen.findByRole('button', { name: /Question 55/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove it' }));
+
+    await waitFor(() => expect(mockConversationDelete).toHaveBeenCalledWith(1, 55));
+    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    // Verify active thread was cleared
+    await waitFor(() => {
+      expect(screen.queryByText('What is a mutex?')).not.toBeInTheDocument();
+    });
+  }, 15_000);
+
+  it('restores the active thread on reload from stored conversation ID', async () => {
+    const summary: ConversationSummary = {
+      id: 42,
+      course_id: 1,
+      user_id: 1,
+      conversation_type: 'course_qa',
+      preview: 'What is paging?',
+      message_count: 2,
+      created_at: '2026-08-20T10:00:00Z',
+      updated_at: '2026-08-20T10:05:00Z',
+    };
+    const detail: ConversationDetail = {
+      ...summary,
+      messages: [
+        {
+          id: 71,
+          role: 'user',
+          content: 'What is paging?',
+          created_at: '2026-08-20T10:00:00Z',
+        },
+        {
+          id: 72,
+          role: 'assistant',
+          content: 'Paging is a memory management scheme.',
+          created_at: '2026-08-20T10:00:01Z',
+        },
+      ],
+    };
+
+    localStorage.setItem('lumina:course:1:conversation:course_qa', '42');
+    mockConversationGet.mockResolvedValue(detail);
+    mockQaAsk.mockResolvedValue(
+      qaResult('Page tables store the mapping.', 42),
+    );
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+
+    // Thread messages should be restored automatically on mount
+    expect(await screen.findByText('What is paging?')).toBeInTheDocument();
+    expect(
+      screen.getByText('Paging is a memory management scheme.'),
+    ).toBeInTheDocument();
+    expect(mockConversationGet).toHaveBeenCalledWith(1, 42, expect.anything());
+
+    // Continuing the thread should send the persisted conversation_id
+    await sendPrompt('How are page tables involved?');
+    await waitFor(() =>
+      expect(mockQaAsk).toHaveBeenCalledWith(1, {
+        question: 'How are page tables involved?',
+        conversation_id: 42,
+        use_profile_knowledge: false,
+        include_profile_context: false,
+      }),
+    );
   }, 15_000);
 });
 

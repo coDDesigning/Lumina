@@ -58,7 +58,11 @@ vi.mock('../api/generatedOutputs', () => ({
 }));
 
 vi.mock('../api/conversations', () => ({
-  conversationsAPI: { list: vi.fn().mockResolvedValue([]), get: vi.fn() },
+  conversationsAPI: {
+    list: vi.fn().mockResolvedValue([]),
+    get: vi.fn(),
+    delete: vi.fn(),
+  },
 }));
 
 beforeEach(() => {

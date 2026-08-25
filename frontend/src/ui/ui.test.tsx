@@ -17,16 +17,24 @@ import { ToastProvider } from './ToastProvider';
 import { useToast } from './toastContext';
 
 describe('Button', () => {
-  it('disables itself and marks busy while loading', () => {
+  it('stays focusable while it works so the press does not lose focus', async () => {
+    const onClick = vi.fn();
     render(
-      <Button isLoading loadingLabel="Generating">
+      <Button isLoading loadingLabel="Generating" onClick={onClick}>
         Make the guide
       </Button>,
     );
 
     const button = screen.getByRole('button', { name: /make the guide/i });
-    expect(button).toBeDisabled();
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
     expect(button).toHaveAttribute('aria-busy', 'true');
+
+    button.focus();
+    expect(button).toHaveFocus();
+    await userEvent.click(button);
+    expect(onClick).not.toHaveBeenCalled();
+
     expect(screen.getByText('Generating')).toBeInTheDocument();
   });
 

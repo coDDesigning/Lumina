@@ -37,6 +37,9 @@ export function AppShell() {
 
   return (
     <div className={styles.shell}>
+      <a className={styles.skipLink} href="#main">
+        Skip to content
+      </a>
       <nav className={styles.rail} aria-label="Main">
         <NavLink to="/dashboard" className={styles.brand} aria-label="Lumina home">
           <Brandmark size="md" />
@@ -78,7 +81,7 @@ export function AppShell() {
         </button>
       </nav>
 
-      <main className={styles.main}>
+      <main id="main" className={styles.main} tabIndex={-1}>
         <Outlet />
       </main>
     </div>

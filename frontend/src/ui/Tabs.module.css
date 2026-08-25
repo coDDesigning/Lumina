@@ -29,3 +29,10 @@
   color: var(--accent);
   box-shadow: var(--shadow-1);
 }
+
+@media (pointer: coarse) {
+  .tab {
+    min-height: var(--size-touch-min);
+    padding: var(--space-2) var(--space-4);
+  }
+}

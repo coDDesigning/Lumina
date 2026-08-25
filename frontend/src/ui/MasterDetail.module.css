@@ -56,7 +56,7 @@
   color: var(--text-muted);
 }
 
-@media (max-width: 52rem) {
+@media (max-width: 64rem) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
   }

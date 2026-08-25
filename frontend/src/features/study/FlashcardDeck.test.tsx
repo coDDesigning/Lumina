@@ -67,16 +67,30 @@ describe('FlashcardDeck', () => {
     expect(screen.getByRole('button', { name: 'Show the answer' })).toBeInTheDocument();
   });
 
-  it('stops at both ends of the deck', async () => {
+  it('stops at both ends of the deck without dropping the focus that pressed it', async () => {
     render(<FlashcardDeck cards={CARDS} />);
 
-    expect(screen.getByRole('button', { name: /previous/i })).toBeDisabled();
+    const previous = screen.getByRole('button', { name: /previous/i });
+    expect(previous).toHaveAttribute('aria-disabled', 'true');
+    expect(previous).not.toBeDisabled();
 
-    await userEvent.click(screen.getByRole('button', { name: /next/i }));
+    previous.focus();
+    await userEvent.click(previous);
+    expect(previous).toHaveFocus();
+    expect(screen.getByText('What is a stack?')).toBeInTheDocument();
+
+    const next = screen.getByRole('button', { name: /next/i });
+    await userEvent.click(next);
     await userEvent.click(screen.getByRole('button', { name: /next/i }));
 
     expect(screen.getByText('What is a heap?')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /next/i })).toBeDisabled();
+    const last = screen.getByRole('button', { name: /next/i });
+    expect(last).toHaveAttribute('aria-disabled', 'true');
+
+    last.focus();
+    await userEvent.click(last);
+    expect(last).toHaveFocus();
+    expect(screen.getByText('What is a heap?')).toBeInTheDocument();
   });
 
   it('leaves the space bar alone when the reader is typing somewhere else', async () => {

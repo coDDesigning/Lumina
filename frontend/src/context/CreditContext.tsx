@@ -1,15 +1,8 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { createContext, useCallback, useContext, type ReactNode } from 'react';
+import { queryKeys } from '../api/queryKeys';
 import { userAPI } from '../api/user';
-import { describeError } from '../api/errors';
 import type { CreditSource, CreditStatus } from '../api/types';
+import { useQuery } from '../lib/query/useQuery';
 import { useAuth } from './AuthContext';
 
 /**
@@ -37,97 +30,21 @@ const CreditContext = createContext<CreditContextType | undefined>(undefined);
 export const CreditProvider = ({ children }: { children: ReactNode }) => {
   const { isAuthenticated, user } = useAuth();
   const identity = user?.id ?? null;
-  const [snapshot, setSnapshot] = useState<{
-    identity: number;
-    status: CreditStatus | null;
-    error: string | null;
-  } | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const inFlight = useRef<{ identity: number; request: Promise<void> } | null>(null);
-  const trailingRefresh = useRef(false);
-  const identityRef = useRef(identity);
-  identityRef.current = identity;
 
-  const refresh = useCallback((): Promise<void> => {
-    if (!isAuthenticated || identity === null) {
-      return Promise.resolve();
-    }
-    if (inFlight.current?.identity === identity) {
-      trailingRefresh.current = true;
-      return inFlight.current.request;
-    }
+  const query = useQuery<CreditStatus>({
+    key: isAuthenticated && identity !== null ? queryKeys.credits(identity) : null,
+    fetcher: ({ signal }) => userAPI.getCredits({ signal }),
+    fallbackMessage: 'Your credit balance could not be loaded.',
+    refetchOnFocus: true,
+    onRefetchError: 'discard',
+  });
 
-    const requestIdentity = identity;
-    const run = async () => {
-      setIsLoading(true);
-      do {
-        trailingRefresh.current = false;
-        try {
-          const nextStatus = await userAPI.getCredits();
-          if (identityRef.current !== requestIdentity) return;
-          setSnapshot({ identity: requestIdentity, status: nextStatus, error: null });
-        } catch (err) {
-          if (identityRef.current !== requestIdentity) return;
-          // The previous balance is dropped rather than left to look current, but
-          // an unknown balance must never be rendered as an exhausted one.
-          setSnapshot({
-            identity: requestIdentity,
-            status: null,
-            error: describeError(err, 'Your credit balance could not be loaded.').message,
-          });
-        }
-      } while (trailingRefresh.current && identityRef.current === requestIdentity);
-      if (identityRef.current === requestIdentity) {
-        setIsLoading(false);
-      }
-    };
-
-    const request = run();
-    inFlight.current = { identity: requestIdentity, request };
-    void request.finally(() => {
-      if (inFlight.current?.request === request) {
-        inFlight.current = null;
-      }
-    });
-    return request;
-  }, [identity, isAuthenticated]);
-
-  useEffect(() => {
-    trailingRefresh.current = false;
-    setSnapshot(null);
-    if (!isAuthenticated) {
-      setIsLoading(false);
-      return;
-    }
-    if (inFlight.current?.identity !== identity) {
-      void refresh();
-    }
-  }, [identity, isAuthenticated, refresh]);
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      return;
-    }
-    // An administrator can grant credits while this tab sits open, so returning
-    // to it is the moment the displayed balance is most likely to be wrong.
-    const onFocus = () => void refresh();
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        void refresh();
-      }
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [isAuthenticated, refresh]);
-
-  const currentSnapshot = snapshot?.identity === identity ? snapshot : null;
-  const status = currentSnapshot?.status ?? null;
-  const error = currentSnapshot?.error ?? null;
+  const status = query.data ?? null;
+  const error = query.error?.message ?? null;
   const isMetered = status != null && status.credits !== null;
+
+  const { refetch } = query;
+  const refresh = useCallback(() => refetch(), [refetch]);
 
   const costOf = useCallback(
     (source: CreditSource) => status?.generation_costs?.[source] ?? null,
@@ -146,7 +63,15 @@ export const CreditProvider = ({ children }: { children: ReactNode }) => {
 
   return (
     <CreditContext.Provider
-      value={{ status, isLoading, error, refresh, isMetered, costOf, canAfford }}
+      value={{
+        status,
+        isLoading: query.status === 'pending',
+        error,
+        refresh,
+        isMetered,
+        costOf,
+        canAfford,
+      }}
     >
       {children}
     </CreditContext.Provider>

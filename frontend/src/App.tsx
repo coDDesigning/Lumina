@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { toWorkspaceProgress } from './data/workspaces'
@@ -27,9 +27,16 @@ import { ProtectedRoute } from './components/ProtectedRoute'
 import { RouteLoading } from './app/RouteLoading'
 import { useAuth } from './context/AuthContext'
 import { coursesAPI } from './api/courses'
+import {
+  afterCourseCreated,
+  afterCourseDeleted,
+  afterCourseUpdated,
+} from './api/invalidations'
+import { queryKeys } from './api/queryKeys'
+import { queryCache } from './lib/query/cache'
+import { useQuery } from './lib/query/useQuery'
 import { progressAPI } from './api/progress'
-import { describeError } from './api/errors'
-import type { Course } from './api/types'
+import type { Course, CourseProgressSummary } from './api/types'
 
 const ACTIVE_WORKSPACE_STORAGE_KEY = 'lumina.activeWorkspaceId'
 const workspaceAccents: Workspace['accent'][] = [
@@ -174,72 +181,68 @@ function mapCourseToWorkspace(
 
 function App() {
   const { isAuthenticated } = useAuth()
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
-  const [haveWorkspacesArrived, setHaveWorkspacesArrived] = useState(false)
-  const [workspacesError, setWorkspacesError] = useState<string | null>(null)
+  const [progressOverrides, setProgressOverrides] = useState<
+    Record<string, Partial<WorkspaceProgress>>
+  >({})
 
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(
     () => localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY) ?? '',
   )
 
-  const fetchWorkspaces = useCallback(
-    async (signal?: AbortSignal) => {
-      if (!isAuthenticated) {
-        setWorkspacesError(null)
-        return
+  const coursesQuery = useQuery<Course[]>({
+    key: isAuthenticated ? queryKeys.courses() : null,
+    fetcher: ({ signal }) => coursesAPI.list({ signal }),
+    fallbackMessage: 'Failed to load workspaces. Please try again.',
+  })
+
+  const progressQuery = useQuery<CourseProgressSummary[]>({
+    key: isAuthenticated ? queryKeys.coursesProgress() : null,
+    fetcher: ({ signal }) => progressAPI.listAll({ signal }),
+    fallbackMessage: 'Progress could not be loaded.',
+  })
+
+  const courses = coursesQuery.data
+  const progressRows = progressQuery.data
+
+  const workspaces = useMemo<Workspace[]>(() => {
+    if (!courses) {
+      return []
+    }
+    const summaries = progressRows
+      ? new Map(progressRows.map((row) => [row.course_id, toWorkspaceProgress(row)]))
+      : null
+    return courses.map((course, index) => {
+      const workspace = mapCourseToWorkspace(
+        course,
+        index,
+        summaries?.get(course.id) ?? null,
+      )
+      const override = progressOverrides[workspace.id]
+      if (!override || !workspace.progress) {
+        return workspace
       }
-      setHaveWorkspacesArrived(false)
-      setWorkspacesError(null)
-      try {
-        const courses = await coursesAPI.list({ signal })
-
-        let summaries: Map<number, WorkspaceProgress> | null = null
-        try {
-          const rows = await progressAPI.listAll({ signal })
-          summaries = new Map(
-            rows.map((row) => [row.course_id, toWorkspaceProgress(row)]),
-          )
-        } catch (error: unknown) {
-          if (error instanceof Error && error.name === 'AbortError') {
-            return
-          }
-          summaries = null
-        }
-
-        const mappedWorkspaces = courses.map((course, index) =>
-          mapCourseToWorkspace(course, index, summaries?.get(course.id) ?? null),
-        )
-        setWorkspaces(mappedWorkspaces)
-
-        setActiveWorkspaceId((current) => {
-          if (mappedWorkspaces.length > 0 && !current) {
-            return mappedWorkspaces[0].id
-          }
-          return current
-        })
-      } catch (error: unknown) {
-        if (error instanceof Error && error.name === 'AbortError') {
-          return
-        }
-        const described = describeError(
-          error,
-          'Failed to load workspaces. Please try again.',
-        )
-        setWorkspacesError(described.message)
-      } finally {
-        setHaveWorkspacesArrived(true)
-      }
-    },
-    [isAuthenticated],
-  )
+      return { ...workspace, progress: { ...workspace.progress, ...override } }
+    })
+  }, [courses, progressRows, progressOverrides])
 
   useEffect(() => {
-    const controller = new AbortController()
-    fetchWorkspaces(controller.signal)
-    return () => {
-      controller.abort()
+    setActiveWorkspaceId((current) => {
+      if (!current && workspaces.length > 0) {
+        return workspaces[0].id
+      }
+      return current
+    })
+  }, [workspaces])
+
+  useEffect(() => {
+    if (progressRows) {
+      setProgressOverrides({})
     }
-  }, [fetchWorkspaces])
+  }, [progressRows])
+
+  const haveWorkspacesArrived =
+    !isAuthenticated || coursesQuery.status === 'success' || coursesQuery.status === 'error'
+  const workspacesError = coursesQuery.error?.message ?? null
 
   useEffect(() => {
     if (activeWorkspaceId) {
@@ -269,7 +272,10 @@ function App() {
         lastActivity: null,
         status: 'no_documents',
       })
-      setWorkspaces((current) => [newWorkspace, ...current])
+      queryCache.setData<Course[]>(queryKeys.courses(), (previous) =>
+        previous ? [newCourse, ...previous] : previous,
+      )
+      afterCourseCreated()
       setActiveWorkspaceId(newWorkspace.id)
       return newWorkspace
     } catch (error) {
@@ -280,10 +286,13 @@ function App() {
 
   const deleteWorkspace = async (courseId: string) => {
     await coursesAPI.delete(Number(courseId))
+    queryCache.setData<Course[]>(queryKeys.courses(), (previous) =>
+      previous?.filter((course) => String(course.id) !== courseId),
+    )
+    afterCourseDeleted(Number(courseId))
     const remaining = workspaces.filter(
       (workspace) => workspace.id !== courseId,
     )
-    setWorkspaces(remaining)
 
     if (activeWorkspaceId !== courseId) return
     const nextWorkspaceId = remaining[0]?.id ?? ''
@@ -309,18 +318,12 @@ function App() {
         },
       )
 
-      const updatedMappedWorkspace = mapCourseToWorkspace(
-        updatedCourse,
-        workspaces.findIndex((w) => w.id === updatedWorkspace.id),
-        workspaces.find((w) => w.id === updatedWorkspace.id)?.progress ?? null,
-      )
-      setWorkspaces((current) =>
-        current.map((workspace) =>
-          workspace.id === updatedWorkspace.id
-            ? updatedMappedWorkspace
-            : workspace,
+      queryCache.setData<Course[]>(queryKeys.courses(), (previous) =>
+        previous?.map((course) =>
+          String(course.id) === updatedWorkspace.id ? updatedCourse : course,
         ),
       )
+      afterCourseUpdated(Number(updatedWorkspace.id))
     } catch (error) {
       console.error('Failed to update workspace', error)
       throw error
@@ -329,15 +332,10 @@ function App() {
 
   const updateWorkspaceProgress = useCallback(
     (courseId: string, progress: Partial<WorkspaceProgress>) => {
-      setWorkspaces((current) => {
-        const target = current.find((w) => w.id === courseId)
-        if (!target || !target.progress) return current
-        return current.map((w) =>
-          w.id === courseId && w.progress
-            ? { ...w, progress: { ...w.progress, ...progress } }
-            : w,
-        )
-      })
+      setProgressOverrides((current) => ({
+        ...current,
+        [courseId]: { ...current[courseId], ...progress },
+      }))
     },
     [],
   )
@@ -359,7 +357,10 @@ function App() {
               workspaces={workspaces}
               isLoading={!haveWorkspacesArrived}
               error={workspacesError}
-              onRetry={() => fetchWorkspaces()}
+              onRetry={() => {
+                void coursesQuery.refetch()
+                void progressQuery.refetch()
+              }}
               onCreate={createWorkspace}
               onSelect={selectWorkspace}
               onDelete={deleteWorkspace}

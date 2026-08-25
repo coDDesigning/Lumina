@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { adminAPI } from '@/api/admin';
+import { queryKeys } from '@/api/queryKeys';
+import { queryCache } from '@/lib/query/cache';
+import { useQuery } from '@/lib/query/useQuery';
 import {
   ADMIN_CREDIT_REASONS,
   POSITIVE_ONLY_ADMIN_REASONS,
@@ -37,19 +40,15 @@ function formatUsd(value: number): string {
   }).format(value);
 }
 
+const COST_REPORT_DAYS = 30;
+
 export default function AdminPage() {
   const { user: currentUser } = useAuth();
   const { showToast } = useToast();
   useDocumentTitle('Admin');
 
-  const [users, setUsers] = useState<User[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
-  const [costReport, setCostReport] = useState<AiCostReport | null>(null);
-  const [costError, setCostError] = useState<string | null>(null);
-  const [isCostLoading, setIsCostLoading] = useState(true);
 
   const [query, setQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
@@ -70,34 +69,26 @@ export default function AdminPage() {
 
   const [banTarget, setBanTarget] = useState<User | null>(null);
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError(null);
-    try {
-      setUsers(await adminAPI.listUsers());
-    } catch (caught) {
-      setLoadError(describeError(caught, "We couldn't load the account list.").message);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  const usersQuery = useQuery<User[]>({
+    key: queryKeys.adminUsers(),
+    fetcher: ({ signal }) => adminAPI.listUsers({ signal }),
+    fallbackMessage: "We couldn't load the account list.",
+  });
 
-  const loadCosts = useCallback(async () => {
-    setIsCostLoading(true);
-    setCostError(null);
-    try {
-      setCostReport(await adminAPI.getAiCostReport());
-    } catch (caught) {
-      setCostError(describeError(caught, "We couldn't load provider costs.").message);
-    } finally {
-      setIsCostLoading(false);
-    }
-  }, []);
+  const costsQuery = useQuery<AiCostReport>({
+    key: queryKeys.adminCosts(COST_REPORT_DAYS),
+    fetcher: ({ signal }) => adminAPI.getAiCostReport(COST_REPORT_DAYS, { signal }),
+    fallbackMessage: "We couldn't load provider costs.",
+  });
 
-  useEffect(() => {
-    void load();
-    void loadCosts();
-  }, [load, loadCosts]);
+  const users = useMemo(() => usersQuery.data ?? [], [usersQuery.data]);
+  const isLoading = usersQuery.status === 'pending' || usersQuery.status === 'idle';
+  const loadError = usersQuery.error?.message ?? null;
+  const costReport = costsQuery.data ?? null;
+  const isCostLoading = costsQuery.status === 'pending' || costsQuery.status === 'idle';
+  const costError = costsQuery.error?.message ?? null;
+  const load = usersQuery.refetch;
+  const loadCosts = costsQuery.refetch;
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -119,8 +110,8 @@ export default function AdminPage() {
   }, [users, query, roleFilter, statusFilter]);
 
   function replaceUser(updated: User) {
-    setUsers((current) =>
-      current.map((account) => (account.email === updated.email ? updated : account)),
+    queryCache.setData<User[]>(queryKeys.adminUsers(), (previous) =>
+      previous?.map((account) => (account.email === updated.email ? updated : account)),
     );
   }
 
@@ -198,7 +189,7 @@ export default function AdminPage() {
 
   async function applyCredits(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!creditTarget) {
+    if (!creditTarget || isApplying) {
       return;
     }
     const target = creditTarget;
@@ -302,7 +293,12 @@ export default function AdminPage() {
               </div>
 
               {costReport.daily.length > 0 ? (
-                <div className={styles.costTableWrap}>
+                <div
+                  className={styles.costTableWrap}
+                  role="region"
+                  aria-label="Provider costs by day"
+                  tabIndex={0}
+                >
                   <table className={styles.costTable}>
                     <thead>
                       <tr>
@@ -399,7 +395,12 @@ export default function AdminPage() {
             description="Try a different name, email, role or status."
           />
         ) : (
-          <div className={styles.tableWrap}>
+          <div
+            className={styles.tableWrap}
+            role="region"
+            aria-label="Accounts"
+            tabIndex={0}
+          >
             <table className={styles.table}>
               <thead>
                 <tr>

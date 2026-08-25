@@ -224,6 +224,9 @@ export default function CoursesPage({
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
     setCreateError(null);
     setIsSubmitting(true);
 

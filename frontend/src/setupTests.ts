@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
+import { resetQueryCache } from '@/lib/query/cache';
 
 const REACT_DEFECTS = [
   'same key',
@@ -34,6 +35,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  resetQueryCache();
   const found = escaped;
   escaped = [];
   consoleSpy?.mockRestore();

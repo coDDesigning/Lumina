@@ -16,6 +16,13 @@ import type {
 } from './api/types';
 import { createMockCourse } from './test/mocks/api';
 
+vi.mock('./api/generatedOutputs', () => ({
+  generatedOutputsAPI: {
+    list: vi.fn().mockResolvedValue([]),
+    get: vi.fn(),
+  },
+}));
+
 vi.mock('./context/CreditContext', () => ({
   useCredits: () => ({
     status: null,
@@ -132,7 +139,7 @@ async function sendPrompt(prompt: string) {
   const input = screen.getByLabelText('Enter prompt');
   await user.clear(input);
   await user.type(input, prompt);
-  await user.click(screen.getByRole('button', { name: 'Submit prompt' }));
+  await user.click(screen.getByRole('button', { name: 'Send' }));
 }
 
 describe('Workspace conversations', () => {

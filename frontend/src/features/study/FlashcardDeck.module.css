@@ -140,7 +140,7 @@
   }
 }
 
-@media (max-width: 34rem) {
+@media (max-width: 48rem) {
   .controls {
     justify-content: center;
   }

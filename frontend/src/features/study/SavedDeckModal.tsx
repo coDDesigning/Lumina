@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Layers } from 'lucide-react';
-import { describeError, isAbortError } from '@/api/errors';
 import { generatedOutputsAPI } from '@/api/generatedOutputs';
+import { queryKeys } from '@/api/queryKeys';
+import { useQuery } from '@/lib/query/useQuery';
 import type { FlashcardGenerationResponse, GeneratedOutputDetail } from '@/api/types';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
@@ -26,53 +27,42 @@ type State =
 export function SavedDeckModal({ courseId, outputId, courseName, onClose }: SavedDeckModalProps) {
   const [state, setState] = useState<State>({ phase: 'loading' });
 
+  const query = useQuery<GeneratedOutputDetail>({
+    key: queryKeys.courseOutput(courseId, outputId),
+    fetcher: ({ signal }) => generatedOutputsAPI.get(courseId, outputId, { signal }),
+    fallbackMessage: 'This deck could not be opened.',
+    staleTime: 5 * 60_000,
+  });
+
   useEffect(() => {
-    const controller = new AbortController();
-
-    generatedOutputsAPI
-      .get(courseId, outputId, { signal: controller.signal })
-      .then((output) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        const cards = extractFlashcards(output.content);
-        if (cards) {
-          const parsed =
-            typeof output.content === 'string'
-              ? tryParseJson(output.content)
-              : output.content;
-          const candidate =
-            typeof parsed === 'object' && parsed !== null
-              ? (parsed as Record<string, unknown>)
-              : null;
-          const deckTitle =
-            typeof candidate?.deck_title === 'string'
-              ? candidate.deck_title
-              : 'Flashcards';
-          setState({
-            phase: 'ready',
-            deck: {
-              deck_title: deckTitle,
-              card_count: cards.length,
-              flashcards: cards,
-            },
-          });
-          return;
-        }
-        setState({ phase: 'unreadable', output });
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted || isAbortError(caught)) {
-          return;
-        }
-        setState({
-          phase: 'error',
-          message: describeError(caught, 'This deck could not be opened.').message,
-        });
+    if (query.status === 'pending' || query.status === 'idle') {
+      setState({ phase: 'loading' });
+      return;
+    }
+    if (query.status === 'error') {
+      setState({
+        phase: 'error',
+        message: query.error?.message ?? 'This deck could not be opened.',
       });
-
-    return () => controller.abort();
-  }, [courseId, outputId]);
+      return;
+    }
+    const output = query.data;
+    if (!output) {
+      return;
+    }
+    const cards = extractFlashcards(output.content);
+    if (!cards) {
+      setState({ phase: 'unreadable', output });
+      return;
+    }
+    const parsed = typeof output.content === 'string' ? tryParseJson(output.content) : output.content;
+    const candidate = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null;
+    const deckTitle = typeof candidate?.deck_title === 'string' ? candidate.deck_title : 'Flashcards';
+    setState({
+      phase: 'ready',
+      deck: { deck_title: deckTitle, card_count: cards.length, flashcards: cards },
+    });
+  }, [query.status, query.data, query.error]);
 
   return (
     <Dialog

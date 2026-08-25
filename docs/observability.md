@@ -77,3 +77,35 @@ Before production launch and after alarm changes, run a staging exercise:
 
 Readiness remains a dependency probe, not a substitute for metrics. Liveness is
 used only to recycle an unresponsive process.
+
+## Correlation ID lifecycle and query workflows
+
+Correlation IDs trace execution end-to-end from the initial HTTP request through background job processing and subprocess extraction:
+
+1. **API Ingress:** When an API request arrives, the `observe_request` middleware binds `_REQUEST_ID` (preserving a valid `X-Request-ID` header or generating a UUID4 hex string) and returns `X-Request-ID` in the response headers.
+2. **Job Enqueue:** When an extraction job is enqueued (`services.processing_jobs.enqueue_document_job`), the active `request_id` is durably stored in `processing_jobs.correlation_id`.
+3. **Worker Claim:** When a worker claims the job (`claim_next_job`), `ClaimedJob.correlation_id` is bound to the worker's logging context (`bind_request_id`).
+4. **Subprocess Isolation:** The extraction subprocess inherits `correlation_id` explicitly across the `multiprocessing` boundary, ensuring OCR, image understanding, and chunking logs preserve the triggering request ID.
+5. **Maintenance Logging:** Maintenance scripts (`workers.course_purge`, `workers.embedding_backfill`, `workers.self_hosted_backup`) format logs using `configure_logging(service="maintenance", ...)`.
+
+### Querying an End-to-End Trace
+
+#### CloudWatch Logs Insights (Hosted ECS):
+```sql
+fields @timestamp, service, event, message, http_status, duration_ms, error_code
+| filter request_id = "<CORRELATION_ID>" or job_id = <JOB_ID>
+| sort @timestamp asc
+```
+
+#### Local / Self-Hosted (Docker Compose):
+```bash
+docker compose logs api worker | grep '<CORRELATION_ID>' | jq .
+```
+
+## Operational Runbooks
+
+For remediation procedures during operational incidents, see:
+* [Stuck Document Processing](runbooks/stuck_document.md)
+* [Stranded Tombstone Course Purge](runbooks/stranded_tombstone.md)
+* [AI Provider Outage & Degradation](runbooks/provider_outage.md)
+* [Self-Hosted Backup & Restore](self-hosted-backup.md)

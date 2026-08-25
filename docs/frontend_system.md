@@ -24,6 +24,24 @@ npm run build    # tsc -b && vite build
 `npm run lint` passing does not mean the build passes — `npm run build` runs `tsc -b`
 first, and type errors in test files fail it. Run all three.
 
+## Production API routing
+
+`VITE_API_BASE_URL` is the complete API prefix embedded by Vite at build time.
+It defaults to `/api`, which is the hosted production setting: CloudFront serves
+the SPA and forwards `/api` and `/api/*` to ECS through the ALB under the same
+browser origin. The development server preserves that contract with its `/api`
+proxy. Changing an API container environment after the frontend is built does
+not alter the bundle.
+
+For a deliberately cross-origin build, use an absolute prefix such as
+`https://api.example.com/api`. The API must then set
+`CORS_ALLOWED_ORIGINS=https://app.example.com`. Origins are exact, wildcards
+are rejected, cookie credential mode is disabled, and the browser continues to
+authenticate with the explicit `Authorization: Bearer` header. The backend
+exposes `X-Error-Code` so cross-origin clients retain the normal AI error
+contract. Empty `CORS_ALLOWED_ORIGINS` installs no CORS middleware and is the
+same-origin production default.
+
 ## Directory layout
 
 | Path | Holds |

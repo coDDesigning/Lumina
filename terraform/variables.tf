@@ -165,15 +165,52 @@ variable "acm_certificate_arn" {
 }
 
 variable "route53_zone_id" {
-  description = "Route53 hosted zone id for the application DNS alias. Empty disables the record."
+  description = "Route53 hosted zone id for frontend and API-origin aliases. Empty leaves DNS external."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.route53_zone_id == "" || can(regex("^Z[A-Z0-9]+$", var.route53_zone_id))
+    error_message = "route53_zone_id must be empty or a Route53 hosted zone id beginning with Z."
+  }
+}
+
+variable "frontend_domain_name" {
+  description = "Certificate-covered public hostname served by CloudFront."
+  type        = string
+}
+
+variable "dns_record_name" {
+  description = "Existing full Route53 frontend record name. Empty uses frontend_domain_name."
   type        = string
   default     = ""
 }
 
-variable "dns_record_name" {
-  description = "DNS record created under route53_zone_id, e.g. 'app' for app.example.com."
+variable "api_origin_domain_name" {
+  description = "Certificate-covered hostname resolving directly to the API ALB."
   type        = string
-  default     = "app"
+}
+
+variable "cloudfront_certificate_arn" {
+  description = "ARN of the existing us-east-1 ACM certificate for frontend_domain_name."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:acm:us-east-1:[0-9]{12}:certificate/[0-9a-fA-F-]+$", var.cloudfront_certificate_arn))
+    error_message = "cloudfront_certificate_arn must be an ACM certificate ARN in us-east-1."
+  }
+}
+
+variable "frontend_bucket_name" {
+  description = "Globally unique frontend bucket name. Empty derives one from project, environment, and AWS account id."
+  type        = string
+  default     = ""
+}
+
+variable "frontend_dns_cutover" {
+  description = "When true, move the managed frontend DNS aliases from the ALB to CloudFront after current/index.html is published."
+  type        = bool
+  default     = false
 }
 
 variable "s3_bucket_name" {
@@ -192,6 +229,23 @@ variable "github_repository" {
   description = "GitHub repository that assumes the deploy role via OIDC."
   type        = string
   default     = "coDDesigning/Lumina"
+}
+
+variable "github_environment_name" {
+  description = "GitHub environment whose deployment jobs may assume the deploy role."
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = length(trimspace(var.github_environment_name)) > 0 && !strcontains(var.github_environment_name, ":")
+    error_message = "github_environment_name must be non-empty and must not contain a colon."
+  }
+}
+
+variable "cors_allowed_origins" {
+  description = "Origins accepted by the API CORS middleware. Empty disables cross-origin access."
+  type        = list(string)
+  default     = []
 }
 
 variable "runtime_secrets" {

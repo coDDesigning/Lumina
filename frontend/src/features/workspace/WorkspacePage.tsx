@@ -42,8 +42,11 @@ import { SavedDeckModal } from '@/features/study/SavedDeckModal';
 import { StudyGuideModal } from '@/features/study/StudyGuideModal';
 import { useCredits } from '@/context/CreditContext';
 import { useAuth } from '@/context/AuthContext';
-import { toWorkspaceProgress } from '@/data/workspaces';
-import type { Workspace, WorkspaceProgress } from '@/data/workspaces';
+import type {
+  Workspace,
+  WorkspaceProgress,
+  WorkspaceProgressStatus,
+} from '@/data/workspaces';
 import { useCourseDocuments } from '@/hooks/useCourseDocuments';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
@@ -66,7 +69,7 @@ import styles from './WorkspacePage.module.css';
 
 export interface WorkspacePageProps {
   workspace: Workspace;
-  onUpdateProgress?: (courseId: string, progress: WorkspaceProgress) => void;
+  onUpdateProgress?: (courseId: string, progress: Partial<WorkspaceProgress>) => void;
 }
 
 interface ThreadMessage {
@@ -271,16 +274,12 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
     if (!onUpdateProgress || !progress) {
       return;
     }
-    onUpdateProgress(
-      workspace.id,
-      toWorkspaceProgress({
-        course_id: Number(workspace.id),
-        attempts_count: progress.attempts_count,
-        average_score: progress.average_score,
-        completion: progress.completion ?? null,
-        last_activity: null,
-      }),
-    );
+    onUpdateProgress(workspace.id, {
+      averageScore:
+        progress.average_score === null ? null : Math.round(progress.average_score * 100),
+      timeSpentSeconds: progress.total_time_spent_seconds ?? null,
+      status: progress.status as WorkspaceProgressStatus,
+    });
   }, [onUpdateProgress, progress, workspace.id]);
 
   const processingCount = entries.filter(

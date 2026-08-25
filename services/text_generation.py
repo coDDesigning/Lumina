@@ -376,6 +376,13 @@ class OllamaTextGenerationProvider:
             if timeout_seconds is not None
             else settings.ai_generation_timeout_seconds
         )
+        self._options = {
+            "temperature": settings.ollama_temperature,
+            "top_p": settings.ollama_top_p,
+            "num_ctx": settings.ollama_num_ctx,
+            "num_predict": settings.ollama_num_predict,
+            "repeat_penalty": settings.ollama_repeat_penalty,
+        }
         self._client = client or _get_shared_http_client()
 
     def _request(self, prompt: str, *, as_json: bool) -> tuple[str, dict[str, object]]:
@@ -383,6 +390,7 @@ class OllamaTextGenerationProvider:
             "model": self._model,
             "prompt": prompt,
             "stream": False,
+            "options": dict(self._options),
         }
         if as_json:
             payload["format"] = "json"

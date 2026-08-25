@@ -1456,6 +1456,11 @@ def _ollama_provider_returning(monkeypatch, generated: str):
             ollama_base_url="http://ollama.test:11434",
             ollama_model="qwen3:8b",
             ai_generation_timeout_seconds=42,
+            ollama_temperature=0.2,
+            ollama_top_p=0.9,
+            ollama_num_ctx=8192,
+            ollama_num_predict=4096,
+            ollama_repeat_penalty=1.1,
         ),
     )
 

@@ -96,6 +96,11 @@ CONFIGURATION_KEYS = (
     "AI_GENERATION_MAX_CONCURRENCY",
     "OLLAMA_BASE_URL",
     "OLLAMA_MODEL",
+    "OLLAMA_TEMPERATURE",
+    "OLLAMA_TOP_P",
+    "OLLAMA_NUM_CTX",
+    "OLLAMA_NUM_PREDICT",
+    "OLLAMA_REPEAT_PENALTY",
     "MAX_UPLOAD_SIZE_BYTES",
     "MAX_REQUEST_SIZE_BYTES",
     "MAX_CONCURRENT_DOCUMENT_VALIDATIONS",
@@ -1533,3 +1538,84 @@ def test_ai_model_catalog_rejects_non_object_entries(
 
     with pytest.raises(ValueError, match="AI_MODEL_CATALOG"):
         load_settings()
+
+
+def test_ollama_sampling_defaults_target_a_single_gpu_box(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+
+    settings = load_settings()
+
+    assert settings.ollama_temperature == 0.2
+    assert settings.ollama_top_p == 0.9
+    assert settings.ollama_num_ctx == 8192
+    assert settings.ollama_num_predict == 4096
+    assert settings.ollama_repeat_penalty == 1.1
+
+
+def test_ollama_sampling_settings_are_configurable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("OLLAMA_TEMPERATURE", "0.05")
+    monkeypatch.setenv("OLLAMA_TOP_P", "0.5")
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "16384")
+    monkeypatch.setenv("OLLAMA_NUM_PREDICT", "2048")
+    monkeypatch.setenv("OLLAMA_REPEAT_PENALTY", "1.05")
+
+    settings = load_settings()
+
+    assert settings.ollama_temperature == 0.05
+    assert settings.ollama_top_p == 0.5
+    assert settings.ollama_num_ctx == 16384
+    assert settings.ollama_num_predict == 2048
+    assert settings.ollama_repeat_penalty == 1.05
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("OLLAMA_TEMPERATURE", "-0.1"),
+        ("OLLAMA_TEMPERATURE", "2.5"),
+        ("OLLAMA_TEMPERATURE", "banana"),
+        ("OLLAMA_TOP_P", "0"),
+        ("OLLAMA_TOP_P", "1.5"),
+        ("OLLAMA_NUM_CTX", "0"),
+        ("OLLAMA_NUM_CTX", "500000"),
+        ("OLLAMA_NUM_PREDICT", "0"),
+        ("OLLAMA_REPEAT_PENALTY", "0"),
+        ("OLLAMA_REPEAT_PENALTY", "3"),
+    ],
+)
+def test_invalid_ollama_sampling_settings_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, value: str
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError):
+        load_settings()
+
+
+def test_ollama_num_predict_cannot_exceed_num_ctx(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "4096")
+    monkeypatch.setenv("OLLAMA_NUM_PREDICT", "8192")
+
+    with pytest.raises(ValueError):
+        load_settings()
+
+
+def test_default_model_catalog_reports_the_context_window_actually_sent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "16384")
+
+    settings = load_settings()
+
+    ollama_entry = settings.ai_model_catalog["ollama"][0]
+    assert ollama_entry["context_window"] == 16384

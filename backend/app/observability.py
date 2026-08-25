@@ -105,7 +105,11 @@ def normalize_request_id(value: str | None) -> str:
     return candidate if _REQUEST_ID_PATTERN.fullmatch(candidate) else uuid4().hex
 
 
-def bind_request_id(value: str) -> Token[str | None]:
+def get_request_id() -> str | None:
+    return _REQUEST_ID.get()
+
+
+def bind_request_id(value: str | None) -> Token[str | None]:
     return _REQUEST_ID.set(value)
 
 

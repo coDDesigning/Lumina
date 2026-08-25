@@ -76,3 +76,50 @@ def test_emf_event_has_cloudwatch_schema() -> None:
         "QueuedJobs",
         "OldestQueuedAgeSeconds",
     }
+
+
+def test_worker_logging_includes_correlation_and_job_id() -> None:
+    from backend.app.observability import bind_request_id, reset_request_id
+
+    formatter = JsonFormatter(service="worker", environment="production")
+    token = bind_request_id("corr-trace-999")
+    try:
+        record = logging.LogRecord(
+            "lumina.worker",
+            logging.INFO,
+            __file__,
+            1,
+            "Job completed successfully",
+            (),
+            None,
+        )
+        record.job_id = 42
+        record.worker_id = "worker-node-1"
+        rendered = formatter.format(record)
+        payload = json.loads(rendered)
+
+        assert payload["request_id"] == "corr-trace-999"
+        assert payload["job_id"] == 42
+        assert payload["worker_id"] == "worker-node-1"
+        assert payload["service"] == "worker"
+    finally:
+        reset_request_id(token)
+
+
+def test_maintenance_logging_uses_structured_json() -> None:
+    formatter = JsonFormatter(service="maintenance", environment="production")
+    record = logging.LogRecord(
+        "lumina.maintenance",
+        logging.INFO,
+        __file__,
+        1,
+        "Course purge finished: examined=1 purged=1 failed=0",
+        (),
+        None,
+    )
+    rendered = formatter.format(record)
+    payload = json.loads(rendered)
+
+    assert payload["service"] == "maintenance"
+    assert payload["level"] == "INFO"
+    assert "Course purge finished" in payload["message"]

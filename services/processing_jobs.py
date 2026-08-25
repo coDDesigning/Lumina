@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.database import begin_serialized_write
+from backend.app.observability import get_request_id
 from backend.app.models import (
     DOCUMENT_PROCESSING_STAGES,
     EMBEDDING_DIMENSIONS,
@@ -82,6 +83,7 @@ class ClaimedJob:
     file_hash: str
     file_type: str
     file_size: int
+    correlation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +173,7 @@ def enqueue_document_job(
     session: Session,
     document: UploadedDocument,
     *,
+    correlation_id: str | None = None,
     max_attempts: int | None = None,
     now: datetime | None = None,
 ) -> ProcessingJob:
@@ -180,11 +183,15 @@ def enqueue_document_job(
     if max_attempts <= 0:
         raise ValueError("max_attempts must be positive")
 
+    if correlation_id is None:
+        correlation_id = get_request_id()
+
     available_at = _database_now(session, now)
     job = ProcessingJob(
         document=document,
         course_id=document.course_id,
         job_type=JOB_TYPE_EXTRACT_DOCUMENT,
+        correlation_id=correlation_id,
         status=JOB_STATUS_QUEUED,
         attempt_count=0,
         max_attempts=max_attempts,
@@ -297,6 +304,7 @@ def claim_next_job(
             UploadedDocument.file_hash,
             UploadedDocument.file_type,
             UploadedDocument.file_size,
+            ProcessingJob.correlation_id,
         )
         .join(UploadedDocument, UploadedDocument.id == ProcessingJob.document_id)
         .where(
@@ -372,6 +380,7 @@ def claim_next_job(
         file_hash=row.file_hash,
         file_type=row.file_type,
         file_size=row.file_size,
+        correlation_id=row.correlation_id,
     )
 
 

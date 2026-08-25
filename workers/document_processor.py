@@ -17,7 +17,12 @@ from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.models import Course
-from backend.app.observability import configure_logging, emit_emf_metrics
+from backend.app.observability import (
+    bind_request_id,
+    configure_logging,
+    emit_emf_metrics,
+    reset_request_id,
+)
 from backend.app.readiness import ReadinessError, check_readiness
 from services.document_embedding import (
     EMBEDDING_STAGE,
@@ -138,6 +143,8 @@ def _extraction_process(
     job: ClaimedJob,
     prompt_context: PromptContext | None = None,
 ) -> None:
+    if job.correlation_id is not None:
+        bind_request_id(job.correlation_id)
     # The parent owns graceful shutdown and the hard timeout for this child.
     for shutdown_signal in WORKER_SHUTDOWN_SIGNALS:
         signal.signal(shutdown_signal, signal.SIG_IGN)
@@ -405,155 +412,163 @@ def process_next_job(
         )
     if job is None:
         return False
-    processing_started = time.monotonic()
-
-    stop = threading.Event()
-    claim_lost = threading.Event()
-    heartbeat = threading.Thread(
-        target=_heartbeat_loop,
-        args=(session_factory, job, lease_seconds, stop, claim_lost),
-        daemon=True,
-    )
-    heartbeat.start()
+    token = bind_request_id(job.correlation_id)
     try:
+        processing_started = time.monotonic()
 
-        def persist_stage(stage: str) -> None:
-            with session_factory() as session:
-                updated = update_job_stage(
-                    session,
-                    job.id,
-                    job.claim_token,
-                    stage,
-                )
-            if not updated:
-                claim_lost.set()
-                raise DocumentProcessingError(
-                    "STATUS_UPDATE_CONFLICT",
-                    "The document processing claim changed unexpectedly.",
-                    retryable=True,
-                )
+        stop = threading.Event()
+        claim_lost = threading.Event()
+        heartbeat = threading.Thread(
+            target=_heartbeat_loop,
+            args=(session_factory, job, lease_seconds, stop, claim_lost),
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
 
-        def persist_extraction(
-            pages: list[PageData],
-            remaining_seconds: float,
-        ) -> None:
-            try:
+            def persist_stage(stage: str) -> None:
                 with session_factory() as session:
-                    updated = replace_document_pages(
+                    updated = update_job_stage(
                         session,
                         job.id,
                         job.claim_token,
-                        pages,
-                        operation_timeout_seconds=remaining_seconds,
+                        stage,
                     )
-            except Exception:
-                logger.exception("Failed to persist raw pages for job %s", job.id)
-                raise DocumentProcessingError(
-                    "EXTRACTION_PERSISTENCE_FAILED",
-                    "The extracted document content could not be recorded.",
-                    retryable=True,
-                    failed_stage="extracting_text",
-                ) from None
-            if not updated:
-                claim_lost.set()
-                raise DocumentProcessingError(
-                    "EXTRACTION_PERSISTENCE_CONFLICT",
-                    "The extracted document content could not be recorded.",
-                    retryable=True,
-                    failed_stage="extracting_text",
-                )
-
-        pages, chunks = _extract_with_timeout(
-            storage,
-            job,
-            settings.processing_job_attempt_timeout_seconds,
-            stage_callback=persist_stage,
-            extraction_callback=persist_extraction,
-            prompt_context=prompt_context,
-        )
-        persist_stage(EMBEDDING_STAGE)
-        embeddings = embed_document_chunks(
-            [chunk.text for chunk in chunks],
-            provider=embedding_provider,
-        )
-    except WorkerProcessFatalError:
-        _stop_heartbeat(stop, heartbeat, claim_lost)
-        logger.critical("Extraction subprocess could not be reaped; exiting worker")
-        raise
-    except DocumentProcessingError as exc:
-        heartbeat_stopped = _stop_heartbeat(stop, heartbeat, claim_lost)
-        if heartbeat_stopped and not claim_lost.is_set():
-            try:
-                _record_failure(session_factory, job, exc)
-            except Exception:
-                logger.exception("Failed to record processing error for job %s", job.id)
-        emit_emf_metrics(
-            {"JobsRetried" if exc.retryable else "JobsFailed": 1},
-            dimensions={"Service": "worker", "Environment": settings.app_env},
-        )
-        return True
-    except Exception:
-        logger.exception("Unexpected processing failure for job %s", job.id)
-        heartbeat_stopped = _stop_heartbeat(stop, heartbeat, claim_lost)
-        if heartbeat_stopped and not claim_lost.is_set():
-            try:
-                _record_failure(
-                    session_factory,
-                    job,
-                    DocumentProcessingError(
-                        "UNEXPECTED_PROCESSING_ERROR",
-                        "Document processing failed unexpectedly.",
+                if not updated:
+                    claim_lost.set()
+                    raise DocumentProcessingError(
+                        "STATUS_UPDATE_CONFLICT",
+                        "The document processing claim changed unexpectedly.",
                         retryable=True,
-                    ),
-                )
-            except Exception:
-                logger.exception("Failed to record processing error for job %s", job.id)
-        emit_emf_metrics(
-            {"JobsRetried": 1},
-            dimensions={"Service": "worker", "Environment": settings.app_env},
-        )
-        return True
+                    )
 
-    if not _stop_heartbeat(stop, heartbeat, claim_lost) or claim_lost.is_set():
-        return True
-    try:
-        with session_factory() as session:
-            completed = complete_job(
-                session,
-                job.id,
-                job.claim_token,
-                chunks,
-                pages,
-                embeddings=embeddings,
-                vector_store=vector_store,
+            def persist_extraction(
+                pages: list[PageData],
+                remaining_seconds: float,
+            ) -> None:
+                try:
+                    with session_factory() as session:
+                        updated = replace_document_pages(
+                            session,
+                            job.id,
+                            job.claim_token,
+                            pages,
+                            operation_timeout_seconds=remaining_seconds,
+                        )
+                except Exception:
+                    logger.exception("Failed to persist raw pages for job %s", job.id)
+                    raise DocumentProcessingError(
+                        "EXTRACTION_PERSISTENCE_FAILED",
+                        "The extracted document content could not be recorded.",
+                        retryable=True,
+                        failed_stage="extracting_text",
+                    ) from None
+                if not updated:
+                    claim_lost.set()
+                    raise DocumentProcessingError(
+                        "EXTRACTION_PERSISTENCE_CONFLICT",
+                        "The extracted document content could not be recorded.",
+                        retryable=True,
+                        failed_stage="extracting_text",
+                    )
+
+            pages, chunks = _extract_with_timeout(
+                storage,
+                job,
+                settings.processing_job_attempt_timeout_seconds,
+                stage_callback=persist_stage,
+                extraction_callback=persist_extraction,
+                prompt_context=prompt_context,
             )
-    except VectorStoreError as exc:
-        # The vector store is classified, so the job requeues instead of waiting
-        # for the lease to expire.
-        logger.warning("Vector persistence failed for job %s", job.id)
-        try:
-            _record_failure(session_factory, job, classify_embedding_error(exc))
+            persist_stage(EMBEDDING_STAGE)
+            embeddings = embed_document_chunks(
+                [chunk.text for chunk in chunks],
+                provider=embedding_provider,
+            )
+        except WorkerProcessFatalError:
+            _stop_heartbeat(stop, heartbeat, claim_lost)
+            logger.critical("Extraction subprocess could not be reaped; exiting worker")
+            raise
+        except DocumentProcessingError as exc:
+            heartbeat_stopped = _stop_heartbeat(stop, heartbeat, claim_lost)
+            if heartbeat_stopped and not claim_lost.is_set():
+                try:
+                    _record_failure(session_factory, job, exc)
+                except Exception:
+                    logger.exception(
+                        "Failed to record processing error for job %s", job.id
+                    )
+            emit_emf_metrics(
+                {"JobsRetried" if exc.retryable else "JobsFailed": 1},
+                dimensions={"Service": "worker", "Environment": settings.app_env},
+            )
+            return True
         except Exception:
-            logger.exception("Failed to record vector error for job %s", job.id)
+            logger.exception("Unexpected processing failure for job %s", job.id)
+            heartbeat_stopped = _stop_heartbeat(stop, heartbeat, claim_lost)
+            if heartbeat_stopped and not claim_lost.is_set():
+                try:
+                    _record_failure(
+                        session_factory,
+                        job,
+                        DocumentProcessingError(
+                            "UNEXPECTED_PROCESSING_ERROR",
+                            "Document processing failed unexpectedly.",
+                            retryable=True,
+                        ),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to record processing error for job %s", job.id
+                    )
+            emit_emf_metrics(
+                {"JobsRetried": 1},
+                dimensions={"Service": "worker", "Environment": settings.app_env},
+            )
+            return True
+
+        if not _stop_heartbeat(stop, heartbeat, claim_lost) or claim_lost.is_set():
+            return True
+        try:
+            with session_factory() as session:
+                completed = complete_job(
+                    session,
+                    job.id,
+                    job.claim_token,
+                    chunks,
+                    pages,
+                    embeddings=embeddings,
+                    vector_store=vector_store,
+                )
+        except VectorStoreError as exc:
+            # The vector store is classified, so the job requeues instead of waiting
+            # for the lease to expire.
+            logger.warning("Vector persistence failed for job %s", job.id)
+            try:
+                _record_failure(session_factory, job, classify_embedding_error(exc))
+            except Exception:
+                logger.exception("Failed to record vector error for job %s", job.id)
+            return True
+        except Exception:
+            # Leave the fenced running state intact; periodic recovery safely retries it.
+            logger.exception("Failed to finalize processing job %s", job.id)
+            return True
+        if not completed:
+            logger.info("Processing claim was lost before job %s completed", job.id)
+        else:
+            emit_emf_metrics(
+                {
+                    "JobsSucceeded": 1,
+                    "ProcessingDurationMs": round(
+                        (time.monotonic() - processing_started) * 1000, 3
+                    ),
+                },
+                dimensions={"Service": "worker", "Environment": settings.app_env},
+                units={"ProcessingDurationMs": "Milliseconds"},
+            )
         return True
-    except Exception:
-        # Leave the fenced running state intact; periodic recovery safely retries it.
-        logger.exception("Failed to finalize processing job %s", job.id)
-        return True
-    if not completed:
-        logger.info("Processing claim was lost before job %s completed", job.id)
-    else:
-        emit_emf_metrics(
-            {
-                "JobsSucceeded": 1,
-                "ProcessingDurationMs": round(
-                    (time.monotonic() - processing_started) * 1000, 3
-                ),
-            },
-            dimensions={"Service": "worker", "Environment": settings.app_env},
-            units={"ProcessingDurationMs": "Milliseconds"},
-        )
-    return True
+    finally:
+        reset_request_id(token)
 
 
 def check_worker_ready(

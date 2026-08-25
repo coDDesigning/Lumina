@@ -58,6 +58,15 @@
   margin-top: auto;
 }
 
+.sourceHintFlush {
+  margin-top: 0;
+}
+
+.threadActions {
+  display: flex;
+  gap: var(--space-1);
+}
+
 .noticeStack {
   display: flex;
   flex-direction: column;

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { cx } from '@/lib/cx';
-import { Alert } from './Alert';
 import { EmptyState } from './EmptyState';
+import { ErrorState } from './ErrorState';
 import { Spinner } from './Spinner';
 import styles from './MasterDetail.module.css';
 
@@ -75,9 +75,5 @@ export function DetailLoading({ label }: { label: string }) {
 }
 
 export function DetailError({ message }: { message: string }) {
-  return (
-    <Alert tone="destructive" live="alert">
-      {message}
-    </Alert>
-  );
+  return <ErrorState>{message}</ErrorState>;
 }

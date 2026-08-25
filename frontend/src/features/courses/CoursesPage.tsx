@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { FolderOpen, Plus, RefreshCw, Settings2, Trash2 } from 'lucide-react';
+import { FolderOpen, Plus, Settings2, Trash2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { describeError } from '@/api/errors';
 import { COURSE_STATUS_LABELS, EDUCATION_LEVEL_LABELS } from '@/api/types';
@@ -25,6 +25,7 @@ import { ConfirmDialog } from '@/ui/ConfirmDialog';
 import { CourseChip, CourseLight } from '@/ui/CourseLight';
 import { Dialog } from '@/ui/Dialog';
 import { EmptyState } from '@/ui/EmptyState';
+import { ErrorState } from '@/ui/ErrorState';
 import { IconButton } from '@/ui/IconButton';
 import { Input, Select, Textarea } from '@/ui/Input';
 import { LinkButton } from '@/ui/LinkButton';
@@ -307,26 +308,13 @@ export default function CoursesPage({
         </div>
 
         {error ? (
-          <Alert
-            tone="destructive"
-            live="alert"
+          <ErrorState
             title="We couldn't load your courses"
             className={styles.spaced}
-            actions={
-              onRetry ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  icon={<RefreshCw aria-hidden="true" />}
-                  onClick={onRetry}
-                >
-                  Try again
-                </Button>
-              ) : undefined
-            }
+            onRetry={onRetry}
           >
             {error}
-          </Alert>
+          </ErrorState>
         ) : isLoading ? (
           <>
             <p className={styles.count} role="status">

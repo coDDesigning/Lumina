@@ -1,4 +1,5 @@
 import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { cx } from '@/lib/cx';
 import { Field } from './Field';
 import styles from './Field.module.css';
@@ -106,15 +107,18 @@ export function Select({
       className={fieldClassName}
     >
       {({ id, describedBy, invalid, className: controlClass }) => (
-        <select
-          {...rest}
-          id={id}
-          aria-describedby={describedBy}
-          aria-invalid={invalid || undefined}
-          className={cx(controlClass, styles.select, className)}
-        >
-          {children}
-        </select>
+        <span className={styles.selectShell}>
+          <select
+            {...rest}
+            id={id}
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
+            className={cx(controlClass, styles.select, className)}
+          >
+            {children}
+          </select>
+          <ChevronDown className={styles.selectChevron} aria-hidden="true" />
+        </span>
       )}
     </Field>
   );

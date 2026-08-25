@@ -11,7 +11,6 @@ import {
   Upload,
   Wand2,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import { coursesAPI } from '@/api/courses';
 import { aiTutorAPI } from '@/api/aiTutor';
 import { conversationsAPI } from '@/api/conversations';
@@ -48,12 +47,15 @@ import type {
   WorkspaceProgressStatus,
 } from '@/data/workspaces';
 import { useCourseDocuments } from '@/hooks/useCourseDocuments';
+import { cx } from '@/lib/cx';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';
+import { ErrorState } from '@/ui/ErrorState';
 import { IconButton } from '@/ui/IconButton';
 import { Input } from '@/ui/Input';
+import { LinkButton } from '@/ui/LinkButton';
 import { PageHeader } from '@/ui/PageHeader';
 import { Spinner } from '@/ui/Spinner';
 import { Tabs } from '@/ui/Tabs';
@@ -448,16 +450,22 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
         }
         actions={
           <>
-            <Link to={`/courses/${workspace.id}/progress`} style={{ textDecoration: 'none' }}>
-              <Button variant="ghost" size="sm" icon={<BarChart3 aria-hidden="true" />}>
-                Progress
-              </Button>
-            </Link>
-            <Link to={`/courses/${workspace.id}/settings`} style={{ textDecoration: 'none' }}>
-              <Button variant="ghost" size="sm" icon={<Settings2 aria-hidden="true" />}>
-                Course settings
-              </Button>
-            </Link>
+            <LinkButton
+              variant="ghost"
+              size="sm"
+              icon={<BarChart3 aria-hidden="true" />}
+              to={`/courses/${workspace.id}/progress`}
+            >
+              Progress
+            </LinkButton>
+            <LinkButton
+              variant="ghost"
+              size="sm"
+              icon={<Settings2 aria-hidden="true" />}
+              to={`/courses/${workspace.id}/settings`}
+            >
+              Course settings
+            </LinkButton>
             <CreditBalance source={creditSource} />
           </>
         }
@@ -507,26 +515,14 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           </div>
 
           {uploadProgress ? (
-            <p className={styles.sourceHint} role="status" style={{ marginTop: 0 }}>
+            <p className={cx(styles.sourceHint, styles.sourceHintFlush)} role="status">
               Uploading {uploadProgress.done} of {uploadProgress.total}…
             </p>
           ) : null}
 
           {uploadErrors.length > 0 || uploadNotices.length > 0 || listError ? (
             <div className={styles.noticeStack}>
-              {listError ? (
-                <Alert
-                  tone="destructive"
-                  live="alert"
-                  actions={
-                    <Button size="sm" onClick={reload}>
-                      Try again
-                    </Button>
-                  }
-                >
-                  {listError}
-                </Alert>
-              ) : null}
+              {listError ? <ErrorState onRetry={reload}>{listError}</ErrorState> : null}
               {uploadErrors.map((failure) => (
                 <Alert key={failure.fileName} tone="destructive" live="alert" title={failure.fileName}>
                   {failure.message}
@@ -573,7 +569,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
               value={threadType}
               onChange={setThreadType}
             />
-            <span style={{ display: 'flex', gap: 'var(--space-1)' }}>
+            <span className={styles.threadActions}>
               <Button
                 variant="ghost"
                 size="sm"

@@ -8,6 +8,7 @@ import { useDocumentTitle } from '@/app/useDocumentTitle';
 import type { Workspace } from '@/data/workspaces';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
+import { ErrorState } from '@/ui/ErrorState';
 import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
 import { StudyGuide } from './StudyGuide';
@@ -175,9 +176,7 @@ export default function GuidePage({ workspace }: GuidePageProps) {
         ) : null}
 
         {state.phase === 'error' ? (
-          <Alert
-            tone="destructive"
-            live="alert"
+          <ErrorState
             title="This guide is not here"
             actions={
               <Button size="sm" onClick={() => navigate(`/courses/${workspace.id}`)}>
@@ -186,7 +185,7 @@ export default function GuidePage({ workspace }: GuidePageProps) {
             }
           >
             {state.message}
-          </Alert>
+          </ErrorState>
         ) : null}
 
         {state.phase === 'unreadable' ? (

@@ -11,17 +11,8 @@
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
-  background: linear-gradient(
-    90deg,
-    transparent,
-    hsl(0 0% 100% / 0.28),
-    transparent
-  );
+  background: linear-gradient(90deg, transparent, var(--sheen), transparent);
   animation: shimmer 1.6s ease-in-out infinite;
-}
-
-:global([data-theme='dark']) .skeleton::after {
-  background: linear-gradient(90deg, transparent, hsl(0 0% 100% / 0.06), transparent);
 }
 
 @keyframes shimmer {

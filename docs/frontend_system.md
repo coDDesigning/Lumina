@@ -82,6 +82,13 @@ Theming has three states, and the token file handles all three:
 Never give a colour its only definition inside a media or `[data-theme]` block, and never
 add a colour to a component that is not a token.
 
+**A theme branch belongs in `tokens.css` and nowhere else.** `ThemeProvider` removes
+`data-theme` entirely when the preference is `system`, so a component rule written as
+`[data-theme='dark'] .thing` never fires for a viewer on system-dark who never touched
+the toggle — they silently get the light value on a dark surface. The skeleton sheen and
+the select chevron both had this bug. Add a role to the token file, define it in all
+three blocks, and let the component read one `var()`.
+
 Motion tokens zero out under `prefers-reduced-motion`, so a transition written with
 `var(--duration-fast)` is automatically respectful.
 
@@ -115,14 +122,23 @@ colour column on `courses` and none is needed.
 Everything in `src/ui/`. Use them; do not hand-roll an equivalent.
 
 `Alert` · `Badge` · `Brandmark` · `Breath` · `Button` · `Card` · `Checkbox` ·
-`ConfirmDialog` · `CourseLight` · `Dialog` · `EmptyState` · `Field` · `IconButton` ·
-`Input` / `Textarea` / `Select` · `LinkButton` · `MasterDetail` · `PageHeader` ·
-`Skeleton` · `Spinner` · `Switch` · `Tabs` · `ToastProvider`
+`ConfirmDialog` · `CourseLight` · `Dialog` · `EmptyState` · `ErrorState` · `Field` ·
+`IconButton` · `Input` / `Textarea` / `Select` · `LinkButton` · `MasterDetail` ·
+`PageHeader` · `Skeleton` · `Spinner` · `Switch` · `Tabs` · `ToastProvider`
+
+Import them by module — `import { Button } from '@/ui/Button'`. There is no barrel;
+`src/ui/index.ts` was deleted because nothing imported it and it had already drifted
+out of date.
 
 Rules that are not negotiable:
 
 - **`IconButton` requires `label`.** An icon-only control cannot ship without an
   accessible name, because the type won't compile.
+- **`ErrorState` is how a failed operation is reported.** It wraps `Alert` with
+  `tone="destructive"` and `live="alert"`, and takes `onRetry` for a retry or
+  `actions` for a way out. A screen that reports a load failure with no recovery
+  route is incomplete. A plain `Alert` stays correct for a form validation error,
+  where the recovery route is the form the user is already looking at.
 - **Never nest a link in a button or a button in a link.** Use `LinkButton` for a
   navigation control that looks like a button.
 - **`Dialog` is the only modal.** It traps focus, restores it to the trigger, closes on
@@ -335,13 +351,24 @@ across the field, and one malformed poll response took the whole workspace down.
 
 ## What the test suite enforces
 
-Beyond the per-screen tests, three guards catch whole classes of mistake:
+Beyond the per-screen tests, five guards catch whole classes of mistake:
 
 - **React warnings fail the test.** `setupTests.ts` promotes duplicate keys, invalid DOM
   nesting, missing `act`, and bad ARIA into assertion failures. These used to scroll past
   in green runs; a real duplicate-key bug in the topic pickers survived that way.
 - **Unknown design tokens fail the test.** `tokenUsage.test.ts` reads every
   `*.module.css` and rejects a `var(--x)` that nothing defines.
+- **Raw visual values fail the test.** `rawValues.test.ts` reads every
+  `*.module.css` and every non-test `.ts`/`.tsx` and rejects a colour literal —
+  hex, URL-encoded hex inside a data URI, a named colour, or a colour function
+  whose arguments hold no `var(--`. `hsl(var(--light-hue) …)` is therefore fine
+  and `hsl(0 0% 100% / 0.28)` is not. `DOCUMENTED_EXTERNAL_VALUES` is the only
+  way through, it needs a reason, and an entry that no longer matches the file
+  fails too, so an exemption cannot outlive what it excused.
+- **A component may not branch a theme.** The same test rejects `[data-theme]`
+  and `prefers-color-scheme` in a `*.module.css`. A component that branches on
+  only one of them is wrong for the third theme state, as the token section above
+  explains.
 - **Regression tests are checked against the bug.** When you fix something, confirm the new
   test fails with the fix reverted. A test that passes either way protects nothing.
 

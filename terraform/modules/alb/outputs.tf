@@ -21,3 +21,8 @@ output "arn_suffix" {
 output "target_group_arn_suffix" {
   value = aws_lb_target_group.this.arn_suffix
 }
+
+output "api_origin_domain_name" {
+  value      = var.api_origin_domain_name
+  depends_on = [aws_route53_record.api_origin]
+}

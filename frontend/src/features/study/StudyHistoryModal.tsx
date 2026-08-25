@@ -6,6 +6,7 @@ import type {
   GeneratedOutputDetail,
   GeneratedOutputSummary,
   RetrievedContext,
+  StudyGuideResponse,
 } from '@/api/types';
 import { Badge } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
@@ -21,9 +22,10 @@ import { FlashcardDeck } from './FlashcardDeck';
 import { StoredQuiz } from './quiz/StoredQuiz';
 import { StudyGuide } from './StudyGuide';
 import {
-  isRenderableFlashcards,
-  isRenderableQuiz,
+  extractFlashcards,
+  extractQuiz,
   isRenderableStudyGuide,
+  tryParseJson,
 } from './storedOutput';
 import styles from './StudyHistoryModal.module.css';
 
@@ -48,6 +50,7 @@ type DetailState =
 const OUTPUT_TYPE_LABELS: Record<string, string> = {
   study_guide: 'Study guide',
   flashcards: 'Flashcards',
+  flashcard: 'Flashcards',
   quiz: 'Practice quiz',
 };
 
@@ -81,43 +84,53 @@ function settingBadges(output: GeneratedOutputSummary): string[] {
 function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
   const { content } = output;
 
-  if (output.output_type === 'flashcards' && isRenderableFlashcards(content)) {
-    return <FlashcardDeck cards={content.flashcards} />;
+  if (output.output_type === 'flashcards' || output.output_type === 'flashcard') {
+    const cards = extractFlashcards(content);
+    if (cards) {
+      return <FlashcardDeck cards={cards} />;
+    }
   }
 
-  if (output.output_type === 'quiz' && isRenderableQuiz(content)) {
-    return <StoredQuiz quiz={content} courseId={output.course_id} />;
+  if (output.output_type === 'quiz') {
+    const quiz = extractQuiz(content);
+    if (quiz) {
+      return <StoredQuiz quiz={quiz} courseId={output.course_id} />;
+    }
   }
 
-  if (output.output_type !== 'study_guide' || !isRenderableStudyGuide(content)) {
-    return (
-      <div className={styles.rawWrap}>
-        <p className={styles.rawNote}>
-          This result was saved in a shape this version no longer recognises, so it is shown as
-          it was stored.
-        </p>
-        <pre className={styles.raw}>
-          {typeof content === 'string' ? content : JSON.stringify(content, null, 2)}
-        </pre>
-      </div>
-    );
+  if (output.output_type === 'study_guide' && isRenderableStudyGuide(content)) {
+    const parsedGuide =
+      typeof content === 'string'
+        ? (tryParseJson(content) as StudyGuideResponse)
+        : (content as StudyGuideResponse);
+    const context = output.generation_context;
+    const reporting: RetrievedContext | null = context
+      ? {
+          context_truncated: context.truncated,
+          chunks_used: context.chunks_used,
+          chunks_available: context.chunks_available,
+          retrieval_narrowed: context.chunks_used < context.chunks_available,
+          lowest_similarity: context.lowest_similarity ?? null,
+          highest_similarity: context.highest_similarity ?? null,
+          profile_knowledge_used: context.profile_knowledge_used ?? false,
+          profile_knowledge_items_used: context.profile_knowledge_items_used ?? 0,
+        }
+      : null;
+
+    return <StudyGuide guide={parsedGuide} context={reporting} />;
   }
 
-  const context = output.generation_context;
-  const reporting: RetrievedContext | null = context
-    ? {
-        context_truncated: context.truncated,
-        chunks_used: context.chunks_used,
-        chunks_available: context.chunks_available,
-        retrieval_narrowed: context.chunks_used < context.chunks_available,
-        lowest_similarity: context.lowest_similarity ?? null,
-        highest_similarity: context.highest_similarity ?? null,
-        profile_knowledge_used: context.profile_knowledge_used ?? false,
-        profile_knowledge_items_used: context.profile_knowledge_items_used ?? 0,
-      }
-    : null;
-
-  return <StudyGuide guide={content} context={reporting} />;
+  return (
+    <div className={styles.rawWrap}>
+      <p className={styles.rawNote}>
+        This result was saved in a shape this version no longer recognises, so it is shown as
+        it was stored.
+      </p>
+      <pre className={styles.raw}>
+        {typeof content === 'string' ? content : JSON.stringify(content, null, 2)}
+      </pre>
+    </div>
+  );
 }
 
 export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onClose }: StudyHistoryModalProps) {

@@ -8,7 +8,7 @@ import { Button } from '@/ui/Button';
 import { Dialog } from '@/ui/Dialog';
 import { Skeleton } from '@/ui/Skeleton';
 import { FlashcardDeck } from './FlashcardDeck';
-import { isRenderableFlashcards } from './storedOutput';
+import { extractFlashcards, tryParseJson } from './storedOutput';
 
 export interface SavedDeckModalProps {
   courseId: number;
@@ -35,8 +35,28 @@ export function SavedDeckModal({ courseId, outputId, courseName, onClose }: Save
         if (controller.signal.aborted) {
           return;
         }
-        if (isRenderableFlashcards(output.content)) {
-          setState({ phase: 'ready', deck: output.content });
+        const cards = extractFlashcards(output.content);
+        if (cards) {
+          const parsed =
+            typeof output.content === 'string'
+              ? tryParseJson(output.content)
+              : output.content;
+          const candidate =
+            typeof parsed === 'object' && parsed !== null
+              ? (parsed as Record<string, unknown>)
+              : null;
+          const deckTitle =
+            typeof candidate?.deck_title === 'string'
+              ? candidate.deck_title
+              : 'Flashcards';
+          setState({
+            phase: 'ready',
+            deck: {
+              deck_title: deckTitle,
+              card_count: cards.length,
+              flashcards: cards,
+            },
+          });
           return;
         }
         setState({ phase: 'unreadable', output });

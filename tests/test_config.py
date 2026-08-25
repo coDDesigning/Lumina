@@ -68,6 +68,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIGURATION_KEYS = (
     "APP_ENV",
     "APP_DEBUG",
+    "CORS_ALLOWED_ORIGINS",
     "DEPLOYMENT_MODE",
     "AI_PROVIDER",
     "AI_MODEL_CATALOG",
@@ -98,6 +99,11 @@ CONFIGURATION_KEYS = (
     "AI_GENERATION_MAX_CONCURRENCY",
     "OLLAMA_BASE_URL",
     "OLLAMA_MODEL",
+    "OLLAMA_TEMPERATURE",
+    "OLLAMA_TOP_P",
+    "OLLAMA_NUM_CTX",
+    "OLLAMA_NUM_PREDICT",
+    "OLLAMA_REPEAT_PENALTY",
     "MAX_UPLOAD_SIZE_BYTES",
     "MAX_REQUEST_SIZE_BYTES",
     "MAX_CONCURRENT_DOCUMENT_VALIDATIONS",
@@ -183,6 +189,7 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
 
     assert loaded.app_env == APP_ENV_DEVELOPMENT
     assert loaded.app_debug is True
+    assert loaded.cors_allowed_origins == ()
     assert loaded.deployment_mode == MODE_SELF_HOSTED
     assert loaded.database_url == "sqlite:///./data/lumina.db"
     assert loaded.database_pool_size == DEFAULT_DATABASE_POOL_SIZE
@@ -231,6 +238,81 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
     assert loaded.quiz_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
     assert loaded.flashcard_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
     assert loaded.ai_tutor_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
+
+
+def test_cors_allowed_origins_are_loaded_as_an_immutable_tuple(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "CORS_ALLOWED_ORIGINS",
+        "https://app.example.com, http://localhost:5173, https://[::1]:8443, https://xn--fa-hia.de, http://xn--bcher-kva.localhost",
+    )
+
+    loaded = load_settings()
+
+    assert loaded.cors_allowed_origins == (
+        "https://app.example.com",
+        "http://localhost:5173",
+        "https://[::1]:8443",
+        "https://xn--fa-hia.de",
+        "http://xn--bcher-kva.localhost",
+    )
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_empty_cors_allowed_origins_disable_cors(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", value)
+
+    assert load_settings().cors_allowed_origins == ()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "*",
+        "null",
+        "https://*.example.com",
+        "https://user@example.com",
+        "https://user:password@example.com",
+        "https://example.com/",
+        "https://example.com/path",
+        "https://example.com?query=value",
+        "https://example.com#fragment",
+        "ftp://example.com",
+        "https://",
+        "https://:443",
+        "https://example.com:",
+        "https://example.com:not-a-port",
+        "https://example.com:65536",
+        "http://example.com:80",
+        "https://example.com:443",
+        "http://127.1",
+        "http://01.2.3.4",
+        "http://0x7f.0.0.1",
+        "http://0x7f000001",
+        "https://[0:0:0:0:0:0:0:1]",
+        "https://xn--a",
+        "https://example..com",
+        "https://-example.com",
+        "https://example.com\n",
+        "https://example.com\x7f",
+        "https://example.com,https://example.com",
+        "https://example.com,",
+        "HTTPS://example.com",
+        "https://EXAMPLE.com",
+    ],
+)
+def test_cors_allowed_origins_reject_invalid_values(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", value)
+
+    with pytest.raises(ValueError, match="CORS_ALLOWED_ORIGINS"):
+        load_settings()
 
 
 def test_database_pool_settings_are_configurable(
@@ -1605,3 +1687,84 @@ def test_ai_model_catalog_rejects_non_object_entries(
 
     with pytest.raises(ValueError, match="AI_MODEL_CATALOG"):
         load_settings()
+
+
+def test_ollama_sampling_defaults_target_a_single_gpu_box(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+
+    settings = load_settings()
+
+    assert settings.ollama_temperature == 0.2
+    assert settings.ollama_top_p == 0.9
+    assert settings.ollama_num_ctx == 8192
+    assert settings.ollama_num_predict == 4096
+    assert settings.ollama_repeat_penalty == 1.1
+
+
+def test_ollama_sampling_settings_are_configurable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("OLLAMA_TEMPERATURE", "0.05")
+    monkeypatch.setenv("OLLAMA_TOP_P", "0.5")
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "16384")
+    monkeypatch.setenv("OLLAMA_NUM_PREDICT", "2048")
+    monkeypatch.setenv("OLLAMA_REPEAT_PENALTY", "1.05")
+
+    settings = load_settings()
+
+    assert settings.ollama_temperature == 0.05
+    assert settings.ollama_top_p == 0.5
+    assert settings.ollama_num_ctx == 16384
+    assert settings.ollama_num_predict == 2048
+    assert settings.ollama_repeat_penalty == 1.05
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("OLLAMA_TEMPERATURE", "-0.1"),
+        ("OLLAMA_TEMPERATURE", "2.5"),
+        ("OLLAMA_TEMPERATURE", "banana"),
+        ("OLLAMA_TOP_P", "0"),
+        ("OLLAMA_TOP_P", "1.5"),
+        ("OLLAMA_NUM_CTX", "0"),
+        ("OLLAMA_NUM_CTX", "500000"),
+        ("OLLAMA_NUM_PREDICT", "0"),
+        ("OLLAMA_REPEAT_PENALTY", "0"),
+        ("OLLAMA_REPEAT_PENALTY", "3"),
+    ],
+)
+def test_invalid_ollama_sampling_settings_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, value: str
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError):
+        load_settings()
+
+
+def test_ollama_num_predict_cannot_exceed_num_ctx(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "4096")
+    monkeypatch.setenv("OLLAMA_NUM_PREDICT", "8192")
+
+    with pytest.raises(ValueError):
+        load_settings()
+
+
+def test_default_model_catalog_reports_the_context_window_actually_sent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "16384")
+
+    settings = load_settings()
+
+    ollama_entry = settings.ai_model_catalog["ollama"][0]
+    assert ollama_entry["context_window"] == 16384

@@ -37,6 +37,11 @@ OLLAMA_SETTINGS = SimpleNamespace(
     ai_generation_backoff_base_seconds=0.01,
     ai_generation_backoff_max_seconds=0.1,
     ai_generation_max_concurrency=10,
+    ollama_temperature=0.2,
+    ollama_top_p=0.9,
+    ollama_num_ctx=8192,
+    ollama_num_predict=4096,
+    ollama_repeat_penalty=1.1,
 )
 
 
@@ -306,6 +311,42 @@ def test_ollama_provider_sends_configured_request(monkeypatch) -> None:
     assert payload["prompt"] == "Explain binary trees"
     assert payload["stream"] is False
     assert "format" not in payload
+
+
+def test_ollama_provider_sends_configured_sampling_options(monkeypatch) -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=_ollama_envelope("Generated response"))
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    provider.generate_text("Explain binary trees")
+
+    options = json.loads(captured[0].content)["options"]
+    assert options["temperature"] == 0.2
+    assert options["top_p"] == 0.9
+    assert options["num_ctx"] == 8192
+    assert options["num_predict"] == 4096
+    assert options["repeat_penalty"] == 1.1
+
+
+def test_ollama_provider_sends_sampling_options_on_json_requests(monkeypatch) -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=_ollama_envelope('{"title": "Test Guide"}'))
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    provider.generate_json("Build a study guide")
+
+    payload = json.loads(captured[0].content)
+    assert payload["format"] == "json"
+    assert payload["options"]["temperature"] == 0.2
+    assert payload["options"]["num_ctx"] == 8192
 
 
 def test_ollama_provider_requests_json_format(monkeypatch) -> None:
@@ -822,6 +863,11 @@ def test_every_implemented_provider_is_constructible(monkeypatch) -> None:
                 ai_generation_backoff_base_seconds=0.01,
                 ai_generation_backoff_max_seconds=0.1,
                 ai_generation_max_concurrency=10,
+                ollama_temperature=0.2,
+                ollama_top_p=0.9,
+                ollama_num_ctx=8192,
+                ollama_num_predict=4096,
+                ollama_repeat_penalty=1.1,
             ),
         )
 

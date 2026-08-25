@@ -226,6 +226,64 @@ def test_processing_queue_metrics_report_backlog_age(session_factory, tmp_path):
     assert metrics.oldest_queued_age_seconds == 12
 
 
+def test_enqueue_and_claim_job_preserves_correlation_id(session_factory, tmp_path):
+    from backend.app.observability import bind_request_id, reset_request_id
+
+    storage = LocalStorage(tmp_path / "uploads", namespace="test")
+    document_id = uuid4()
+    content = b"%PDF-1.4 test content"
+    file_hash = hashlib.sha256(content).hexdigest()
+
+    token = bind_request_id("ctx-trace-12345")
+    try:
+        with session_factory() as session:
+            role = session.scalar(select(Role).where(Role.name == "user"))
+            user = User(
+                name="Corr User",
+                email="corr-user@example.com",
+                password_hash="hash",
+                role=role,
+            )
+            course = Course(title="Corr Course", owner=user)
+            session.add(course)
+            session.flush()
+
+            storage_key = storage.generate_key(course.id, document_id, "pdf")
+            storage.save(storage_key, BytesIO(content))
+
+            document = UploadedDocument(
+                id=document_id,
+                original_file_name="test.pdf",
+                file_type="pdf",
+                mime_type="application/pdf",
+                file_size=len(content),
+                file_hash=file_hash,
+                uploader=user,
+                course=course,
+                storage_provider=storage.provider,
+                storage_key=storage_key,
+                status="uploaded",
+            )
+            session.add(document)
+            session.flush()
+            job = enqueue_document_job(session, document)
+            session.commit()
+
+            assert job.correlation_id == "ctx-trace-12345"
+
+        with session_factory() as session:
+            claimed = claim_next_job(
+                session,
+                "test-worker-1",
+                storage.provider,
+                lease_seconds=60,
+            )
+            assert claimed is not None
+            assert claimed.correlation_id == "ctx-trace-12345"
+    finally:
+        reset_request_id(token)
+
+
 def _text_pdf(*page_texts: str) -> bytes:
     pdf = pymupdf.open()
     for text in page_texts:

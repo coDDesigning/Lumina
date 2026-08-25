@@ -3,18 +3,22 @@ import type { FormEvent } from 'react';
 import { FolderOpen, Plus, RefreshCw, Settings2, Trash2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { describeError } from '@/api/errors';
-import { EDUCATION_LEVEL_LABELS } from '@/api/types';
+import { COURSE_STATUS_LABELS, EDUCATION_LEVEL_LABELS } from '@/api/types';
 import type { EducationLevel } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import type {
   Workspace,
   WorkspaceDraft,
+  WorkspaceProgress,
   WorkspaceProgressStatus,
 } from '@/data/workspaces';
 import { RecentActivity } from '@/features/activity/RecentActivity';
+import { cx } from '@/lib/cx';
+import { formatStudyTime } from '@/lib/formatStudyTime';
 import { relativeDay } from '@/lib/relativeDay';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
+import type { BadgeTone } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
 import { Card } from '@/ui/Card';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
@@ -93,14 +97,22 @@ function examUrgency(days: number | null): 'destructive' | 'warning' | 'neutral'
   return 'neutral';
 }
 
-function statusTone(status: WorkspaceProgressStatus): 'success' | 'processing' | 'neutral' {
-  if (status === 'Mastered') {
-    return 'success';
+const STATUS_TONES: Record<WorkspaceProgressStatus, BadgeTone> = {
+  no_documents: 'neutral',
+  processing: 'processing',
+  ready: 'neutral',
+  practiced: 'accent',
+  mastered: 'success',
+};
+
+function scoreLine(progress: WorkspaceProgress): string {
+  if (progress.status === 'no_documents') {
+    return 'No sources to study yet';
   }
-  if (status === 'In progress') {
-    return 'processing';
+  if (progress.status === 'processing') {
+    return 'Sources still processing';
   }
-  return 'neutral';
+  return 'No quiz activity yet';
 }
 
 function countdownPhrase(days: number): string {
@@ -340,6 +352,10 @@ export default function CoursesPage({
               {filtered.map((workspace) => {
                 const days = daysUntilExam(workspace.examDate, now);
                 const eyebrow = workspace.subjectArea || workspace.semester || 'Course';
+                const studyTime =
+                  workspace.progress?.timeSpentSeconds != null
+                    ? formatStudyTime(workspace.progress.timeSpentSeconds)
+                    : null;
 
                 return (
                   <li key={workspace.id} className={styles.cardShell}>
@@ -368,8 +384,9 @@ export default function CoursesPage({
                           <div className={styles.meta}>
                             <Badge tone={examUrgency(days)}>{examLabel(days, workspace.examDate)}</Badge>
                             {workspace.progress !== null ? (
-                              <Badge tone={statusTone(workspace.progress.status)}>
-                                {workspace.progress.status}
+                              <Badge tone={STATUS_TONES[workspace.progress.status] ?? 'neutral'}>
+                                {COURSE_STATUS_LABELS[workspace.progress.status] ??
+                                  workspace.progress.status}
                               </Badge>
                             ) : null}
                             <span className="tabular">
@@ -380,7 +397,7 @@ export default function CoursesPage({
                                   <strong>{workspace.progress.averageScore}%</strong> average score
                                 </>
                               ) : (
-                                'No quiz activity yet'
+                                scoreLine(workspace.progress)
                               )}
                             </span>
                           </div>
@@ -399,6 +416,11 @@ export default function CoursesPage({
                               {workspace.progress.lastActivity !== null
                                 ? `Last studied ${relativeDay(workspace.progress.lastActivity)}`
                                 : 'Not studied yet'}
+                              {studyTime !== null ? (
+                                <span className={cx(styles.studyTime, 'tabular')}>
+                                  {studyTime} spent practising
+                                </span>
+                              ) : null}
                             </p>
                           ) : null}
                         </CourseLight>

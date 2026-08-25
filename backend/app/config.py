@@ -11,10 +11,12 @@ import math
 import os
 import re
 import secrets
+from ipaddress import IPv4Address, IPv6Address, ip_address
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import idna
 from email_validator import EmailNotValidError, validate_email
 from sqlalchemy.engine import make_url
 from .database_config import (
@@ -39,6 +41,11 @@ IMPLEMENTED_AI_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
 DEFAULT_AI_PROVIDER = AI_PROVIDER_OLLAMA
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1"
+DEFAULT_OLLAMA_TEMPERATURE = 0.2
+DEFAULT_OLLAMA_TOP_P = 0.9
+DEFAULT_OLLAMA_NUM_CTX = 8192
+DEFAULT_OLLAMA_NUM_PREDICT = 4096
+DEFAULT_OLLAMA_REPEAT_PENALTY = 1.1
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 OLLAMA_MODEL_PATTERN = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
 
@@ -114,6 +121,7 @@ MAX_CREDIT_BALANCE_CEILING = 1_000_000.0
 class Settings:
     app_env: str
     app_debug: bool
+    cors_allowed_origins: tuple[str, ...]
 
     # Which deployment flavor we are running as - the keystone value.
     deployment_mode: str
@@ -155,6 +163,11 @@ class Settings:
     gemini_api_key: str | None
     ollama_base_url: str
     ollama_model: str
+    ollama_temperature: float
+    ollama_top_p: float
+    ollama_num_ctx: int
+    ollama_num_predict: int
+    ollama_repeat_penalty: float
     ai_fallback_providers: str
     ai_generation_timeout_seconds: int
     ai_generation_max_attempts: int
@@ -245,6 +258,7 @@ def load_settings() -> Settings:
         raise ValueError("APP_DEBUG must be false in production.")
 
     mode = load_deployment_mode()
+    cors_allowed_origins = _cors_allowed_origins_setting()
 
     storage_backend = os.getenv("STORAGE_BACKEND", STORAGE_BACKEND_LOCAL).strip()
     database_url = load_database_url(mode, app_env=app_env)
@@ -384,7 +398,42 @@ def load_settings() -> Settings:
             "OLLAMA_MODEL must contain 1-128 characters limited to letters, digits, "
             "dots, colons, slashes, dashes, or underscores."
         )
-    ai_model_catalog = _ai_model_catalog_setting(ollama_model)
+    ollama_temperature = _bounded_float_setting(
+        "OLLAMA_TEMPERATURE",
+        DEFAULT_OLLAMA_TEMPERATURE,
+        minimum=0.0,
+        maximum=2.0,
+    )
+    ollama_top_p = _bounded_float_setting(
+        "OLLAMA_TOP_P",
+        DEFAULT_OLLAMA_TOP_P,
+        minimum=0.01,
+        maximum=1.0,
+    )
+    ollama_num_ctx = _bounded_positive_integer_setting(
+        "OLLAMA_NUM_CTX",
+        DEFAULT_OLLAMA_NUM_CTX,
+        minimum=512,
+        maximum=131_072,
+    )
+    ollama_num_predict = _bounded_positive_integer_setting(
+        "OLLAMA_NUM_PREDICT",
+        DEFAULT_OLLAMA_NUM_PREDICT,
+        minimum=64,
+        maximum=131_072,
+    )
+    ollama_repeat_penalty = _bounded_float_setting(
+        "OLLAMA_REPEAT_PENALTY",
+        DEFAULT_OLLAMA_REPEAT_PENALTY,
+        minimum=0.5,
+        maximum=2.0,
+    )
+    if ollama_num_predict > ollama_num_ctx:
+        raise ValueError(
+            "OLLAMA_NUM_PREDICT must not exceed OLLAMA_NUM_CTX; the response shares "
+            f"the context window with the prompt (got {ollama_num_predict} > {ollama_num_ctx})."
+        )
+    ai_model_catalog = _ai_model_catalog_setting(ollama_model, ollama_num_ctx)
     ai_pricing_version, ai_model_cost_rates = _ai_model_cost_rates_setting()
     ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
     if ai_fallback_providers_raw:
@@ -719,6 +768,7 @@ def load_settings() -> Settings:
     return Settings(
         app_env=app_env,
         app_debug=app_debug,
+        cors_allowed_origins=cors_allowed_origins,
         deployment_mode=mode,
         database_url=database_url,
         database_pool_size=database_pool_size,
@@ -744,6 +794,11 @@ def load_settings() -> Settings:
         gemini_api_key=gemini_api_key,
         ollama_base_url=ollama_base_url,
         ollama_model=ollama_model,
+        ollama_temperature=ollama_temperature,
+        ollama_top_p=ollama_top_p,
+        ollama_num_ctx=ollama_num_ctx,
+        ollama_num_predict=ollama_num_predict,
+        ollama_repeat_penalty=ollama_repeat_penalty,
         ai_fallback_providers=ai_fallback_providers,
         ai_generation_timeout_seconds=ai_generation_timeout_seconds,
         ai_generation_max_attempts=ai_generation_max_attempts,
@@ -799,8 +854,154 @@ def load_settings() -> Settings:
     )
 
 
+def _cors_allowed_origins_setting() -> tuple[str, ...]:
+    raw_value = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    if any(
+        ord(character) < 32 or 127 <= ord(character) <= 159 for character in raw_value
+    ):
+        raise ValueError("CORS_ALLOWED_ORIGINS must not contain control characters.")
+    if not raw_value.strip():
+        return ()
+
+    origins: list[str] = []
+    seen: set[str] = set()
+    for raw_origin in raw_value.split(","):
+        origin = raw_origin.strip()
+        if not origin:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must contain comma-separated origins."
+            )
+        if origin in {"*", "null"}:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS does not allow wildcard or null origins."
+            )
+        if any(character.isspace() for character in origin):
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS origins must not contain whitespace."
+            )
+
+        try:
+            parts = urlsplit(origin)
+            port = parts.port
+        except ValueError as exc:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must contain valid http:// or https:// origins."
+            ) from exc
+
+        hostname = parts.hostname
+        if (
+            parts.scheme not in {"http", "https"}
+            or hostname is None
+            or parts.username is not None
+            or parts.password is not None
+            or parts.path
+            or "?" in origin
+            or "#" in origin
+        ):
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must contain exact http:// or https:// origins "
+                "without userinfo, paths, queries, or fragments."
+            )
+        if "*" in hostname:
+            raise ValueError("CORS_ALLOWED_ORIGINS does not allow wildcard hosts.")
+
+        if ":" in hostname:
+            if "%" in hostname:
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                )
+            try:
+                address = ip_address(hostname)
+            except ValueError as exc:
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                ) from exc
+            if not isinstance(address, IPv6Address) or hostname != address.compressed:
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain exact serialized origins."
+                )
+            serialized_host = f"[{address.compressed}]"
+        else:
+            try:
+                ascii_hostname = hostname.encode("idna").decode("ascii")
+            except UnicodeError as exc:
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                ) from exc
+            labels = (
+                ascii_hostname[:-1] if ascii_hostname.endswith(".") else ascii_hostname
+            )
+            hostname_labels = labels.split(".")
+            if any(label.startswith("0x") for label in hostname_labels):
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain exact serialized origins."
+                )
+            if re.fullmatch(r"[0-9.]+", hostname):
+                try:
+                    address = ip_address(hostname)
+                except ValueError as exc:
+                    raise ValueError(
+                        "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                    ) from exc
+                if not isinstance(address, IPv4Address) or hostname != str(address):
+                    raise ValueError(
+                        "CORS_ALLOWED_ORIGINS must contain exact serialized origins."
+                    )
+            elif (
+                ascii_hostname != hostname
+                or not labels
+                or len(ascii_hostname) > 253
+                or any(
+                    not label
+                    or len(label) > 63
+                    or re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label) is None
+                    for label in hostname_labels
+                )
+            ):
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                )
+            if any(label.startswith("xn--") for label in hostname_labels):
+                try:
+                    normalized_domain = idna.encode(
+                        hostname,
+                        uts46=True,
+                        std3_rules=True,
+                        transitional=False,
+                    ).decode("ascii")
+                except idna.IDNAError as exc:
+                    raise ValueError(
+                        "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                    ) from exc
+                if normalized_domain != hostname:
+                    raise ValueError(
+                        "CORS_ALLOWED_ORIGINS must contain exact serialized origins."
+                    )
+            serialized_host = ascii_hostname
+
+        if (parts.scheme, port) in {("http", 80), ("https", 443)}:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must omit default ports from serialized origins."
+            )
+
+        serialized_origin = f"{parts.scheme}://{serialized_host}"
+        if port is not None:
+            serialized_origin += f":{port}"
+        if origin != serialized_origin:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must contain exact serialized origins."
+            )
+        if origin in seen:
+            raise ValueError("CORS_ALLOWED_ORIGINS must not contain duplicates.")
+        seen.add(origin)
+        origins.append(origin)
+
+    return tuple(origins)
+
+
 def _ai_model_catalog_setting(
     ollama_model: str,
+    ollama_num_ctx: int,
 ) -> dict[str, list[dict[str, object]]]:
     raw_value = os.getenv("AI_MODEL_CATALOG", "").strip()
 
@@ -810,7 +1011,7 @@ def _ai_model_catalog_setting(
                 {
                     "model": ollama_model,
                     "json_mode": True,
-                    "context_window": 128_000,
+                    "context_window": ollama_num_ctx,
                     "vision": False,
                 }
             ],

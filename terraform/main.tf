@@ -15,7 +15,8 @@ locals {
     Environment = var.environment
     ManagedBy   = "terraform"
   }
-  name_prefix = "${var.project}-${var.environment}"
+  name_prefix          = "${var.project}-${var.environment}"
+  frontend_bucket_name = var.frontend_bucket_name == "" ? "${var.project}-${var.environment}-frontend-${data.aws_caller_identity.current.account_id}" : var.frontend_bucket_name
 }
 
 data "aws_caller_identity" "current" {}
@@ -42,15 +43,30 @@ module "s3" {
 }
 
 module "alb" {
-  source              = "./modules/alb"
-  name_prefix         = local.name_prefix
-  vpc_id              = module.vpc.vpc_id
-  public_subnet_ids   = module.vpc.public_subnet_ids
-  acm_certificate_arn = var.acm_certificate_arn
-  route53_zone_id     = var.route53_zone_id
-  dns_record_name     = var.dns_record_name
-  environment         = var.environment
-  tags                = local.tags
+  source                 = "./modules/alb"
+  name_prefix            = local.name_prefix
+  vpc_id                 = module.vpc.vpc_id
+  public_subnet_ids      = module.vpc.public_subnet_ids
+  acm_certificate_arn    = var.acm_certificate_arn
+  route53_zone_id        = var.route53_zone_id
+  api_origin_domain_name = var.api_origin_domain_name
+  environment            = var.environment
+  tags                   = local.tags
+}
+
+module "frontend" {
+  source                     = "./modules/frontend"
+  name_prefix                = local.name_prefix
+  bucket_name                = local.frontend_bucket_name
+  cloudfront_certificate_arn = var.cloudfront_certificate_arn
+  frontend_domain_name       = var.frontend_domain_name
+  frontend_dns_record_name   = var.dns_record_name == "" ? var.frontend_domain_name : var.dns_record_name
+  api_origin_domain_name     = module.alb.api_origin_domain_name
+  frontend_dns_cutover       = var.frontend_dns_cutover
+  alb_dns_name               = module.alb.dns_name
+  alb_zone_id                = module.alb.zone_id
+  route53_zone_id            = var.route53_zone_id
+  tags                       = local.tags
 }
 
 module "security" {
@@ -108,6 +124,7 @@ module "ecs" {
   migration_database_url_secret_arn = module.rds.database_url_secret_arn
   bootstrap_admin_email             = var.bootstrap_admin_email
   ai_model_cost_rates               = var.ai_model_cost_rates
+  cors_allowed_origins              = var.cors_allowed_origins
   api_cpu                           = var.api_cpu
   api_memory                        = var.api_memory
   api_min_instances                 = var.api_min_instances
@@ -131,13 +148,16 @@ module "secrets" {
 }
 
 module "github_oidc" {
-  source              = "./modules/github-oidc"
-  name_prefix         = local.name_prefix
-  repository          = var.github_repository
-  ecr_repository_arn  = module.ecr.arn
-  ecs_cluster_name    = module.ecs.cluster_name
-  api_service_name    = module.ecs.api_service_name
-  worker_service_name = module.ecs.worker_service_name
+  source                      = "./modules/github-oidc"
+  name_prefix                 = local.name_prefix
+  repository                  = var.github_repository
+  environment_name            = var.github_environment_name
+  ecr_repository_arn          = module.ecr.arn
+  frontend_bucket_arn         = module.frontend.bucket_arn
+  cloudfront_distribution_arn = module.frontend.distribution_arn
+  ecs_cluster_name            = module.ecs.cluster_name
+  api_service_name            = module.ecs.api_service_name
+  worker_service_name         = module.ecs.worker_service_name
   task_definition_families = [
     module.ecs.api_task_definition_family,
     module.ecs.worker_task_definition_family,
@@ -166,6 +186,11 @@ module "observability" {
 moved {
   from = module.ecs.aws_security_group.this
   to   = module.security.aws_security_group.this
+}
+
+moved {
+  from = module.alb.aws_route53_record.app[0]
+  to   = module.frontend.aws_route53_record.frontend_a[0]
 }
 
 moved {

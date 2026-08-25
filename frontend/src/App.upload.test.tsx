@@ -99,6 +99,7 @@ describe('Document Upload UI in Workspace', () => {
       }),
     );
     mockGetProgress.mockResolvedValue({
+      status: 'no_documents',
       attempts_count: 0,
       average_score: null,
       topic_mastery: [],

@@ -279,6 +279,68 @@ def test_retrieval_failure_refunds_generation_charge(
 
 
 @pytest.mark.parametrize(
+    ("endpoint", "provider_dependency", "material_dependency", "payload"),
+    [
+        (
+            "qa",
+            "routes.course_qa.get_text_generation_provider",
+            "services.course_qa.CourseQAService.get_course_material",
+            {"question": "What is sorting?"},
+        ),
+        (
+            "ai-tutor",
+            "routes.ai_tutor.get_text_generation_provider",
+            "services.ai_tutor.AiTutorService.get_course_material",
+            {"question": "What is sorting?"},
+        ),
+        (
+            "study-guide",
+            "routes.study_guide.get_text_generation_provider",
+            "services.study_guide.StudyGuideService.get_course_material",
+            {"summary_format": "overview", "topic_focus": "Sorting"},
+        ),
+    ],
+)
+def test_unexpected_retrieval_failure_refunds_generation_charge(
+    authz_api,
+    retrieval_env,
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    provider_dependency: str,
+    material_dependency: str,
+    payload: dict,
+):
+    _add_material(
+        authz_api.session_factory,
+        authz_api.user_a_id,
+        authz_api.a_course_id,
+        retrieval_env,
+    )
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 10.0)
+    monkeypatch.setattr(provider_dependency, lambda **kwargs: StubProvider())
+
+    def fail_retrieval(*args, **kwargs):
+        raise RuntimeError("Unexpected retrieval defect")
+
+    monkeypatch.setattr(material_dependency, fail_retrieval)
+
+    with pytest.raises(RuntimeError, match="Unexpected retrieval defect"):
+        authz_api.client.post(
+            f"/api/courses/{authz_api.a_course_id}/{endpoint}",
+            json=payload,
+            headers=authz_api.authorization_a,
+        )
+
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == 10.0
+        transactions = rows(session, authz_api.user_a_id)
+        assert [row.reason for row in transactions[-2:]] == [
+            CreditReason.GENERATION_CHARGE.value,
+            CreditReason.GENERATION_REFUND.value,
+        ]
+
+
+@pytest.mark.parametrize(
     ("endpoint", "provider_dependency"),
     [
         ("qa", "routes.course_qa.get_text_generation_provider"),

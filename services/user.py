@@ -183,8 +183,16 @@ class UserService:
     @staticmethod
     def update_user(db: Session, email: str, update_data: UserUpdate) -> UserResponse:
         """Updates specific fields of a user by email."""
-        user = UserService.get_user_by_email(db, email)
-        if not user:
+        canonical_email = UserService.canonicalize_email(email)
+        if canonical_email is None:
+            raise NotFoundException("User not found")
+        user = db.scalar(
+            select(User)
+            .options(selectinload(User.role))
+            .where(User.email == canonical_email)
+            .with_for_update(of=User)
+        )
+        if user is None:
             raise NotFoundException("User not found")
 
         update_dict = update_data.model_dump(exclude_unset=True)

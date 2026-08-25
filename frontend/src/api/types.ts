@@ -534,10 +534,27 @@ export interface TopicMastery {
   status: LooseUnion<MasteryStatus>;
 }
 
+export type CourseStatus =
+  | 'no_documents'
+  | 'processing'
+  | 'ready'
+  | 'practiced'
+  | 'mastered';
+
+export const COURSE_STATUS_LABELS: Record<CourseStatus, string> = {
+  no_documents: 'No sources ready',
+  processing: 'Processing',
+  ready: 'Ready to study',
+  practiced: 'Practiced',
+  mastered: 'Mastered',
+};
+
 export interface CourseProgressResponse {
+  status: LooseUnion<CourseStatus>;
   quizzes_completed?: number;
   attempts_count: number;
   average_score: number | null;
+  total_time_spent_seconds?: number | null;
   correct_count?: number;
   incorrect_count?: number;
   total_questions_answered?: number;
@@ -549,9 +566,11 @@ export interface CourseProgressResponse {
 
 export interface CourseProgressSummary {
   course_id: number;
+  status: LooseUnion<CourseStatus>;
   attempts_count: number;
   average_score: number | null;
   completion: number | null;
+  total_time_spent_seconds?: number | null;
   last_activity: string | null;
 }
 

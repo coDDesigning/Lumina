@@ -14,10 +14,12 @@ import {
 import { Link } from 'react-router-dom';
 import { coursesAPI } from '@/api/courses';
 import { aiTutorAPI } from '@/api/aiTutor';
+import { conversationsAPI } from '@/api/conversations';
 import { courseQaAPI } from '@/api/courseQa';
 import {
   describeGenerationError,
   describeUploadError,
+  isAbortError,
   isInsufficientCredits,
 } from '@/api/errors';
 import type {
@@ -40,8 +42,11 @@ import { SavedDeckModal } from '@/features/study/SavedDeckModal';
 import { StudyGuideModal } from '@/features/study/StudyGuideModal';
 import { useCredits } from '@/context/CreditContext';
 import { useAuth } from '@/context/AuthContext';
-import { toWorkspaceProgress } from '@/data/workspaces';
-import type { Workspace, WorkspaceProgress } from '@/data/workspaces';
+import type {
+  Workspace,
+  WorkspaceProgress,
+  WorkspaceProgressStatus,
+} from '@/data/workspaces';
 import { useCourseDocuments } from '@/hooks/useCourseDocuments';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
@@ -64,7 +69,7 @@ import styles from './WorkspacePage.module.css';
 
 export interface WorkspacePageProps {
   workspace: Workspace;
-  onUpdateProgress?: (courseId: string, progress: WorkspaceProgress) => void;
+  onUpdateProgress?: (courseId: string, progress: Partial<WorkspaceProgress>) => void;
 }
 
 interface ThreadMessage {
@@ -111,6 +116,36 @@ function uploadedOn(value: string): string | null {
   return `on ${new Intl.DateTimeFormat('en', { day: 'numeric', month: 'long' }).format(parsed)}`;
 }
 
+function getStoredConversationId(courseId: number, type: ConversationType): number | null {
+  try {
+    const raw = localStorage.getItem(`lumina:course:${courseId}:conversation:${type}`);
+    if (!raw) {
+      return null;
+    }
+    const parsed = Number(raw);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function setStoredConversationId(
+  courseId: number,
+  type: ConversationType,
+  id: number | null,
+): void {
+  try {
+    const key = `lumina:course:${courseId}:conversation:${type}`;
+    if (id !== null) {
+      localStorage.setItem(key, String(id));
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage errors in restricted contexts
+  }
+}
+
 export default function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const { user } = useAuth();
   const {
@@ -129,6 +164,61 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
     course_qa: EMPTY_THREAD,
     ai_tutor: EMPTY_THREAD,
   });
+
+  useEffect(() => {
+    if (!Number.isInteger(courseId) || courseId <= 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    (['course_qa', 'ai_tutor'] as const).forEach((type) => {
+      const storedId = getStoredConversationId(courseId, type);
+      if (!storedId) {
+        return;
+      }
+
+      setThreads((state) => ({
+        ...state,
+        [type]: { ...state[type], isLoading: true, error: null },
+      }));
+
+      conversationsAPI
+        .get(courseId, storedId, { signal: controller.signal })
+        .then((detail) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          setThreads((state) => ({
+            ...state,
+            [type]: {
+              conversationId: detail.id,
+              messages: detail.messages.map(({ role, content }) => ({ role, content })),
+              isLoading: false,
+              error: null,
+            },
+          }));
+        })
+        .catch((caught: unknown) => {
+          if (controller.signal.aborted || isAbortError(caught)) {
+            return;
+          }
+          setStoredConversationId(courseId, type, null);
+          setThreads((state) => ({
+            ...state,
+            [type]: {
+              ...state[type],
+              conversationId: null,
+              isLoading: false,
+            },
+          }));
+        });
+    });
+
+    return () => {
+      controller.abort();
+    };
+  }, [courseId]);
 
   const [uploadErrors, setUploadErrors] = useState<{ fileName: string; message: string }[]>([]);
   const [uploadNotices, setUploadNotices] = useState<string[]>([]);
@@ -184,16 +274,12 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
     if (!onUpdateProgress || !progress) {
       return;
     }
-    onUpdateProgress(
-      workspace.id,
-      toWorkspaceProgress({
-        course_id: Number(workspace.id),
-        attempts_count: progress.attempts_count,
-        average_score: progress.average_score,
-        completion: progress.completion ?? null,
-        last_activity: null,
-      }),
-    );
+    onUpdateProgress(workspace.id, {
+      averageScore:
+        progress.average_score === null ? null : Math.round(progress.average_score * 100),
+      timeSpentSeconds: progress.total_time_spent_seconds ?? null,
+      status: progress.status as WorkspaceProgressStatus,
+    });
   }, [onUpdateProgress, progress, workspace.id]);
 
   const processingCount = entries.filter(
@@ -271,6 +357,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           ? await aiTutorAPI.ask(courseId, request)
           : await courseQaAPI.ask(courseId, request);
 
+      setStoredConversationId(courseId, threadType, result.conversation_id);
       setThreads((state) => ({
         ...state,
         [threadType]: {
@@ -322,10 +409,12 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   }
 
   function startNewConversation() {
+    setStoredConversationId(courseId, threadType, null);
     setThreads((state) => ({ ...state, [threadType]: EMPTY_THREAD }));
   }
 
   function resumeConversation(conversation: ConversationDetail) {
+    setStoredConversationId(courseId, conversation.conversation_type, conversation.id);
     setThreads((state) => ({
       ...state,
       [conversation.conversation_type]: {
@@ -734,6 +823,24 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           canResume={workspace.ownerId == null || workspace.ownerId === user?.id}
           onClose={() => setIsPastThreadsOpen(false)}
           onResume={resumeConversation}
+          onDelete={(conversationId) => {
+            (['course_qa', 'ai_tutor'] as const).forEach((type) => {
+              if (getStoredConversationId(courseId, type) === conversationId) {
+                setStoredConversationId(courseId, type, null);
+              }
+            });
+            setThreads((state) => {
+              let changed = false;
+              const next = { ...state };
+              for (const type of ['course_qa', 'ai_tutor'] as const) {
+                if (next[type].conversationId === conversationId) {
+                  next[type] = EMPTY_THREAD;
+                  changed = true;
+                }
+              }
+              return changed ? next : state;
+            });
+          }}
         />
       ) : null}
 

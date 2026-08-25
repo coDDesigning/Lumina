@@ -54,6 +54,12 @@ variable "ai_model_cost_rates" {
   type = string
 }
 
+variable "cors_allowed_origins" {
+  description = "Origins accepted by the API CORS middleware."
+  type        = list(string)
+  default     = []
+}
+
 variable "api_cpu" {
   type = number
 }

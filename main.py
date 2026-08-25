@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.cors import CORSMiddleware
 
 from backend.app.config import settings
 from backend.app.database import get_db
@@ -67,7 +68,6 @@ app.add_middleware(
     max_concurrent_uploads=settings.max_concurrent_document_validations,
     upload_request_timeout_seconds=settings.upload_request_timeout_seconds,
 )
-
 app.include_router(auth.router)
 app.include_router(course.router)
 app.include_router(course_settings.router)
@@ -155,3 +155,14 @@ def health_ready(
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "not_ready"}
     return {"status": "ready"}
+
+
+if settings.cors_allowed_origins:
+    app.middleware_stack = CORSMiddleware(
+        app.build_middleware_stack(),
+        allow_origins=settings.cors_allowed_origins,
+        allow_credentials=False,
+        allow_methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
+        allow_headers=("Authorization", "Content-Type"),
+        expose_headers=("X-Error-Code",),
+    )

@@ -23,9 +23,9 @@ data "aws_iam_policy_document" "github_trust" {
       values   = ["sts.amazonaws.com"]
     }
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.repository}:ref:refs/heads/main"]
+      values   = ["repo:${var.repository}:environment:${var.environment_name}"]
     }
   }
 }
@@ -40,18 +40,9 @@ resource "aws_iam_role" "github_actions" {
       Version = "2012-10-17"
       Statement = [
         {
-          Sid    = "ECR"
-          Effect = "Allow"
-          Action = [
-            "ecr:GetAuthorizationToken",
-            "ecr:BatchGetImage",
-            "ecr:BatchCheckLayerAvailability",
-            "ecr:GetDownloadUrlForLayer",
-            "ecr:PutImage",
-            "ecr:InitiateLayerUpload",
-            "ecr:UploadLayerPart",
-            "ecr:CompleteLayerUpload",
-          ]
+          Sid      = "ECRAuthorization"
+          Effect   = "Allow"
+          Action   = ["ecr:GetAuthorizationToken"]
           Resource = "*"
         },
         {
@@ -69,28 +60,95 @@ resource "aws_iam_role" "github_actions" {
           Resource = var.ecr_repository_arn
         },
         {
-          Sid    = "ECSDeploy"
+          Sid    = "FrontendObjectRead"
+          Effect = "Allow"
+          Action = ["s3:GetObject"]
+          Resource = [
+            "${var.frontend_bucket_arn}/releases/*/frontend.tar.gz",
+            "${var.frontend_bucket_arn}/releases/*/task-definitions.json",
+          ]
+        },
+        {
+          Sid    = "FrontendCurrentWrite"
           Effect = "Allow"
           Action = [
-            "ecs:DescribeServices",
-            "ecs:DescribeTasks",
-            "ecs:RunTask",
-            "ecs:UpdateService",
+            "s3:DeleteObject",
+            "s3:GetObject",
+            "s3:PutObject",
           ]
+          Resource = "${var.frontend_bucket_arn}/current/*"
+        },
+        {
+          Sid      = "FrontendCurrentList"
+          Effect   = "Allow"
+          Action   = ["s3:ListBucket"]
+          Resource = var.frontend_bucket_arn
+          Condition = {
+            StringLike = {
+              "s3:prefix" = ["current", "current/*"]
+            }
+          }
+        },
+        {
+          Sid    = "FrontendReleaseCreate"
+          Effect = "Allow"
+          Action = ["s3:PutObject"]
           Resource = [
-            local.cluster_arn,
+            "${var.frontend_bucket_arn}/releases/*/frontend.tar.gz",
+            "${var.frontend_bucket_arn}/releases/*/task-definitions.json",
+          ]
+          Condition = {
+            Null = {
+              "s3:if-none-match" = "false"
+            }
+          }
+        },
+        {
+          Sid    = "FrontendInvalidation"
+          Effect = "Allow"
+          Action = [
+            "cloudfront:CreateInvalidation",
+            "cloudfront:GetInvalidation",
+          ]
+          Resource = var.cloudfront_distribution_arn
+        },
+        {
+          Sid      = "ECSDescribeTaskDefinitions"
+          Effect   = "Allow"
+          Action   = ["ecs:DescribeTaskDefinition"]
+          Resource = "*"
+        },
+        {
+          Sid      = "ECSDescribeServices"
+          Effect   = "Allow"
+          Action   = ["ecs:DescribeServices"]
+          Resource = [local.api_svc_arn, local.worker_svc_arn]
+        },
+        {
+          Sid      = "ECSDescribeTasks"
+          Effect   = "Allow"
+          Action   = ["ecs:DescribeTasks"]
+          Resource = local.cluster_task_arn
+        },
+        {
+          Sid    = "ECSUpdateServices"
+          Effect = "Allow"
+          Action = ["ecs:UpdateService"]
+          Resource = [
             local.api_svc_arn,
             local.worker_svc_arn,
           ]
         },
         {
-          Sid    = "ECSTaskDefinitions"
-          Effect = "Allow"
-          Action = [
-            "ecs:DescribeTaskDefinition",
-            "ecs:RunTask",
-          ]
+          Sid      = "ECSRunTask"
+          Effect   = "Allow"
+          Action   = ["ecs:RunTask"]
           Resource = concat(local.taskdef_arns, [for arn in local.taskdef_arns : "${arn}:*"])
+          Condition = {
+            ArnEquals = {
+              "ecs:cluster" = local.cluster_arn
+            }
+          }
         },
         {
           Sid      = "ECSRegister"
@@ -106,6 +164,11 @@ resource "aws_iam_role" "github_actions" {
             var.ecs_task_role_arn,
             var.ecs_execution_role_arn,
           ]
+          Condition = {
+            StringEquals = {
+              "iam:PassedToService" = "ecs-tasks.amazonaws.com"
+            }
+          }
         },
       ]
     })

@@ -125,6 +125,70 @@ describe('AuthContext', () => {
     expect(result.current.user).toBeNull();
   });
 
+  it('does not restore a stale account after a newer login completes', async () => {
+    const firstUser = createMockUser({ id: 1, name: 'First account' });
+    const secondUser = createMockUser({ id: 2, name: 'Second account' });
+    let resolveFirst: (user: typeof firstUser) => void = () => {};
+    let resolveSecond: (user: typeof secondUser) => void = () => {};
+    mockMe
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveSecond = resolve;
+        }),
+      );
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }) => <AuthProvider>{children}</AuthProvider>,
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    let firstLogin: Promise<void> = Promise.resolve();
+    let secondLogin: Promise<void> = Promise.resolve();
+    act(() => {
+      firstLogin = result.current.login('first-token');
+      secondLogin = result.current.login('second-token');
+    });
+    await act(async () => resolveSecond(secondUser));
+    await secondLogin;
+    await waitFor(() => expect(result.current.user).toEqual(secondUser));
+
+    await act(async () => resolveFirst(firstUser));
+    await firstLogin;
+
+    expect(localStorage.getItem('token')).toBe('second-token');
+    expect(result.current.user).toEqual(secondUser);
+  });
+
+  it('does not restore an in-flight account after logout', async () => {
+    const staleUser = createMockUser({ name: 'Stale account' });
+    let resolveUser: (user: typeof staleUser) => void = () => {};
+    mockMe.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveUser = resolve;
+      }),
+    );
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }) => <AuthProvider>{children}</AuthProvider>,
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    let login: Promise<void> = Promise.resolve();
+    act(() => {
+      login = result.current.login('stale-token');
+    });
+    act(() => result.current.logout());
+    await act(async () => resolveUser(staleUser));
+    await login;
+
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(result.current.user).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+  });
+
   it('handles auth:unauthorized window event by clearing user', async () => {
     localStorage.setItem('token', 'some-token');
     mockMe.mockResolvedValueOnce(createMockUser());

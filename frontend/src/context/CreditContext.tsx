@@ -43,7 +43,7 @@ export const CreditProvider = ({ children }: { children: ReactNode }) => {
     error: string | null;
   } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const inFlight = useRef<Promise<void> | null>(null);
+  const inFlight = useRef<{ identity: number; request: Promise<void> } | null>(null);
   const trailingRefresh = useRef(false);
   const identityRef = useRef(identity);
   identityRef.current = identity;
@@ -52,9 +52,9 @@ export const CreditProvider = ({ children }: { children: ReactNode }) => {
     if (!isAuthenticated || identity === null) {
       return Promise.resolve();
     }
-    if (inFlight.current) {
+    if (inFlight.current?.identity === identity) {
       trailingRefresh.current = true;
-      return inFlight.current;
+      return inFlight.current.request;
     }
 
     const requestIdentity = identity;
@@ -83,9 +83,9 @@ export const CreditProvider = ({ children }: { children: ReactNode }) => {
     };
 
     const request = run();
-    inFlight.current = request;
+    inFlight.current = { identity: requestIdentity, request };
     void request.finally(() => {
-      if (inFlight.current === request) {
+      if (inFlight.current?.request === request) {
         inFlight.current = null;
       }
     });
@@ -94,13 +94,14 @@ export const CreditProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     trailingRefresh.current = false;
-    inFlight.current = null;
     setSnapshot(null);
     if (!isAuthenticated) {
       setIsLoading(false);
       return;
     }
-    void refresh();
+    if (inFlight.current?.identity !== identity) {
+      void refresh();
+    }
   }, [identity, isAuthenticated, refresh]);
 
   useEffect(() => {

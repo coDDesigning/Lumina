@@ -115,12 +115,62 @@ image (`Dockerfile`) and runs the same three roles:
 | --- | --- |
 | VPC | Public/private subnets, one NAT gateway, route tables |
 | ECR | `lumina` repository (immutable tags, scan on push, keep 20 images) |
-| S3 | Document bucket (versioned, encrypted, TLS-only policy) |
+| S3 | Separate private document and frontend buckets (versioned, encrypted, TLS-only policies) |
+| CloudFront | OAC static delivery; `/api` and `/api/*` proxy to the ALB without caching |
 | RDS | PostgreSQL 16.8+, pgvector 0.8+, storage autoscaling, Performance Insights |
 | RDS Proxy | TLS-only runtime connection pool; direct RDS access is migrator-only |
 | ECS | Fargate `api` + `worker` services, one-off `migrate` task definition |
 | ALB | HTTPS (ACM) listener, HTTP-to-HTTPS redirect, `/health/ready` target check |
-| Route53 | Optional A alias to the ALB |
+| Route53 | Optional frontend A/AAAA aliases to CloudFront and API-origin A alias to the ALB |
+
+### Hosted frontend decision and routing contract
+
+Hosted production uses private S3 plus CloudFront rather than an Nginx ECS
+sidecar. Static delivery therefore does not consume API/worker capacity or add
+frontend files to the backend image. The public application hostname points to
+CloudFront. CloudFront serves `current/` from the frontend bucket by OAC and
+routes exact `/api` plus `/api/*` paths to the ALB with caching disabled. The
+browser sees one origin, so the production setting `VITE_API_BASE_URL=/api`
+needs no CORS.
+
+A distinct `api_origin_domain_name` points to the ALB. During the staged
+transition, the regional ALB certificate must cover both that name and
+`frontend_domain_name`; after cutover only the API-origin name reaches the ALB.
+The CloudFront viewer certificate must cover `frontend_domain_name` and reside
+in `us-east-1`. Reusing the public frontend hostname as the origin would
+recurse after DNS cutover, while using the raw ALB hostname would not match the
+customer ACM certificate.
+
+The static default behavior uses a viewer-request function to rewrite `/` and
+extensionless GET/HEAD routes to `/index.html`. `/assets/*` bypasses the
+function. API behaviors are separate, so backend error statuses, JSON bodies,
+`X-Error-Code`, and `X-Request-ID` pass through unchanged. There is deliberately
+no distribution-wide 403/404-to-index fallback. Every behavior adds HSTS,
+content-type, frame, referrer, and content-security headers. The API origin and
+ALB use 120-second response/idle timeouts. Hosted retrieval embeddings are
+bounded to 10 seconds and each generation attempt to 30 seconds, so retrieval,
+three generation attempts, and their three seconds of backoff fit within 103
+seconds and leave headroom inside that edge budget.
+
+Cross-origin builds are optional. Set `VITE_API_BASE_URL` to the complete
+absolute API prefix and configure `CORS_ALLOWED_ORIGINS` with exact comma-
+separated frontend origins. Wildcards are rejected. CORS permits the explicit
+bearer `Authorization` header, does not enable cookie credentials, and exposes
+`X-Error-Code`. Leave the setting empty for same-origin deployment.
+
+The first rollout is deliberately two-phase. Before applying the OIDC trust
+policy, create the GitHub `production` environment and restrict its deployment
+branches to `main`; the workflow also refuses to deploy any other ref. Apply
+Terraform with
+`frontend_dns_cutover=false` so the moved application A record remains on the
+ALB while CloudFront and the empty frontend bucket are created. Configure the
+workflow's `FRONTEND_URL` from the `cloudfront_url` output and deploy once to
+publish and verify `current/index.html`. Then apply with
+`frontend_dns_cutover=true`, which retargets the A record and creates the AAAA
+record, and switch the workflow variable to the public `frontend_url`. This
+avoids an empty-bucket 403 window. Set `dns_record_name` to the existing
+record's full hostname through the Terraform state move so Route53 does not
+replace the record. External DNS follows the same sequence.
 
 Apply order matters once, on the first rollout: the ECS tasks read
 `JWT_SECRET_KEY`, `BOOTSTRAP_ADMIN_TOKEN`, and `GEMINI_API_KEY` from SSM
@@ -147,10 +197,14 @@ the next worker recovers its lease. Self-hosted SQLite/local/Chroma remains a
 single-host, single-worker topology. Provider concurrency and upload limits are
 per process, so raising replica maxima multiplies upstream AI/embedding load.
 
-Deployments run through the SCRUM-93 workflow: it builds and pushes the image
-to ECR, registers new task definition revisions, runs the one-off `migrate`
-task, and rolls out both services. The state bucket is passed to Terraform
-with `-backend-config`; never commit `.tfstate` or `terraform.tfvars`.
+Deployments use one commit SHA for the backend image, frontend release, and
+sanitized task-definition documents. The workflow archives the frontend and
+task definitions before runtime mutation, runs the one-off `migrate` task,
+rolls out both ECS services, then promotes an exact copy of the static output
+and uploads `index.html` last. ECS deployment circuit breakers and the workflow
+restore both previous service revisions if either rollout fails. The state
+bucket is passed to Terraform with
+`-backend-config`; never commit `.tfstate`, saved plans, or `terraform.tfvars`.
 
 ### AWS secrets management
 
@@ -165,12 +219,12 @@ directly to RDS. A third credential document is readable only by RDS Proxy.
 The ECS task role authenticates to S3 with an IAM role; no static AWS keys
 exist on the platform side.
 
-The GitHub Actions deploy role uses OIDC federation
-(`github-oidc` Terraform module): the trust policy accepts the `main` branch
-of the repository only, and the role can deploy but cannot read the runtime
-secrets. Set its ARN as the `AWS_DEPLOY_ROLE_ARN` secret and the Terraform
-outputs as variables on the GitHub `production` environment, then the SCRUM-93
-workflow deploys without any stored long-lived credentials.
+The GitHub Actions deploy role uses OIDC federation. Its trust policy accepts
+the exact GitHub `production` environment subject. Configure that environment's
+deployment branch policy to permit `main` only; environment protection is the
+branch boundary because environment jobs receive an environment-shaped OIDC
+subject. The role can deploy but cannot read runtime secrets. Set its ARN as
+`AWS_DEPLOY_ROLE_ARN` on the production environment.
 
 ### AWS observability
 
@@ -185,8 +239,8 @@ thresholds, and required staging alarm exercise.
 ### AWS deploy pipeline
 
 `.github/workflows/deploy.yml` deploys the repository to the AWS topology on a
-push to `main` or through manual dispatch. The workflow authenticates with the
-GitHub OIDC role created by the secrets module (SCRUM-94), never with stored
+push to `main` or through manual dispatch from `main`. The workflow authenticates with the
+GitHub OIDC role created by the `github-oidc` module, never with stored
 long-lived keys. It requires these repository environment variables and
 secrets on the `production` environment:
 
@@ -195,18 +249,38 @@ secrets on the `production` environment:
 | `vars.AWS_REGION`, `vars.ECR_REPOSITORY`, `vars.ECS_CLUSTER` | Terraform outputs |
 | `vars.API_SERVICE`, `vars.WORKER_SERVICE` | Terraform outputs |
 | `vars.API_TASK_DEFINITION`, `vars.WORKER_TASK_DEFINITION`, `vars.MIGRATE_TASK_DEFINITION` | Terraform outputs |
-| `vars.ALB_DNS` | Terraform output |
-| `vars.PRIVATE_SUBNETS`, `vars.ECS_SECURITY_GROUP` | Terraform outputs (comma-separated subnet list) |
-| `secrets.AWS_DEPLOY_ROLE_ARN` | OIDC role from SCRUM-94 |
+| `vars.PRIVATE_SUBNETS`, `vars.ECS_SECURITY_GROUP` | `private_subnet_ids_csv`, `ecs_security_group_id` outputs |
+| `vars.FRONTEND_BUCKET` | `frontend_bucket_name` output |
+| `vars.CLOUDFRONT_DISTRIBUTION_ID` | `cloudfront_distribution_id` output |
+| `vars.FRONTEND_URL` | `cloudfront_url` before DNS cutover; `frontend_url` afterward |
+| `vars.VITE_API_BASE_URL` | `/api` for the supported same-origin topology |
+| `secrets.AWS_DEPLOY_ROLE_ARN` | `github-oidc` module output |
 
-The workflow builds the image with tag `github.sha`, registers new task
-definition revisions for `api`, `worker`, and `migrate`, runs the one-off
-migration task (skipped on rollback), rolls out both services, and smoke-tests
-`GET /health/ready` through the ALB. A rollback deploys an already-published
-image tag (`rollback_to` input) without building or migrating. The first
-deployment needs the Terraform task definitions to reference an existing
-image: either set `image_tag` to the first deployed SHA at apply time or push
-a `latest`-tagged image manually before the first rollout.
+The workflow builds the image and frontend for `github.sha`, uploads immutable
+checksummed frontend and task-definition archives under `releases/<sha>/`,
+registers those task definition revisions, runs migration, rolls out both
+services, and then publishes the matching frontend below `current/`. Hashed
+assets are immutable; unhashed files revalidate; `index.html` is the final
+upload; the distribution is invalidated; and only then are stale current files
+deleted.
+Release archives expire after 180 days and noncurrent object versions after 30
+days. A rerun must reproduce the archived checksums or it fails before runtime
+infrastructure mutation.
+
+A rollback accepts only a full commit SHA. Before mutation it verifies the
+immutable ECR image plus checksummed frontend and task-definition archives,
+skips migration, deploys the archived frontend first, and then registers and
+deploys the archived API/worker task-definition documents. Publishing the older
+frontend first preserves the already-qualified
+old-frontend/new-backend compatibility direction if ECS rollback fails. Database
+schema is never downgraded, so migrations must remain backward compatible with
+the retained rollback window. Production smoke checks exercise the SPA root,
+a deep link, an asset, an unauthenticated API request, and an API 404 through
+CloudFront; the raw ALB hostname is not used as an HTTPS client hostname. A
+failed rollout, publication, or smoke check restores the previously captured
+task definitions and exact frontend contents as needed, preserving the
+qualified compatibility direction during both deployment and rollback
+restoration.
 
 ## Transition from the experimental stack
 

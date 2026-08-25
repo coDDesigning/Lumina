@@ -188,6 +188,10 @@ class CourseQAService:
             CreditService.refund(db, receipt)
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
+        except Exception:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            raise
 
         with (
             CreditService.refund_on_error(db, receipt),

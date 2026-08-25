@@ -3,12 +3,8 @@ name: Deploy
 on:
   workflow_dispatch:
     inputs:
-      image_tag:
-        description: "Image tag to deploy. Defaults to the commit SHA of the run."
-        required: false
-        type: string
       rollback_to:
-        description: "Deploy an already-published image tag without building or migrating (rollback)."
+        description: "Release commit SHA to roll back to without building or migrating."
         required: false
         type: string
   push:
@@ -22,88 +18,343 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
-env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
-  API_SERVICE: ${{ vars.API_SERVICE }}
-  WORKER_SERVICE: ${{ vars.WORKER_SERVICE }}
-  API_TASK_DEFINITION: ${{ vars.API_TASK_DEFINITION }}
-  WORKER_TASK_DEFINITION: ${{ vars.WORKER_TASK_DEFINITION }}
-  MIGRATE_TASK_DEFINITION: ${{ vars.MIGRATE_TASK_DEFINITION }}
-  ALB_DNS: ${{ vars.ALB_DNS }}
-  PRIVATE_SUBNETS: ${{ vars.PRIVATE_SUBNETS }}
-  ECS_SECURITY_GROUP: ${{ vars.ECS_SECURITY_GROUP }}
-
 jobs:
   deploy:
     name: Deploy to production
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     environment: production
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      API_SERVICE: ${{ vars.API_SERVICE }}
+      WORKER_SERVICE: ${{ vars.WORKER_SERVICE }}
+      API_TASK_DEFINITION: ${{ vars.API_TASK_DEFINITION }}
+      WORKER_TASK_DEFINITION: ${{ vars.WORKER_TASK_DEFINITION }}
+      MIGRATE_TASK_DEFINITION: ${{ vars.MIGRATE_TASK_DEFINITION }}
+      PRIVATE_SUBNETS: ${{ vars.PRIVATE_SUBNETS }}
+      ECS_SECURITY_GROUP: ${{ vars.ECS_SECURITY_GROUP }}
+      FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
+      FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+      CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || '/api' }}
     steps:
+      - name: Resolve and validate release
+        id: release
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          ROLLBACK_TO: ${{ inputs.rollback_to }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Production deployments must run from the main branch."
+            exit 1
+          fi
+          if [ -n "$ROLLBACK_TO" ]; then
+            if [[ ! "$ROLLBACK_TO" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+              echo "::error::rollback_to must be a full 40-character commit SHA."
+              exit 1
+            fi
+            release_id="${ROLLBACK_TO,,}"
+            is_rollback=true
+          else
+            release_id="$COMMIT_SHA"
+            is_rollback=false
+          fi
+
+          if [[ ! "$release_id" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error::The release ID must be a full 40-character commit SHA."
+            exit 1
+          fi
+
+          required=(
+            AWS_REGION ECR_REPOSITORY ECS_CLUSTER API_SERVICE WORKER_SERVICE
+            API_TASK_DEFINITION WORKER_TASK_DEFINITION MIGRATE_TASK_DEFINITION
+            PRIVATE_SUBNETS ECS_SECURITY_GROUP FRONTEND_BUCKET FRONTEND_URL
+            CLOUDFRONT_DISTRIBUTION_ID VITE_API_BASE_URL
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Required production variable $name is not configured."
+              exit 1
+            fi
+          done
+
+          echo "RELEASE_ID=$release_id" >> "$GITHUB_ENV"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "is_rollback=$is_rollback" >> "$GITHUB_OUTPUT"
+          echo "Release: $release_id"
+
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        if: ${{ !inputs.rollback_to }}
         with:
           persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: steps.release.outputs.is_rollback == 'false'
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        if: steps.release.outputs.is_rollback == 'false'
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Build frontend
+        if: steps.release.outputs.is_rollback == 'false'
+        working-directory: frontend
+        run: npm run build
+
+      - name: Package frontend release
+        if: steps.release.outputs.is_rollback == 'false'
+        run: |
+          set -euo pipefail
+          test -f frontend/dist/index.html
+          test -d frontend/dist/assets
+          test -n "$(find frontend/dist -type f -print -quit)"
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+            -C frontend/dist -czf "$RUNNER_TEMP/frontend.tar.gz" .
+          (
+            cd "$RUNNER_TEMP"
+            archive_sha256="$(sha256sum frontend.tar.gz | awk '{print $1}')"
+            echo "FRONTEND_ARCHIVE_SHA256=$archive_sha256" >> "$GITHUB_ENV"
+          )
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@bcd4089080cf41e4db9dad11fce2a9397e670bbd # v6.2.3
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          role-duration-seconds: 1800
+          role-duration-seconds: 3600
+
+      - name: Upload frontend release artifacts
+        if: steps.release.outputs.is_rollback == 'false'
+        run: |
+          set -euo pipefail
+          archive_key="releases/$RELEASE_ID/frontend.tar.gz"
+          if ! aws s3api put-object \
+            --bucket "$FRONTEND_BUCKET" \
+            --key "$archive_key" \
+            --body "$RUNNER_TEMP/frontend.tar.gz" \
+            --content-type application/gzip \
+            --metadata "sha256=$FRONTEND_ARCHIVE_SHA256" \
+            --if-none-match '*' >/dev/null 2>"$RUNNER_TEMP/frontend-put-error"; then
+            if ! stored_sha256="$(aws s3api head-object \
+              --bucket "$FRONTEND_BUCKET" \
+              --key "$archive_key" \
+              --query 'Metadata.sha256' --output text)"; then
+              cat "$RUNNER_TEMP/frontend-put-error" >&2
+              exit 1
+            fi
+            if [ "$stored_sha256" != "$FRONTEND_ARCHIVE_SHA256" ]; then
+              echo "::error::Release $RELEASE_ID already has a different frontend archive."
+              exit 1
+            fi
+          fi
+
+      - name: Check release artifacts
+        id: artifacts
+        env:
+          IS_ROLLBACK: ${{ steps.release.outputs.is_rollback }}
+        run: |
+          set -euo pipefail
+          repository_name="${ECR_REPOSITORY##*/}"
+          image_result="$(aws ecr batch-get-image \
+            --repository-name "$repository_name" \
+            --image-ids "imageTag=$RELEASE_ID" \
+            --output json)"
+          image_count="$(jq '.images | length' <<<"$image_result")"
+          if [ "$image_count" = "1" ]; then
+            image_exists=true
+          else
+            failure_code="$(jq -r '.failures[0].failureCode // empty' <<<"$image_result")"
+            if [ "$failure_code" != "ImageNotFound" ]; then
+              echo "::error::ECR image lookup failed: ${failure_code:-unknown failure}"
+              exit 1
+            fi
+            image_exists=false
+          fi
+
+          if [ "$IS_ROLLBACK" = "true" ]; then
+            if [ "$image_exists" != "true" ]; then
+              echo "::error::ECR image $RELEASE_ID does not exist."
+              exit 1
+            fi
+            aws s3api head-object \
+              --bucket "$FRONTEND_BUCKET" \
+              --key "releases/$RELEASE_ID/frontend.tar.gz" \
+              --query 'Metadata.sha256' --output text > "$RUNNER_TEMP/frontend-archive-sha256"
+            aws s3api head-object \
+              --bucket "$FRONTEND_BUCKET" \
+              --key "releases/$RELEASE_ID/task-definitions.json" \
+              --query 'Metadata.sha256' --output text > "$RUNNER_TEMP/task-definitions-sha256"
+            aws s3 cp \
+              "s3://$FRONTEND_BUCKET/releases/$RELEASE_ID/task-definitions.json" \
+              "$RUNNER_TEMP/task-definitions.json" --only-show-errors
+            expected_sha256="$(cat "$RUNNER_TEMP/task-definitions-sha256")"
+            test "$expected_sha256" != "None"
+            actual_sha256="$(sha256sum "$RUNNER_TEMP/task-definitions.json" | awk '{print $1}')"
+            test "$actual_sha256" = "$expected_sha256"
+          fi
+          echo "image_exists=$image_exists" >> "$GITHUB_OUTPUT"
+
+      - name: Restore rollback frontend
+        if: steps.release.outputs.is_rollback == 'true'
+        run: |
+          set -euo pipefail
+          release_prefix="s3://$FRONTEND_BUCKET/releases/$RELEASE_ID"
+          aws s3 cp "$release_prefix/frontend.tar.gz" "$RUNNER_TEMP/frontend.tar.gz" --only-show-errors
+          expected_sha256="$(cat "$RUNNER_TEMP/frontend-archive-sha256")"
+          test "$expected_sha256" != "None"
+          actual_sha256="$(sha256sum "$RUNNER_TEMP/frontend.tar.gz" | awk '{print $1}')"
+          test "$actual_sha256" = "$expected_sha256"
+          mkdir -p "$RUNNER_TEMP/frontend-dist"
+          tar -xzf "$RUNNER_TEMP/frontend.tar.gz" \
+            -C "$RUNNER_TEMP/frontend-dist" --no-same-owner --no-same-permissions
+          test -f "$RUNNER_TEMP/frontend-dist/index.html"
+          test -d "$RUNNER_TEMP/frontend-dist/assets"
+
+      - name: Select frontend directory
+        env:
+          IS_ROLLBACK: ${{ steps.release.outputs.is_rollback }}
+        run: |
+          set -euo pipefail
+          if [ "$IS_ROLLBACK" = "true" ]; then
+            frontend_dist="$RUNNER_TEMP/frontend-dist"
+          else
+            frontend_dist="$GITHUB_WORKSPACE/frontend/dist"
+          fi
+          echo "FRONTEND_DIST=$frontend_dist" >> "$GITHUB_ENV"
+
+      - name: Capture current production state
+        run: |
+          set -euo pipefail
+          previous_frontend_dist="$RUNNER_TEMP/previous-frontend-dist"
+          mkdir -p "$previous_frontend_dist"
+          aws s3 cp "s3://$FRONTEND_BUCKET/current/" "$previous_frontend_dist/" \
+            --recursive --only-show-errors
+          if [ -f "$previous_frontend_dist/index.html" ]; then
+            previous_frontend_exists=true
+          else
+            previous_frontend_exists=false
+          fi
+
+          previous_api="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$API_SERVICE" \
+            --query 'services[0].taskDefinition' --output text)"
+          previous_worker="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$WORKER_SERVICE" \
+            --query 'services[0].taskDefinition' --output text)"
+          test "$previous_api" != "None"
+          test "$previous_worker" != "None"
+
+          echo "PREVIOUS_FRONTEND_DIST=$previous_frontend_dist" >> "$GITHUB_ENV"
+          echo "PREVIOUS_FRONTEND_EXISTS=$previous_frontend_exists" >> "$GITHUB_ENV"
+          echo "PREVIOUS_API_TASK_ARN=$previous_api" >> "$GITHUB_ENV"
+          echo "PREVIOUS_WORKER_TASK_ARN=$previous_worker" >> "$GITHUB_ENV"
+
+      - name: Publish rollback frontend
+        id: rollback_frontend
+        if: steps.release.outputs.is_rollback == 'true'
+        run: bash .github/scripts/publish-frontend.sh
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@af990da1348c53e469c2b8b90ebe936bc2f574d0 # v2.1.6
-        if: ${{ !inputs.rollback_to }}
+        if: steps.artifacts.outputs.image_exists == 'false'
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-        if: ${{ !inputs.rollback_to }}
+        if: steps.artifacts.outputs.image_exists == 'false'
 
       - name: Build and push image
         uses: docker/build-push-action@2ca78c6bec76527009825f31aae0532b4d40d820 # v7.3.0
-        if: ${{ !inputs.rollback_to }}
+        if: steps.artifacts.outputs.image_exists == 'false'
         with:
           context: .
           push: true
-          tags: ${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          tags: ${{ env.ECR_REPOSITORY }}:${{ steps.release.outputs.release_id }}
           provenance: false
 
-      - name: Resolve image tag
-        id: tag
-        run: |
-          if [ -n "${{ inputs.rollback_to }}" ]; then
-            image_tag="${{ inputs.rollback_to }}"
-          elif [ -n "${{ inputs.image_tag }}" ]; then
-            image_tag="${{ inputs.image_tag }}"
-          else
-            image_tag="${{ github.sha }}"
-          fi
-          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
-          echo "Deploying image tag: ${image_tag}"
-
       - name: Register task definitions
+        id: tasks
+        env:
+          IMAGE_URI: ${{ env.ECR_REPOSITORY }}:${{ steps.release.outputs.release_id }}
+          IS_ROLLBACK: ${{ steps.release.outputs.is_rollback }}
         run: |
-          for family in "$API_TASK_DEFINITION" "$WORKER_TASK_DEFINITION" "$MIGRATE_TASK_DEFINITION"; do
-            aws ecs describe-task-definition \
-              --task-definition "$family" \
-              --query 'taskDefinition' --output json |
-              jq --arg img "$ECR_REPOSITORY:${{ steps.tag.outputs.image_tag }}" --arg fam "$family" \
-                'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .draft, .lastStatus) | .containerDefinitions[0].image = $img | .family = $fam' \
-                > "/tmp/${family}.json"
-            aws ecs register-task-definition --cli-input-json "file:///tmp/${family}.json" \
-              --output text --query 'taskDefinition.taskDefinitionArn'
+          set -euo pipefail
+          families=("$API_TASK_DEFINITION" "$WORKER_TASK_DEFINITION")
+          output_names=(api worker)
+          if [ "$IS_ROLLBACK" = "false" ]; then
+            families+=("$MIGRATE_TASK_DEFINITION")
+            output_names+=(migrate)
+          fi
+
+          definition_files=()
+          for index in "${!families[@]}"; do
+            family="${families[$index]}"
+            definition_file="$(mktemp)"
+            if [ "$IS_ROLLBACK" = "true" ]; then
+              jq --arg name "${output_names[$index]}" -e '.[$name]' \
+                "$RUNNER_TEMP/task-definitions.json" > "$definition_file"
+            else
+              aws ecs describe-task-definition \
+                --task-definition "$family" \
+                --query 'taskDefinition' --output json |
+                jq --arg image "$IMAGE_URI" --arg family "$family" \
+                  'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .draft, .lastStatus) | .containerDefinitions[0].image = $image | .family = $family' \
+                  > "$definition_file"
+            fi
+            definition_files+=("$definition_file")
+          done
+
+          if [ "$IS_ROLLBACK" = "false" ]; then
+            task_archive="$RUNNER_TEMP/task-definitions.json"
+            jq -n \
+              --slurpfile api "${definition_files[0]}" \
+              --slurpfile worker "${definition_files[1]}" \
+              --slurpfile migrate "${definition_files[2]}" \
+              '{api: $api[0], worker: $worker[0], migrate: $migrate[0]}' > "$task_archive"
+            task_archive_sha256="$(sha256sum "$task_archive" | awk '{print $1}')"
+            archive_key="releases/$RELEASE_ID/task-definitions.json"
+            if ! aws s3api put-object \
+              --bucket "$FRONTEND_BUCKET" \
+              --key "$archive_key" \
+              --body "$task_archive" \
+              --content-type application/json \
+              --metadata "sha256=$task_archive_sha256" \
+              --if-none-match '*' >/dev/null 2>"$RUNNER_TEMP/task-definitions-put-error"; then
+              if ! stored_sha256="$(aws s3api head-object \
+                --bucket "$FRONTEND_BUCKET" \
+                --key "$archive_key" \
+                --query 'Metadata.sha256' --output text)"; then
+                cat "$RUNNER_TEMP/task-definitions-put-error" >&2
+                exit 1
+              fi
+              if [ "$stored_sha256" != "$task_archive_sha256" ]; then
+                echo "::error::Release $RELEASE_ID already has different task definitions."
+                exit 1
+              fi
+            fi
+          fi
+
+          for index in "${!families[@]}"; do
+            task_arn="$(aws ecs register-task-definition \
+              --cli-input-json "file://${definition_files[$index]}" \
+              --query 'taskDefinition.taskDefinitionArn' --output text)"
+            echo "${output_names[$index]}=$task_arn" >> "$GITHUB_OUTPUT"
           done
 
       - name: Apply database migrations
-        if: ${{ !inputs.rollback_to }}
+        if: steps.release.outputs.is_rollback == 'false'
+        env:
+          MIGRATE_TASK_ARN: ${{ steps.tasks.outputs.migrate }}
         run: |
+          set -euo pipefail
           task_arn="$(aws ecs run-task \
             --cluster "$ECS_CLUSTER" \
-            --task-definition "$MIGRATE_TASK_DEFINITION" \
+            --task-definition "$MIGRATE_TASK_ARN" \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[${PRIVATE_SUBNETS}],securityGroups=[${ECS_SECURITY_GROUP}],assignPublicIp=DISABLED}" \
             --query 'tasks[0].taskArn' --output text)"
@@ -119,21 +370,143 @@ jobs:
           echo "Migration task completed successfully."
 
       - name: Roll out services
+        id: rollout
+        env:
+          API_TASK_ARN: ${{ steps.tasks.outputs.api }}
+          WORKER_TASK_ARN: ${{ steps.tasks.outputs.worker }}
         run: |
-          api_revision="$(aws ecs describe-task-definition --task-definition "$API_TASK_DEFINITION" \
-            --query 'taskDefinition.taskDefinitionArn' --output text)"
-          worker_revision="$(aws ecs describe-task-definition --task-definition "$WORKER_TASK_DEFINITION" \
-            --query 'taskDefinition.taskDefinitionArn' --output text)"
-          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$API_SERVICE" \
-            --task-definition "$api_revision" --force-new-deployment --output text --query 'service.serviceArn'
-          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" \
-            --task-definition "$worker_revision" --force-new-deployment --output text --query 'service.serviceArn'
-          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$API_SERVICE" "$WORKER_SERVICE"
+          set -euo pipefail
+          rollout_failed=false
+          if ! aws ecs update-service --cluster "$ECS_CLUSTER" --service "$API_SERVICE" \
+            --task-definition "$API_TASK_ARN" --force-new-deployment --output text --query 'service.serviceArn'; then
+            rollout_failed=true
+          fi
+          if ! aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" \
+            --task-definition "$WORKER_TASK_ARN" --force-new-deployment --output text --query 'service.serviceArn'; then
+            rollout_failed=true
+          fi
+          if [ "$rollout_failed" = "false" ] && ! aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" --services "$API_SERVICE" "$WORKER_SERVICE"; then
+            rollout_failed=true
+          fi
+          if [ "$rollout_failed" = "false" ]; then
+            deployed_api="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$API_SERVICE" \
+              --query 'services[0].taskDefinition' --output text)"
+            deployed_worker="$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$WORKER_SERVICE" \
+              --query 'services[0].taskDefinition' --output text)"
+            if [ "$deployed_api" != "$API_TASK_ARN" ] || [ "$deployed_worker" != "$WORKER_TASK_ARN" ]; then
+              rollout_failed=true
+            fi
+          fi
+
+          if [ "$rollout_failed" = "true" ]; then
+            echo "::error::Service rollout failed."
+            exit 1
+          fi
           echo "Both services are stable."
 
-      - name: Smoke test readiness
+      - name: Publish frontend
+        id: frontend
+        if: steps.release.outputs.is_rollback == 'false'
+        run: bash .github/scripts/publish-frontend.sh
+
+      - name: Smoke test production routing
+        id: smoke
         run: |
-          body="$(curl --fail --silent --show-error --max-time 30 "https://${ALB_DNS}/health/ready")"
-          echo "${body}"
-          test "$(echo "${body}" | jq -r '.status')" = "ready"
-          echo "Readiness probe succeeded."
+          set -euo pipefail
+          base_url="${FRONTEND_URL%/}"
+
+          curl --fail --silent --show-error --max-time 30 \
+            -D "$RUNNER_TEMP/frontend-root-headers" \
+            "$base_url/" -o "$RUNNER_TEMP/frontend-root.html"
+          test -s "$RUNNER_TEMP/frontend-root.html"
+          grep -iq '^content-type:.*text/html' "$RUNNER_TEMP/frontend-root-headers"
+          asset_path="$(grep -oE '/assets/[^"]+' "$RUNNER_TEMP/frontend-root.html" | sed -n '1p')"
+          test -n "$asset_path"
+          curl --fail --silent --show-error --max-time 30 \
+            -D "$RUNNER_TEMP/frontend-asset-headers" \
+            "$base_url$asset_path" -o "$RUNNER_TEMP/frontend-asset"
+          test -s "$RUNNER_TEMP/frontend-asset"
+          grep -iq '^cache-control:.*max-age=31536000.*immutable' \
+            "$RUNNER_TEMP/frontend-asset-headers"
+          case "$asset_path" in
+            *.js) grep -Eiq '^content-type:.*(text|application)/javascript' "$RUNNER_TEMP/frontend-asset-headers" ;;
+            *.css) grep -iq '^content-type:.*text/css' "$RUNNER_TEMP/frontend-asset-headers" ;;
+          esac
+          curl --fail --silent --show-error --max-time 30 \
+            -D "$RUNNER_TEMP/frontend-deep-link-headers" \
+            "$base_url/courses/deployment-smoke-test" -o "$RUNNER_TEMP/frontend-deep-link.html"
+          test -s "$RUNNER_TEMP/frontend-deep-link.html"
+          grep -iq '^content-type:.*text/html' "$RUNNER_TEMP/frontend-deep-link-headers"
+
+          auth_status="$(curl --silent --show-error --max-time 30 \
+            -D "$RUNNER_TEMP/auth-headers" -o "$RUNNER_TEMP/auth-body.json" \
+            -w '%{http_code}' "$base_url/api/auth/me")"
+          test "$auth_status" = "401"
+          grep -iq '^content-type:.*application/json' "$RUNNER_TEMP/auth-headers"
+          jq -e . "$RUNNER_TEMP/auth-body.json" >/dev/null
+
+          missing_status="$(curl --silent --show-error --max-time 30 \
+            -D "$RUNNER_TEMP/missing-headers" -o "$RUNNER_TEMP/missing-body.json" \
+            -w '%{http_code}' "$base_url/api/__deployment_smoke_missing__")"
+          test "$missing_status" = "404"
+          grep -iq '^content-type:.*application/json' "$RUNNER_TEMP/missing-headers"
+          jq -e . "$RUNNER_TEMP/missing-body.json" >/dev/null
+
+      - name: Restore previous release after deployment failure
+        if: >-
+          ${{ failure() &&
+              (steps.rollback_frontend.outcome == 'failure' ||
+               (steps.release.outputs.is_rollback == 'true' &&
+                steps.rollback_frontend.outcome == 'success') ||
+               steps.rollout.outcome == 'failure' ||
+               steps.frontend.outcome == 'failure' ||
+               steps.smoke.outcome == 'failure') }}
+        env:
+          IS_ROLLBACK: ${{ steps.release.outputs.is_rollback }}
+        run: |
+          set -euo pipefail
+
+          restore_frontend() {
+            if [ "$PREVIOUS_FRONTEND_EXISTS" = "true" ]; then
+              FRONTEND_DIST="$PREVIOUS_FRONTEND_DIST" bash .github/scripts/publish-frontend.sh
+              return
+            fi
+
+            aws s3 rm "s3://$FRONTEND_BUCKET/current/" --recursive --only-show-errors
+            invalidation_id="$(aws cloudfront create-invalidation \
+              --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
+              --paths '/*' --query 'Invalidation.Id' --output text)"
+            aws cloudfront wait invalidation-completed \
+              --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
+              --id "$invalidation_id"
+          }
+
+          restore_services() {
+            aws ecs update-service --cluster "$ECS_CLUSTER" --service "$API_SERVICE" \
+              --task-definition "$PREVIOUS_API_TASK_ARN" --force-new-deployment \
+              --output text --query 'service.serviceArn'
+            aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WORKER_SERVICE" \
+              --task-definition "$PREVIOUS_WORKER_TASK_ARN" --force-new-deployment \
+              --output text --query 'service.serviceArn'
+            aws ecs wait services-stable --cluster "$ECS_CLUSTER" \
+              --services "$API_SERVICE" "$WORKER_SERVICE"
+          }
+
+          echo "::warning::Deployment failed after production mutation; restoring the previous release."
+          if [ "${{ steps.rollback_frontend.outcome }}" = "failure" ]; then
+            restore_frontend
+          elif [ "${{ steps.rollout.outcome }}" = "failure" ]; then
+            restore_services
+            if [ "$IS_ROLLBACK" = "true" ]; then
+              restore_frontend
+            fi
+          elif [ "$IS_ROLLBACK" = "true" ] && [ "${{ steps.rollout.outcome }}" != "success" ]; then
+            restore_frontend
+          elif [ "$IS_ROLLBACK" = "true" ]; then
+            restore_services
+            restore_frontend
+          else
+            restore_frontend
+            restore_services
+          fi

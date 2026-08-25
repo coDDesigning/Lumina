@@ -24,6 +24,24 @@ npm run build    # tsc -b && vite build
 `npm run lint` passing does not mean the build passes — `npm run build` runs `tsc -b`
 first, and type errors in test files fail it. Run all three.
 
+## Production API routing
+
+`VITE_API_BASE_URL` is the complete API prefix embedded by Vite at build time.
+It defaults to `/api`, which is the hosted production setting: CloudFront serves
+the SPA and forwards `/api` and `/api/*` to ECS through the ALB under the same
+browser origin. The development server preserves that contract with its `/api`
+proxy. Changing an API container environment after the frontend is built does
+not alter the bundle.
+
+For a deliberately cross-origin build, use an absolute prefix such as
+`https://api.example.com/api`. The API must then set
+`CORS_ALLOWED_ORIGINS=https://app.example.com`. Origins are exact, wildcards
+are rejected, cookie credential mode is disabled, and the browser continues to
+authenticate with the explicit `Authorization: Bearer` header. The backend
+exposes `X-Error-Code` so cross-origin clients retain the normal AI error
+contract. Empty `CORS_ALLOWED_ORIGINS` installs no CORS middleware and is the
+same-origin production default.
+
 ## Directory layout
 
 | Path | Holds |
@@ -259,11 +277,28 @@ These are product rules, not style preferences.
   because the mapper hardcoded an empty array; that is the failure mode to avoid.
 - **Unavailable is not empty.** A course card reads progress from the single
   `GET /api/progress` request and distinguishes three states, not two: progress that could
-  not be loaded says "Progress unavailable", a course with no graded attempt says "No quiz
-  activity yet", and a scored course shows its average score. A nullable number collapsed
-  the first two, so a network failure read as a course the student had never touched. The
-  status badge and the last-studied line come from the same response and are omitted
-  entirely when it is missing, because a card that cannot load progress must claim nothing.
+  not be loaded says "Progress unavailable", a course with no graded attempt says what it
+  is still waiting for, and a scored course shows its average score. A nullable number
+  collapsed the first two, so a network failure read as a course the student had never
+  touched. The status badge, the time-spent line and the last-studied line come from the
+  same response and are omitted entirely when it is missing, because a card that cannot
+  load progress must claim nothing.
+- **The client derives no course status.** `status` arrives on the progress response and
+  `services/course_status.py` is its only owner; `COURSE_STATUS_LABELS` in `api/types.ts`
+  maps it to a label and `CoursesPage` to a `BadgeTone`. Five values, furthest-along wins:
+  `no_documents` reads "No sources ready", `processing` reads "Processing", `ready` reads
+  "Ready to study", `practiced` reads "Practiced", `mastered` reads "Mastered". The backend
+  compares the average score rounded the way this client prints it, so the badge can never
+  read "Practiced" beside the number 80. The badge label is deliberately "No sources ready"
+  rather than "No documents", because that state also covers a course whose uploads all
+  failed to process. The line beneath follows the same signal: a course with nothing to
+  study says "No sources to study yet" and one still being read says "Sources still
+  processing", so "No quiz activity yet" is only ever shown to a student who actually has
+  material to be quizzed on.
+- **Time spent is absent, never zero.** `total_time_spent_seconds` on the progress reads
+  and `time_spent_seconds` on each `quiz_history` item are null when no attempt recorded a
+  duration, and `formatStudyTime` returns null for anything at or below zero, so the card
+  line and the attempt-history column disappear rather than reading "0m".
 - **No control claims an outcome it does not produce.** A settings page that said
   "Preferences saved locally" while persisting nothing is worse than no message.
 - **Name what is not built.** The landing page lists unbuilt capabilities as prominently as

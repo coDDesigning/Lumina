@@ -1,6 +1,66 @@
 import type { BaseResponse } from './types';
 
-const BASE_URL = '/api';
+const DEFAULT_BASE_URL = '/api';
+
+function resolveApiBaseUrl(value: string | undefined): string {
+  if (value === undefined || !value.trim()) {
+    return DEFAULT_BASE_URL;
+  }
+
+  if (
+    Array.from(value).some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
+    })
+  ) {
+    throw new Error('VITE_API_BASE_URL must not include control characters.');
+  }
+
+  const baseUrl = value.trim();
+
+  if (baseUrl.includes('\\')) {
+    throw new Error('VITE_API_BASE_URL must not include backslashes.');
+  }
+
+  if (baseUrl.includes('?') || baseUrl.includes('#')) {
+    throw new Error('VITE_API_BASE_URL must not include a query or fragment.');
+  }
+
+  if (baseUrl.startsWith('/')) {
+    if (baseUrl.startsWith('//')) {
+      throw new Error('VITE_API_BASE_URL must be root-relative or an absolute HTTP(S) URL.');
+    }
+
+    return baseUrl.replace(/\/+$/, '') || '/';
+  }
+
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    throw new Error('VITE_API_BASE_URL must be root-relative or an absolute HTTP(S) URL.');
+  }
+
+  let parsedBaseUrl: URL;
+  try {
+    parsedBaseUrl = new URL(baseUrl);
+  } catch {
+    throw new Error('VITE_API_BASE_URL must be a valid absolute HTTP(S) URL.');
+  }
+
+  if (
+    parsedBaseUrl.username ||
+    parsedBaseUrl.password ||
+    /^https?:\/\/[^/]*@/i.test(baseUrl)
+  ) {
+    throw new Error('VITE_API_BASE_URL must not include userinfo.');
+  }
+
+  return parsedBaseUrl.href.replace(/\/+$/, '');
+}
+
+const BASE_URL = resolveApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
+
+function buildApiUrl(endpoint: string): string {
+  return `${BASE_URL.replace(/\/+$/, '')}/${endpoint.replace(/^\/+/, '')}`;
+}
 
 interface ParsedApiError {
   message: string;
@@ -86,7 +146,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const url = `${BASE_URL}${endpoint}`;
+  const url = buildApiUrl(endpoint);
 
   const response = await fetch(url, {
     ...options,

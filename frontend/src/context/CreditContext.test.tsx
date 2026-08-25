@@ -1,5 +1,5 @@
 import { render, renderHook, screen, waitFor, act } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import { StrictMode, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CreditProvider, useCredits } from './CreditContext';
 import CreditBalance from '../components/credits/CreditBalance';
@@ -138,6 +138,26 @@ describe('CreditProvider', () => {
 
     await waitFor(() => expect(mockGetCredits).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(result.current.status?.credits).toBe(8));
+  });
+
+  it('does not duplicate the initial balance request in Strict Mode', async () => {
+    let resolve: (value: CreditStatus) => void = () => {};
+    mockGetCredits.mockReturnValue(
+      new Promise<CreditStatus>((done) => {
+        resolve = done;
+      }),
+    );
+    const strictWrapper = ({ children }: { children: ReactNode }) => (
+      <StrictMode>
+        <CreditProvider>{children}</CreditProvider>
+      </StrictMode>
+    );
+    const { result } = renderHook(() => useCredits(), { wrapper: strictWrapper });
+
+    await waitFor(() => expect(mockGetCredits).toHaveBeenCalledTimes(1));
+    await act(async () => resolve(status({ credits: 9 })));
+    await waitFor(() => expect(result.current.status?.credits).toBe(9));
+    expect(mockGetCredits).toHaveBeenCalledTimes(1);
   });
 
   it('does not apply an in-flight balance after the authenticated account changes', async () => {

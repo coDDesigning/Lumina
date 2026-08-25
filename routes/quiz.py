@@ -36,6 +36,7 @@ from services.text_generation import (
 from utils.ai_errors import InsufficientCreditsError, ai_generation_http_exception
 from utils.authorization import AuthorizedCourse, OwnedCourse
 from utils.deps import get_current_user
+from utils.rate_limit import rate_limit_generation
 
 router = APIRouter(
     prefix="/api/courses",
@@ -56,6 +57,7 @@ def _provider_for(model: str | None, preferred_model: str | None):
 @router.post(
     "/{course_id}/quiz",
     response_model=BaseResponse[QuizGenerationResult],
+    dependencies=[Depends(rate_limit_generation("quiz"))],
     responses={
         400: {"description": "No processed course material is available"},
         401: {"description": "Authentication required"},
@@ -68,7 +70,7 @@ def _provider_for(model: str | None, preferred_model: str | None):
             )
         },
         422: {"description": "Invalid quiz request"},
-        429: {"description": "AI provider rate limited"},
+        429: {"description": "AI provider or per-user generation rate limited"},
         503: {"description": "AI provider or course search unreachable"},
         504: {"description": "AI provider timed out"},
     },

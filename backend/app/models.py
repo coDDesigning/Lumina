@@ -1396,3 +1396,25 @@ class CreditTransaction(Base):
     user: Mapped["User"] = relationship(
         back_populates="credit_transactions", foreign_keys=[user_id]
     )
+
+
+class RateLimitBucket(Base):
+    """One fixed-window counter for one abuse-control key.
+
+    ``key`` already encodes the dimension being limited (for example
+    ``login:ip:203.0.113.4`` or ``generation:user:42:quiz``), so one row per key
+    is enough: a window rollover resets ``count`` in place rather than inserting
+    a new row, keeping the table's size bounded by the number of active keys
+    rather than growing with request volume. ``utils/rate_limit.py`` is the only
+    module that reads or writes this table. See docs/rate_limiting.md.
+    """
+
+    __tablename__ = "rate_limit_buckets"
+
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    window_start: Mapped[datetime] = mapped_column(UTCDateTime())
+    count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    violation_streak: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

@@ -24,7 +24,7 @@ locals {
     { name = "GEMINI_EMBEDDING_MODEL", value = "text-embedding-004" },
     { name = "AI_PROVIDER", value = "gemini" },
     { name = "EMBEDDING_BATCH_SIZE", value = "32" },
-    { name = "EMBEDDING_TIMEOUT_SECONDS", value = "60" },
+    { name = "EMBEDDING_TIMEOUT_SECONDS", value = "10" },
     { name = "MAX_UPLOAD_SIZE_BYTES", value = "52428800" },
     { name = "MAX_REQUEST_SIZE_BYTES", value = "1048576" },
     { name = "MAX_CONCURRENT_DOCUMENT_VALIDATIONS", value = "2" },
@@ -47,7 +47,7 @@ locals {
     { name = "OCR_MIN_TEXT_CHARACTERS", value = "20" },
     { name = "DOCUMENT_CHUNK_SIZE_CHARACTERS", value = "1200" },
     { name = "DOCUMENT_CHUNK_OVERLAP_CHARACTERS", value = "200" },
-    { name = "AI_GENERATION_TIMEOUT_SECONDS", value = "60" },
+    { name = "AI_GENERATION_TIMEOUT_SECONDS", value = "30" },
     { name = "AI_GENERATION_MAX_ATTEMPTS", value = "3" },
     { name = "AI_GENERATION_BACKOFF_BASE_SECONDS", value = "1.0" },
     { name = "AI_GENERATION_BACKOFF_MAX_SECONDS", value = "10.0" },
@@ -75,6 +75,7 @@ locals {
 
   api_env = concat(local.common_env, [
     { name = "BOOTSTRAP_ADMIN_EMAIL", value = var.bootstrap_admin_email },
+    { name = "CORS_ALLOWED_ORIGINS", value = join(",", var.cors_allowed_origins) },
   ])
 
   worker_env = concat(local.common_env, [

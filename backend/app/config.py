@@ -11,10 +11,12 @@ import os
 import re
 import json
 import secrets
+from ipaddress import IPv4Address, IPv6Address, ip_address
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import idna
 from email_validator import EmailNotValidError, validate_email
 from sqlalchemy.engine import make_url
 from .database_config import (
@@ -117,6 +119,7 @@ MAX_CREDIT_BALANCE_CEILING = 1_000_000.0
 class Settings:
     app_env: str
     app_debug: bool
+    cors_allowed_origins: tuple[str, ...]
 
     # Which deployment flavor we are running as - the keystone value.
     deployment_mode: str
@@ -251,6 +254,7 @@ def load_settings() -> Settings:
         raise ValueError("APP_DEBUG must be false in production.")
 
     mode = load_deployment_mode()
+    cors_allowed_origins = _cors_allowed_origins_setting()
 
     storage_backend = os.getenv("STORAGE_BACKEND", STORAGE_BACKEND_LOCAL).strip()
     database_url = load_database_url(mode, app_env=app_env)
@@ -759,6 +763,7 @@ def load_settings() -> Settings:
     return Settings(
         app_env=app_env,
         app_debug=app_debug,
+        cors_allowed_origins=cors_allowed_origins,
         deployment_mode=mode,
         database_url=database_url,
         database_pool_size=database_pool_size,
@@ -840,6 +845,151 @@ def load_settings() -> Settings:
         credit_periodic_grant=credit_periodic_grant,
         credit_max_balance=credit_max_balance,
     )
+
+
+def _cors_allowed_origins_setting() -> tuple[str, ...]:
+    raw_value = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    if any(
+        ord(character) < 32 or 127 <= ord(character) <= 159 for character in raw_value
+    ):
+        raise ValueError("CORS_ALLOWED_ORIGINS must not contain control characters.")
+    if not raw_value.strip():
+        return ()
+
+    origins: list[str] = []
+    seen: set[str] = set()
+    for raw_origin in raw_value.split(","):
+        origin = raw_origin.strip()
+        if not origin:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must contain comma-separated origins."
+            )
+        if origin in {"*", "null"}:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS does not allow wildcard or null origins."
+            )
+        if any(character.isspace() for character in origin):
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS origins must not contain whitespace."
+            )
+
+        try:
+            parts = urlsplit(origin)
+            port = parts.port
+        except ValueError as exc:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must contain valid http:// or https:// origins."
+            ) from exc
+
+        hostname = parts.hostname
+        if (
+            parts.scheme not in {"http", "https"}
+            or hostname is None
+            or parts.username is not None
+            or parts.password is not None
+            or parts.path
+            or "?" in origin
+            or "#" in origin
+        ):
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must contain exact http:// or https:// origins "
+                "without userinfo, paths, queries, or fragments."
+            )
+        if "*" in hostname:
+            raise ValueError("CORS_ALLOWED_ORIGINS does not allow wildcard hosts.")
+
+        if ":" in hostname:
+            if "%" in hostname:
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                )
+            try:
+                address = ip_address(hostname)
+            except ValueError as exc:
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                ) from exc
+            if not isinstance(address, IPv6Address) or hostname != address.compressed:
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain exact serialized origins."
+                )
+            serialized_host = f"[{address.compressed}]"
+        else:
+            try:
+                ascii_hostname = hostname.encode("idna").decode("ascii")
+            except UnicodeError as exc:
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                ) from exc
+            labels = (
+                ascii_hostname[:-1] if ascii_hostname.endswith(".") else ascii_hostname
+            )
+            hostname_labels = labels.split(".")
+            if any(label.startswith("0x") for label in hostname_labels):
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain exact serialized origins."
+                )
+            if re.fullmatch(r"[0-9.]+", hostname):
+                try:
+                    address = ip_address(hostname)
+                except ValueError as exc:
+                    raise ValueError(
+                        "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                    ) from exc
+                if not isinstance(address, IPv4Address) or hostname != str(address):
+                    raise ValueError(
+                        "CORS_ALLOWED_ORIGINS must contain exact serialized origins."
+                    )
+            elif (
+                ascii_hostname != hostname
+                or not labels
+                or len(ascii_hostname) > 253
+                or any(
+                    not label
+                    or len(label) > 63
+                    or re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label) is None
+                    for label in hostname_labels
+                )
+            ):
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                )
+            if any(label.startswith("xn--") for label in hostname_labels):
+                try:
+                    normalized_domain = idna.encode(
+                        hostname,
+                        uts46=True,
+                        std3_rules=True,
+                        transitional=False,
+                    ).decode("ascii")
+                except idna.IDNAError as exc:
+                    raise ValueError(
+                        "CORS_ALLOWED_ORIGINS must contain valid serialized hosts."
+                    ) from exc
+                if normalized_domain != hostname:
+                    raise ValueError(
+                        "CORS_ALLOWED_ORIGINS must contain exact serialized origins."
+                    )
+            serialized_host = ascii_hostname
+
+        if (parts.scheme, port) in {("http", 80), ("https", 443)}:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must omit default ports from serialized origins."
+            )
+
+        serialized_origin = f"{parts.scheme}://{serialized_host}"
+        if port is not None:
+            serialized_origin += f":{port}"
+        if origin != serialized_origin:
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must contain exact serialized origins."
+            )
+        if origin in seen:
+            raise ValueError("CORS_ALLOWED_ORIGINS must not contain duplicates.")
+        seen.add(origin)
+        origins.append(origin)
+
+    return tuple(origins)
 
 
 def _ai_model_catalog_setting(

@@ -136,6 +136,15 @@ resource "aws_ecs_service" "api" {
   health_check_grace_period_seconds  = 120
   wait_for_steady_state              = false
   tags                               = var.tags
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
 
 resource "aws_ecs_service" "worker" {
@@ -154,6 +163,15 @@ resource "aws_ecs_service" "worker" {
   deployment_maximum_percent         = 200
   wait_for_steady_state              = false
   tags                               = var.tags
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
 
 resource "aws_appautoscaling_target" "api" {

@@ -1030,6 +1030,7 @@ idna==3.18 \
     --hash=sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848
     # via
     #   -c requirements.txt
+    #   -r requirements.in
     #   anyio
     #   email-validator
     #   httpx

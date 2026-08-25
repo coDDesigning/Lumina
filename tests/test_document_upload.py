@@ -809,3 +809,28 @@ def test_corrupted_and_encrypted_content_is_admitted_at_upload_time(
     assert payload["document"]["status"] == "uploaded"
     assert payload["document"]["file_type"] == "pdf"
     assert payload["document"]["file_size"] == len(corrupt_pdf)
+
+
+def test_document_upload_persists_incoming_correlation_id_to_processing_job(
+    upload_api,
+) -> None:
+    content = b"%PDF-1.4 sample pdf content"
+    headers = dict(upload_api.authorization)
+    headers["X-Request-ID"] = "req-corr-trace-777"
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/documents",
+        headers=headers,
+        files={"document": ("correlated.pdf", content, "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    assert response.headers["X-Request-ID"] == "req-corr-trace-777"
+    document_id = UUID(response.json()["document"]["id"])
+
+    with upload_api.session_factory() as session:
+        job = session.scalar(
+            select(ProcessingJob).where(ProcessingJob.document_id == document_id)
+        )
+        assert job is not None
+        assert job.correlation_id == "req-corr-trace-777"

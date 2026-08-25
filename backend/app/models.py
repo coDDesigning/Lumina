@@ -818,6 +818,7 @@ class ProcessingJob(Base):
     document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True))
     course_id: Mapped[int] = mapped_column(Integer)
     job_type: Mapped[str] = mapped_column(String(50))
+    correlation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), default=JOB_STATUS_QUEUED, server_default=JOB_STATUS_QUEUED
     )

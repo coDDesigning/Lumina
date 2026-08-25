@@ -24,8 +24,10 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.models import Course
+from backend.app.observability import configure_logging
 from services.course import CourseDeletionError, CourseService
 from services.vector_store import VectorStore, get_vector_store
 from storage.base import Storage
@@ -108,7 +110,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--dry-run", action="store_true")
     arguments = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO)
+    configure_logging(service="maintenance", environment=settings.app_env)
     report = run_purge(course_id=arguments.course_id, dry_run=arguments.dry_run)
     print(report.summary())
     if report.courses_failed:

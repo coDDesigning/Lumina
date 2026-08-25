@@ -15,8 +15,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.models import Course, DocumentChunk, UploadedDocument
+from backend.app.observability import configure_logging
 from services.embeddings import (
     EmbeddingProvider,
     configured_embedding_identity,
@@ -202,7 +204,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if arguments.batch_size <= 0:
         parser.error("--batch-size must be a positive integer")
 
-    logging.basicConfig(level=logging.INFO)
+    configure_logging(service="maintenance", environment=settings.app_env)
     report = run_backfill(
         course_id=arguments.course_id,
         document_id=UUID(arguments.document_id) if arguments.document_id else None,

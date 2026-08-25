@@ -113,6 +113,128 @@ only checks that the value is a well-formed model tag. A model that is not
 pulled on the target Ollama instance passes startup validation and then fails at
 generation time with a provider error — pull it first.
 
+## Sampling Options
+
+Ollama's own defaults are tuned for open-ended chat, not for schema-constrained
+JSON. The provider therefore sends an explicit `options` block on every request
+rather than inheriting them:
+
+| Variable | Default | Bounds | Meaning |
+| --- | --- | --- | --- |
+| `OLLAMA_TEMPERATURE` | `0.2` | `0.0`-`2.0` | Sampling randomness. Ollama's own default is `0.8`. |
+| `OLLAMA_TOP_P` | `0.9` | `0.01`-`1.0` | Nucleus sampling cutoff. |
+| `OLLAMA_NUM_CTX` | `8192` | `512`-`131072` | Context window. The prompt and the response share it. |
+| `OLLAMA_NUM_PREDICT` | `4096` | `64`-`131072` | Maximum response tokens. May not exceed `OLLAMA_NUM_CTX`. |
+| `OLLAMA_REPEAT_PENALTY` | `1.1` | `0.5`-`2.0` | Penalty applied to repeated tokens. |
+
+**Temperature is a correctness setting here, not a style setting.** Every
+generation feature except the AI tutor validates model output against a Pydantic
+schema, and those schemas carry hard constraints — a multiple-choice question
+must have exactly four options. At Ollama's default temperature an 8B model
+violates such a constraint often enough that a ten-question quiz rarely survives
+validation, and schema failures are deliberately not retried. Measured on
+`llama3.1` 8B Q4_K_M, ten-question quizzes, identical prompt:
+
+| Temperature | Quizzes passing schema validation |
+| --- | --- |
+| `0.8` (Ollama default) | 2 of 5 |
+| `0.2` (this default) | 5 of 5 |
+
+The dominant failure at `0.8` was `multiple_choice.options` carrying three
+entries instead of four.
+
+`num_ctx` is sent per request, which has two consequences worth knowing. A model
+needs no custom Modelfile to run at the intended window, and a server-wide
+`OLLAMA_CONTEXT_LENGTH` cannot silently inflate the KV cache — an oversized
+window is what pushes a model off the GPU and into system RAM.
+
+Sampling options do not apply to `EMBEDDING_PROVIDER` or `IMAGE_PROVIDER`; both
+call different endpoints with different contracts.
+
+## Single-GPU Box Profile
+
+A self-hosted deployment on one consumer GPU — 16 GB system RAM, 8 GB VRAM — is
+a supported target. The binding constraint is VRAM: a model that does not fit
+entirely in VRAM spills into system RAM and slows down by roughly a factor of
+five, which then turns into generation timeouts rather than merely slow answers.
+
+An 8B model at Q4_K_M with an 8192-token window occupies about 5.8 GB loaded,
+which fits 8 GB VRAM with room for the desktop. That is the largest practical
+model for this profile.
+
+```bash
+ollama pull llama3.1
+ollama pull nomic-embed-text
+```
+
+```bash
+AI_PROVIDER=ollama
+EMBEDDING_PROVIDER=ollama
+OLLAMA_MODEL=llama3.1
+OLLAMA_TEMPERATURE=0.2
+OLLAMA_NUM_CTX=8192
+OLLAMA_NUM_PREDICT=4096
+
+AI_GENERATION_TIMEOUT_SECONDS=180
+
+STUDY_GUIDE_MATERIAL_MAX_CHARS=16000
+QUIZ_MATERIAL_MAX_CHARS=16000
+FLASHCARD_MATERIAL_MAX_CHARS=16000
+AI_TUTOR_MATERIAL_MAX_CHARS=16000
+COURSE_QA_MATERIAL_MAX_CHARS=16000
+```
+
+The material budgets matter as much as the model choice. The default `120000`
+characters is roughly 30k tokens, which exceeds an 8192-token window nearly four
+times over; Ollama then truncates the prompt silently, and the model answers
+from whatever survived. `16000` characters is roughly 4k tokens, which leaves
+room for the prompt template and the response inside the same window. Nothing
+cross-validates the two settings, because a Gemini deployment has a 1M-token
+window and needs no such reduction.
+
+`AI_GENERATION_TIMEOUT_SECONDS` must be raised from its `60` default. A
+twenty-question quiz emits roughly 2,700 tokens, which at this profile's
+throughput does not finish inside a minute, and a model that has been idle long
+enough to unload pays its load time on top of that.
+
+### Measured Behaviour
+
+`llama3.1` 8B Q4_K_M, fully GPU-resident, prompts built from the real templates
+and validated against the real response schemas:
+
+| Feature | Schema-valid | Median latency |
+| --- | --- | --- |
+| Flashcards | 6 of 6 | 12.6 s |
+| Quiz, 10 questions | 6 of 6 | 32.4 s |
+| Quiz, 20 questions | 4 of 5 | 69.7 s |
+
+The same twenty-question case at the default `AI_GENERATION_TIMEOUT_SECONDS` of
+`60` failed every attempt, all of them `TextGenerationTimeoutError` rather than
+schema failures. That setting, not the model, is what makes large quizzes look
+broken on this profile.
+
+Twenty questions remains the least reliable request on an 8B model, and the
+reason is arithmetic rather than a defect: one malformed question invalidates the
+whole response, so per-question compliance compounds across the request. Ten
+questions is the comfortable size here. A deployment that needs twenty to be
+dependable should run a larger model.
+
+Lowering `OLLAMA_TEMPERATURE` further helps that case: twenty-question quizzes
+measured 4 of 5 at `0.2` and 6 of 6 at `0.1`. Those samples are too small to
+separate confidently, so the shipped default stays at `0.2`, which is also what
+the quiz and study-guide templates declare in their `model_hints`. A deployment
+whose main workload is large quizzes can reasonably set `0.1`; one that leans on
+the AI tutor should not, since that template asks for `0.4` and prose written at
+`0.1` is noticeably flatter.
+
+Quality, as distinct from validity, is bounded by the model. An 8B model writes
+tersely: an in-depth AI tutor question returned about 320 tokens, and a study
+guide requested at `detail_level=high` returned a 364-character summary with
+several sections left thin. This is the model declining to elaborate, not a
+truncation — every measured response ended with `done_reason: stop`, never
+`length`. Raising `OLLAMA_NUM_PREDICT` does not change it. A deployment with
+more VRAM should prefer a larger instruction-tuned model over tuning this one.
+
 ## Configuration Validation
 
 `backend/app/config.py` is the only module that reads the environment. No
@@ -125,6 +247,11 @@ rather than at the first user click:
 | `AI_PROVIDER` | not a recognized name, or recognized but not implemented |
 | `OLLAMA_BASE_URL` | empty, whitespace, or not a valid `http://`/`https://` URL with a host (`banana` and `localhost:11434` both fail) |
 | `OLLAMA_MODEL` | empty, whitespace, longer than 128 characters, or containing characters outside letters, digits, `. : / - _` |
+| `OLLAMA_TEMPERATURE` | not a finite number, or outside `0.0`-`2.0` |
+| `OLLAMA_TOP_P` | not a finite number, or outside `0.01`-`1.0` |
+| `OLLAMA_NUM_CTX` | not a positive integer, or outside `512`-`131072` |
+| `OLLAMA_NUM_PREDICT` | not a positive integer, outside `64`-`131072`, or greater than `OLLAMA_NUM_CTX` |
+| `OLLAMA_REPEAT_PENALTY` | not a finite number, or outside `0.5`-`2.0` |
 | `AI_FALLBACK_PROVIDERS` | any token is unrecognized, or recognized but not implemented |
 | `AI_MODEL_CATALOG` | not valid JSON, empty, contains an unimplemented provider, contains duplicate model names, or a model entry is missing/invalid `model`, `json_mode`, `context_window`, or `vision` metadata |
 
@@ -240,9 +367,12 @@ Each budget must be at least `DOCUMENT_CHUNK_SIZE_CHARACTERS`, or startup fails:
 a budget smaller than one stored chunk could never assemble any material at all.
 
 The budget covers the course material only, not the fixed prompt template or the
-model's own context window. Lower it for small local models on modest hardware;
-`120000` characters is roughly 30k tokens, which the default `llama3.1` context
-window accommodates but a slower machine may not want to spend.
+model's own context window, and nothing cross-validates the two. `120000`
+characters is roughly 30k tokens: a Gemini deployment absorbs that comfortably,
+while an Ollama deployment at the default `OLLAMA_NUM_CTX` of `8192` does not —
+Ollama truncates the prompt silently and the model answers from whatever
+survived. Lower these budgets whenever the configured context window cannot hold
+them; the Single-GPU Box Profile above pairs `8192` with `16000` characters.
 
 Whole-corpus selection is deliberately simple: chunks of `ready` documents are
 taken **whole**, ordered by document `created_at`, then document id, then

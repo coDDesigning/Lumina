@@ -39,6 +39,11 @@ IMPLEMENTED_AI_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
 DEFAULT_AI_PROVIDER = AI_PROVIDER_OLLAMA
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1"
+DEFAULT_OLLAMA_TEMPERATURE = 0.2
+DEFAULT_OLLAMA_TOP_P = 0.9
+DEFAULT_OLLAMA_NUM_CTX = 8192
+DEFAULT_OLLAMA_NUM_PREDICT = 4096
+DEFAULT_OLLAMA_REPEAT_PENALTY = 1.1
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 OLLAMA_MODEL_PATTERN = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
 
@@ -151,6 +156,11 @@ class Settings:
     gemini_api_key: str | None
     ollama_base_url: str
     ollama_model: str
+    ollama_temperature: float
+    ollama_top_p: float
+    ollama_num_ctx: int
+    ollama_num_predict: int
+    ollama_repeat_penalty: float
     ai_fallback_providers: str
     ai_generation_timeout_seconds: int
     ai_generation_max_attempts: int
@@ -380,7 +390,42 @@ def load_settings() -> Settings:
             "OLLAMA_MODEL must contain 1-128 characters limited to letters, digits, "
             "dots, colons, slashes, dashes, or underscores."
         )
-    ai_model_catalog = _ai_model_catalog_setting(ollama_model)
+    ollama_temperature = _bounded_float_setting(
+        "OLLAMA_TEMPERATURE",
+        DEFAULT_OLLAMA_TEMPERATURE,
+        minimum=0.0,
+        maximum=2.0,
+    )
+    ollama_top_p = _bounded_float_setting(
+        "OLLAMA_TOP_P",
+        DEFAULT_OLLAMA_TOP_P,
+        minimum=0.01,
+        maximum=1.0,
+    )
+    ollama_num_ctx = _bounded_positive_integer_setting(
+        "OLLAMA_NUM_CTX",
+        DEFAULT_OLLAMA_NUM_CTX,
+        minimum=512,
+        maximum=131_072,
+    )
+    ollama_num_predict = _bounded_positive_integer_setting(
+        "OLLAMA_NUM_PREDICT",
+        DEFAULT_OLLAMA_NUM_PREDICT,
+        minimum=64,
+        maximum=131_072,
+    )
+    ollama_repeat_penalty = _bounded_float_setting(
+        "OLLAMA_REPEAT_PENALTY",
+        DEFAULT_OLLAMA_REPEAT_PENALTY,
+        minimum=0.5,
+        maximum=2.0,
+    )
+    if ollama_num_predict > ollama_num_ctx:
+        raise ValueError(
+            "OLLAMA_NUM_PREDICT must not exceed OLLAMA_NUM_CTX; the response shares "
+            f"the context window with the prompt (got {ollama_num_predict} > {ollama_num_ctx})."
+        )
+    ai_model_catalog = _ai_model_catalog_setting(ollama_model, ollama_num_ctx)
     ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
     if ai_fallback_providers_raw:
         for fallback_token in (
@@ -737,6 +782,11 @@ def load_settings() -> Settings:
         gemini_api_key=gemini_api_key,
         ollama_base_url=ollama_base_url,
         ollama_model=ollama_model,
+        ollama_temperature=ollama_temperature,
+        ollama_top_p=ollama_top_p,
+        ollama_num_ctx=ollama_num_ctx,
+        ollama_num_predict=ollama_num_predict,
+        ollama_repeat_penalty=ollama_repeat_penalty,
         ai_fallback_providers=ai_fallback_providers,
         ai_generation_timeout_seconds=ai_generation_timeout_seconds,
         ai_generation_max_attempts=ai_generation_max_attempts,
@@ -794,6 +844,7 @@ def load_settings() -> Settings:
 
 def _ai_model_catalog_setting(
     ollama_model: str,
+    ollama_num_ctx: int,
 ) -> dict[str, list[dict[str, object]]]:
     raw_value = os.getenv("AI_MODEL_CATALOG", "").strip()
 
@@ -803,7 +854,7 @@ def _ai_model_catalog_setting(
                 {
                     "model": ollama_model,
                     "json_mode": True,
-                    "context_window": 128_000,
+                    "context_window": ollama_num_ctx,
                     "vision": False,
                 }
             ],

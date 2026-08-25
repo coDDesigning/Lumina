@@ -53,7 +53,12 @@ const mockWorkspaces: Workspace[] = [
     examDate: '2026-12-15',
     topics: ['Processes', 'Memory', 'Concurrency'],
     syllabus: 'Core CS syllabus',
-    progress: { averageScore: 45, lastActivity: '2026-08-22T10:00:00Z', status: 'In progress' },
+    progress: {
+      averageScore: 45,
+      timeSpentSeconds: null,
+      lastActivity: '2026-08-22T10:00:00Z',
+      status: 'practiced',
+    },
     updatedAt: 'Updated today',
     accent: 'blue',
   },
@@ -66,7 +71,12 @@ const mockWorkspaces: Workspace[] = [
     examDate: '',
     topics: ['Graphs', 'Dynamic Programming'],
     syllabus: 'Advanced algorithms',
-    progress: { averageScore: 80, lastActivity: '2026-08-20T10:00:00Z', status: 'Mastered' },
+    progress: {
+      averageScore: 80,
+      timeSpentSeconds: null,
+      lastActivity: '2026-08-20T10:00:00Z',
+      status: 'mastered',
+    },
     updatedAt: 'Updated yesterday',
     accent: 'violet',
   },
@@ -251,7 +261,7 @@ describe('CoursesPage', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('shows the derived status and when the course was last studied', () => {
+  it('shows the status the backend derived and when the course was last studied', () => {
     renderPage({
       workspaces: [
         {
@@ -260,23 +270,96 @@ describe('CoursesPage', () => {
           name: 'Mastered Course',
           progress: {
             averageScore: 91,
+            timeSpentSeconds: null,
             lastActivity: '2026-08-22T10:00:00Z',
-            status: 'Mastered',
+            status: 'mastered',
           },
         },
         {
           ...mockWorkspaces[1],
           id: '21',
           name: 'Untouched Course',
-          progress: { averageScore: null, lastActivity: null, status: 'Not started' },
+          progress: {
+            averageScore: null,
+            timeSpentSeconds: null,
+            lastActivity: null,
+            status: 'ready',
+          },
         },
       ],
     });
 
     expect(screen.getByText('Mastered')).toBeInTheDocument();
     expect(screen.getByText(/Last studied/)).toBeInTheDocument();
-    expect(screen.getByText('Not started')).toBeInTheDocument();
+    expect(screen.getByText('Ready to study')).toBeInTheDocument();
     expect(screen.getByText('Not studied yet')).toBeInTheDocument();
+  });
+
+  it('reads a course with nothing uploaded apart from one that is ready', () => {
+    renderPage({
+      workspaces: [
+        {
+          ...mockWorkspaces[0],
+          id: '30',
+          name: 'Empty Course',
+          progress: {
+            averageScore: null,
+            timeSpentSeconds: null,
+            lastActivity: null,
+            status: 'no_documents',
+          },
+        },
+        {
+          ...mockWorkspaces[1],
+          id: '31',
+          name: 'Indexing Course',
+          progress: {
+            averageScore: null,
+            timeSpentSeconds: null,
+            lastActivity: null,
+            status: 'processing',
+          },
+        },
+      ],
+    });
+
+    expect(screen.getByText('No sources ready')).toBeInTheDocument();
+    expect(screen.getByText('No sources to study yet')).toBeInTheDocument();
+    expect(screen.getByText('Processing')).toBeInTheDocument();
+    expect(screen.getByText('Sources still processing')).toBeInTheDocument();
+    expect(screen.queryByText('No quiz activity yet')).not.toBeInTheDocument();
+  });
+
+  it('shows time spent practising only when an attempt recorded it', () => {
+    renderPage({
+      workspaces: [
+        {
+          ...mockWorkspaces[0],
+          id: '40',
+          name: 'Timed Course',
+          progress: {
+            averageScore: 60,
+            timeSpentSeconds: 4320,
+            lastActivity: '2026-08-22T10:00:00Z',
+            status: 'practiced',
+          },
+        },
+        {
+          ...mockWorkspaces[1],
+          id: '41',
+          name: 'Untimed Course',
+          progress: {
+            averageScore: 60,
+            timeSpentSeconds: null,
+            lastActivity: '2026-08-22T10:00:00Z',
+            status: 'practiced',
+          },
+        },
+      ],
+    });
+
+    expect(screen.getByText('1h 12m spent practising')).toBeInTheDocument();
+    expect(screen.getAllByText(/spent practising/)).toHaveLength(1);
   });
 
   it('claims nothing about a course whose progress could not be loaded', () => {
@@ -287,9 +370,10 @@ describe('CoursesPage', () => {
     });
 
     expect(screen.getByText('Progress unavailable')).toBeInTheDocument();
-    expect(screen.queryByText('Not started')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ready to study')).not.toBeInTheDocument();
     expect(screen.queryByText(/Last studied/)).not.toBeInTheDocument();
     expect(screen.queryByText('Not studied yet')).not.toBeInTheDocument();
+    expect(screen.queryByText(/spent practising/)).not.toBeInTheDocument();
   });
 
   it('separates no quiz activity from a genuine zero score and from unavailable data', () => {
@@ -299,7 +383,12 @@ describe('CoursesPage', () => {
           ...mockWorkspaces[0],
           id: '10',
           name: 'Unstudied Course',
-          progress: { averageScore: null, lastActivity: null, status: 'Not started' },
+          progress: {
+            averageScore: null,
+            timeSpentSeconds: null,
+            lastActivity: null,
+            status: 'ready',
+          },
         },
         {
           ...mockWorkspaces[1],
@@ -307,8 +396,9 @@ describe('CoursesPage', () => {
           name: 'Zero Score Course',
           progress: {
             averageScore: 0,
+            timeSpentSeconds: null,
             lastActivity: '2026-08-22T10:00:00Z',
-            status: 'In progress',
+            status: 'practiced',
           },
         },
         { ...mockWorkspaces[0], id: '12', name: 'Unknown Course', progress: null },

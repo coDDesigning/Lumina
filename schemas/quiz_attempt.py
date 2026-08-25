@@ -3,6 +3,7 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from schemas.progress import CourseStatus
 from schemas.quiz import QuizCorrectAnswer, QuizQuestionType
 
 MAX_TIME_SPENT_SECONDS = 86400
@@ -120,9 +121,11 @@ class TopicMastery(BaseModel):
 
 
 class CourseProgressResponse(BaseModel):
+    status: CourseStatus = "no_documents"
     quizzes_completed: int = 0
     attempts_count: int = 0
     average_score: float | None = None
+    total_time_spent_seconds: int | None = None
     correct_count: int = 0
     incorrect_count: int = 0
     total_questions_answered: int = 0

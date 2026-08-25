@@ -6,8 +6,10 @@ import type { CourseProgressResponse } from '@/api/types';
 import { ProgressView } from './ProgressView';
 
 const SAMPLE_PROGRESS: CourseProgressResponse = {
+  status: 'practiced',
   attempts_count: 2,
   average_score: 0.75,
+  total_time_spent_seconds: 75,
   topic_mastery: [
     {
       topic: 'Algebra',
@@ -49,6 +51,7 @@ describe('ProgressView', () => {
           documentCount={2}
           readyDocumentCount={2}
           progress={{
+            status: 'ready',
             attempts_count: 0,
             average_score: null,
             topic_mastery: [],
@@ -89,6 +92,60 @@ describe('ProgressView', () => {
     expect(attemptLinks).toHaveLength(2);
     expect(attemptLinks[0]).toHaveAttribute('href', '/courses/10/practice/5/attempts/101');
     expect(attemptLinks[1]).toHaveAttribute('href', '/courses/10/practice/5/attempts/102');
+  });
+
+  it('reports how long each attempt took and how long the course has taken', () => {
+    render(
+      <MemoryRouter>
+        <ProgressView
+          courseId="10"
+          documentCount={3}
+          readyDocumentCount={3}
+          progress={SAMPLE_PROGRESS}
+          isLoading={false}
+          error={null}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('40s')).toBeInTheDocument();
+    expect(screen.getByText('35s')).toBeInTheDocument();
+    expect(
+      screen.getByText('1m spent answering questions in this course'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Review attempt from .*50%, 40s spent/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('says nothing about time an attempt did not record', () => {
+    render(
+      <MemoryRouter>
+        <ProgressView
+          courseId="10"
+          documentCount={3}
+          readyDocumentCount={3}
+          progress={{
+            ...SAMPLE_PROGRESS,
+            total_time_spent_seconds: null,
+            quiz_history: SAMPLE_PROGRESS.quiz_history?.map((item) => ({
+              ...item,
+              time_spent_seconds: null,
+            })),
+          }}
+          isLoading={false}
+          error={null}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByText('40s')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/spent answering questions in this course/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Review attempt from .*50%$/ }),
+    ).toBeInTheDocument();
   });
 
   it('turns a weak topic into practice on that topic', async () => {

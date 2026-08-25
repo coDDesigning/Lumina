@@ -27,7 +27,12 @@ const workspace: Workspace = {
   examDate: '2026-12-15',
   topics: ['Processes', 'Memory'],
   syllabus: 'Deep dive into kernels and virtual memory.',
-  progress: { averageScore: 45, lastActivity: '2026-08-22T10:00:00Z', status: 'In progress' },
+  progress: {
+    averageScore: 45,
+    timeSpentSeconds: null,
+    lastActivity: '2026-08-22T10:00:00Z',
+    status: 'practiced',
+  },
   updatedAt: 'Updated today',
   accent: 'blue',
 };

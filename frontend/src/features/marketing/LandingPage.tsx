@@ -171,7 +171,7 @@ export default function LandingPage() {
                 ALU-to-ALU dependencies, but a load-use pair still costs one bubble…
               </p>
               <span className={styles.previewProvenance}>
-                <FileText aria-hidden="true" style={{ width: '0.75rem', height: '0.75rem' }} />
+                <FileText aria-hidden="true" />
                 Read <b>5 of 63 passages</b> · lecture-07 pp. 12–18
               </span>
             </div>

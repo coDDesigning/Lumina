@@ -4,8 +4,8 @@ import { BookOpen, History, Layers3, Sparkles, Target } from 'lucide-react';
 import type { ActivityItem } from '@/api/types';
 import { cx } from '@/lib/cx';
 import { relativeDay } from '@/lib/relativeDay';
-import { Alert } from '@/ui/Alert';
 import { EmptyState } from '@/ui/EmptyState';
+import { ErrorState } from '@/ui/ErrorState';
 import { Skeleton } from '@/ui/Skeleton';
 import { activityHref } from './activityHref';
 import { useRecentActivity } from './useRecentActivity';
@@ -48,7 +48,7 @@ export function RecentActivity({
   headingLevel = 'h2',
   footer,
 }: RecentActivityProps) {
-  const { items, isLoading, error } = useRecentActivity(limit);
+  const { items, isLoading, error, reload } = useRecentActivity(limit);
   const Heading = headingLevel;
 
   return (
@@ -58,9 +58,9 @@ export function RecentActivity({
       </Heading>
 
       {error ? (
-        <Alert tone="destructive" live="alert" title="Your recent activity could not be loaded">
+        <ErrorState title="Your recent activity could not be loaded" onRetry={reload}>
           {error}
-        </Alert>
+        </ErrorState>
       ) : isLoading ? (
         <div className={styles.loading} aria-hidden="true">
           <Skeleton width="70%" />

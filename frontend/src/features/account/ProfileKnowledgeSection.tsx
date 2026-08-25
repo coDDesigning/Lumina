@@ -9,6 +9,7 @@ import { Button } from '@/ui/Button';
 import { Card } from '@/ui/Card';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
 import { Dialog } from '@/ui/Dialog';
+import { ErrorState } from '@/ui/ErrorState';
 import { Input, Textarea } from '@/ui/Input';
 import { Skeleton } from '@/ui/Skeleton';
 import styles from './AccountPage.module.css';
@@ -177,17 +178,7 @@ export function ProfileKnowledgeSection() {
       ) : null}
 
       {loadError ? (
-        <Alert
-          tone="destructive"
-          live="alert"
-          actions={
-            <Button size="sm" onClick={() => void load()}>
-              Try again
-            </Button>
-          }
-        >
-          {loadError}
-        </Alert>
+        <ErrorState onRetry={() => void load()}>{loadError}</ErrorState>
       ) : null}
 
       {isLoading ? (

@@ -256,6 +256,11 @@
   color: var(--text-muted);
 }
 
+.previewProvenance svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
 .previewProvenance b {
   color: var(--text);
   font-weight: var(--weight-semibold);

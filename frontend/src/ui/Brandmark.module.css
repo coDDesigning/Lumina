@@ -8,7 +8,7 @@
   font-weight: var(--weight-bold);
   letter-spacing: -0.02em;
   flex: 0 0 auto;
-  box-shadow: 0 0.25rem 0.75rem -0.25rem rgba(107, 63, 208, 0.6);
+  box-shadow: var(--shadow-2);
 }
 
 .sm {

@@ -45,6 +45,7 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
           isLoading={isLoading}
           error={error}
           onPractice={setPracticeTopic}
+          onRetry={reload}
           actions={
             <LinkButton variant="primary" to={`/courses/${workspace.id}`}>
               Back to the course

@@ -107,4 +107,16 @@ describe('FlashcardDeck', () => {
     await userEvent.keyboard('{Escape}');
     expect(closed).toBe(1);
   });
+
+  it('shuffles the deck while preserving the active card index', async () => {
+    render(<FlashcardDeck cards={CARDS} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /next/i }));
+    expect(screen.getByText('What is a queue?')).toBeInTheDocument();
+    expect(document.querySelector('[aria-live="polite"]')).toHaveTextContent(/^Card 2 of 3\./);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Shuffle the deck' }));
+
+    expect(document.querySelector('[aria-live="polite"]')).toHaveTextContent(/^Card 2 of 3\./);
+  });
 });

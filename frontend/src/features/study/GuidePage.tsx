@@ -11,7 +11,7 @@ import { Button } from '@/ui/Button';
 import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
 import { StudyGuide } from './StudyGuide';
-import { isRenderableStudyGuide } from './storedOutput';
+import { isRenderableStudyGuide, tryParseJson } from './storedOutput';
 import { studyGuideFileName, studyGuideToMarkdown } from './studyGuideMarkdown';
 import styles from './GuidePage.module.css';
 
@@ -69,7 +69,11 @@ export default function GuidePage({ workspace }: GuidePageProps) {
           return;
         }
         if (output.output_type === 'study_guide' && isRenderableStudyGuide(output.content)) {
-          setState({ phase: 'ready', output, guide: output.content });
+          const guide =
+            typeof output.content === 'string'
+              ? (tryParseJson(output.content) as StudyGuideResponse)
+              : output.content;
+          setState({ phase: 'ready', output, guide });
           return;
         }
         setState({ phase: 'unreadable', output });

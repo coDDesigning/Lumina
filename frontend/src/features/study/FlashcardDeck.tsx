@@ -42,7 +42,6 @@ export function FlashcardDeck({ cards, onEscape }: FlashcardDeckProps) {
   const handleShuffle = useCallback(() => {
     setOrder((previous) => shuffle(previous));
     setIsFlipped(false);
-    setIndex(0);
   }, []);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {

@@ -221,4 +221,95 @@ describe('StudyHistoryModal', () => {
       '/courses/7/practice/55',
     );
   });
+
+  it('renders stored quiz when content is a stringified JSON string without falling through to raw view', async () => {
+    const quizData = {
+      quiz_id: 56,
+      course_id: 7,
+      title: 'Stringified Quiz Title',
+      questions: [
+        {
+          question_id: 102,
+          question_number: 1,
+          question_type: 'multiple_choice',
+          difficulty: 'easy',
+          topic: 'Mitosis',
+          question: 'Is mitosis nuclear division?',
+          options: ['Yes', 'No'],
+          correct_option_index: 0,
+          explanation: 'Yes it is.',
+        },
+      ],
+    };
+
+    mockList.mockResolvedValue([
+      {
+        ...SUMMARY,
+        id: 31,
+        output_type: 'quiz',
+      },
+    ]);
+    mockGet.mockResolvedValue({
+      ...SUMMARY,
+      id: 31,
+      output_type: 'quiz',
+      content: JSON.stringify(quizData),
+    } as unknown as GeneratedOutputDetail);
+
+    renderModal();
+    await userEvent.click(await screen.findByRole('button', { name: /Practice quiz/ }));
+
+    expect(await screen.findByText('Stringified Quiz Title')).toBeInTheDocument();
+    expect(screen.getByText('Is mitosis nuclear division?')).toBeInTheDocument();
+    expect(screen.queryByText(/This result was saved in a shape/)).not.toBeInTheDocument();
+  });
+
+  it('renders stored flashcards when content is a stringified JSON string', async () => {
+    const flashcardData = {
+      deck_title: 'Stringified Deck',
+      card_count: 1,
+      flashcards: [
+        { card_number: 1, front: 'Stringified front', back: 'Stringified back', difficulty: 'Easy' },
+      ],
+    };
+
+    mockList.mockResolvedValue([
+      { ...SUMMARY, id: 21, output_type: 'flashcards' },
+    ]);
+    mockGet.mockResolvedValue({
+      ...SUMMARY,
+      id: 21,
+      output_type: 'flashcards',
+      content: JSON.stringify(flashcardData),
+    } as unknown as GeneratedOutputDetail);
+
+    renderModal();
+    await userEvent.click(await screen.findByRole('button', { name: /Flashcards/ }));
+
+    expect(await screen.findByText('Stringified front')).toBeInTheDocument();
+    expect(screen.queryByText(/This result was saved in a shape/)).not.toBeInTheDocument();
+  });
+
+  it('renders stored flashcards when output_type is singular flashcard', async () => {
+    mockList.mockResolvedValue([
+      { ...SUMMARY, id: 22, output_type: 'flashcard' },
+    ]);
+    mockGet.mockResolvedValue({
+      ...SUMMARY,
+      id: 22,
+      output_type: 'flashcard',
+      content: {
+        deck_title: 'Singular Type Deck',
+        card_count: 1,
+        flashcards: [
+          { card_number: 1, front: 'Singular front', back: 'Singular back', difficulty: 'Medium' },
+        ],
+      },
+    } as unknown as GeneratedOutputDetail);
+
+    renderModal();
+    await userEvent.click(await screen.findByRole('button', { name: /Flashcards/ }));
+
+    expect(await screen.findByText('Singular front')).toBeInTheDocument();
+  });
 });

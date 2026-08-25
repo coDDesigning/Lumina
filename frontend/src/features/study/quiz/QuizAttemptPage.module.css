@@ -124,3 +124,14 @@
   gap: var(--space-3);
   flex-wrap: wrap;
 }
+
+@media (pointer: coarse) {
+  .navigator {
+    gap: var(--space-3);
+  }
+
+  .pip {
+    width: var(--size-touch-min);
+    height: var(--size-touch-min);
+  }
+}

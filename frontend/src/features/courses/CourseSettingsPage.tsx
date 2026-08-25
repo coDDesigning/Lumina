@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { describeError } from '@/api/errors';
+import { queryKeys } from '@/api/queryKeys';
 import { settingsAPI } from '@/api/settings';
+import { useCourseSettings } from './useCourseSettings';
+import { queryCache } from '@/lib/query/cache';
 import { EDUCATION_LEVEL_LABELS } from '@/api/types';
 import type { EducationLevel } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
@@ -12,6 +15,7 @@ import { Button } from '@/ui/Button';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
 import { Input, Select, Textarea } from '@/ui/Input';
 import { PageHeader } from '@/ui/PageHeader';
+import { ErrorState } from '@/ui/ErrorState';
 import { Skeleton } from '@/ui/Skeleton';
 import { useToast } from '@/ui/toastContext';
 import styles from './CourseSettingsPage.module.css';
@@ -57,7 +61,6 @@ export default function CourseSettingsPage({
 
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const [loadedPreferences, setLoadedPreferences] = useState(DEFAULT_PREFERENCES);
-  const [arePreferencesLoading, setArePreferencesLoading] = useState(true);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
   const [preferencesError, setPreferencesError] = useState<string | null>(null);
 
@@ -70,34 +73,23 @@ export default function CourseSettingsPage({
 
   const courseId = Number(workspace.id);
 
-  const loadPreferences = useCallback(async (id: number) => {
-    setArePreferencesLoading(true);
-    setPreferencesError(null);
-    try {
-      const data = await settingsAPI.get(id);
-      const stored = {
-        studyMode: data.study_mode,
-        difficulty: data.difficulty,
-        questionCount: data.question_count,
-        summaryLength: data.summary_length,
-        detailLevel: data.detail_level,
-      };
-      setPreferences(stored);
-      setLoadedPreferences(stored);
-    } catch (caught) {
-      setPreferencesError(
-        describeError(caught, "We couldn't load this course's defaults.").message,
-      );
-    } finally {
-      setArePreferencesLoading(false);
-    }
-  }, []);
+  const settings = useCourseSettings(courseId);
+  const storedSettings = settings.status === 'success' ? settings.data : undefined;
 
   useEffect(() => {
-    if (Number.isInteger(courseId) && courseId > 0) {
-      loadPreferences(courseId);
+    if (!storedSettings) {
+      return;
     }
-  }, [courseId, loadPreferences]);
+    const stored = {
+      studyMode: storedSettings.study_mode,
+      difficulty: storedSettings.difficulty,
+      questionCount: storedSettings.question_count,
+      summaryLength: storedSettings.summary_length,
+      detailLevel: storedSettings.detail_level,
+    };
+    setPreferences(stored);
+    setLoadedPreferences(stored);
+  }, [storedSettings]);
 
   function updateCourse(field: keyof typeof course, value: string) {
     setCourse((current) => ({ ...current, [field]: value }));
@@ -105,6 +97,9 @@ export default function CourseSettingsPage({
 
   async function saveCourse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSavingCourse) {
+      return;
+    }
     setCourseError(null);
     setIsSavingCourse(true);
 
@@ -133,17 +128,21 @@ export default function CourseSettingsPage({
 
   async function savePreferences(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSavingPreferences) {
+      return;
+    }
     setPreferencesError(null);
     setIsSavingPreferences(true);
 
     try {
-      await settingsAPI.update(courseId, {
+      const saved = await settingsAPI.update(courseId, {
         study_mode: preferences.studyMode,
         difficulty: preferences.difficulty,
         question_count: preferences.questionCount,
         summary_length: preferences.summaryLength,
         detail_level: preferences.detailLevel,
       });
+      queryCache.setData(queryKeys.courseSettings(courseId), saved);
       setLoadedPreferences(preferences);
       showToast({ tone: 'success', title: 'Defaults saved' });
     } catch (caught) {
@@ -317,11 +316,20 @@ export default function CourseSettingsPage({
             them on any single request.
           </p>
 
-          {arePreferencesLoading ? (
+          {settings.status === 'pending' || settings.status === 'idle' ? (
             <div className={styles.loading} aria-hidden="true">
               <Skeleton variant="block" />
               <Skeleton variant="block" />
             </div>
+          ) : settings.status === 'error' ? (
+            <ErrorState
+              title="This course's defaults could not be loaded"
+              onRetry={() => {
+                void settings.refetch();
+              }}
+            >
+              {settings.error?.message}
+            </ErrorState>
           ) : (
             <form onSubmit={savePreferences}>
               {preferencesError ? (

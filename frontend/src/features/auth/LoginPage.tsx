@@ -28,6 +28,9 @@ export default function LoginPage() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
     setError(null);
     setIsSubmitting(true);
 

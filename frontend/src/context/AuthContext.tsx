@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { User } from '../api/types';
 import { authAPI } from '../api/auth';
+import { queryCache } from '../lib/query/cache';
 
 interface AuthContextType {
   user: User | null;
@@ -36,12 +37,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return;
       }
       setUser(userData);
-    } catch (error) {
+    } catch (caught) {
       if (requestGeneration.current !== request || localStorage.getItem('token') !== token) {
         return;
       }
-      console.error('Failed to fetch user', error);
+      console.error('Failed to fetch user', caught);
       localStorage.removeItem('token');
+      queryCache.clear();
       setUser(null);
     } finally {
       if (requestGeneration.current === request) {
@@ -56,6 +58,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Listen for unauthorized events from API client
     const handleUnauthorized = () => {
       requestGeneration.current += 1;
+      queryCache.clear();
       setUser(null);
       setIsLoading(false);
     };
@@ -65,6 +68,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   const login = async (token: string) => {
+    queryCache.clear();
     localStorage.setItem('token', token);
     setIsLoading(true);
     await fetchUser();
@@ -73,6 +77,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const logout = () => {
     requestGeneration.current += 1;
     localStorage.removeItem('token');
+    queryCache.clear();
     setUser(null);
     setIsLoading(false);
   };

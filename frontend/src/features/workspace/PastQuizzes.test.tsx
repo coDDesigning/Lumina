@@ -89,11 +89,17 @@ describe('PastQuizzes', () => {
     expect(await screen.findByText((_, node) => node?.textContent?.includes('1 question') === true && node.tagName === 'SPAN')).toBeInTheDocument();
   });
 
-  it('shows empty state rather than breaking when the list cannot be read', async () => {
+  it('reports a failed read as a failure, not as an empty library', async () => {
     mockList.mockRejectedValue(new Error('boom'));
     renderList();
 
-    expect(await screen.findByText('No quizzes saved yet. Generate a practice quiz to see it here.')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Your saved quizzes could not be loaded',
+    );
+    expect(
+      screen.queryByText('No quizzes saved yet. Generate a practice quiz to see it here.'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
   it('lists every quiz as its own row', async () => {

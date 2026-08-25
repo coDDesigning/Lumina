@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Clock, Send } from 'lucide-react';
-import { describeError, isAbortError } from '@/api/errors';
+import { describeError } from '@/api/errors';
 import { quizAPI } from '@/api/quiz';
+import { queryKeys } from '@/api/queryKeys';
+import { useQuery } from '@/lib/query/useQuery';
+import { afterQuizAttempt } from '@/api/invalidations';
 import type { QuizQuestionView, QuizView } from '@/api/types';
 import { isOptionBased } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
@@ -53,40 +57,75 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
   const [answers, setAnswers] = useState<Record<number, AnswerDraft>>({});
   const [timeLeft, setTimeLeft] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const navigatorRef = useRef<HTMLElement>(null);
+  const indexRef = useRef(0);
+  const questionsRef = useRef(0);
+
+  const focusPip = useCallback((position: number) => {
+    const pips = navigatorRef.current?.querySelectorAll<HTMLButtonElement>('button');
+    pips?.[position]?.focus();
+  }, []);
+
+  const handleNavigatorKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>) => {
+      const total = questionsRef.current;
+      if (total === 0) {
+        return;
+      }
+      let next: number | null = null;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        next = (indexRef.current + 1) % total;
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        next = (indexRef.current - 1 + total) % total;
+      } else if (event.key === 'Home') {
+        next = 0;
+      } else if (event.key === 'End') {
+        next = total - 1;
+      }
+      if (next === null) {
+        return;
+      }
+      event.preventDefault();
+      setIndex(next);
+      focusPip(next);
+    },
+    [focusPip],
+  );
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
 
   const startedAtRef = useRef(0);
   useDocumentTitle(`Quiz · ${workspace.name}`);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    const id = Number(quizId);
+  const quizIdNumber = Number(quizId);
+  const isValidQuizAddress = Number.isInteger(quizIdNumber) && quizIdNumber > 0;
 
-    if (!Number.isInteger(id) || id <= 0) {
+  const quizQuery = useQuery<QuizView>({
+    key: isValidQuizAddress ? queryKeys.courseQuiz(courseId, quizIdNumber) : null,
+    fetcher: ({ signal }) => quizAPI.get(courseId, quizIdNumber, { signal }),
+    fallbackMessage: 'This quiz could not be opened.',
+    staleTime: 5 * 60_000,
+  });
+
+  useEffect(() => {
+    if (!isValidQuizAddress) {
       setLoadError('That is not a quiz address.');
       return;
     }
-
-    quizAPI
-      .get(courseId, id, { signal: controller.signal })
-      .then((loaded) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setQuiz(loaded);
-        setTimeLeft(loaded.questions.length * SECONDS_PER_QUESTION);
-        startedAtRef.current = Date.now();
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted || isAbortError(caught)) {
-          return;
-        }
-        setLoadError(describeError(caught, 'This quiz could not be opened.').message);
-      });
-
-    return () => controller.abort();
-  }, [courseId, quizId]);
+    if (quizQuery.status === 'error') {
+      setLoadError(quizQuery.error?.message ?? 'This quiz could not be opened.');
+      return;
+    }
+    const loaded = quizQuery.data;
+    if (!loaded) {
+      return;
+    }
+    setLoadError(null);
+    setQuiz(loaded);
+    setTimeLeft(loaded.questions.length * SECONDS_PER_QUESTION);
+    startedAtRef.current = Date.now();
+  }, [isValidQuizAddress, quizQuery.status, quizQuery.data, quizQuery.error]);
 
   const questions: QuizQuestionView[] = useMemo(() => quiz?.questions ?? [], [quiz]);
 
@@ -116,6 +155,7 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
         }),
         time_spent_seconds: spent,
       });
+      afterQuizAttempt(courseId);
       onAttemptRecorded?.();
       navigate(
         `/courses/${workspace.id}/practice/${quiz.quiz_id}/attempts/${recorded.attempt_id}`,
@@ -138,6 +178,9 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
     const timer = setTimeout(() => setTimeLeft((seconds) => seconds - 1), 1000);
     return () => clearTimeout(timer);
   }, [quiz, isSubmitting, timeLeft, submit]);
+
+  indexRef.current = index;
+  questionsRef.current = questions.length;
 
   const question = questions[index];
   const answeredCount = questions.filter((row) => isAnswered(answers[row.question_id])).length;
@@ -200,7 +243,12 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
               </p>
             </div>
 
-            <nav className={styles.navigator} aria-label="Questions">
+            <nav
+              ref={navigatorRef}
+              className={styles.navigator}
+              aria-label="Questions"
+              onKeyDown={handleNavigatorKeyDown}
+            >
               {questions.map((row, position) => (
                 <button
                   key={row.question_id}
@@ -211,6 +259,7 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
                     isAnswered(answers[row.question_id]) && styles.pipAnswered,
                   )}
                   aria-current={position === index ? 'true' : undefined}
+                  tabIndex={position === index ? 0 : -1}
                   aria-label={`Question ${position + 1}${
                     isAnswered(answers[row.question_id]) ? ', answered' : ', not answered'
                   }`}

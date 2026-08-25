@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { APIError } from '../api/client';
 import { coursesAPI } from '../api/courses';
+import { queryKeys } from '../api/queryKeys';
+import { queryCache } from '../lib/query/cache';
+import { useQuery } from '../lib/query/useQuery';
 import { describeDocumentError, describeError, isAbortError } from '../api/errors';
 import type {
   DocumentResponse,
@@ -86,21 +89,27 @@ function mergeListing(
 
 export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [listError, setListError] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState(0);
 
   const controlRef = useRef<PollControl | null>(null);
+  const seedRef = useRef<((documents: DocumentResponse[]) => void) | null>(null);
   const entriesRef = useRef<DocumentEntry[]>(entries);
   entriesRef.current = entries;
 
   const hasValidCourse = Number.isInteger(courseId) && courseId > 0;
 
+  const listing = useQuery<DocumentResponse[]>({
+    key: hasValidCourse ? queryKeys.courseDocuments(courseId) : null,
+    fetcher: ({ signal }) => coursesAPI.listDocuments(courseId, { signal }),
+    fallbackMessage: 'Sources could not be loaded.',
+  });
+
+  const isLoading = hasValidCourse && (listing.status === 'pending' || listing.status === 'idle');
+  const listError = listing.error?.message ?? null;
+
   useEffect(() => {
+    setEntries([]);
+
     if (!hasValidCourse) {
-      setEntries([]);
-      setIsLoading(false);
-      setListError(null);
       return;
     }
 
@@ -221,64 +230,68 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
       }
     }
 
-    async function loadList(): Promise<void> {
-      try {
-        const documents = await coursesAPI.listDocuments(courseId, {
-          signal: controller.signal,
-        });
-        if (cancelled) return;
-
-        setEntries((previous) => mergeListing(previous, documents));
-        setIsLoading(false);
-
-        documents
-          .filter((document) => document.status !== 'ready')
-          .forEach((document, index) => {
-            schedule(document.id, index * SEED_STAGGER_MS);
-          });
-      } catch (error) {
-        if (cancelled || isAbortError(error)) return;
-        setIsLoading(false);
-        setListError(describeError(error, 'Sources could not be loaded.').message);
-      }
-    }
-
     controlRef.current = { signal: controller.signal, schedule, stop };
-
-    setEntries([]);
-    setIsLoading(true);
-    setListError(null);
-    void loadList();
+    seedRef.current = (documents: DocumentResponse[]) => {
+      if (cancelled) return;
+      setEntries((previous) => mergeListing(previous, documents));
+      documents
+        .filter((document) => document.status !== 'ready')
+        .forEach((document, index) => {
+          schedule(document.id, index * SEED_STAGGER_MS);
+        });
+    };
 
     return () => {
       cancelled = true;
       controlRef.current = null;
+      seedRef.current = null;
       controller.abort();
       timers.forEach((timer) => clearTimeout(timer));
       timers.clear();
       inFlight.clear();
     };
-  }, [courseId, hasValidCourse, reloadToken]);
+  }, [courseId, hasValidCourse]);
 
-  const reload = useCallback(() => {
-    setReloadToken((token) => token + 1);
-  }, []);
-
-  const addUploaded = useCallback((document: DocumentResponse) => {
-    setEntries((previous) => {
-      const index = previous.findIndex((entry) => entry.document.id === document.id);
-      if (index === -1) {
-        return [newEntry(document), ...previous];
-      }
-      const next = [...previous];
-      next[index] = { ...next[index], document, error: null, pending: null };
-      return next;
-    });
-
-    if (document.status !== 'ready') {
-      controlRef.current?.schedule(document.id, 0);
+  useEffect(() => {
+    if (listing.data) {
+      seedRef.current?.(listing.data);
     }
-  }, []);
+  }, [listing.data]);
+
+  const { refetch } = listing;
+  const reload = useCallback(() => {
+    void refetch();
+  }, [refetch]);
+
+  const addUploaded = useCallback(
+    (document: DocumentResponse) => {
+      queryCache.setData<DocumentResponse[]>(
+        queryKeys.courseDocuments(courseId),
+        (previous) => {
+          if (!previous) return previous;
+          const index = previous.findIndex((row) => row.id === document.id);
+          if (index === -1) return [document, ...previous];
+          const next = [...previous];
+          next[index] = document;
+          return next;
+        },
+      );
+      setEntries((previous) => {
+        const index = previous.findIndex((entry) => entry.document.id === document.id);
+        if (index === -1) {
+          return [newEntry(document), ...previous];
+        }
+        const next = [...previous];
+        next[index] = { ...next[index], document, error: null, pending: null };
+        return next;
+      });
+
+      if (document.status !== 'ready') {
+        controlRef.current?.schedule(document.id, 0);
+      }
+    },
+    [courseId],
+  );
 
   const setPending = useCallback(
     (documentId: string, pending: DocumentPendingAction | null) => {
@@ -360,6 +373,10 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
           signal: control.signal,
         });
         control.stop(documentId);
+        queryCache.setData<DocumentResponse[]>(
+          queryKeys.courseDocuments(courseId),
+          (previous) => previous?.filter((row) => row.id !== documentId),
+        );
         setEntries((previous) =>
           previous.filter((row) => row.document.id !== documentId),
         );
@@ -370,6 +387,10 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
 
         if (described.status === 404) {
           control.stop(documentId);
+        queryCache.setData<DocumentResponse[]>(
+          queryKeys.courseDocuments(courseId),
+          (previous) => previous?.filter((row) => row.id !== documentId),
+        );
           setEntries((previous) =>
             previous.filter((row) => row.document.id !== documentId),
           );

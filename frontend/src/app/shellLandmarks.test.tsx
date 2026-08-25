@@ -129,6 +129,25 @@ describe('shell landmarks', () => {
     expect(screen.getAllByRole('main')).toHaveLength(1);
   });
 
+  it('offers a skip link that reaches the main landmark before the rail', async () => {
+    renderAppAt('/dashboard');
+
+    await waitFor(() => {
+      expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument();
+    });
+
+    const skip = screen.getByRole('link', { name: 'Skip to content' });
+    expect(skip).toHaveAttribute('href', '#main');
+
+    const main = screen.getByRole('main');
+    expect(main).toHaveAttribute('id', 'main');
+    expect(main).toHaveAttribute('tabindex', '-1');
+
+    expect(skip.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const rail = screen.getByRole('navigation', { name: 'Main' });
+    expect(skip.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('renders no application shell on the unauthenticated sign-in route', () => {
     renderAppAt('/login');
 

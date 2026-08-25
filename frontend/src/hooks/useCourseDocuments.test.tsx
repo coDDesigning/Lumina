@@ -79,6 +79,41 @@ async function advance(ms: number) {
 }
 
 describe('useCourseDocuments polling lifecycle', () => {
+  it('does not show the previous course sources while another is loading', async () => {
+    listDocuments.mockImplementation(async (courseId: number) =>
+      courseId === 1 ? [document('ready', '2026-08-19T10:00:00Z', 'a')] : [],
+    );
+    getDocumentStatus.mockResolvedValue(status('ready', '2026-08-19T10:00:05Z'));
+
+    const { result, rerender } = renderHook(({ courseId }) => useCourseDocuments(courseId), {
+      initialProps: { courseId: 1 },
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+    expect(result.current.entries).toHaveLength(1);
+
+    let releaseSecond!: () => void;
+    listDocuments.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseSecond = () => resolve([]);
+        }),
+    );
+    rerender({ courseId: 2 });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.entries).toHaveLength(0);
+
+    releaseSecond();
+    await advance(0);
+  });
+
   it('keeps every source the course has, whatever state each one is in', async () => {
     listDocuments.mockResolvedValue([
       document('ready', '2026-08-19T10:04:00Z', '11111111-1111-1111-1111-111111111111'),

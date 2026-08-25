@@ -12,6 +12,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { coursesAPI } from '@/api/courses';
+import { afterConversationTurn, afterDocumentChanged } from '@/api/invalidations';
 import { aiTutorAPI } from '@/api/aiTutor';
 import { conversationsAPI } from '@/api/conversations';
 import { courseQaAPI } from '@/api/courseQa';
@@ -269,6 +270,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   const {
     artifacts,
     isLoading: areArtifactsLoading,
+    error: artifactsError,
     reload: reloadArtifacts,
   } = useCourseArtifacts(courseId, progress);
 
@@ -305,6 +307,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
       try {
         const response = await coursesAPI.uploadDocument(courseId, file, materialKind);
         addUploaded(response.document);
+        afterDocumentChanged(courseId);
         if (response.duplicate) {
           const when = uploadedOn(response.document.created_at);
           notices.push(
@@ -385,6 +388,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           ],
         },
       }));
+      afterConversationTurn(courseId);
       void refreshCredits();
     } catch (caught) {
       setPrompt(question);
@@ -561,7 +565,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           <p className={styles.sourceHint}>PDF, TXT and Markdown</p>
         </section>
 
-        <section className={styles.panel} aria-label="Conversation">
+        <section className={`${styles.panel} ${styles.conversation}`} aria-label="Conversation">
           <div className={styles.panelHead}>
             <Tabs
               label="Conversation type"
@@ -639,7 +643,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 placeholder={`Ask anything about ${workspace.name}…`}
-                disabled={thread.isLoading}
+                readOnly={thread.isLoading}
               />
               <IconButton
                 label="Help me word this"
@@ -649,7 +653,6 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
               <Button
                 type="submit"
                 variant="primary"
-                aria-label="Submit prompt"
                 isLoading={thread.isLoading}
                 loadingLabel="Sending"
                 disabled={threadExhausted}
@@ -717,6 +720,8 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           <ArtifactRail
             artifacts={artifacts}
             isLoading={areArtifactsLoading}
+            error={artifactsError}
+            onRetry={reloadArtifacts}
             onOpenAll={() => setIsMadeForYouOpen(true)}
             onOpen={(artifact) => {
               if (artifact.kind === 'flashcards') {

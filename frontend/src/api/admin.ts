@@ -9,9 +9,10 @@ import type {
 } from './types';
 
 export const adminAPI = {
-  getAiCostReport: async (days = 30): Promise<AiCostReport> => {
+  getAiCostReport: async (days = 30, options?: RequestInit): Promise<AiCostReport> => {
     const res = await apiClient.get<BaseResponse<AiCostReport>>(
       `/admin/ai-costs?days=${days}`,
+      options,
     );
     return unwrapData(res, 'Admin AI cost report');
   },
@@ -57,10 +58,12 @@ export const adminAPI = {
     delta: number,
     reason: AdminCreditReason,
     note?: string,
+    options?: RequestInit,
   ): Promise<CreditMutation> => {
     const res = await apiClient.post<BaseResponse<CreditMutation>>(
       `/admin/users/${encodeURIComponent(email)}/credits`,
       { delta, reason, note: note || null },
+      options,
     );
     return unwrapData(res, 'Admin change credits');
   },
@@ -68,9 +71,11 @@ export const adminAPI = {
   listUserCreditTransactions: async (
     email: string,
     limit = 20,
+    options?: RequestInit,
   ): Promise<CreditTransaction[]> => {
     const res = await apiClient.get<BaseResponse<CreditTransaction[]>>(
       `/admin/users/${encodeURIComponent(email)}/credit-transactions?limit=${limit}`,
+      options,
     );
     return unwrapData(res, 'Admin user credit transactions');
   },

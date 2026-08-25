@@ -7,8 +7,9 @@ product keeps one visual and interaction language. Testing conventions live in
 ## Stack
 
 React 19 + TypeScript + Vite. Routing is `react-router-dom` 7. Icons are `lucide-react`.
-There is no CSS framework, no component library, no state manager and no data-fetching
-library — server state lives in feature hooks, UI state in `useState`.
+There is no CSS framework, no component library and no state manager. There is no
+data-fetching *dependency* either: server state is owned by `src/lib/query/`, a small
+in-repo query cache described below. UI state stays in `useState`.
 
 Styling is **CSS Modules over a design-token layer**. Fonts are self-hosted, so a
 self-hosted deployment makes no third-party requests.
@@ -385,9 +386,52 @@ Actions that cannot act on anything are **absent**, not disabled.
 
 ## Responsive
 
-Breakpoint tokens: 30 / 48 / 64 / 80 rem. The workspace goes three columns → two (drops the
-tools rail) → one (drops the sources rail). The rail becomes a bottom bar under 48rem.
-Wide content scrolls inside its own container; the page body never scrolls sideways.
+Breakpoint tokens: 30 / 48 / 64 / 80 rem, and `styles/breakpoints.test.ts` fails a media
+query that breaks anywhere else — media queries cannot read a custom property, so the token
+scale is a convention a test has to hold up.
+
+The workspace goes three columns → two → one. **Nothing is ever removed by width.** Under
+64rem the study-tools rail moves below the conversation; under 48rem all three stack, in the
+order conversation, sources, study tools. The rails used to be `display: none` under 68rem
+and 52rem with no other route to them, which meant a reader on a phone could not upload a
+source, retry a failed one, or generate anything — roughly half the product. Do not
+reintroduce a width that hides a capability instead of moving it.
+
+The rail becomes a bottom bar under 48rem and reserves its own space plus
+`env(safe-area-inset-bottom)`. Form controls grow to 16px under `(pointer: coarse)`, because
+Safari zooms the viewport when a focused control is smaller and pans the page away from what
+the reader was typing. Wide content scrolls inside its own container; the page body never
+scrolls sideways, and a scrollable container carries `tabIndex={0}` and a name so it can be
+reached without a mouse.
+
+## Server state
+
+`src/lib/query/` is a ~450-line cache: keyed entries, one in-flight request per key,
+trailing refresh, staleness, focus revalidation, prefix invalidation and optimistic writes.
+It was adopted by explicit team decision in SCRUM-135 in place of TanStack Query, so the
+frontend still ships no data-fetching dependency.
+
+- **Keys come from `src/api/queryKeys.ts` and nowhere else.** `lib/query/keyDiscipline.test.ts`
+  fails an inline key literal, because a typo'd key silently makes an invalidation do nothing
+  and has no runtime symptom.
+- **Prefix matching is element-wise.** `["course",1` is a string prefix of
+  `["course",11,…]`, so matching on the serialised key would let course 1 invalidate
+  course 11. `['courses']` is deliberately a different first segment from `['course', id]`.
+- **`status: 'error'` and an empty result are different values**, which is how
+  "unavailable is not empty" stays true. `error` means the load failed; `refetchError` means a
+  background refresh failed while good data is still on screen.
+- **Unmount does not abort.** Only `remove()` and `clear()` do. That is what makes
+  StrictMode's double mount a no-op and stops the workspace and the progress page fetching the
+  same course twice — and it is why `queryCache.clear()` on logout and on `auth:unauthorized`
+  is correctness rather than hygiene.
+- **It is a module singleton**, reset once in `setupTests.ts`. A provider would have to be
+  added to every `render()` in the suite. It schedules no timers, so it cannot disturb a test
+  running fake timers.
+- `src/api/invalidations.ts` is the whole mutation → key table in one readable file.
+- `CreditContext` is the reference consumer: its coalescing, trailing refresh, identity
+  fencing and focus revalidation are all cache behaviour now, and its tests pass unchanged.
+  `AuthContext` deliberately stays bespoke — identity is what `me()` returns, so there is no
+  key to cache it under that would not contain a bearer token.
 
 ## Accessibility baseline
 

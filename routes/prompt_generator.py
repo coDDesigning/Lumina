@@ -21,6 +21,7 @@ from services.text_generation import (
 )
 from utils.ai_errors import ai_generation_http_exception
 from utils.deps import get_current_user
+from utils.rate_limit import rate_limit_generation
 
 router = APIRouter(
     prefix="/api",
@@ -31,9 +32,10 @@ router = APIRouter(
 @router.post(
     "/prompt-generator",
     response_model=BaseResponse[PromptGenerationResponse],
+    dependencies=[Depends(rate_limit_generation("prompt_generator"))],
     responses={
         402: {"description": "Insufficient credits"},
-        429: {"description": "AI provider rate limited"},
+        429: {"description": "AI provider or per-user generation rate limited"},
         503: {"description": "AI provider unreachable"},
         504: {"description": "AI provider timed out"},
     },

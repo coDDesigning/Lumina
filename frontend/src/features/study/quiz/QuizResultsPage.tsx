@@ -6,8 +6,8 @@ import { quizAPI } from '@/api/quiz';
 import type { QuizAttemptResponse, QuizView } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import type { Workspace } from '@/data/workspaces';
-import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
+import { ErrorState } from '@/ui/ErrorState';
 import { LinkButton } from '@/ui/LinkButton';
 import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
@@ -114,9 +114,16 @@ export default function QuizResultsPage({ workspace }: QuizResultsPageProps) {
 
       <div className={styles.body}>
         {error ? (
-          <Alert tone="destructive" live="alert" title="These results are not here">
+          <ErrorState
+            title="These results are not here"
+            actions={
+              <Button size="sm" onClick={() => navigate(`/courses/${workspace.id}`)}>
+                Back to the course
+              </Button>
+            }
+          >
             {error}
-          </Alert>
+          </ErrorState>
         ) : null}
 
         {isLoading && !error ? (

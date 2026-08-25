@@ -3,11 +3,11 @@ import { CircleDot, Target, TrendingUp } from 'lucide-react';
 import type { CourseProgressResponse, MasteryStatus } from '@/api/types';
 import { cx } from '@/lib/cx';
 import { formatStudyTime } from '@/lib/formatStudyTime';
-import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
 import type { BadgeTone } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
 import { EmptyState } from '@/ui/EmptyState';
+import { ErrorState } from '@/ui/ErrorState';
 import { Skeleton } from '@/ui/Skeleton';
 import styles from './ProgressView.module.css';
 
@@ -20,6 +20,7 @@ export interface ProgressViewProps {
   error: string | null;
   actions?: React.ReactNode;
   onPractice?: (topic: string) => void;
+  onRetry?: () => void;
 }
 
 const UNTAGGED_TOPIC = 'Untagged';
@@ -61,6 +62,7 @@ export function ProgressView({
   error,
   actions,
   onPractice,
+  onRetry,
 }: ProgressViewProps) {
   const attempts = progress?.attempts_count ?? 0;
   const topicMastery = progress?.topic_mastery ?? [];
@@ -84,9 +86,9 @@ export function ProgressView({
 
   if (error) {
     return (
-      <Alert tone="destructive" live="alert" title="Your progress could not be loaded">
+      <ErrorState title="Your progress could not be loaded" onRetry={onRetry}>
         {error}
-      </Alert>
+      </ErrorState>
     );
   }
 

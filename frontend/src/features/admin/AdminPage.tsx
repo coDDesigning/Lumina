@@ -18,6 +18,7 @@ import { Button } from '@/ui/Button';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
 import { Dialog } from '@/ui/Dialog';
 import { EmptyState } from '@/ui/EmptyState';
+import { ErrorState } from '@/ui/ErrorState';
 import { Input, Select, Textarea } from '@/ui/Input';
 import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
@@ -282,16 +283,7 @@ export default function AdminPage() {
           {isCostLoading ? (
             <Skeleton variant="block" />
           ) : costError ? (
-            <Alert
-              tone="destructive"
-              actions={
-                <Button size="sm" onClick={() => void loadCosts()}>
-                  Try again
-                </Button>
-              }
-            >
-              {costError}
-            </Alert>
+            <ErrorState onRetry={() => void loadCosts()}>{costError}</ErrorState>
           ) : costReport ? (
             <>
               <div className={styles.costMetrics}>
@@ -352,18 +344,9 @@ export default function AdminPage() {
         </section>
 
         {loadError ? (
-          <Alert
-            tone="destructive"
-            live="alert"
-            className={styles.spaced}
-            actions={
-              <Button size="sm" onClick={() => void load()}>
-                Try again
-              </Button>
-            }
-          >
+          <ErrorState className={styles.spaced} onRetry={() => void load()}>
             {loadError}
-          </Alert>
+          </ErrorState>
         ) : null}
 
         {actionError ? (

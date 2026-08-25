@@ -8,6 +8,7 @@ import { Badge } from './Badge';
 import { Button } from './Button';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Dialog } from './Dialog';
+import { ErrorState } from './ErrorState';
 import { IconButton } from './IconButton';
 import { Input, Select, Textarea } from './Input';
 import { Checkbox, Switch } from './Checkbox';
@@ -53,6 +54,44 @@ describe('Badge', () => {
   it('renders its label so status is never carried by colour alone', () => {
     render(<Badge tone="destructive">Couldn&apos;t read it</Badge>);
     expect(screen.getByText("Couldn't read it")).toBeInTheDocument();
+  });
+});
+
+describe('ErrorState', () => {
+  it('announces the failure and offers the retry', async () => {
+    const onRetry = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <ErrorState title="Your progress could not be loaded" onRetry={onRetry}>
+        The server did not answer.
+      </ErrorState>,
+    );
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Your progress could not be loaded');
+    expect(alert).toHaveTextContent('The server did not answer.');
+
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers a way out instead of a retry when there is nothing to retry', () => {
+    render(
+      <ErrorState title="This quiz is not here" actions={<Button>Back to the course</Button>}>
+        It may have been deleted.
+      </ErrorState>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Back to the course' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+  });
+
+  it('renders no recovery control when the caller offers none', () => {
+    render(<ErrorState>Something went wrong.</ErrorState>);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong.');
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });
 

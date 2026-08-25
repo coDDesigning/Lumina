@@ -11,6 +11,7 @@ import { cx } from '@/lib/cx';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
+import { ErrorState } from '@/ui/ErrorState';
 import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
 import { EMPTY_DRAFT } from './answerDraft';
@@ -168,9 +169,7 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
 
       <div className={styles.body}>
         {loadError ? (
-          <Alert
-            tone="destructive"
-            live="alert"
+          <ErrorState
             title="This quiz is not here"
             actions={
               <Button size="sm" onClick={() => navigate(`/courses/${workspace.id}`)}>
@@ -179,7 +178,7 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
             }
           >
             {loadError}
-          </Alert>
+          </ErrorState>
         ) : null}
 
         {!quiz && !loadError ? (

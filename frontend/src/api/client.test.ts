@@ -67,6 +67,76 @@ describe('unwrapData', () => {
   });
 });
 
+describe('API base URL', () => {
+  const originalFetch = global.fetch;
+
+  async function requestWithBaseUrl(baseUrl: string | undefined, endpoint: string) {
+    vi.stubEnv('VITE_API_BASE_URL', baseUrl);
+    vi.resetModules();
+    const { apiClient: configuredClient } = await import('./client');
+    const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    global.fetch = mockFetch;
+
+    await configuredClient.get(endpoint);
+
+    return mockFetch;
+  }
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it.each([undefined, '', '   '])('defaults %s to /api', async (baseUrl) => {
+    const mockFetch = await requestWithBaseUrl(baseUrl, '/courses/?page=2');
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/courses/?page=2', expect.any(Object));
+  });
+
+  it('normalizes a root-relative base while preserving endpoint syntax', async () => {
+    const mockFetch = await requestWithBaseUrl('/gateway/api///', '///courses/?page=2');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/gateway/api/courses/?page=2',
+      expect.any(Object),
+    );
+  });
+
+  it.each([
+    [
+      'https://api.example.com/v1/',
+      '/courses/?page=2',
+      'https://api.example.com/v1/courses/?page=2',
+    ],
+    ['http://localhost:8000/api', 'health/', 'http://localhost:8000/api/health/'],
+  ])('supports the absolute base %s', async (baseUrl, endpoint, expectedUrl) => {
+    const mockFetch = await requestWithBaseUrl(baseUrl, endpoint);
+
+    expect(mockFetch).toHaveBeenCalledWith(expectedUrl, expect.any(Object));
+  });
+
+  it.each([
+    'api',
+    './api',
+    '../api',
+    '//api.example.com/api',
+    '/\\evil.example/api',
+    '/\t/evil.example/api',
+    '\t/api',
+    'ftp://api.example.com/api',
+    'https://user:password@api.example.com/api',
+    'https://@api.example.com/api',
+    'https://api.example.com/api?tenant=lumina',
+    'https://api.example.com/api#resources',
+  ])('rejects the invalid base %s', async (baseUrl) => {
+    vi.stubEnv('VITE_API_BASE_URL', baseUrl);
+    vi.resetModules();
+
+    await expect(import('./client')).rejects.toThrow('VITE_API_BASE_URL');
+  });
+});
+
 describe('apiClient HTTP requests', () => {
   const originalFetch = global.fetch;
 
@@ -102,6 +172,7 @@ describe('apiClient HTTP requests', () => {
 
     const headers = mockFetch.mock.calls[0][1]?.headers as Headers;
     expect(headers.get('Authorization')).toBe('Bearer saved-jwt');
+    expect(mockFetch.mock.calls[0][1]).not.toHaveProperty('credentials');
     expect(result).toEqual({ success: true, message: 'ok', data: { id: 1 } });
   });
 

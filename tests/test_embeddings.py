@@ -300,6 +300,36 @@ def test_gemini_uses_the_configured_model_and_preserves_order(monkeypatch) -> No
     assert result == [_vector(1.0), _vector(2.0), _vector(3.0)]
 
 
+def test_gemini_honours_the_configured_timeout(monkeypatch) -> None:
+    client_options: list[object] = []
+
+    monkeypatch.setattr(embeddings, "settings", GEMINI_SETTINGS)
+    monkeypatch.setattr(
+        embeddings.genai,
+        "Client",
+        lambda **kwargs: (
+            client_options.append(kwargs["http_options"]) or _FakeGeminiClient([], [])
+        ),
+    )
+
+    GeminiEmbeddingProvider()
+
+    assert client_options[0].timeout == 42_000
+
+
+def test_gemini_timeout_is_retryable(monkeypatch) -> None:
+    recorder: list[tuple[str, list[str]]] = []
+    provider = _gemini_provider(
+        monkeypatch,
+        [httpx.ReadTimeout("too slow")],
+        recorder,
+    )
+
+    with pytest.raises(EmbeddingTimeoutError) as excinfo:
+        provider.embed_documents(["a"])
+    assert is_transient_embedding_error(excinfo.value)
+
+
 def test_gemini_rate_limit_is_retryable(monkeypatch) -> None:
     recorder: list[tuple[str, list[str]]] = []
     provider = _gemini_provider(

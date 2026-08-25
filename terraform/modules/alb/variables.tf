@@ -19,9 +19,14 @@ variable "route53_zone_id" {
   default = ""
 }
 
-variable "dns_record_name" {
-  type    = string
-  default = "app"
+variable "api_origin_domain_name" {
+  description = "Certificate-covered API origin hostname that resolves to the ALB."
+  type        = string
+
+  validation {
+    condition     = length(var.api_origin_domain_name) <= 253 && can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", var.api_origin_domain_name))
+    error_message = "api_origin_domain_name must be a lowercase fully qualified hostname with valid DNS labels."
+  }
 }
 
 variable "environment" {

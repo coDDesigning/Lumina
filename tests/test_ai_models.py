@@ -177,6 +177,11 @@ def test_get_text_generation_provider_honors_model(monkeypatch: pytest.MonkeyPat
         ai_generation_backoff_base_seconds=0.01,
         ai_generation_backoff_max_seconds=0.1,
         ai_generation_max_concurrency=10,
+        ollama_temperature=0.2,
+        ollama_top_p=0.9,
+        ollama_num_ctx=8192,
+        ollama_num_predict=4096,
+        ollama_repeat_penalty=1.1,
     )
     monkeypatch.setattr(text_generation, "settings", fake_settings)
 
@@ -283,6 +288,11 @@ def test_selected_model_is_passed_to_provider(
         ai_generation_backoff_base_seconds=1.0,
         ai_generation_backoff_max_seconds=10.0,
         ai_generation_max_concurrency=10,
+        ollama_temperature=0.2,
+        ollama_top_p=0.9,
+        ollama_num_ctx=8192,
+        ollama_num_predict=4096,
+        ollama_repeat_penalty=1.1,
     )
 
     monkeypatch.setattr(text_generation, "settings", fake_settings)

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Archive, History } from 'lucide-react';
-import { describeError, isAbortError } from '@/api/errors';
 import { generatedOutputsAPI } from '@/api/generatedOutputs';
+import { queryKeys } from '@/api/queryKeys';
+import { useQuery } from '@/lib/query/useQuery';
 import type {
   GeneratedOutputDetail,
   GeneratedOutputSummary,
@@ -134,75 +135,51 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
 }
 
 export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onClose }: StudyHistoryModalProps) {
-  const [listState, setListState] = useState<ListState>({ phase: 'loading' });
-  const [detailState, setDetailState] = useState<DetailState>({ phase: 'empty' });
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  const detailAbortRef = useRef<AbortController | null>(null);
+  const listQuery = useQuery<GeneratedOutputSummary[]>({
+    key: queryKeys.courseOutputs(courseId),
+    fetcher: ({ signal }) => generatedOutputsAPI.list(courseId, { signal }),
+    fallbackMessage: 'The history could not be loaded.',
+  });
 
-  const handleSelect = useCallback(
-    (output: GeneratedOutputSummary) => {
-      detailAbortRef.current?.abort();
-      const controller = new AbortController();
-      detailAbortRef.current = controller;
+  const detailQuery = useQuery<GeneratedOutputDetail>({
+    key: selectedId === null ? null : queryKeys.courseOutput(courseId, selectedId),
+    fetcher: ({ signal }) => generatedOutputsAPI.get(courseId, selectedId as number, { signal }),
+    fallbackMessage: 'This result could not be opened.',
+    staleTime: 5 * 60_000,
+  });
 
-      setSelectedId(output.id);
-      setDetailState({ phase: 'loading' });
+  const handleSelect = useCallback((output: GeneratedOutputSummary) => {
+    setSelectedId(output.id);
+  }, []);
 
-      generatedOutputsAPI
-        .get(courseId, output.id, { signal: controller.signal })
-        .then((detail) => {
-          if (controller.signal.aborted) {
-            return;
-          }
-          setDetailState({ phase: 'ready', output: detail });
-        })
-        .catch((caught: unknown) => {
-          if (controller.signal.aborted || isAbortError(caught)) {
-            return;
-          }
-          setDetailState({
-            phase: 'error',
-            message: describeError(caught, 'This result could not be opened.').message,
-          });
-        });
-    },
-    [courseId],
-  );
+  const outputs = listQuery.data;
 
   useEffect(() => {
-    const controller = new AbortController();
+    if (!outputs || !initialSelectedId) {
+      return;
+    }
+    if (outputs.some((output) => output.id === initialSelectedId)) {
+      setSelectedId(initialSelectedId);
+    }
+  }, [outputs, initialSelectedId]);
 
-    generatedOutputsAPI
-      .list(courseId, { signal: controller.signal })
-      .then((outputs) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setListState({ phase: 'ready', outputs });
-        
-        if (initialSelectedId) {
-          const found = outputs.find((o) => o.id === initialSelectedId);
-          if (found) {
-            handleSelect(found);
-          }
-        }
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted || isAbortError(caught)) {
-          return;
-        }
-        setListState({
-          phase: 'error',
-          message: describeError(caught, 'The history could not be loaded.').message,
-        });
-      });
+  const listState: ListState =
+    listQuery.status === 'error'
+      ? { phase: 'error', message: listQuery.error?.message ?? 'The history could not be loaded.' }
+      : listQuery.data
+        ? { phase: 'ready', outputs: listQuery.data }
+        : { phase: 'loading' };
 
-    return () => {
-      controller.abort();
-      detailAbortRef.current?.abort();
-    };
-  }, [courseId, initialSelectedId, handleSelect]);
+  const detailState: DetailState =
+    selectedId === null
+      ? { phase: 'empty' }
+      : detailQuery.status === 'error'
+        ? { phase: 'error', message: detailQuery.error?.message ?? 'This result could not be opened.' }
+        : detailQuery.data
+          ? { phase: 'ready', output: detailQuery.data }
+          : { phase: 'loading' };
 
   return (
     <Dialog

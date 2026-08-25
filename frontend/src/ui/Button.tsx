@@ -30,14 +30,27 @@ export function Button({
   children,
   disabled,
   type = 'button',
+  onClick,
+  'aria-disabled': ariaDisabled,
   ...rest
 }: ButtonProps) {
+  const isBusy = isLoading && !disabled;
+  const isInert = isBusy || ariaDisabled === true || ariaDisabled === 'true';
+
   return (
     <button
       {...rest}
       type={type}
-      disabled={disabled || isLoading}
+      disabled={disabled}
+      aria-disabled={isInert || undefined}
       aria-busy={isLoading || undefined}
+      onClick={
+        isBusy
+          ? (event) => {
+              event.preventDefault();
+            }
+          : onClick
+      }
       className={cx(
         styles.button,
         styles[variant],

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { BookOpen, Check, Copy, Download } from 'lucide-react';
-import { describeError, isAbortError } from '@/api/errors';
 import { generatedOutputsAPI } from '@/api/generatedOutputs';
+import { queryKeys } from '@/api/queryKeys';
+import { useQuery } from '@/lib/query/useQuery';
 import type { GeneratedOutputDetail, RetrievedContext, StudyGuideResponse } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import type { Workspace } from '@/data/workspaces';
@@ -54,43 +55,46 @@ export default function GuidePage({ workspace }: GuidePageProps) {
     state.phase === 'ready' ? `${state.guide.title} · ${workspace.name}` : `Study guide · ${workspace.name}`,
   );
 
-  useEffect(() => {
-    const controller = new AbortController();
-    const id = Number(outputId);
+  const id = Number(outputId);
+  const isValidAddress = Number.isInteger(id) && id > 0;
 
-    if (!Number.isInteger(id) || id <= 0) {
+  const query = useQuery<GeneratedOutputDetail>({
+    key: isValidAddress ? queryKeys.courseOutput(courseId, id) : null,
+    fetcher: ({ signal }) => generatedOutputsAPI.get(courseId, id, { signal }),
+    fallbackMessage: 'This study guide could not be opened.',
+    staleTime: 5 * 60_000,
+  });
+
+  useEffect(() => {
+    if (!isValidAddress) {
       setState({ phase: 'error', message: 'That is not a study guide address.' });
       return;
     }
-
-    generatedOutputsAPI
-      .get(courseId, id, { signal: controller.signal })
-      .then((output) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        if (output.output_type === 'study_guide' && isRenderableStudyGuide(output.content)) {
-          const guide =
-            typeof output.content === 'string'
-              ? (tryParseJson(output.content) as StudyGuideResponse)
-              : output.content;
-          setState({ phase: 'ready', output, guide });
-          return;
-        }
-        setState({ phase: 'unreadable', output });
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted || isAbortError(caught)) {
-          return;
-        }
-        setState({
-          phase: 'error',
-          message: describeError(caught, 'This study guide could not be opened.').message,
-        });
+    if (query.status === 'pending' || query.status === 'idle') {
+      setState({ phase: 'loading' });
+      return;
+    }
+    if (query.status === 'error') {
+      setState({
+        phase: 'error',
+        message: query.error?.message ?? 'This study guide could not be opened.',
       });
-
-    return () => controller.abort();
-  }, [courseId, outputId]);
+      return;
+    }
+    const output = query.data;
+    if (!output) {
+      return;
+    }
+    if (output.output_type === 'study_guide' && isRenderableStudyGuide(output.content)) {
+      const guide =
+        typeof output.content === 'string'
+          ? (tryParseJson(output.content) as StudyGuideResponse)
+          : output.content;
+      setState({ phase: 'ready', output, guide });
+      return;
+    }
+    setState({ phase: 'unreadable', output });
+  }, [isValidAddress, query.status, query.data, query.error]);
 
   useEffect(() => {
     if (copyState === 'idle') {

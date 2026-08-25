@@ -9,6 +9,13 @@ import { progressAPI } from '@/api/progress';
 import { promptGeneratorAPI } from '@/api/promptGenerator';
 import { createMockCourse } from '@/test/mocks/api';
 
+vi.mock('@/api/generatedOutputs', () => ({
+  generatedOutputsAPI: {
+    list: vi.fn().mockResolvedValue([]),
+    get: vi.fn(),
+  },
+}));
+
 vi.mock('@/context/CreditContext', () => ({
   useCredits: () => ({
     status: null,

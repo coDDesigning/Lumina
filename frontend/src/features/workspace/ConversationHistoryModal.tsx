@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Bot, History, MessageCircle, MessagesSquare, Trash2, UserRound } from 'lucide-react';
 import { conversationsAPI } from '@/api/conversations';
-import { describeError, isAbortError } from '@/api/errors';
+import { queryKeys } from '@/api/queryKeys';
+import { queryCache } from '@/lib/query/cache';
+import { useQuery } from '@/lib/query/useQuery';
+import { describeError } from '@/api/errors';
 import type { ConversationDetail, ConversationSummary, ConversationType } from '@/api/types';
 import { cx } from '@/lib/cx';
 import { Markdown } from '@/lib/markdown';
@@ -52,66 +55,42 @@ export function ConversationHistoryModal({
   onResume,
   onDelete,
 }: ConversationHistoryModalProps) {
-  const [listState, setListState] = useState<ListState>({ phase: 'loading' });
-  const [detailState, setDetailState] = useState<DetailState>({ phase: 'empty' });
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const detailAbortRef = useRef<AbortController | null>(null);
   const [removing, setRemoving] = useState<ConversationSummary | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const controller = new AbortController();
+  const listQuery = useQuery<ConversationSummary[]>({
+    key: queryKeys.courseConversations(courseId),
+    fetcher: ({ signal }) => conversationsAPI.list(courseId, { signal }),
+    fallbackMessage: 'Your past threads could not be loaded.',
+  });
 
-    conversationsAPI
-      .list(courseId, { signal: controller.signal })
-      .then((conversations) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setListState({ phase: 'ready', conversations });
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted || isAbortError(caught)) {
-          return;
-        }
-        setListState({
-          phase: 'error',
-          message: describeError(caught, 'Your past threads could not be loaded.').message,
-        });
-      });
+  const detailQuery = useQuery<ConversationDetail>({
+    key: selectedId === null ? null : queryKeys.courseConversation(courseId, selectedId),
+    fetcher: ({ signal }) => conversationsAPI.get(courseId, selectedId as number, { signal }),
+    fallbackMessage: 'This thread could not be opened.',
+    staleTime: 60_000,
+  });
 
-    return () => {
-      controller.abort();
-      detailAbortRef.current?.abort();
-    };
-  }, [courseId]);
+  const listState: ListState =
+    listQuery.status === 'error'
+      ? { phase: 'error', message: listQuery.error?.message ?? 'Your past threads could not be loaded.' }
+      : listQuery.data
+        ? { phase: 'ready', conversations: listQuery.data }
+        : { phase: 'loading' };
+
+  const detailState: DetailState =
+    selectedId === null
+      ? { phase: 'empty' }
+      : detailQuery.status === 'error'
+        ? { phase: 'error', message: detailQuery.error?.message ?? 'This thread could not be opened.' }
+        : detailQuery.data
+          ? { phase: 'ready', conversation: detailQuery.data }
+          : { phase: 'loading' };
 
   const selectConversation = (conversation: ConversationSummary) => {
-    detailAbortRef.current?.abort();
-    const controller = new AbortController();
-    detailAbortRef.current = controller;
-
     setSelectedId(conversation.id);
-    setDetailState({ phase: 'loading' });
-
-    conversationsAPI
-      .get(courseId, conversation.id, { signal: controller.signal })
-      .then((detail) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setDetailState({ phase: 'ready', conversation: detail });
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted || isAbortError(caught)) {
-          return;
-        }
-        setDetailState({
-          phase: 'error',
-          message: describeError(caught, 'This thread could not be opened.').message,
-        });
-      });
   };
 
   async function handleRemove() {
@@ -124,17 +103,13 @@ export function ConversationHistoryModal({
     try {
       await conversationsAPI.delete(courseId, removedId);
       onDelete?.(removedId);
-      setListState((current) =>
-        current.phase === 'ready'
-          ? {
-              phase: 'ready',
-              conversations: current.conversations.filter((row) => row.id !== removedId),
-            }
-          : current,
+      queryCache.setData<ConversationSummary[]>(
+        queryKeys.courseConversations(courseId),
+        (previous) => previous?.filter((row) => row.id !== removedId),
       );
+      queryCache.remove(queryKeys.courseConversation(courseId, removedId));
       if (selectedId === removedId) {
         setSelectedId(null);
-        setDetailState({ phase: 'empty' });
       }
       setRemoving(null);
     } catch (caught) {

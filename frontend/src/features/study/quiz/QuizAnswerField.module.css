@@ -155,7 +155,7 @@
   color: var(--text-subtle);
 }
 
-@media (max-width: 34rem) {
+@media (max-width: 48rem) {
   .binary {
     grid-template-columns: 1fr;
   }

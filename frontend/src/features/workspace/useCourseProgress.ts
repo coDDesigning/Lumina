@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
-import { describeError, isAbortError } from '@/api/errors';
 import { progressAPI } from '@/api/progress';
+import { queryKeys } from '@/api/queryKeys';
 import type { CourseProgressResponse } from '@/api/types';
+import { useQuery } from '@/lib/query/useQuery';
 
 export interface CourseProgressState {
   progress: CourseProgressResponse | null;
@@ -11,44 +11,21 @@ export interface CourseProgressState {
 }
 
 export function useCourseProgress(courseId: number): CourseProgressState {
-  const [progress, setProgress] = useState<CourseProgressResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [token, setToken] = useState(0);
+  const isValid = Number.isInteger(courseId) && courseId > 0;
 
-  const reload = useCallback(() => {
-    setToken((current) => current + 1);
-  }, []);
+  const query = useQuery<CourseProgressResponse>({
+    key: isValid ? queryKeys.courseProgress(courseId) : null,
+    fetcher: ({ signal }) => progressAPI.get(courseId, { signal }),
+    fallbackMessage: 'Progress could not be loaded.',
+    staleTime: 30_000,
+  });
 
-  useEffect(() => {
-    if (!Number.isInteger(courseId) || courseId <= 0) {
-      return;
-    }
-
-    const controller = new AbortController();
-    let cancelled = false;
-
-    setIsLoading(true);
-    setError(null);
-
-    progressAPI
-      .get(courseId, { signal: controller.signal })
-      .then((result) => {
-        if (cancelled) return;
-        setProgress(result);
-        setIsLoading(false);
-      })
-      .catch((caught: unknown) => {
-        if (cancelled || isAbortError(caught)) return;
-        setIsLoading(false);
-        setError(describeError(caught, 'Progress could not be loaded.').message);
-      });
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [courseId, token]);
-
-  return { progress, isLoading, error, reload };
+  return {
+    progress: query.data ?? null,
+    isLoading: query.status === 'pending',
+    error: query.error?.message ?? null,
+    reload: () => {
+      void query.refetch();
+    },
+  };
 }

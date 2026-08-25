@@ -109,7 +109,7 @@
   width: 10rem;
 }
 
-@media (max-width: 34rem) {
+@media (max-width: 48rem) {
   .search,
   .filter {
     width: 100%;

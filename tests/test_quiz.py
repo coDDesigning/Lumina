@@ -1231,6 +1231,41 @@ def test_malformed_provider_output_persists_no_quiz_and_no_questions(
     assert _persisted_questions(upload_api.session_factory, upload_api.course_id) == []
 
 
+def test_generate_endpoint_propagates_unexpected_exceptions_as_500(
+    upload_api, retrieval_env, monkeypatch
+) -> None:
+    """Unexpected programming errors must not be masked as AI generation failures."""
+    with upload_api.session_factory() as session:
+        _add_ready_material(
+            session,
+            upload_api.course_id,
+            ["API quiz lecture material"],
+            file_hash="67" + "6" * 62,
+            retrieval_env=retrieval_env,
+        )
+
+    def synthetic_bug(*args, **kwargs):
+        raise TypeError("Synthetic defect: unexpected type")
+
+    monkeypatch.setattr(quiz_service.QuizService, "generate", synthetic_bug)
+
+    from fastapi.testclient import TestClient
+    from main import app
+    from utils.ai_errors import ERROR_CODE_HEADER
+
+    safe_client = TestClient(app, raise_server_exceptions=False)
+    response = safe_client.post(
+        f"/api/courses/{upload_api.course_id}/quiz",
+        json=QUIZ_REQUEST,
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 500
+    assert ERROR_CODE_HEADER not in response.headers
+    assert PUBLIC_MESSAGES[AiErrorCode.GENERATION_FAILED] not in response.text
+    assert _persisted_quizzes(upload_api.session_factory, upload_api.course_id) == []
+
+
 def _generate(upload_api, monkeypatch, payload, **overrides):
     _install_provider(monkeypatch, CountingProvider(payload))
     response = upload_api.client.post(

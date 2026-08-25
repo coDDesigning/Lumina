@@ -26,11 +26,13 @@ from services.quiz import QuizGenerationError, QuizService
 from services.quiz_attempt import QuizAttemptService
 from services.retrieval_material import RetrievalMaterialError
 from services.text_generation import (
+    IncompatibleModelError,
     TextGenerationError,
+    UnavailableModelError,
     get_text_generation_provider,
     resolve_effective_model,
 )
-from utils.ai_errors import ai_generation_http_exception
+from utils.ai_errors import InsufficientCreditsError, ai_generation_http_exception
 from utils.authorization import AuthorizedCourse, OwnedCourse
 from utils.deps import get_current_user
 
@@ -124,7 +126,9 @@ def generate_quiz(
         TextGenerationError,
         QuizGenerationError,
         RetrievalMaterialError,
-        Exception,
+        UnavailableModelError,
+        IncompatibleModelError,
+        InsufficientCreditsError,
     ) as exc:
         raise ai_generation_http_exception(exc, feature="quiz") from exc
 

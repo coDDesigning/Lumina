@@ -154,6 +154,7 @@ describe('ConversationHistoryModal', () => {
   it('removes a thread once, and only after asking', async () => {
     const remove = vi.mocked(conversationsAPI.delete);
     remove.mockResolvedValue({ id: 18 });
+    const onDelete = vi.fn();
 
     mockGet.mockResolvedValue(TUTOR_DETAIL);
     render(
@@ -162,6 +163,7 @@ describe('ConversationHistoryModal', () => {
         courseName="Algorithms"
         onClose={vi.fn()}
         onResume={vi.fn()}
+        onDelete={onDelete}
       />,
     );
 
@@ -174,6 +176,7 @@ describe('ConversationHistoryModal', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Remove it' }));
 
     await waitFor(() => expect(remove).toHaveBeenCalledWith(7, 18));
+    expect(onDelete).toHaveBeenCalledWith(18);
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: /Tutoring 18/ })).toBeNull(),
     );

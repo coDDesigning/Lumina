@@ -168,6 +168,8 @@ class RequestSizeLimitMiddleware:
     def _content_length(scope: Scope) -> int | None:
         for name, value in scope.get("headers", []):
             if name.lower() == b"content-length":
+                if not value or not value.isdigit():
+                    return None
                 try:
                     return int(value)
                 except ValueError:
@@ -176,10 +178,23 @@ class RequestSizeLimitMiddleware:
 
     @staticmethod
     def _has_ambiguous_framing(scope: Scope) -> bool:
-        header_names = {name.lower() for name, _value in scope.get("headers", [])}
-        return (
-            b"content-length" in header_names and b"transfer-encoding" in header_names
+        headers = scope.get("headers", [])
+        content_lengths = [
+            value for name, value in headers if name.lower() == b"content-length"
+        ]
+        has_transfer_encoding = any(
+            name.lower() == b"transfer-encoding" for name, _value in headers
         )
+        if content_lengths and has_transfer_encoding:
+            return True
+
+        if any(not value or not value.isdigit() for value in content_lengths):
+            return True
+        try:
+            parsed_lengths = [int(value) for value in content_lengths]
+        except ValueError:
+            return True
+        return len(set(parsed_lengths)) > 1
 
     @staticmethod
     async def _send_invalid_framing(

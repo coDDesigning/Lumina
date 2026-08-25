@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
 from backend.app.models import User
+from schemas.ai_usage import AiCostReport
 from schemas.credits import (
     CreditChangeRequest,
     CreditMutationResponse,
@@ -12,6 +13,7 @@ from schemas.credits import (
 )
 from schemas.response import BaseResponse
 from schemas.user import Role, UserResponse, UserUpdate
+from services.ai_cost_reporting import build_ai_cost_report
 from services.credits import (
     DEFAULT_HISTORY_LIMIT,
     MAX_HISTORY_LIMIT,
@@ -23,6 +25,28 @@ from utils.deps import get_current_admin
 from utils.exceptions import NotFoundException
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
+
+
+@router.get(
+    "/ai-costs",
+    response_model=BaseResponse[AiCostReport],
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Administrator privileges required"},
+        422: {"description": "The reporting period is out of range"},
+    },
+)
+def get_ai_costs(
+    current_admin: Annotated[UserResponse, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    days: Annotated[int, Query(ge=1, le=366)] = 30,
+):
+    """Summarize persisted provider-cost estimates in UTC day buckets."""
+    return BaseResponse(
+        success=True,
+        message="AI cost report retrieved",
+        data=build_ai_cost_report(db, days=days),
+    )
 
 
 @router.get(

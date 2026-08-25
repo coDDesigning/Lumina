@@ -56,12 +56,15 @@ def generate_prompt(
             effective_model=effective_model,
             require_json_mode=True,
         )
+        telemetry_provider, telemetry_model = effective_model.split(":", 1)
 
         generated_prompt = PromptGeneratorService.generate(
             request.description,
             provider,
             db=db,
             user_id=current_user.id,
+            telemetry_provider=telemetry_provider,
+            telemetry_model=telemetry_model,
         )
 
     except (TextGenerationError, PromptGenerationError, Exception) as exc:

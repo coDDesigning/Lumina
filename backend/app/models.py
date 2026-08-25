@@ -1304,9 +1304,20 @@ class AiUsageLog(Base):
 
     __tablename__ = "ai_usage_logs"
     __table_args__ = (
+        CheckConstraint(
+            "estimated_cost_usd IS NULL OR "
+            "(estimated_cost_usd >= 0 AND estimated_cost_usd <= 1000000)",
+            name="ck_ai_usage_logs_estimated_cost_range",
+        ),
+        CheckConstraint(
+            "(estimated_cost_usd IS NULL AND pricing_version IS NULL) OR "
+            "(estimated_cost_usd IS NOT NULL AND pricing_version IS NOT NULL)",
+            name="ck_ai_usage_logs_pricing_pair",
+        ),
         Index("ix_ai_usage_logs_user_created", "user_id", "created_at"),
         Index("ix_ai_usage_logs_course_created", "course_id", "created_at"),
         Index("ix_ai_usage_logs_type_created", "generation_type", "created_at"),
+        Index("ix_ai_usage_logs_success_created", "success", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -1318,13 +1329,15 @@ class AiUsageLog(Base):
     )
     generation_type: Mapped[str] = mapped_column(String(50), index=True)
     provider: Mapped[str] = mapped_column(String(50))
-    model: Mapped[str] = mapped_column(String(100))
+    model: Mapped[str] = mapped_column(String(128))
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     success: Mapped[bool] = mapped_column(Boolean)
     error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    estimated_cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pricing_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -1339,8 +1352,8 @@ class CreditTransaction(Base):
     The ledger is append-only: a mistake is corrected by a new, opposing
     transaction, never by editing or deleting an existing row. For every
     account with a non-null balance, ``users.credits`` equals the sum of that
-    account's deltas. Accounts with a null balance are not metered and own no
-    transactions. See docs/credits.md.
+    account's deltas. Accounts with a null balance are not metered; retained
+    history remains immutable across role transitions. See docs/credits.md.
     """
 
     __tablename__ = "credit_transactions"

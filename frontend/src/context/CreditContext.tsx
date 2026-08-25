@@ -35,40 +35,74 @@ interface CreditContextType {
 const CreditContext = createContext<CreditContextType | undefined>(undefined);
 
 export const CreditProvider = ({ children }: { children: ReactNode }) => {
-  const { isAuthenticated } = useAuth();
-  const [status, setStatus] = useState<CreditStatus | null>(null);
+  const { isAuthenticated, user } = useAuth();
+  const identity = user?.id ?? null;
+  const [snapshot, setSnapshot] = useState<{
+    identity: number;
+    status: CreditStatus | null;
+    error: string | null;
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const inFlight = useRef(false);
+  const inFlight = useRef<{ identity: number; request: Promise<void> } | null>(null);
+  const trailingRefresh = useRef(false);
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
 
-  const refresh = useCallback(async () => {
-    if (!isAuthenticated || inFlight.current) {
-      return;
+  const refresh = useCallback((): Promise<void> => {
+    if (!isAuthenticated || identity === null) {
+      return Promise.resolve();
     }
-    inFlight.current = true;
-    setIsLoading(true);
-    try {
-      setStatus(await userAPI.getCredits());
-      setError(null);
-    } catch (err) {
-      // The previous balance is dropped rather than left to look current, but
-      // an unknown balance must never be rendered as an exhausted one.
-      setStatus(null);
-      setError(describeError(err, 'Your credit balance could not be loaded.').message);
-    } finally {
-      inFlight.current = false;
-      setIsLoading(false);
+    if (inFlight.current?.identity === identity) {
+      trailingRefresh.current = true;
+      return inFlight.current.request;
     }
-  }, [isAuthenticated]);
+
+    const requestIdentity = identity;
+    const run = async () => {
+      setIsLoading(true);
+      do {
+        trailingRefresh.current = false;
+        try {
+          const nextStatus = await userAPI.getCredits();
+          if (identityRef.current !== requestIdentity) return;
+          setSnapshot({ identity: requestIdentity, status: nextStatus, error: null });
+        } catch (err) {
+          if (identityRef.current !== requestIdentity) return;
+          // The previous balance is dropped rather than left to look current, but
+          // an unknown balance must never be rendered as an exhausted one.
+          setSnapshot({
+            identity: requestIdentity,
+            status: null,
+            error: describeError(err, 'Your credit balance could not be loaded.').message,
+          });
+        }
+      } while (trailingRefresh.current && identityRef.current === requestIdentity);
+      if (identityRef.current === requestIdentity) {
+        setIsLoading(false);
+      }
+    };
+
+    const request = run();
+    inFlight.current = { identity: requestIdentity, request };
+    void request.finally(() => {
+      if (inFlight.current?.request === request) {
+        inFlight.current = null;
+      }
+    });
+    return request;
+  }, [identity, isAuthenticated]);
 
   useEffect(() => {
+    trailingRefresh.current = false;
+    setSnapshot(null);
     if (!isAuthenticated) {
-      setStatus(null);
-      setError(null);
+      setIsLoading(false);
       return;
     }
-    void refresh();
-  }, [isAuthenticated, refresh]);
+    if (inFlight.current?.identity !== identity) {
+      void refresh();
+    }
+  }, [identity, isAuthenticated, refresh]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -90,6 +124,9 @@ export const CreditProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [isAuthenticated, refresh]);
 
+  const currentSnapshot = snapshot?.identity === identity ? snapshot : null;
+  const status = currentSnapshot?.status ?? null;
+  const error = currentSnapshot?.error ?? null;
   const isMetered = status != null && status.credits !== null;
 
   const costOf = useCallback(

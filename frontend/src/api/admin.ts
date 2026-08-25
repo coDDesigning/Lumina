@@ -1,6 +1,7 @@
 import { apiClient, unwrapData } from './client';
 import type {
   AdminCreditReason,
+  AiCostReport,
   BaseResponse,
   CreditMutation,
   CreditTransaction,
@@ -8,6 +9,13 @@ import type {
 } from './types';
 
 export const adminAPI = {
+  getAiCostReport: async (days = 30): Promise<AiCostReport> => {
+    const res = await apiClient.get<BaseResponse<AiCostReport>>(
+      `/admin/ai-costs?days=${days}`,
+    );
+    return unwrapData(res, 'Admin AI cost report');
+  },
+
   listUsers: async (options?: RequestInit): Promise<User[]> => {
     const res = await apiClient.get<BaseResponse<User[]>>(
       '/admin/users',

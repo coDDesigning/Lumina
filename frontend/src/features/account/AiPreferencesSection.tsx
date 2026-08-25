@@ -43,6 +43,7 @@ export function AiPreferencesSection() {
   const [modelError, setModelError] = useState<string | null>(null);
   const [modelNotice, setModelNotice] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
+  const [transactionError, setTransactionError] = useState<string | null>(null);
 
   const selectedId = user?.preferred_model ?? '';
   const selected = models.find((model) => model.id === selectedId) ?? null;
@@ -71,22 +72,29 @@ export function AiPreferencesSection() {
   useEffect(() => {
     if (!isMetered) {
       setTransactions([]);
+      setTransactionError(null);
       return;
     }
 
     let cancelled = false;
+    setTransactions([]);
+    setTransactionError(null);
     userAPI
       .getCreditTransactions(20)
       .then((result) => {
         if (!cancelled) setTransactions(result);
       })
-      .catch(() => {
+      .catch((caught: unknown) => {
+        if (cancelled) return;
+        setTransactionError(
+          describeError(caught, "We couldn't refresh your credit history.").message,
+        );
       });
 
     return () => {
       cancelled = true;
     };
-  }, [isMetered]);
+  }, [isMetered, status?.credits]);
 
   async function handleModelChange(modelId: string) {
     setModelError(null);
@@ -187,6 +195,8 @@ export function AiPreferencesSection() {
               </p>
             </div>
           </Card>
+
+          {transactionError ? <Alert tone="destructive">{transactionError}</Alert> : null}
 
           {transactions.length > 0 ? (
             <Card padding="none" className={styles.section}>

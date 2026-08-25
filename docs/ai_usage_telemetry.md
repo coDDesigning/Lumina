@@ -33,14 +33,20 @@ Lumina implements strict privacy-safe logging controls:
 | `course_id` | `INTEGER` (FK `courses.id`) | Yes | Course context if applicable (cascades on delete) |
 | `generation_type` | `VARCHAR(50)` | No | AI feature (`study_guide`, `quiz`, `quiz_grading`, `flashcard`, `ai_tutor`, `prompt_generator`, `course_qa`) |
 | `provider` | `VARCHAR(50)` | No | Model provider backend (e.g., `gemini`) |
-| `model` | `VARCHAR(100)` | No | Model identifier (e.g., `gemini-2.5-flash`) |
+| `model` | `VARCHAR(128)` | No | Model identifier (e.g., `gemini-2.5-flash`) |
 | `prompt_tokens` | `INTEGER` | Yes | Token count for input (prompt) when exposed by provider |
 | `completion_tokens` | `INTEGER` | Yes | Token count for output (completion) when exposed by provider |
 | `total_tokens` | `INTEGER` | Yes | Total token count when exposed by provider |
 | `latency_ms` | `INTEGER` | Yes | Provider response duration in milliseconds |
 | `success` | `BOOLEAN` | No | Boolean flag indicating whether the generation succeeded |
 | `error_category` | `VARCHAR(50)` | Yes | Stable, high-level categorical error code for failed attempts |
+| `estimated_cost_usd` | `FLOAT` | Yes | Immutable operational estimate for a successful generation; absent when tokens or configured rates are unavailable |
+| `pricing_version` | `VARCHAR(100)` | Yes | Version of `AI_MODEL_COST_RATES` used for the estimate; present exactly when `estimated_cost_usd` is present |
 | `created_at` | `TIMESTAMP WITH TIME ZONE` | No | UTC timestamp when generation occurred |
+
+Cost estimates are operational planning data, not provider invoices or user
+billing records. Failed generations are always left unpriced. Historical rows
+retain the rate version applied when the event was written.
 
 ## Data Retention
 

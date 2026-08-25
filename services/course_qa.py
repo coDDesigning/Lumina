@@ -158,19 +158,45 @@ class CourseQAService:
             raise NoReadyCourseMaterialError(NO_READY_MATERIAL_MESSAGE)
 
         query = cls.build_retrieval_query(course, question)
+
+        receipt = None
+        if resolved_user_id:
+            receipt = CreditService.charge(
+                db,
+                resolved_user_id,
+                GENERATION_CREDIT_COSTS["course_qa"],
+                source_type="course_qa",
+            )
+            if receipt is None:
+                log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
+                raise InsufficientCreditsError("Insufficient credits.")
+
         try:
             material = cls.get_course_material(db, course_id, query=query)
         except MaterialNotIndexedError:
+            db.rollback()
+            CreditService.refund(db, receipt)
             log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
             raise
         except NoRelevantMaterialError:
+            db.rollback()
+            CreditService.refund(db, receipt)
             log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
             raise
         except MaterialRetrievalError:
+            db.rollback()
+            CreditService.refund(db, receipt)
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
+        except Exception:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            raise
 
-        with acquire_generation_locks(material.document_ids):
+        with (
+            CreditService.refund_on_error(db, receipt),
+            acquire_generation_locks(material.document_ids),
+        ):
             conversation_history = ConversationService.format_history(conversation)
 
             profile_context = load_profile_knowledge_for_generation(
@@ -190,18 +216,6 @@ class CourseQAService:
                 context=prompt_context,
             )
             metadata = None
-
-            receipt = None
-            if resolved_user_id:
-                receipt = CreditService.charge(
-                    db,
-                    resolved_user_id,
-                    GENERATION_CREDIT_COSTS["course_qa"],
-                    source_type="course_qa",
-                )
-                if receipt is None:
-                    log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
-                    raise InsufficientCreditsError("Insufficient credits.")
 
             try:
                 if hasattr(provider, "generate_text_with_metadata"):

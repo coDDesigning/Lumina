@@ -47,6 +47,8 @@ class PromptGeneratorService:
         provider: TextGenerationProvider,
         db: Session | None = None,
         user_id: int | None = None,
+        telemetry_provider: str | None = None,
+        telemetry_model: str | None = None,
     ) -> PromptGenerationResponse:
         prompt_context = (
             resolve_prompt_context(db, course=None, user_id=user_id)
@@ -55,6 +57,14 @@ class PromptGeneratorService:
         )
         prompt = cls.build_prompt(description, context=prompt_context)
         metadata = None
+
+        def commit_usage() -> None:
+            if db is None:
+                return
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
 
         receipt = None
         if db is not None and user_id is not None:
@@ -71,7 +81,10 @@ class PromptGeneratorService:
                     course_id=None,
                     generation_type=GenerationType.PROMPT_GENERATOR,
                     error_category=ErrorCategory.INSUFFICIENT_CREDITS,
+                    provider=telemetry_provider,
+                    model=telemetry_model,
                 )
+                commit_usage()
                 raise InsufficientCreditsError("Insufficient credits.")
 
         try:
@@ -90,11 +103,24 @@ class PromptGeneratorService:
                     error_category=getattr(
                         exc, "error_category", ErrorCategory.PROVIDER_ERROR
                     ),
+                    provider=getattr(exc, "provider", telemetry_provider),
+                    model=getattr(exc, "model", telemetry_model),
                 )
+                commit_usage()
             raise PromptGenerationError("Text generation provider failed.") from exc
         except Exception:
             if db is not None and user_id is not None:
                 CreditService.refund(db, receipt)
+                AiUsageLogger.log_failure(
+                    db,
+                    user_id=user_id,
+                    course_id=None,
+                    generation_type=GenerationType.PROMPT_GENERATOR,
+                    error_category=ErrorCategory.UNKNOWN_ERROR,
+                    provider=telemetry_provider,
+                    model=telemetry_model,
+                )
+                commit_usage()
             raise
 
         try:
@@ -108,8 +134,11 @@ class PromptGeneratorService:
                     course_id=None,
                     generation_type=GenerationType.PROMPT_GENERATOR,
                     error_category=ErrorCategory.INVALID_STRUCTURE,
+                    provider=metadata.provider if metadata else telemetry_provider,
+                    model=metadata.model if metadata else telemetry_model,
                     latency_ms=metadata.latency_ms if metadata else None,
                 )
+                commit_usage()
             raise PromptGenerationError(
                 "Generated prompt has an invalid structure."
             ) from exc
@@ -121,6 +150,9 @@ class PromptGeneratorService:
                 course_id=None,
                 generation_type=GenerationType.PROMPT_GENERATOR,
                 metadata=metadata,
+                provider=telemetry_provider,
+                model=telemetry_model,
             )
+            commit_usage()
 
         return validated

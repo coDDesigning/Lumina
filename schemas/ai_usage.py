@@ -1,4 +1,8 @@
+from datetime import date
 from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel
 
 
 class GenerationType(str, Enum):
@@ -24,3 +28,26 @@ class ErrorCategory(str, Enum):
     AUTHENTICATION_ERROR = "authentication_error"
     INSUFFICIENT_CREDITS = "insufficient_credits"
     UNKNOWN_ERROR = "unknown_error"
+
+
+class AiCostTotals(BaseModel):
+    successful_generations: int
+    prompt_tokens: int
+    completion_tokens: int
+    estimated_cost_usd: float
+    unpriced_generations: int
+
+
+class AiCostDailyRow(AiCostTotals):
+    date: date
+    provider: str
+    model: str
+    pricing_version: str | None = None
+
+
+class AiCostReport(BaseModel):
+    timezone: Literal["UTC"] = "UTC"
+    start_date: date
+    end_date: date
+    totals: AiCostTotals
+    daily: list[AiCostDailyRow]

@@ -183,21 +183,23 @@ class UserService:
     @staticmethod
     def update_user(db: Session, email: str, update_data: UserUpdate) -> UserResponse:
         """Updates specific fields of a user by email."""
-        user = UserService.get_user_by_email(db, email)
-        if not user:
+        canonical_email = UserService.canonicalize_email(email)
+        if canonical_email is None:
+            raise NotFoundException("User not found")
+        user = db.scalar(
+            select(User)
+            .options(selectinload(User.role))
+            .where(User.email == canonical_email)
+            .with_for_update(of=User)
+        )
+        if user is None:
             raise NotFoundException("User not found")
 
         update_dict = update_data.model_dump(exclude_unset=True)
         role = update_dict.pop("role", None)
-        remetered = False
         if role is not None:
-            previous_role = Role(user.role.name)
             user.role = UserService._get_role(db, role)
-            if role == Role.ADMIN:
-                user.credits = None
-            elif previous_role == Role.ADMIN and user.credits is None:
-                user.credits = settings.credit_initial_grant
-                remetered = True
+            CreditService.apply_role_metering(db, user, is_admin=role == Role.ADMIN)
 
         education_level = update_dict.get("education_level")
         if education_level is not None:
@@ -211,9 +213,6 @@ class UserService:
 
         for field, value in update_dict.items():
             setattr(user, field, value)
-
-        if remetered:
-            CreditService.record_metering_reset(db, user)
 
         db.commit()
         db.refresh(user)

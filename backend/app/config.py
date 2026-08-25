@@ -6,10 +6,10 @@ No other module should call os.getenv for application configuration -
 this file is the single source of truth for "what the environment says".
 """
 
+import json
 import math
 import os
 import re
-import json
 import secrets
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from dataclasses import dataclass
@@ -105,6 +105,8 @@ DEFAULT_AI_GENERATION_MAX_ATTEMPTS = 3
 DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS = 10.0
 DEFAULT_AI_GENERATION_MAX_CONCURRENCY = 10
+MAX_AI_MODEL_COST_RATE_USD_PER_MILLION = 1_000_000.0
+MAX_AI_EVENT_ESTIMATED_COST_USD = 1_000_000.0
 DEFAULT_DATABASE_POOL_SIZE = 5
 DEFAULT_DATABASE_MAX_OVERFLOW = 5
 DEFAULT_DATABASE_POOL_RECYCLE_SECONDS = 900
@@ -156,6 +158,8 @@ class Settings:
     # AI provider configuration
     ai_provider: str
     ai_model_catalog: dict[str, list[dict[str, object]]]
+    ai_pricing_version: str | None
+    ai_model_cost_rates: dict[str, dict[str, float]]
     gemini_api_key: str | None
     ollama_base_url: str
     ollama_model: str
@@ -430,6 +434,7 @@ def load_settings() -> Settings:
             f"the context window with the prompt (got {ollama_num_predict} > {ollama_num_ctx})."
         )
     ai_model_catalog = _ai_model_catalog_setting(ollama_model, ollama_num_ctx)
+    ai_pricing_version, ai_model_cost_rates = _ai_model_cost_rates_setting()
     ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
     if ai_fallback_providers_raw:
         for fallback_token in (
@@ -784,6 +789,8 @@ def load_settings() -> Settings:
         bootstrap_admin_token=bootstrap_admin_token or None,
         ai_provider=ai_provider,
         ai_model_catalog=ai_model_catalog,
+        ai_pricing_version=ai_pricing_version,
+        ai_model_cost_rates=ai_model_cost_rates,
         gemini_api_key=gemini_api_key,
         ollama_base_url=ollama_base_url,
         ollama_model=ollama_model,
@@ -1106,6 +1113,88 @@ def _ai_model_catalog_setting(
             seen_models.add(model)
 
     return parsed
+
+
+def _ai_model_cost_rates_setting() -> tuple[str | None, dict[str, dict[str, float]]]:
+    raw_value = os.getenv("AI_MODEL_COST_RATES", "").strip()
+    if not raw_value:
+        return None, {}
+
+    try:
+        configured = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("AI_MODEL_COST_RATES must be valid JSON.") from exc
+    if not isinstance(configured, dict) or set(configured) != {"version", "models"}:
+        raise ValueError(
+            "AI_MODEL_COST_RATES must contain exactly 'version' and 'models'."
+        )
+
+    version = configured["version"]
+    models = configured["models"]
+    if not isinstance(version, str) or not version.strip() or len(version) > 100:
+        raise ValueError(
+            "AI_MODEL_COST_RATES version must be a non-empty string of at most 100 characters."
+        )
+    if not isinstance(models, dict):
+        raise ValueError("AI_MODEL_COST_RATES models must be a JSON object.")
+
+    normalized: dict[str, dict[str, float]] = {}
+    expected_fields = {
+        "prompt_usd_per_million_tokens",
+        "completion_usd_per_million_tokens",
+    }
+    for identity, rates in models.items():
+        if not isinstance(identity, str) or not identity.strip() or len(identity) > 200:
+            raise ValueError(
+                "AI_MODEL_COST_RATES model keys must be non-empty provider:model strings."
+            )
+        provider, separator, model = identity.strip().partition(":")
+        model = model.strip()
+        if not separator or provider not in IMPLEMENTED_AI_PROVIDERS or not model:
+            raise ValueError(
+                "AI_MODEL_COST_RATES model keys must use an implemented provider:model identity."
+            )
+        if len(model) > 128:
+            raise ValueError(
+                "AI_MODEL_COST_RATES model names must be at most 128 characters."
+            )
+        normalized_identity = f"{provider}:{model}"
+        if normalized_identity in normalized:
+            raise ValueError(
+                f"AI_MODEL_COST_RATES contains duplicate model '{normalized_identity}'."
+            )
+        if not isinstance(rates, dict) or set(rates) != expected_fields:
+            raise ValueError(
+                f"AI_MODEL_COST_RATES entry '{identity}' must contain exactly "
+                "prompt_usd_per_million_tokens and completion_usd_per_million_tokens."
+            )
+
+        normalized_rates: dict[str, float] = {}
+        for field in expected_fields:
+            value = rates[field]
+            if isinstance(value, bool):
+                raise ValueError(
+                    f"AI_MODEL_COST_RATES {identity}.{field} must be a number."
+                )
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"AI_MODEL_COST_RATES {identity}.{field} must be a number."
+                ) from exc
+            if (
+                not math.isfinite(numeric)
+                or numeric < 0
+                or numeric > MAX_AI_MODEL_COST_RATE_USD_PER_MILLION
+            ):
+                raise ValueError(
+                    f"AI_MODEL_COST_RATES {identity}.{field} must be between 0 and "
+                    f"{MAX_AI_MODEL_COST_RATE_USD_PER_MILLION}."
+                )
+            normalized_rates[field] = numeric
+        normalized[normalized_identity] = normalized_rates
+
+    return version.strip(), normalized
 
 
 def _positive_integer_setting(name: str, default: int) -> int:

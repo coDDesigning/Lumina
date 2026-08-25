@@ -79,6 +79,32 @@ describe('adminAPI', () => {
     );
   });
 
+  it('reads the UTC provider cost report', async () => {
+    const report = {
+      timezone: 'UTC',
+      start_date: '2026-07-26',
+      end_date: '2026-08-24',
+      totals: {
+        successful_generations: 1,
+        prompt_tokens: 100,
+        completion_tokens: 200,
+        estimated_cost_usd: 0.001,
+        unpriced_generations: 0,
+      },
+      daily: [],
+    } as const;
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ success: true, message: 'ok', data: report }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await adminAPI.getAiCostReport()).toEqual(report);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/ai-costs?days=30',
+      expect.objectContaining({ headers: expect.any(Headers) }),
+    );
+  });
+
   it('bans user successfully', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       jsonResponse({

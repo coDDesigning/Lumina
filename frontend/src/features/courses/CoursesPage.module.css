@@ -157,6 +157,11 @@
   margin: 0;
 }
 
+.studyTime {
+  display: block;
+  color: var(--text-subtle);
+}
+
 .cardActions {
   position: absolute;
   top: var(--space-3);

@@ -72,6 +72,7 @@ beforeEach(() => {
   mockGetCredits.mockResolvedValue(STATUS);
   mockQuizList.mockResolvedValue([]);
   mockProgress.mockResolvedValue({
+    status: 'practiced',
     attempts_count: 2,
     average_score: 0.5,
     topic_mastery: [

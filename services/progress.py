@@ -9,6 +9,7 @@ from backend.app.models import (
     QuizAttempt,
 )
 from schemas.progress import CourseProgressSummary
+from services.course_status import NO_DOCUMENTS, derive_status, document_signals
 
 
 class ProgressService:
@@ -31,12 +32,13 @@ class ProgressService:
             return []
 
         attempts = {
-            course_id: (count, average, last_attempt)
-            for course_id, count, average, last_attempt in db.execute(
+            course_id: (count, average, time_spent, last_attempt)
+            for course_id, count, average, time_spent, last_attempt in db.execute(
                 select(
                     Quiz.course_id,
                     func.count(QuizAttempt.id),
                     func.avg(QuizAttempt.score),
+                    func.sum(QuizAttempt.time_spent_seconds),
                     func.max(QuizAttempt.created_at),
                 )
                 .join(Quiz, Quiz.id == QuizAttempt.quiz_id)
@@ -73,9 +75,13 @@ class ProgressService:
             ).all()
         )
 
+        signals = document_signals(db, course_ids)
+
         summaries: list[CourseProgressSummary] = []
         for course_id in course_ids:
-            count, average, last_attempt = attempts.get(course_id, (0, None, None))
+            count, average, time_spent, last_attempt = attempts.get(
+                course_id, (0, None, None, None)
+            )
             average_score = float(average) if average is not None else None
             stamps = [
                 stamp
@@ -89,12 +95,20 @@ class ProgressService:
             summaries.append(
                 CourseProgressSummary(
                     course_id=course_id,
+                    status=derive_status(
+                        signals=signals.get(course_id, NO_DOCUMENTS),
+                        attempts_count=count,
+                        average_score=average_score,
+                    ),
                     attempts_count=count,
                     average_score=average_score,
                     completion=(
                         min(1.0, max(0.0, average_score))
                         if average_score is not None
                         else None
+                    ),
+                    total_time_spent_seconds=(
+                        int(time_spent) if time_spent is not None else None
                     ),
                     last_activity=max(stamps) if stamps else None,
                 )

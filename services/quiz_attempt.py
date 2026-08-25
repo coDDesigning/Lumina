@@ -23,6 +23,7 @@ from schemas.quiz_attempt import (
     QuizHistoryItem,
     TopicMastery,
 )
+from services.course_status import NO_DOCUMENTS, derive_status, document_signals
 from services.quiz import QuizService, parse_correct_answer
 from services.quiz_grading import ProviderFactory, QuizGradingService
 from utils.exceptions import BadRequestException, NotFoundException
@@ -49,6 +50,7 @@ class _ProgressAggregate:
 
     attempts_count: int
     average_score: float | None
+    total_time_spent_seconds: int | None
     completion: float
     correct_count: int
     incorrect_count: int
@@ -294,10 +296,16 @@ class QuizAttemptService:
         completion = (
             min(1.0, max(0.0, average_score)) if average_score is not None else 0.0
         )
+        recorded_times = [
+            attempt.time_spent_seconds
+            for attempt in attempts
+            if attempt.time_spent_seconds is not None
+        ]
 
         return _ProgressAggregate(
             attempts_count=attempts_count,
             average_score=average_score,
+            total_time_spent_seconds=sum(recorded_times) if recorded_times else None,
             completion=completion,
             correct_count=correct_count,
             incorrect_count=incorrect_count,
@@ -363,11 +371,18 @@ class QuizAttemptService:
         user_id: int,
     ) -> CourseProgressResponse:
         summary = cls._aggregate(db, course_id, user_id)
+        signals = document_signals(db, [course_id])
 
         return CourseProgressResponse(
+            status=derive_status(
+                signals=signals.get(course_id, NO_DOCUMENTS),
+                attempts_count=summary.attempts_count,
+                average_score=summary.average_score,
+            ),
             quizzes_completed=summary.attempts_count,
             attempts_count=summary.attempts_count,
             average_score=summary.average_score,
+            total_time_spent_seconds=summary.total_time_spent_seconds,
             correct_count=summary.correct_count,
             incorrect_count=summary.incorrect_count,
             total_questions_answered=summary.total_questions_answered,

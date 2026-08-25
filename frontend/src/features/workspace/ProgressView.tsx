@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { CircleDot, Target, TrendingUp } from 'lucide-react';
 import type { CourseProgressResponse, MasteryStatus } from '@/api/types';
 import { cx } from '@/lib/cx';
+import { formatStudyTime } from '@/lib/formatStudyTime';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
 import type { BadgeTone } from '@/ui/Badge';
@@ -65,6 +66,10 @@ export function ProgressView({
   const topicMastery = progress?.topic_mastery ?? [];
   const weakTopics = progress?.weak_topics ?? [];
   const history = progress?.quiz_history ?? [];
+  const totalStudyTime =
+    progress?.total_time_spent_seconds != null
+      ? formatStudyTime(progress.total_time_spent_seconds)
+      : null;
   const averagePercent =
     progress?.average_score != null ? Math.round(progress.average_score * 100) : null;
 
@@ -202,8 +207,17 @@ export function ProgressView({
           <h2 id="history-heading" className={styles.heading}>
             Every attempt
           </h2>
+          {totalStudyTime !== null ? (
+            <p className={cx(styles.historyTotal, 'tabular')}>
+              {totalStudyTime} spent answering questions in this course
+            </p>
+          ) : null}
           <ol className={styles.history}>
             {history.map((item) => {
+              const spent =
+                item.time_spent_seconds != null
+                  ? formatStudyTime(item.time_spent_seconds)
+                  : null;
               const content = (
                 <>
                   <span className={styles.historyDate}>{formatDate(item.created_at)}</span>
@@ -213,6 +227,9 @@ export function ProgressView({
                   <span className={cx(styles.historyDetail, 'tabular')}>
                     {item.correct_count} of {item.total_questions}
                   </span>
+                  {spent !== null ? (
+                    <span className={cx(styles.historyTime, 'tabular')}>{spent}</span>
+                  ) : null}
                 </>
               );
 
@@ -222,7 +239,7 @@ export function ProgressView({
                     <Link
                       to={`/courses/${courseId}/practice/${item.quiz_id}/attempts/${item.attempt_id}`}
                       className={styles.historyLink}
-                      aria-label={`Review attempt from ${formatDate(item.created_at)}: ${Math.round(item.score * 100)}%`}
+                      aria-label={`Review attempt from ${formatDate(item.created_at)}: ${Math.round(item.score * 100)}%${spent !== null ? `, ${spent} spent` : ''}`}
                     >
                       {content}
                     </Link>

@@ -1,4 +1,5 @@
 import anyio
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
@@ -196,6 +197,61 @@ def test_ambiguous_upload_framing_is_rejected() -> None:
     )
     assert response_start["status"] == 400
     assert (b"connection", b"close") in response_start["headers"]
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [(b"content-length", b"invalid")],
+        [(b"content-length", b"-1")],
+        [(b"content-length", b"+1")],
+        [(b"content-length", b" 1")],
+        [(b"content-length", b"1 ")],
+        [(b"content-length", b"9" * 5000)],
+        [(b"content-length", b"1"), (b"content-length", b"9")],
+    ],
+)
+def test_invalid_content_length_is_rejected_before_application(headers) -> None:
+    async def run_request() -> tuple[list[dict], bool]:
+        sent: list[dict] = []
+        app_called = False
+
+        async def receive() -> dict:
+            return {"type": "http.request", "body": b"oversized", "more_body": False}
+
+        async def send(message: dict) -> None:
+            sent.append(message)
+
+        async def consume_body(scope, receive, send) -> None:
+            nonlocal app_called
+            app_called = True
+
+        middleware = RequestSizeLimitMiddleware(
+            consume_body,
+            max_request_body_size=4,
+            max_upload_body_size=8,
+            max_concurrent_uploads=1,
+            upload_request_timeout_seconds=1,
+        )
+        await middleware(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/courses/1/documents",
+                "headers": headers,
+            },
+            receive,
+            send,
+        )
+        return sent, app_called
+
+    sent, app_called = anyio.run(run_request)
+
+    response_start = next(
+        message for message in sent if message["type"] == "http.response.start"
+    )
+    assert response_start["status"] == 400
+    assert app_called is False
 
 
 def test_upload_body_times_out_before_application_parsing() -> None:

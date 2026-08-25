@@ -473,7 +473,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             )}
           </div>
 
-          <p className={styles.sourceHint}>PDF, TXT and Markdown · up to 50 MB each</p>
+          <p className={styles.sourceHint}>PDF, TXT and Markdown</p>
         </section>
 
         <section className={styles.panel} aria-label="Conversation">

@@ -17,7 +17,7 @@ vi.mock('../../api/user', () => ({
 }));
 
 vi.mock('../../context/AuthContext', () => ({
-  useAuth: () => ({ isAuthenticated: true }),
+  useAuth: () => ({ isAuthenticated: true, user: { id: 1 } }),
 }));
 
 const mockGenerate = vi.mocked(studyGuideAPI.generate);

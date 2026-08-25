@@ -38,7 +38,8 @@ TYPED_CONVERSATIONS_REVISION = "b9c1d4e7f2a6"
 LEARNER_CONTEXT_REVISION = "a3d9e5c17b48"
 REMOVE_NOTIFICATION_SETTINGS_REVISION = "e7c1d4a8b203"
 COURSE_ARCHIVE_STATE_REVISION = "f8b4c2d1e7a3"
-HEAD_REVISION = COURSE_ARCHIVE_STATE_REVISION
+AI_USAGE_COST_REVISION = "c2a6e9f4d817"
+HEAD_REVISION = AI_USAGE_COST_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -66,7 +67,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
-        HEAD_REVISION: REMOVE_NOTIFICATION_SETTINGS_REVISION,
+        HEAD_REVISION: COURSE_ARCHIVE_STATE_REVISION,
+        COURSE_ARCHIVE_STATE_REVISION: REMOVE_NOTIFICATION_SETTINGS_REVISION,
         REMOVE_NOTIFICATION_SETTINGS_REVISION: LEARNER_CONTEXT_REVISION,
         LEARNER_CONTEXT_REVISION: TYPED_CONVERSATIONS_REVISION,
         TYPED_CONVERSATIONS_REVISION: CREDIT_LEDGER_REVISION,
@@ -263,6 +265,25 @@ def assert_upgraded_schema(database_path: Path) -> None:
             "SELECT version_num FROM alembic_version"
         ).fetchone()
         assert revision == (HEAD_REVISION,)
+
+        usage_column_rows = connection.execute(
+            "PRAGMA table_info(ai_usage_logs)"
+        ).fetchall()
+        usage_columns = {row[1] for row in usage_column_rows}
+        assert {"estimated_cost_usd", "pricing_version"} <= usage_columns
+        assert next(row[2] for row in usage_column_rows if row[1] == "model") == (
+            "VARCHAR(128)"
+        )
+        usage_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'ai_usage_logs'"
+        ).fetchone()[0]
+        assert "ck_ai_usage_logs_estimated_cost_range" in usage_sql
+        assert "ck_ai_usage_logs_pricing_pair" in usage_sql
+        usage_indexes = {
+            row[1] for row in connection.execute("PRAGMA index_list(ai_usage_logs)")
+        }
+        assert "ix_ai_usage_logs_success_created" in usage_indexes
 
         create_sql_row = connection.execute(
             "SELECT sql FROM sqlite_master "
@@ -1963,3 +1984,42 @@ def test_course_archive_state_migration(tmp_path: Path) -> None:
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone() == (HEAD_REVISION,)
+
+
+def test_ai_usage_cost_migration_preserves_existing_events(tmp_path: Path) -> None:
+    database_path = tmp_path / "ai-usage-cost.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", COURSE_ARCHIVE_STATE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        user_id = insert_legacy_user(
+            connection,
+            email="cost-migration@example.com",
+            credits=10.0,
+        )
+        usage_id = connection.execute(
+            "INSERT INTO ai_usage_logs "
+            "(user_id, generation_type, provider, model, success) "
+            "VALUES (?, 'quiz', 'gemini', 'existing-model', 1)",
+            (user_id,),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT model, estimated_cost_usd, pricing_version "
+            "FROM ai_usage_logs WHERE id = ?",
+            (usage_id,),
+        ).fetchone() == ("existing-model", None, None)
+
+    run_alembic(database_path, tmp_path, "downgrade", COURSE_ARCHIVE_STATE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(ai_usage_logs)")
+        }
+        assert "estimated_cost_usd" not in columns
+        assert "pricing_version" not in columns
+        assert connection.execute(
+            "SELECT model FROM ai_usage_logs WHERE id = ?", (usage_id,)
+        ).fetchone() == ("existing-model",)

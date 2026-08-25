@@ -62,7 +62,7 @@ VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
-HEAD_REVISION = "f8b4c2d1e7a3"
+HEAD_REVISION = "c2a6e9f4d817"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -698,6 +698,21 @@ def test_postgresql_schema_readiness_and_role_seeds(
         column["name"]: column for column in inspector.get_columns("conversations")
     }
     assert not conversation_columns["conversation_type"]["nullable"]
+    usage_columns = {
+        column["name"]: column for column in inspector.get_columns("ai_usage_logs")
+    }
+    assert usage_columns["model"]["type"].length == 128
+    assert {"estimated_cost_usd", "pricing_version"} <= set(usage_columns)
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("ai_usage_logs")
+    } >= {
+        "ck_ai_usage_logs_estimated_cost_range",
+        "ck_ai_usage_logs_pricing_pair",
+    }
+    assert {index["name"] for index in inspector.get_indexes("ai_usage_logs")} >= {
+        "ix_ai_usage_logs_success_created"
+    }
     assert {
         constraint["name"]
         for constraint in inspector.get_check_constraints("conversations")

@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -70,6 +71,7 @@ CONFIGURATION_KEYS = (
     "DEPLOYMENT_MODE",
     "AI_PROVIDER",
     "AI_MODEL_CATALOG",
+    "AI_MODEL_COST_RATES",
     "DATABASE_URL",
     "DATABASE_POOL_SIZE",
     "DATABASE_MAX_OVERFLOW",
@@ -940,6 +942,76 @@ def test_ai_model_catalog_supports_multiple_models_per_provider(
     assert len(loaded.ai_model_catalog["ollama"]) == 2
     assert loaded.ai_model_catalog["ollama"][0]["model"] == "llama3.1"
     assert loaded.ai_model_catalog["ollama"][1]["model"] == "qwen3:8b"
+
+
+def test_ai_model_cost_rates_are_versioned_and_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AI_MODEL_COST_RATES",
+        """
+        {
+          "version": "2026-08-24",
+          "models": {
+            "gemini:gemini-2.5-flash": {
+              "prompt_usd_per_million_tokens": 0.3,
+              "completion_usd_per_million_tokens": 2.5
+            }
+          }
+        }
+        """,
+    )
+
+    loaded = load_settings()
+
+    assert loaded.ai_pricing_version == "2026-08-24"
+    assert loaded.ai_model_cost_rates["gemini:gemini-2.5-flash"] == {
+        "prompt_usd_per_million_tokens": 0.3,
+        "completion_usd_per_million_tokens": 2.5,
+    }
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [
+        "{not-json",
+        '{"version":"","models":{}}',
+        '{"version":"v1","models":[]}',
+        '{"version":"v1","models":{"gemini:   ":{"prompt_usd_per_million_tokens":1,"completion_usd_per_million_tokens":2}}}',
+        '{"version":"v1","models":{"unknown:model":{"prompt_usd_per_million_tokens":1,"completion_usd_per_million_tokens":2}}}',
+        '{"version":"v1","models":{"gemini:model":{"prompt_usd_per_million_tokens":1,"completion_usd_per_million_tokens":2},"gemini:model ":{"prompt_usd_per_million_tokens":1,"completion_usd_per_million_tokens":2}}}',
+        '{"version":"v1","models":{"gemini:model":{"prompt_usd_per_million_tokens":1e308,"completion_usd_per_million_tokens":2}}}',
+        '{"version":"v1","models":{"gemini:model":{"prompt_usd_per_million_tokens":-1,"completion_usd_per_million_tokens":2}}}',
+    ],
+)
+def test_ai_model_cost_rates_reject_invalid_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    configured: str,
+) -> None:
+    monkeypatch.setenv("AI_MODEL_COST_RATES", configured)
+
+    with pytest.raises(ValueError, match="AI_MODEL_COST_RATES"):
+        load_settings()
+
+
+def test_ai_model_cost_rates_reject_model_name_beyond_telemetry_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = json.dumps(
+        {
+            "version": "v1",
+            "models": {
+                f"gemini:{'m' * 129}": {
+                    "prompt_usd_per_million_tokens": 1,
+                    "completion_usd_per_million_tokens": 2,
+                }
+            },
+        }
+    )
+    monkeypatch.setenv("AI_MODEL_COST_RATES", configured)
+
+    with pytest.raises(ValueError, match="128"):
+        load_settings()
 
 
 def test_ollama_base_url_trailing_slash_is_normalized(

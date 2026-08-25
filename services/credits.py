@@ -409,17 +409,21 @@ class CreditService:
         )
 
     @staticmethod
-    def record_metering_reset(db: Session, user: User) -> None:
-        """Re-baseline an account that just re-entered metering.
+    def apply_role_metering(db: Session, user: User, *, is_admin: bool) -> None:
+        """Apply the balance semantics of a role transition.
 
         An account leaving metering keeps its history but stops having a
         derivable balance. When it comes back, its stored deltas no longer sum
         to the balance it was given, so this writes the one row that makes them
         agree again.
         """
-        if user.credits is None:
+        if is_admin:
+            user.credits = None
+            return
+        if user.credits is not None:
             return
 
+        user.credits = settings.credit_initial_grant
         recorded = (
             db.scalar(
                 select(func.coalesce(func.sum(CreditTransaction.delta), 0.0)).where(

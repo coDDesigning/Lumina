@@ -69,6 +69,7 @@ resource "aws_iam_role" "task" {
             "s3:GetObject",
             "s3:PutObject",
             "s3:DeleteObject",
+            "s3:DeleteObjectVersion",
           ]
           Resource = ["${var.s3_bucket_arn}/*"]
         }

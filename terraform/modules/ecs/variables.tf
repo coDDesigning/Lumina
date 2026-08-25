@@ -50,6 +50,10 @@ variable "bootstrap_admin_email" {
   type = string
 }
 
+variable "ai_model_cost_rates" {
+  type = string
+}
+
 variable "api_cpu" {
   type = number
 }

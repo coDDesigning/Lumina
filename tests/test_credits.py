@@ -13,6 +13,7 @@ from services.text_generation import (
 from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from services.retrieval_material import MaterialRetrievalError
 from tests.conftest import assert_balance_is_derivable, rows, set_balance
+from utils.ai_errors import ERROR_CODE_HEADER, PUBLIC_MESSAGES, AiErrorCode
 
 
 class StubProvider:
@@ -324,12 +325,15 @@ def test_unexpected_retrieval_failure_refunds_generation_charge(
 
     monkeypatch.setattr(material_dependency, fail_retrieval)
 
-    with pytest.raises(RuntimeError, match="Unexpected retrieval defect"):
-        authz_api.client.post(
-            f"/api/courses/{authz_api.a_course_id}/{endpoint}",
-            json=payload,
-            headers=authz_api.authorization_a,
-        )
+    response = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/{endpoint}",
+        json=payload,
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 500
+    assert response.headers[ERROR_CODE_HEADER] == AiErrorCode.GENERATION_FAILED.value
+    assert response.json() == {"detail": PUBLIC_MESSAGES[AiErrorCode.GENERATION_FAILED]}
 
     with authz_api.session_factory() as session:
         assert session.get(User, authz_api.user_a_id).credits == 10.0

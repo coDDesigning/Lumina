@@ -16,6 +16,11 @@
     color var(--duration-fast) var(--ease-out);
 }
 
+.wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .button:disabled,
 .button[aria-disabled='true'] {
   opacity: 0.45;

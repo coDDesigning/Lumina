@@ -36,6 +36,8 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
         ]}
       />
 
+      <h1 className="visually-hidden">{workspace.name} progress</h1>
+
       <div className={styles.body}>
         <ProgressView
           courseId={workspace.id}

@@ -346,13 +346,26 @@ npm --prefix frontend run dev &
 node .user/scripts/shoot.mjs /tmp/ui 1440 /dashboard /courses/1 /courses/1/progress
 ```
 
-Neither is used by the app, the tests or CI. Three real defects came out of the first two
+Neither is used by the app or the build. Three real defects came out of the first two
 runs: a course link opened cold bounced to the dashboard, a focused select tiled its chevron
 across the field, and one malformed poll response took the whole workspace down.
 
+`stub_api.py` now has a second job. `frontend/e2e/` is a Playwright suite that runs against it
+plus `vite preview`, so the browser layer needs no deployed stack and stays runnable offline.
+It covers the quiz from setup to review, the sign-in routes, and axe over eight screens —
+failing on any serious or critical violation. It found the defect the token maths cannot:
+`.dangerBody` and `Alert`'s `.message` set an `opacity` on text that already carried a colour,
+blending `--destructive` from a passing 4.53:1 down to 4.03:1 while `contrast.test.ts` stayed
+green. `styles/fadedText.test.ts` now refuses that pairing outright. One contrast gap is
+documented rather than fixed: `--text-subtle` is used at 12-13px, where AA asks 4.5:1 and the
+token only guarantees 3:1, and closing it is a palette decision. See `docs/frontend_testing.md`.
+
 ## What the test suite enforces
 
-Beyond the per-screen tests, five guards catch whole classes of mistake:
+Beyond the per-screen tests, a set of guards catches whole classes of mistake. They read
+files off disk rather than rendering anything, and each one exists because something got
+through review. `docs/frontend_testing.md` lists them all; these are the ones that shape how
+you write a component:
 
 - **React warnings fail the test.** `setupTests.ts` promotes duplicate keys, invalid DOM
   nesting, missing `act`, and bad ARIA into assertion failures. These used to scroll past
@@ -370,6 +383,13 @@ Beyond the per-screen tests, five guards catch whole classes of mistake:
   and `prefers-color-scheme` in a `*.module.css`. A component that branches on
   only one of them is wrong for the third theme state, as the token section above
   explains.
+- **Coloured text may not also be faded.** `fadedText.test.ts` rejects an `opacity` in any
+  rule that sets a `color`. The palette is chosen to clear its ratios and a fade silently
+  blends it below them, somewhere only a browser can measure.
+- **No screen claims an outcome it did not produce, or prints a number the backend did not
+  send.** `features/honesty.test.ts` rejects a success notice in a screen that calls no API
+  and takes no save callback, a nullable metric coalesced to `0`, and a hardcoded stand-in
+  fixture. All three shipped once; the Honesty rules section above says what they cost.
 - **Regression tests are checked against the bug.** When you fix something, confirm the new
   test fails with the fix reverted. A test that passes either way protects nothing.
 
@@ -407,8 +427,9 @@ reached without a mouse.
 `Button` sets `white-space: nowrap`, which is right until a label carries user text: a long
 course name on the delete button pushed `/courses/:id/settings` to 413px in a 360px viewport.
 Such a label takes `wrap` instead of losing the name, because naming what is about to be
-deleted is what stops a misclick. jsdom has no layout engine, so no test in the suite can see
-this class of defect — only a real browser at a real width can.
+deleted is what stops a misclick. jsdom has no layout engine, so no component test can see
+this class of defect — only a real browser at a real width can, which is what the Playwright
+suite is for: it asserts no screen scrolls sideways at 360px.
 
 ## Server state
 

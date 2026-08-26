@@ -114,7 +114,7 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
           lowest_similarity: context.lowest_similarity ?? null,
           highest_similarity: context.highest_similarity ?? null,
           profile_knowledge_used: context.profile_knowledge_used ?? false,
-          profile_knowledge_items_used: context.profile_knowledge_items_used ?? 0,
+          profile_knowledge_items_used: context.profile_knowledge_items_used ?? null,
         }
       : null;
 

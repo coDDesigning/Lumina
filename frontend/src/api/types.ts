@@ -231,7 +231,7 @@ export interface BoundedContext {
   chunks_used: number;
   chunks_available: number;
   profile_knowledge_used?: boolean;
-  profile_knowledge_items_used?: number;
+  profile_knowledge_items_used?: number | null;
 }
 
 /**

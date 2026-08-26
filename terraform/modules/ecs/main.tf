@@ -58,6 +58,8 @@ locals {
     { name = "FLASHCARD_MATERIAL_MAX_CHARS", value = "120000" },
     { name = "AI_TUTOR_MATERIAL_MAX_CHARS", value = "120000" },
     { name = "COURSE_QA_MATERIAL_MAX_CHARS", value = "120000" },
+    { name = "COURSE_PURGE_INTERVAL_SECONDS", value = tostring(var.course_purge_interval_seconds) },
+    { name = "EMBEDDING_BACKFILL_INTERVAL_SECONDS", value = tostring(var.embedding_backfill_interval_seconds) },
   ]
 
   app_secrets = [
@@ -131,5 +133,19 @@ locals {
     environment = local.common_env
     secrets     = local.migrate_secrets
     command     = ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check"]
+  })
+
+  course_purge_container = merge(local.container_base, {
+    name        = "course-purge"
+    environment = local.worker_env
+    secrets     = local.app_secrets
+    command     = ["python", "-m", "workers.course_purge"]
+  })
+
+  embedding_backfill_container = merge(local.container_base, {
+    name        = "embedding-backfill"
+    environment = local.worker_env
+    secrets     = local.app_secrets
+    command     = ["python", "-m", "workers.embedding_backfill"]
   })
 }

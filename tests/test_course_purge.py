@@ -323,3 +323,126 @@ def test_purge_command_passes_its_arguments_through(monkeypatch, capsys) -> None
 
     assert received == {"course_id": 7, "dry_run": True}
     assert "examined=0 purged=0 failed=0" in capsys.readouterr().out
+
+
+def test_purge_worker_runs_periodically_and_stops_cleanly(monkeypatch) -> None:
+    runs = 0
+    stop = course_purge._SignalStopEvent()
+
+    def mock_run_purge(**kwargs):
+        nonlocal runs
+        runs += 1
+        if runs >= 2:
+            stop.requested = True
+        return PurgeReport(courses_examined=1, courses_purged=1)
+
+    monkeypatch.setattr(course_purge, "check_purge_ready", lambda **k: None)
+    monkeypatch.setattr(course_purge, "run_purge", mock_run_purge)
+
+    course_purge.run_purge_worker(
+        interval_seconds=0.01,
+        stop_event=stop,
+        session_factory=lambda: None,
+        storage=object(),
+        vector_store=object(),
+    )
+
+    assert runs == 2
+
+
+def test_purge_worker_once_mode(monkeypatch) -> None:
+    runs = 0
+
+    def mock_run_purge(**kwargs):
+        nonlocal runs
+        runs += 1
+        return PurgeReport()
+
+    monkeypatch.setattr(course_purge, "check_purge_ready", lambda **k: None)
+    monkeypatch.setattr(course_purge, "run_purge", mock_run_purge)
+
+    course_purge.run_purge_worker(
+        interval_seconds=10.0,
+        once=True,
+        session_factory=lambda: None,
+        storage=object(),
+        vector_store=object(),
+    )
+
+    assert runs == 1
+
+
+def test_purge_worker_survives_iteration_failure(monkeypatch) -> None:
+    runs = 0
+    stop = course_purge._SignalStopEvent()
+
+    def mock_run_purge(**kwargs):
+        nonlocal runs
+        runs += 1
+        if runs == 1:
+            raise RuntimeError("transient db error")
+        stop.requested = True
+        return PurgeReport()
+
+    monkeypatch.setattr(course_purge, "check_purge_ready", lambda **k: None)
+    monkeypatch.setattr(course_purge, "run_purge", mock_run_purge)
+
+    course_purge.run_purge_worker(
+        interval_seconds=0.01,
+        stop_event=stop,
+        session_factory=lambda: None,
+        storage=object(),
+        vector_store=object(),
+    )
+
+    assert runs == 2
+
+
+def test_purge_worker_readiness_failure(monkeypatch) -> None:
+    def fail_readiness(**kwargs):
+        raise course_purge.ReadinessError("storage unavailable")
+
+    monkeypatch.setattr(course_purge, "check_purge_ready", fail_readiness)
+
+    with pytest.raises(course_purge.ReadinessError):
+        course_purge.run_purge_worker(
+            interval_seconds=0.01,
+            session_factory=lambda: None,
+            storage=object(),
+            vector_store=object(),
+        )
+
+
+def test_purge_check_cli(monkeypatch) -> None:
+    called = False
+
+    def mock_check():
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(course_purge, "check_purge_ready", mock_check)
+    course_purge.main(["--check"])
+    assert called is True
+
+
+def test_purge_check_cli_failure_exits_nonzero(monkeypatch) -> None:
+    def fail_check():
+        raise course_purge.ReadinessError("db down")
+
+    monkeypatch.setattr(course_purge, "check_purge_ready", fail_check)
+    with pytest.raises(SystemExit) as exc:
+        course_purge.main(["--check"])
+    assert exc.value.code == 1
+
+
+def test_purge_worker_cli_with_interval(monkeypatch) -> None:
+    called_with = {}
+
+    def mock_worker(**kwargs):
+        called_with.update(kwargs)
+
+    monkeypatch.setattr(course_purge, "run_purge_worker", mock_worker)
+    course_purge.main(["--interval-seconds", "300", "--once"])
+
+    assert called_with["interval_seconds"] == 300.0
+    assert called_with["once"] is True

@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import { Check, X } from 'lucide-react';
+import { isOptionBased } from '@/api/types';
 import type { QuizQuestionView } from '@/api/types';
 import { cx } from '@/lib/cx';
 import { MAX_ANSWER_TEXT_CHARS, OPEN_ENDED_ROWS, SHORT_ANSWER_ROWS } from './answerDraft';
@@ -49,7 +50,7 @@ export function QuizAnswerField({ question, draft, onChange }: QuizAnswerFieldPr
     );
   }
 
-  if (question.options) {
+  if (isOptionBased(question.question_type) && question.options) {
     return (
       <fieldset className={styles.fieldset}>
         <legend className="visually-hidden">Choose one answer</legend>

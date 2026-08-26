@@ -22,7 +22,6 @@ function output(content: unknown, overrides: Partial<GeneratedOutputDetail> = {}
     id: 5,
     course_id: 10,
     output_type: 'flashcards',
-    topic: 'Sorting',
     created_at: '2026-08-23T10:00:00Z',
     user_id: 1,
     model_used: 'ollama:qwen3:8b',

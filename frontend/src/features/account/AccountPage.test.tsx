@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { APIError } from '@/api/client'
 import type { CreditStatus } from '@/api/types'
 import { ThemeProvider } from '@/app/ThemeProvider'
 import AccountAppearancePage from './AccountAppearancePage'
@@ -69,6 +70,7 @@ vi.mock('@/api/profileKnowledge', () => ({
 vi.mock('@/api/user', () => ({
   userAPI: {
     updatePreferredModel: vi.fn(),
+    updateEducationLevel: vi.fn(),
     getCreditTransactions: vi.fn(),
   },
 }))
@@ -78,6 +80,7 @@ const mockKnowledgeList = vi.mocked(profileKnowledgeAPI.list)
 const mockKnowledgeCreate = vi.mocked(profileKnowledgeAPI.create)
 const mockKnowledgeDelete = vi.mocked(profileKnowledgeAPI.delete)
 const mockUpdatePreferredModel = vi.mocked(userAPI.updatePreferredModel)
+const mockUpdateEducationLevel = vi.mocked(userAPI.updateEducationLevel)
 const mockGetCreditTransactions = vi.mocked(userAPI.getCreditTransactions)
 
 function renderAccountPage(path = '/account') {
@@ -396,5 +399,110 @@ describe('AccountPage credits', () => {
     await user.type(screen.getByLabelText('Your notes'), 'just some prose with no colon')
 
     expect(screen.getByRole('button', { name: /Save/ })).toBeDisabled()
+  })
+})
+
+describe('when the account cannot be saved', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockModelsList.mockResolvedValue([
+      {
+        id: 'gemini-1.5-flash',
+        model: 'gemini-1.5-flash',
+        display_name: 'Gemini 1.5 Flash',
+        provider: 'gemini',
+        is_default: true,
+        cost_hint: 'Metered (1-2 credits)',
+        capabilities: ['study_guide'],
+        description: 'Fast Google Gemini model',
+        is_local: false,
+        supports_json: true,
+      },
+      {
+        id: 'gpt-4o-mini',
+        model: 'gpt-4o-mini',
+        display_name: 'GPT-4o Mini',
+        provider: 'openai',
+        is_default: false,
+        cost_hint: 'Metered (1 credit)',
+        capabilities: ['quiz'],
+        description: 'Compact OpenAI model',
+        is_local: false,
+        supports_json: true,
+      },
+    ])
+    mockKnowledgeList.mockResolvedValue([])
+    mockGetCreditTransactions.mockResolvedValue([])
+    creditState.status = null
+  })
+
+  it('claims no saved model when the request was refused', async () => {
+    const person = userEvent.setup()
+    mockUpdatePreferredModel.mockRejectedValue(new APIError(500, { detail: 'No.' }))
+    renderAccountPage('/account/ai')
+
+    await person.selectOptions(
+      await screen.findByLabelText('Preferred AI Model'),
+      'gpt-4o-mini',
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('No.')
+    expect(screen.queryByText(/Preferred AI model updated/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('claims no saved level when the request was refused', async () => {
+    const person = userEvent.setup()
+    mockUpdateEducationLevel.mockRejectedValue(new APIError(422, { detail: 'Unknown level.' }))
+    renderAccountPage()
+
+    await person.selectOptions(
+      await screen.findByLabelText('What are you studying at?'),
+      'graduate',
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unknown level.')
+    expect(screen.queryByText('Education level updated.')).not.toBeInTheDocument()
+  })
+
+  it('says the level was saved only once the request came back', async () => {
+    const person = userEvent.setup()
+    mockUpdateEducationLevel.mockResolvedValue(undefined as never)
+    renderAccountPage()
+
+    await person.selectOptions(
+      await screen.findByLabelText('What are you studying at?'),
+      'graduate',
+    )
+
+    expect(await screen.findByText('Education level updated.')).toBeInTheDocument()
+    expect(mockUpdateEducationLevel).toHaveBeenCalledWith('graduate')
+    expect(mockRefreshUser).toHaveBeenCalled()
+  })
+
+  it('reports a model list that could not be loaded rather than an empty one', async () => {
+    mockModelsList.mockRejectedValue(new APIError(503, { detail: 'Models are unavailable.' }))
+    renderAccountPage('/account/ai')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Models are unavailable.')
+  })
+
+  it('keeps a topic on screen when adding it was refused', async () => {
+    const person = userEvent.setup()
+    mockKnowledgeCreate.mockRejectedValue(new APIError(409, { detail: 'That topic exists.' }))
+    renderAccountPage('/account/background')
+
+    await person.click(await screen.findByRole('button', { name: 'Add a note' }))
+    await person.type(await screen.findByLabelText('Topic Name'), 'Graph Theory')
+    await person.type(
+      screen.getByLabelText('Knowledge Details & Background'),
+      'Spanning trees.',
+    )
+    await person.click(screen.getByRole('button', { name: 'Save Topic' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('That topic exists.')
+    expect(
+      screen.queryByText('Knowledge topic added successfully.'),
+    ).not.toBeInTheDocument()
   })
 })

@@ -167,17 +167,22 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
     }
   }, [answers, courseId, isSubmitting, navigate, onAttemptRecorded, quiz, workspace.id]);
 
+  const submitRef = useRef(submit);
+  useEffect(() => {
+    submitRef.current = submit;
+  }, [submit]);
+
   useEffect(() => {
     if (!quiz || isSubmitting) {
       return;
     }
     if (timeLeft <= 0) {
-      void submit();
+      void submitRef.current();
       return;
     }
     const timer = setTimeout(() => setTimeLeft((seconds) => seconds - 1), 1000);
     return () => clearTimeout(timer);
-  }, [quiz, isSubmitting, timeLeft, submit]);
+  }, [quiz, isSubmitting, timeLeft]);
 
   indexRef.current = index;
   questionsRef.current = questions.length;

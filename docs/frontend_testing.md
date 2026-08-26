@@ -30,7 +30,7 @@ npx vitest run src/context/AuthContext.test.tsx
 npx vitest run -t "upload"                 # everything matching a name
 ```
 
-The browser suite needs the stub API and a built frontend. Playwright starts both itself:
+The browser suite needs a built frontend and nothing else:
 
 ```bash
 npx playwright install chromium            # once per machine
@@ -38,9 +38,12 @@ npm run build
 npm run test:e2e                           # or: npx playwright test --ui
 ```
 
-`playwright.config.ts` launches `.user/scripts/stub_api.py` on `:8000` and `vite preview` on
-`:4173`, and reuses either if it is already running. There is no deployed stack involved, so the
-suite is runnable offline.
+`playwright.config.ts` starts `vite preview` on `:4173` and reuses it if it is already running.
+The API is answered inside the browser by `e2e/api.ts` through `page.route`, so there is no
+second process, no deployed stack, and no dependency on anything outside `frontend/` — the suite
+runs offline and on a clean checkout. A request the fixture does not recognise is answered `404`
+with the path in the body rather than reaching the network, so a screen that starts calling
+something new fails loudly instead of hanging.
 
 ## Structure and Conventions
 
@@ -159,5 +162,6 @@ changes.
 ## What is not covered
 
 - **Load and performance.** No tooling, and no acceptance criterion asks for one yet.
-- **Visual regression.** `.user/scripts/shoot.mjs` takes screenshots ad hoc; nothing compares them.
+- **Visual regression.** Nothing captures or compares screenshots. Local scratch tooling may
+  exist under `.user/`, but nothing committed depends on it.
 - **Firefox and WebKit.** The Playwright config runs Chromium only.

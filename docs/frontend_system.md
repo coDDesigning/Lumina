@@ -346,14 +346,19 @@ npm --prefix frontend run dev &
 node .user/scripts/shoot.mjs /tmp/ui 1440 /dashboard /courses/1 /courses/1/progress
 ```
 
-Neither is used by the app or the build. Three real defects came out of the first two
+Neither is used by the app, the tests, or CI, and nothing committed may depend on them:
+`.user/` is a scratch directory that can be deleted at any time. Three real defects came out of
+the first two
 runs: a course link opened cold bounced to the dashboard, a focused select tiled its chevron
 across the field, and one malformed poll response took the whole workspace down.
 
-`stub_api.py` now has a second job. `frontend/e2e/` is a Playwright suite that runs against it
-plus `vite preview`, so the browser layer needs no deployed stack and stays runnable offline.
-It covers the quiz from setup to review, the sign-in routes, and axe over eight screens —
-failing on any serious or critical violation. It found the defect the token maths cannot:
+`frontend/e2e/` is a committed Playwright suite that covers the same ground automatically. It
+answers its own API calls in the browser and serves the built app with `vite preview`, so it
+depends on nothing outside `frontend/` — no deployed stack, no second process, and nothing
+under `.user/`, which stays a scratch directory you can delete at any time. It covers the quiz
+from setup through the practice page to the review, the sign-in routes, and axe over eight
+screens — failing on any serious or critical violation. It found the defect the token maths
+cannot:
 `.dangerBody` and `Alert`'s `.message` set an `opacity` on text that already carried a colour,
 blending `--destructive` from a passing 4.53:1 down to 4.03:1 while `contrast.test.ts` stayed
 green. `styles/fadedText.test.ts` now refuses that pairing outright. One contrast gap is

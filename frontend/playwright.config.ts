@@ -16,18 +16,10 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  webServer: [
-    {
-      command: 'python ../.user/scripts/stub_api.py',
-      url: 'http://localhost:8000/api/auth/me',
-      reuseExistingServer: !process.env.CI,
-      timeout: 30_000,
-    },
-    {
-      command: 'npm run preview -- --port 4173 --strictPort',
-      url: HOST,
-      reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
-    },
-  ],
+  webServer: {
+    command: 'npm run preview -- --port 4173 --strictPort',
+    url: HOST,
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+  },
 })

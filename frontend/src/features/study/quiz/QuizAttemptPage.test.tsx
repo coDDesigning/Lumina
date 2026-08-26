@@ -57,6 +57,10 @@ function renderPage() {
           path="/courses/:courseId/practice/:quizId"
           element={<QuizAttemptPage workspace={WORKSPACE} />}
         />
+        <Route
+          path="/courses/:courseId/practice/:quizId/attempts/:attemptId"
+          element={<p>Attempt recorded</p>}
+        />
       </Routes>
     </MemoryRouter>,
   );
@@ -129,5 +133,61 @@ describe('QuizAttemptPage question navigator', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Question 12, not answered' })).toHaveFocus(),
     );
+  });
+});
+
+function multipleChoiceQuiz(count: number): QuizView {
+  return {
+    quiz_id: 3,
+    title: 'Practice quiz',
+    questions: Array.from({ length: count }, (_, position) => ({
+      question_id: position + 1,
+      question: `Question number ${position + 1}`,
+      question_type: 'multiple_choice',
+      topic: 'Matrices',
+      options: ['First', 'Second', 'Third', 'Fourth'],
+    })),
+  } as unknown as QuizView;
+}
+
+describe('QuizAttemptPage keyboard-only completion', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGet.mockResolvedValue(multipleChoiceQuiz(2));
+    vi.mocked(quizAPI.submitAttempt).mockResolvedValue({
+      attempt_id: 88,
+      score: 1,
+      correct_count: 2,
+      graded_count: 2,
+      total_questions: 2,
+    } as never);
+  });
+
+  it('answers and hands in the whole quiz without a single pointer event', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('radio', { name: 'First' });
+
+    for (let question = 1; question <= 2; question += 1) {
+      const chosen = screen.getByRole('radio', { name: 'Second' });
+      chosen.focus();
+      await user.keyboard(' ');
+      expect(chosen).toBeChecked();
+
+      const advance = screen.getByRole('button', {
+        name: question === 2 ? 'Hand it in' : 'Next question',
+      });
+      advance.focus();
+      await user.keyboard('{Enter}');
+    }
+
+    await waitFor(() => {
+      expect(vi.mocked(quizAPI.submitAttempt)).toHaveBeenCalledTimes(1);
+    });
+    const [, , payload] = vi.mocked(quizAPI.submitAttempt).mock.calls[0];
+    expect(payload.answers).toEqual([
+      { question_id: 1, selected_option_index: 1 },
+      { question_id: 2, selected_option_index: 1 },
+    ]);
   });
 });

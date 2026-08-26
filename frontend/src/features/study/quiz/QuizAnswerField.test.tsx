@@ -35,7 +35,7 @@ const SHORT_ANSWER = question({
   question: 'Name a stable sort.',
   options: null,
   correct_option_index: null,
-  correct_answer: { type: 'short_answer', accepted_answers: ['Merge sort'] },
+  correct_answer: { type: 'short_answer', text: 'Merge sort', accepted_answers: ['Merge sort'] },
 });
 
 const OPEN_ENDED = question({
@@ -134,7 +134,7 @@ describe('a written question that arrived carrying options', () => {
     question: 'Name a stable sort.',
     options: ['Quicksort', 'Merge sort'],
     correct_option_index: null,
-    correct_answer: { type: 'short_answer', accepted_answers: ['Merge sort'] },
+    correct_answer: { type: 'short_answer', text: 'Merge sort', accepted_answers: ['Merge sort'] },
   });
 
   it('is still answered in writing, because that is how the answer is sent', () => {

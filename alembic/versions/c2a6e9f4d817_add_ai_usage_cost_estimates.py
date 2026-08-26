@@ -22,9 +22,7 @@ def upgrade() -> None:
     if is_postgresql:
         # autocommit_block commits these changes before the concurrent index. Keep
         # every operation restart-safe so an interrupted index build can be retried.
-        op.execute(
-            "ALTER TABLE ai_usage_logs ALTER COLUMN model TYPE VARCHAR(128)"
-        )
+        op.execute("ALTER TABLE ai_usage_logs ALTER COLUMN model TYPE VARCHAR(128)")
         op.execute(
             "ALTER TABLE ai_usage_logs ADD COLUMN IF NOT EXISTS "
             "estimated_cost_usd DOUBLE PRECISION"
@@ -81,8 +79,7 @@ def upgrade() -> None:
         )
         with op.get_context().autocommit_block():
             op.execute(
-                "DROP INDEX CONCURRENTLY IF EXISTS "
-                "ix_ai_usage_logs_success_created"
+                "DROP INDEX CONCURRENTLY IF EXISTS ix_ai_usage_logs_success_created"
             )
             op.create_index(
                 "ix_ai_usage_logs_success_created",
@@ -137,8 +134,7 @@ def downgrade() -> None:
     if is_postgresql:
         with op.get_context().autocommit_block():
             op.execute(
-                "DROP INDEX CONCURRENTLY IF EXISTS "
-                "ix_ai_usage_logs_success_created"
+                "DROP INDEX CONCURRENTLY IF EXISTS ix_ai_usage_logs_success_created"
             )
     else:
         op.drop_index("ix_ai_usage_logs_success_created", table_name="ai_usage_logs")

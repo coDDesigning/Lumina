@@ -693,7 +693,9 @@ def run_worker(
                         stop_event=stop,
                     )
                 except Exception:
-                    logger.exception("Periodic embedding backfill reconciliation failed")
+                    logger.exception(
+                        "Periodic embedding backfill reconciliation failed"
+                    )
                 next_backfill = monotonic_now + backfill_interval
 
             if stop.is_set():

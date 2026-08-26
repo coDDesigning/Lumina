@@ -63,6 +63,8 @@ interface QuizSetup {
 
 type QuizStep = 'config' | 'generating' | 'solving' | 'submitting' | 'results' | 'error';
 
+type FailedAction = 'generate' | 'submit';
+
 const SECONDS_PER_QUESTION = 60;
 const QUESTION_COUNTS = [5, 10, 15, 20];
 const LOW_TIME_SECONDS = 60;
@@ -105,6 +107,7 @@ export function QuizModal({
 }: QuizModalProps) {
   const [step, setStep] = useState<QuizStep>('config');
   const [failure, setFailure] = useState<GenerationFailure | null>(null);
+  const [failedAction, setFailedAction] = useState<FailedAction>('generate');
   const [setup, setSetup] = useState<QuizSetup>({
     questionTypes: ['multiple_choice'],
     questionCount: 5,
@@ -146,7 +149,7 @@ export function QuizModal({
   }, [defaults]);
 
   useEffect(() => {
-    if (step !== 'generating') {
+    if (step !== 'generating' && step !== 'submitting') {
       return;
     }
     setElapsed(0);
@@ -202,22 +205,28 @@ export function QuizModal({
         return;
       }
       const described = describeError(caught, 'Your answers could not be saved.');
-      setFailure({ ...described, title: 'Your answers were not saved', retryable: true, remedy: null });
+      setFailedAction('submit');
+      setFailure({ ...described, title: 'Your answers were not saved', remedy: null });
       setStep('error');
     }
   }, [answers, courseId, onAttemptRecorded, quiz]);
+
+  const submitAttemptRef = useRef(submitAttempt);
+  useEffect(() => {
+    submitAttemptRef.current = submitAttempt;
+  }, [submitAttempt]);
 
   useEffect(() => {
     if (step !== 'solving' || !setup.hasTimer) {
       return;
     }
     if (timeLeft <= 0) {
-      void submitAttempt();
+      void submitAttemptRef.current();
       return;
     }
     const timer = setTimeout(() => setTimeLeft((seconds) => seconds - 1), 1000);
     return () => clearTimeout(timer);
-  }, [step, setup.hasTimer, timeLeft, submitAttempt]);
+  }, [step, setup.hasTimer, timeLeft]);
 
   const { refresh, canAfford, costOf, isMetered } = useCredits();
   const quizSource: CreditSource = setup.questionTypes.includes('open_ended')
@@ -276,6 +285,7 @@ export function QuizModal({
         setStep('config');
         return;
       }
+      setFailedAction('generate');
       setFailure(described);
       setStep('error');
     }
@@ -501,14 +511,16 @@ export function QuizModal({
         <GeneratingState
           heading="Marking your answers"
           detail="Checking what you wrote against the material."
-          elapsed={0}
+          elapsed={elapsed}
         />
       ) : null}
 
       {step === 'error' && failure ? (
         <GenerationError
           failure={failure}
-          onRetry={() => void startQuiz()}
+          onRetry={() =>
+            void (failedAction === 'submit' ? submitAttemptRef.current() : startQuiz())
+          }
           onBroadenTopic={() => {
             setSetup((previous) => ({ ...previous, topic: ALL_TOPICS }));
             setStep('config');

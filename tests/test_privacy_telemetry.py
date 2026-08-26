@@ -129,6 +129,9 @@ def test_privacy_regression_asserts_raw_prompts_and_chunks_are_never_persisted(
     secret_marker_student_prompt = "TOP_SECRET_STUDENT_QUESTION_778899"
     secret_marker_course_chunk = "HIGHLY_CONFIDENTIAL_LECTURE_CHUNK_990011"
     secret_marker_description = "SECRET_PROJECT_DESCRIPTION_554433"
+    # The citation label is derived from the file name, so the name is now
+    # student content that reaches a prompt and must never reach telemetry.
+    secret_marker_file_name = "SECRET_FILE_MARKER_112233"
 
     with session_factory() as session:
         role = session.scalar(select(Role).where(Role.name == "user"))
@@ -150,7 +153,7 @@ def test_privacy_regression_asserts_raw_prompts_and_chunks_are_never_persisted(
         )
         doc = UploadedDocument(
             id=uuid4(),
-            original_file_name="confidential.txt",
+            original_file_name=f"{secret_marker_file_name}.txt",
             file_type="txt",
             mime_type="text/plain",
             file_size=100,
@@ -247,3 +250,52 @@ def test_privacy_regression_asserts_raw_prompts_and_chunks_are_never_persisted(
                     assert secret_marker_student_prompt not in col_val
                     assert secret_marker_course_chunk not in col_val
                     assert secret_marker_description not in col_val
+                    assert secret_marker_file_name not in col_val
+
+
+def test_dropping_a_citation_key_logs_a_count_and_never_the_key_or_label(
+    caplog,
+) -> None:
+    """A dropped key is a diagnostic count, not a record of what was cited."""
+    import logging as _logging
+    from uuid import uuid4
+
+    from services.citations import SuppliedCitation, resolve_citations
+
+    supplied = {
+        "S1": SuppliedCitation(
+            key="S1",
+            chunk_id=1,
+            document_id=uuid4(),
+            document_label="SECRET_LABEL_445566",
+            page_start=12,
+            page_end=12,
+        )
+    }
+
+    with caplog.at_level(_logging.DEBUG, logger="services.citations"):
+        resolved = resolve_citations(["S1", "SECRET_KEY_778899", "S42"], supplied)
+
+    assert [citation.key for citation in resolved] == ["S1"]
+    emitted = " ".join(record.getMessage() for record in caplog.records)
+    assert "SECRET_LABEL_445566" not in emitted
+    assert "SECRET_KEY_778899" not in emitted
+    assert "S42" not in emitted
+    assert "2" in emitted
+
+
+def test_the_observability_field_allowlist_did_not_grow() -> None:
+    """Citations must never reach a log record through a new structured field."""
+    from backend.app.observability import _ALLOWED_FIELDS
+
+    assert _ALLOWED_FIELDS == (
+        "duration_ms",
+        "error_code",
+        "exception_chain",
+        "exception_type",
+        "http_method",
+        "http_path",
+        "http_status",
+        "job_id",
+        "worker_id",
+    )

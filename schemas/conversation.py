@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from schemas.citation import Citation
+
 
 class ConversationType(StrEnum):
     COURSE_QA = "course_qa"
@@ -15,6 +17,7 @@ class ConversationMessageResponse(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     created_at: datetime
+    citations: list[Citation] = []
 
 
 class ConversationSummary(BaseModel):

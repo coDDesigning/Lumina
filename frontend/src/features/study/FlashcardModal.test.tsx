@@ -174,7 +174,32 @@ describe('when the deck arrives', () => {
     await generate();
 
     await screen.findByText('What is a stack?');
-    expect(screen.getByText(/4 of 9/)).toBeInTheDocument();
+    expect(screen.getByText(/Read 4 of 9 passages/)).toBeInTheDocument();
+  });
+
+  it('counts the profile notes it actually used', async () => {
+    mockGenerate.mockResolvedValue({
+      ...DECK,
+      profile_knowledge_used: true,
+      profile_knowledge_items_used: 3,
+    });
+    await generate();
+
+    await screen.findByText('What is a stack?');
+    expect(screen.getByText(/plus 3 notes from your profile/)).toBeInTheDocument();
+  });
+
+  it('claims no note count when the generation recorded none', async () => {
+    mockGenerate.mockResolvedValue({
+      ...DECK,
+      profile_knowledge_used: true,
+      profile_knowledge_items_used: 0,
+    });
+    await generate();
+
+    await screen.findByText('What is a stack?');
+    const report = screen.getByText(/notes from your profile/);
+    expect(report.textContent).not.toMatch(/plus 0 notes|undefined/);
   });
 });
 

@@ -109,37 +109,37 @@ module "rds_proxy" {
 }
 
 module "ecs" {
-  source                            = "./modules/ecs"
-  name_prefix                       = local.name_prefix
-  environment                       = var.environment
-  region                            = var.region
-  ecr_repository_url                = module.ecr.repository_url
-  image_tag                         = var.image_tag
-  private_subnet_ids                = module.vpc.private_subnet_ids
-  ecs_security_group_id             = module.security.security_group_id
-  alb_target_group_arn              = module.alb.target_group_arn
-  s3_bucket                         = module.s3.bucket
-  s3_bucket_arn                     = module.s3.arn
-  runtime_database_url_secret_arn   = module.rds_proxy.runtime_database_url_secret_arn
-  migration_database_url_secret_arn = module.rds.database_url_secret_arn
-  bootstrap_admin_email             = var.bootstrap_admin_email
-  ai_model_cost_rates               = var.ai_model_cost_rates
-  cors_allowed_origins              = var.cors_allowed_origins
-  api_cpu                           = var.api_cpu
-  api_memory                        = var.api_memory
-  api_min_instances                 = var.api_min_instances
-  api_max_instances                 = var.api_max_instances
-  worker_cpu                        = var.worker_cpu
-  worker_memory                     = var.worker_memory
-  worker_min_instances              = var.worker_min_instances
-  worker_max_instances              = var.worker_max_instances
-  worker_target_queue_age_seconds   = var.worker_target_queue_age_seconds
-  migrate_cpu                       = var.migrate_cpu
-  migrate_memory                    = var.migrate_memory
-  tmpfs_size_bytes                  = var.tmpfs_size_bytes
-  course_purge_interval_seconds     = var.course_purge_interval_seconds
+  source                              = "./modules/ecs"
+  name_prefix                         = local.name_prefix
+  environment                         = var.environment
+  region                              = var.region
+  ecr_repository_url                  = module.ecr.repository_url
+  image_tag                           = var.image_tag
+  private_subnet_ids                  = module.vpc.private_subnet_ids
+  ecs_security_group_id               = module.security.security_group_id
+  alb_target_group_arn                = module.alb.target_group_arn
+  s3_bucket                           = module.s3.bucket
+  s3_bucket_arn                       = module.s3.arn
+  runtime_database_url_secret_arn     = module.rds_proxy.runtime_database_url_secret_arn
+  migration_database_url_secret_arn   = module.rds.database_url_secret_arn
+  bootstrap_admin_email               = var.bootstrap_admin_email
+  ai_model_cost_rates                 = var.ai_model_cost_rates
+  cors_allowed_origins                = var.cors_allowed_origins
+  api_cpu                             = var.api_cpu
+  api_memory                          = var.api_memory
+  api_min_instances                   = var.api_min_instances
+  api_max_instances                   = var.api_max_instances
+  worker_cpu                          = var.worker_cpu
+  worker_memory                       = var.worker_memory
+  worker_min_instances                = var.worker_min_instances
+  worker_max_instances                = var.worker_max_instances
+  worker_target_queue_age_seconds     = var.worker_target_queue_age_seconds
+  migrate_cpu                         = var.migrate_cpu
+  migrate_memory                      = var.migrate_memory
+  tmpfs_size_bytes                    = var.tmpfs_size_bytes
+  course_purge_interval_seconds       = var.course_purge_interval_seconds
   embedding_backfill_interval_seconds = var.embedding_backfill_interval_seconds
-  tags                              = local.tags
+  tags                                = local.tags
 }
 
 module "secrets" {

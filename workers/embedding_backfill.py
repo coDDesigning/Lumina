@@ -382,7 +382,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                 once=arguments.once,
                 stop_event=stop_event,
                 course_id=arguments.course_id,
-                document_id=UUID(arguments.document_id) if arguments.document_id else None,
+                document_id=UUID(arguments.document_id)
+                if arguments.document_id
+                else None,
                 batch_size=arguments.batch_size,
                 dry_run=arguments.dry_run,
                 prune_orphans=arguments.prune_orphans,

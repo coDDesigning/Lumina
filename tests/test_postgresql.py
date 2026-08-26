@@ -810,9 +810,7 @@ def test_postgresql_cost_migration_resumes_after_partial_commit(
     try:
         with postgresql_engine.begin() as connection:
             connection.execute(
-                text(
-                    "ALTER TABLE ai_usage_logs ALTER COLUMN model TYPE VARCHAR(128)"
-                )
+                text("ALTER TABLE ai_usage_logs ALTER COLUMN model TYPE VARCHAR(128)")
             )
             connection.execute(
                 text(
@@ -844,9 +842,9 @@ def test_postgresql_cost_migration_resumes_after_partial_commit(
             "ck_ai_usage_logs_estimated_cost_range",
             "ck_ai_usage_logs_pricing_pair",
         }
-        assert {
-            index["name"] for index in inspector.get_indexes("ai_usage_logs")
-        } >= {"ix_ai_usage_logs_success_created"}
+        assert {index["name"] for index in inspector.get_indexes("ai_usage_logs")} >= {
+            "ix_ai_usage_logs_success_created"
+        }
     finally:
         _run_alembic("upgrade", HEAD_REVISION)
 

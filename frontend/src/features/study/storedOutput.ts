@@ -16,6 +16,15 @@ export function tryParseJson(value: unknown): unknown {
   return value;
 }
 
+function isCited(value: unknown): boolean {
+  return (
+    typeof value === 'string' ||
+    (typeof value === 'object' &&
+      value !== null &&
+      typeof (value as { text?: unknown }).text === 'string')
+  );
+}
+
 export function isRenderableStudyGuide(content: unknown): content is StudyGuideResponse {
   const parsed = tryParseJson(content);
   if (typeof parsed !== 'object' || parsed === null) {
@@ -28,7 +37,7 @@ export function isRenderableStudyGuide(content: unknown): content is StudyGuideR
 
   return (
     typeof candidate.title === 'string' &&
-    typeof candidate.summary === 'string' &&
+    isCited(candidate.summary) &&
     typeof candidate.estimated_study_time === 'string' &&
     Array.isArray(candidate.key_points) &&
     Array.isArray(candidate.important_terms) &&

@@ -117,6 +117,8 @@ def _seed_course(
     course: Course | None = None,
     created_at: datetime | None = None,
     status: str = "ready",
+    file_name: str = "retrieval.txt",
+    pages: list[tuple[int, int] | None] | None = None,
 ) -> tuple[Course, UploadedDocument, list[DocumentChunk]]:
     if course is None:
         role = session.scalar(select(Role).where(Role.name == "user"))
@@ -132,7 +134,7 @@ def _seed_course(
     document_id = uuid4()
     document = UploadedDocument(
         id=document_id,
-        original_file_name="retrieval.txt",
+        original_file_name=file_name,
         file_type="txt",
         mime_type="text/plain",
         file_size=64,
@@ -145,14 +147,17 @@ def _seed_course(
     )
     if created_at is not None:
         document.created_at = created_at
+    page_ranges = pages if pages is not None else [None] * len(texts)
     chunks = [
         DocumentChunk(
             document=document,
             course=course,
             chunk_index=index,
             text=text,
+            page_number=page_range[0] if page_range else None,
+            end_page_number=page_range[1] if page_range else None,
         )
-        for index, text in enumerate(texts)
+        for index, (text, page_range) in enumerate(zip(texts, page_ranges, strict=True))
     ]
     session.add_all([document, *chunks])
     session.flush()
@@ -192,6 +197,7 @@ def _load(db: Session, course_id: int, **overrides):
         "min_similarity": 0.0,
         "max_characters": BUDGET,
         "provider": StubEmbeddingProvider(),
+        "include_citations": False,
     }
     arguments.update(overrides)
     return load_retrieved_material(db, course_id, **arguments)
@@ -592,3 +598,161 @@ def test_never_falls_back_to_whole_corpus_assembly(
 
     with pytest.raises(MaterialRetrievalError):
         _load(db_session, course.id, store=StubVectorStore(error=VectorStoreError("v")))
+
+
+def test_supplies_one_citation_per_kept_chunk_in_emission_order(
+    db_session: Session, retrieval_store: ChromaVectorStore
+) -> None:
+    course, document, chunks = _seed_course(
+        db_session,
+        email="cite-order@example.com",
+        texts=["alpha", "beta"],
+        file_name="lecture-04.pdf",
+        pages=[(12, 12), (13, 14)],
+    )
+    _index(retrieval_store, db_session, document, chunks, [0.1, 0.0])
+
+    material = _load(
+        db_session, course.id, store=retrieval_store, include_citations=True
+    )
+
+    assert [citation.key for citation in material.citations] == ["S1", "S2"]
+    assert [citation.chunk_id for citation in material.citations] == [
+        chunks[0].id,
+        chunks[1].id,
+    ]
+    assert material.citations[0].document_label == "Lecture 4"
+    assert material.citations[0].page_start == 12
+    assert material.citations[1].page_end == 14
+
+
+def test_heads_every_supplied_passage_with_its_citation_key(
+    db_session: Session, retrieval_store: ChromaVectorStore
+) -> None:
+    course, document, chunks = _seed_course(
+        db_session,
+        email="cite-header@example.com",
+        texts=["alpha", "beta"],
+        file_name="lecture-04.pdf",
+        pages=[(12, 12), (13, 14)],
+    )
+    _index(retrieval_store, db_session, document, chunks, [0.0, 0.1])
+
+    material = _load(
+        db_session, course.id, store=retrieval_store, include_citations=True
+    )
+
+    assert material.text == CHUNK_SEPARATOR.join(
+        ["[S1] (Lecture 4, p. 12)\nalpha", "[S2] (Lecture 4, pp. 13-14)\nbeta"]
+    )
+
+
+def test_cites_a_chunk_without_a_page_by_document_alone(
+    db_session: Session, retrieval_store: ChromaVectorStore
+) -> None:
+    course, document, chunks = _seed_course(
+        db_session,
+        email="cite-nopage@example.com",
+        texts=["alpha"],
+        file_name="week_01_intro.txt",
+    )
+    _index(retrieval_store, db_session, document, chunks, [0.0])
+
+    material = _load(
+        db_session, course.id, store=retrieval_store, include_citations=True
+    )
+
+    assert material.citations[0].page_start is None
+    assert material.citations[0].page_end is None
+    assert material.text.startswith("[S1] (Week 1 Intro)\n")
+
+
+def test_gives_two_chunks_of_one_document_distinct_citation_keys(
+    db_session: Session, retrieval_store: ChromaVectorStore
+) -> None:
+    course, document, chunks = _seed_course(
+        db_session,
+        email="cite-distinct@example.com",
+        texts=["alpha", "beta"],
+        file_name="lecture-04.pdf",
+        pages=[(12, 12), (12, 12)],
+    )
+    _index(retrieval_store, db_session, document, chunks, [0.0, 0.1])
+
+    material = _load(
+        db_session, course.id, store=retrieval_store, include_citations=True
+    )
+
+    keys = [citation.key for citation in material.citations]
+    assert keys == ["S1", "S2"]
+    assert len(set(keys)) == 2
+
+
+def test_supplies_a_citation_for_exactly_the_chunks_the_budget_kept(
+    db_session: Session, retrieval_store: ChromaVectorStore
+) -> None:
+    course, document, chunks = _seed_course(
+        db_session,
+        email="cite-budget@example.com",
+        texts=["a" * 50, "b" * 50, "c" * 50],
+        file_name="lecture-04.pdf",
+    )
+    _index(retrieval_store, db_session, document, chunks, [0.0, 0.1, 0.2])
+
+    material = _load(
+        db_session,
+        course.id,
+        store=retrieval_store,
+        max_characters=160,
+        include_citations=True,
+    )
+
+    assert material.truncated is True
+    assert len(material.citations) == material.chunks_used
+    assert set(material.citation_map) == {
+        citation.key for citation in material.citations
+    }
+
+
+def test_counts_citation_headers_against_the_character_budget(
+    db_session: Session, retrieval_store: ChromaVectorStore
+) -> None:
+    course, document, chunks = _seed_course(
+        db_session,
+        email="cite-charge@example.com",
+        texts=["a" * 50, "b" * 50, "c" * 50],
+        file_name="lecture-04.pdf",
+        pages=[(1, 1), (2, 2), (3, 3)],
+    )
+    _index(retrieval_store, db_session, document, chunks, [0.0, 0.1, 0.2])
+
+    material = _load(
+        db_session,
+        course.id,
+        store=retrieval_store,
+        max_characters=160,
+        include_citations=True,
+    )
+
+    assert len(material.text) <= 160
+
+
+def test_supplies_no_citations_when_the_caller_opts_out(
+    db_session: Session, retrieval_store: ChromaVectorStore
+) -> None:
+    course, document, chunks = _seed_course(
+        db_session,
+        email="cite-optout@example.com",
+        texts=["alpha"],
+        file_name="lecture-04.pdf",
+        pages=[(12, 12)],
+    )
+    _index(retrieval_store, db_session, document, chunks, [0.0])
+
+    material = _load(
+        db_session, course.id, store=retrieval_store, include_citations=False
+    )
+
+    assert material.citations == ()
+    assert material.citation_map == {}
+    assert material.text == "alpha"

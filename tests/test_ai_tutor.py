@@ -150,7 +150,7 @@ def test_get_course_material_uses_semantic_retrieval_and_ready_chunks(
         query=question,
     )
 
-    assert material.text == "First chunk\n\nSecond chunk"
+    assert material.text == ("[S1] (Ready)\nFirst chunk\n\n[S2] (Ready)\nSecond chunk")
     assert material.chunks_used == 2
     assert material.chunks_available == 2
     assert material.truncated is False

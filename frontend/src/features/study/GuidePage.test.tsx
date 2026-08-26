@@ -184,3 +184,40 @@ describe('what the stored guide reports about its material', () => {
     expect(screen.queryByText(/passages/)).toBeNull();
   });
 });
+
+describe('sources on a reopened guide', () => {
+  const CITATION = {
+    key: 'S1',
+    document_id: '11111111-1111-1111-1111-111111111111',
+    document_label: 'Lecture 4',
+    page_start: 12,
+    page_end: 12,
+  };
+
+  it('names the sources a stored guide was generated with', async () => {
+    mockGet.mockResolvedValue(
+      output({
+        content: {
+          ...GUIDE,
+          summary: { text: 'Sorting puts a sequence in order.', citations: [CITATION] },
+          key_points: [{ text: 'Merge sort is stable', citations: [CITATION] }],
+        } as unknown as Record<string, unknown>,
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('Sorting Algorithms')).toBeInTheDocument();
+    expect(screen.getAllByText('Lecture 4 · p. 12').length).toBeGreaterThan(0);
+  });
+
+  it('still opens a guide stored before citations existed', async () => {
+    mockGet.mockResolvedValue(output());
+
+    renderPage();
+
+    expect(await screen.findByText('Sorting Algorithms')).toBeInTheDocument();
+    expect(screen.getByText('Merge sort is stable')).toBeInTheDocument();
+    expect(screen.queryByText('Sources:')).not.toBeInTheDocument();
+  });
+});

@@ -32,6 +32,8 @@ class RetrievedChunk:
     chunk_index: int
     similarity: float
     text: str
+    page_number: int | None = None
+    end_page_number: int | None = None
 
 
 def retrieve_course_chunks(
@@ -92,6 +94,8 @@ def retrieve_course_chunks(
                 chunk_index=result.chunk_index,
                 similarity=result.similarity,
                 text=chunk.text,
+                page_number=chunk.page_number,
+                end_page_number=chunk.end_page_number,
             )
         )
     return retrieved

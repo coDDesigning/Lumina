@@ -9,6 +9,7 @@ from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.conversation import ConversationType
 from schemas.course_qa import CourseQAResponse
 from services.ai_usage_logger import AiUsageLogger
+from services.citations import sanitize_citation_markers
 from services.conversation import CONVERSATION_NOT_FOUND, ConversationService
 from services.course_material import count_available_chunks
 from services.profile_knowledge import (
@@ -79,6 +80,7 @@ class CourseQAService:
             limit=settings.retrieval_chunk_limit,
             min_similarity=settings.retrieval_min_similarity,
             max_characters=settings.course_qa_material_max_chars,
+            include_citations=True,
         )
 
     @staticmethod
@@ -234,6 +236,8 @@ class CourseQAService:
                     CreditService.refund(db, receipt)
                 raise
 
+            cited = sanitize_citation_markers(answer, material.citation_map)
+
             if resolved_user_id is None:
                 raise CourseQAError("Unable to determine conversation owner.")
 
@@ -245,7 +249,8 @@ class CourseQAService:
                     course_id=course_id,
                     conversation_type=ConversationType.COURSE_QA,
                     question=question,
-                    answer=answer,
+                    answer=cited.text,
+                    citations=cited.citations,
                 )
                 AiUsageLogger.log_success(
                     db,
@@ -262,7 +267,7 @@ class CourseQAService:
                 raise
 
             return CourseQAGeneration(
-                response=CourseQAResponse(answer=answer),
+                response=CourseQAResponse(answer=cited.text, citations=cited.citations),
                 material=material,
                 model_used=model_identifier(metadata),
                 conversation_id=conversation.id,

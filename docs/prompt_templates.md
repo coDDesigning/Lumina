@@ -45,13 +45,13 @@ All templates reside in `app/prompts/<task_name>.json`:
 
 | Template Name | Version | Status | Owner | Primary Purpose | Output Schema Ref |
 |---|---|---|---|---|---|
-| `study_guide` | `2.2.0` | active | `services/study_guide.py` | Comprehensive study guide generation | `StudyGuideResponse` |
-| `quiz` | `3.2.0` | active | `services/quiz.py` | Multi-format quiz generation | `QuizGenerationResponse` |
+| `study_guide` | `2.3.0` | active | `services/study_guide.py` | Comprehensive study guide generation | `StudyGuideResponse` |
+| `quiz` | `3.3.0` | active | `services/quiz.py` | Multi-format quiz generation | `QuizGenerationResponse` |
 | `exam_style_question` | `1.2.0` | deferred | Exam Mode / Similar Question Generation (not built) | Exam-style practice questions | `QuizGenerationResponse` |
 | `quiz_grading` | `2.0.0` | active | `services/quiz_grading.py` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
-| `flashcard` | `2.1.0` | active | `services/flashcard.py` | Active recall flashcard decks | `FlashcardGenerationResponse` |
-| `ai_tutor` | `2.2.0` | active | `services/ai_tutor.py` | Hint-first tutoring with stepwise guidance | `AiTutorResponse` |
-| `course_qa` | `2.2.0` | active | `services/course_qa.py` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |
+| `flashcard` | `2.2.0` | active | `services/flashcard.py` | Active recall flashcard decks | `FlashcardGenerationResponse` |
+| `ai_tutor` | `2.3.0` | active | `services/ai_tutor.py` | Hint-first tutoring with stepwise guidance | `AiTutorResponse` |
+| `course_qa` | `2.3.0` | active | `services/course_qa.py` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |
 | `prompt_generator` | `2.0.0` | active | `services/prompt_generator.py` | User request transformation to optimized prompt | `PromptGenerationResponse` |
 | `image_description` | `1.0.0` | active | `services/image_understanding.py` | Visual descriptions for the retrieval index | — |
 | `visual_content` | `2.1.0` | deferred | Advanced visual understanding (not built) | Multimodal diagram, chart, table, and figure analysis | `VisualContentDescriptionResponse` |

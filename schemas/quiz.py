@@ -26,6 +26,7 @@ from pydantic import (
     field_validator,
 )
 
+from schemas.citation import Citation, CitationKeys
 from schemas.generation import RetrievalGenerationContext, RetrievedContext
 
 MIN_QUIZ_QUESTIONS = 1
@@ -168,6 +169,7 @@ class GeneratedQuestionBase(BaseModel):
     question: str = Field(min_length=1)
     difficulty: QuizDifficulty
     explanation: str
+    citations: CitationKeys = []
 
     def stored_options(self) -> list[str] | None:
         return None
@@ -367,6 +369,7 @@ class QuizQuestionView(BaseModel):
     correct_option_index: int | None = None
     correct_answer: QuizCorrectAnswer | None = None
     explanation: str
+    citations: list[Citation] = []
 
 
 class QuizView(BaseModel):

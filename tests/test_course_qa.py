@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy import select
 
 import routes.course_qa as course_qa_route
 from backend.app.models import (
@@ -66,9 +67,11 @@ def _add_ready_document(
     text: str | list[str],
     retrieval_env=None,
     seeds: list[float] | None = None,
+    file_name: str = "qa-notes.txt",
+    pages: list[tuple[int, int] | None] | None = None,
 ) -> UploadedDocument:
     document = UploadedDocument(
-        original_file_name="qa-notes.txt",
+        original_file_name=file_name,
         file_type="txt",
         mime_type="text/plain",
         file_size=10,
@@ -83,15 +86,19 @@ def _add_ready_document(
     db_session.flush()
 
     texts = [text] if isinstance(text, str) else text
+    page_ranges = pages if pages is not None else [None] * len(texts)
     chunks = [
         DocumentChunk(
             document=document,
             course=course,
             chunk_index=index,
-            page_number=None,
+            page_number=page_range[0] if page_range else None,
+            end_page_number=page_range[1] if page_range else None,
             text=chunk_text,
         )
-        for index, chunk_text in enumerate(texts)
+        for index, (chunk_text, page_range) in enumerate(
+            zip(texts, page_ranges, strict=True)
+        )
     ]
     db_session.add_all(chunks)
     db_session.flush()
@@ -161,7 +168,9 @@ def test_get_course_material_uses_semantic_retrieval_and_ready_chunks(
         query=question,
     )
 
-    assert material.text == "First ready chunk\n\nSecond ready chunk"
+    assert material.text == (
+        "[S1] (Ready)\nFirst ready chunk\n\n[S2] (Ready)\nSecond ready chunk"
+    )
     assert material.chunks_used == 2
     assert material.chunks_available == 2
     assert material.truncated is False
@@ -1235,3 +1244,136 @@ def test_course_qa_response_diagnostics_never_expose_private_material_content(
     assert "text" not in data
     assert "raw_material" not in data
     assert "chunk_text" not in data
+
+
+def _citing_provider(answer: str):
+    class CitingProvider:
+        def __init__(self):
+            self.prompts: list[str] = []
+
+        def generate_text_with_metadata(self, prompt: str):
+            self.prompts.append(prompt)
+            return answer, GenerationMetadata(
+                provider="ollama", model="llama3.1", latency_ms=10
+            )
+
+    return CitingProvider()
+
+
+def _seed_cited_course(db_session, model_graph, retrieval_env):
+    return _add_ready_document(
+        db_session,
+        user=model_graph.user,
+        course=model_graph.course,
+        file_hash="9" * 64,
+        text="Photosynthesis converts light energy into chemical energy.",
+        retrieval_env=retrieval_env,
+        file_name="lecture-04.pdf",
+        pages=[(12, 12)],
+    )
+
+
+def test_an_answer_keeps_a_supplied_marker_and_resolves_its_citation(
+    db_session, model_graph, retrieval_env
+) -> None:
+    _seed_cited_course(db_session, model_graph, retrieval_env)
+
+    result = CourseQAService.generate(
+        db_session,
+        model_graph.course.id,
+        "What does photosynthesis do?",
+        _citing_provider("Photosynthesis converts light energy. [S1]"),
+        user_id=model_graph.user.id,
+    )
+
+    assert result.response.answer == "Photosynthesis converts light energy. [S1]"
+    citation = result.response.citations[0]
+    assert citation.key == "S1"
+    assert citation.document_label == "Lecture 4"
+    assert citation.page_start == 12
+
+
+def test_an_answer_marker_for_an_unsupplied_key_is_removed_from_the_stored_message(
+    db_session, model_graph, retrieval_env
+) -> None:
+    _seed_cited_course(db_session, model_graph, retrieval_env)
+
+    result = CourseQAService.generate(
+        db_session,
+        model_graph.course.id,
+        "What does photosynthesis do?",
+        _citing_provider("Photosynthesis converts light energy. [S9]"),
+        user_id=model_graph.user.id,
+    )
+
+    assert result.response.answer == "Photosynthesis converts light energy."
+    assert result.response.citations == []
+
+    stored = db_session.scalars(
+        select(ConversationMessage)
+        .where(ConversationMessage.conversation_id == result.conversation_id)
+        .where(ConversationMessage.role == "assistant")
+    ).all()
+    assert stored[-1].content == "Photosynthesis converts light energy."
+    assert stored[-1].citations == []
+
+
+def test_an_assistant_message_persists_its_citations(
+    db_session, model_graph, retrieval_env
+) -> None:
+    _seed_cited_course(db_session, model_graph, retrieval_env)
+
+    result = CourseQAService.generate(
+        db_session,
+        model_graph.course.id,
+        "What does photosynthesis do?",
+        _citing_provider("Light becomes chemical energy. [S1]"),
+        user_id=model_graph.user.id,
+    )
+
+    messages = db_session.scalars(
+        select(ConversationMessage)
+        .where(ConversationMessage.conversation_id == result.conversation_id)
+        .order_by(ConversationMessage.id)
+    ).all()
+
+    assert messages[0].role == "user"
+    assert messages[0].citations is None
+    assert messages[1].role == "assistant"
+    assert messages[1].citations[0]["key"] == "S1"
+    assert messages[1].citations[0]["document_label"] == "Lecture 4"
+
+
+def test_conversation_history_sent_to_the_provider_carries_no_citation_markers(
+    db_session, model_graph, retrieval_env
+) -> None:
+    """A key means a different passage in every turn, so an old marker must not survive.
+
+    The sanitiser would accept a stale [S1] because that key exists in this
+    turn's map too, which is exactly why the history is scrubbed instead.
+    """
+    _seed_cited_course(db_session, model_graph, retrieval_env)
+
+    first = CourseQAService.generate(
+        db_session,
+        model_graph.course.id,
+        "What does photosynthesis do?",
+        _citing_provider("Light becomes chemical energy. [S1]"),
+        user_id=model_graph.user.id,
+    )
+
+    second_provider = _citing_provider("It happens in the chloroplast. [S1]")
+    CourseQAService.generate(
+        db_session,
+        model_graph.course.id,
+        "Where does it happen?",
+        second_provider,
+        user_id=model_graph.user.id,
+        conversation_id=first.conversation_id,
+    )
+
+    history_prompt = second_provider.prompts[0]
+    history_start = history_prompt.index("Conversation History:")
+
+    assert "Light becomes chemical energy." in history_prompt[history_start:]
+    assert "[S1]" not in history_prompt[history_start:]

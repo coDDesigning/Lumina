@@ -1,22 +1,28 @@
 import type { ReactNode } from 'react';
+import type { Citation } from '@/api/types';
+import { citationsByKey } from '@/features/study/citations';
+import { CitationChip } from '@/ui/CitationChip';
 import { cx } from './cx';
 import styles from './markdown.module.css';
 
 export interface MarkdownProps {
   text: string;
   className?: string;
+  citations?: Citation[];
 }
+
+type CitationIndex = Map<string, Citation> | undefined;
 
 const SAFE_LINK = /^(https?:\/\/|mailto:)/i;
 
-function inline(text: string, keyPrefix: string): ReactNode[] {
+function inline(text: string, keyPrefix: string, citations?: CitationIndex): ReactNode[] {
   const nodes: ReactNode[] = [];
   let rest = text;
   let index = 0;
 
   // Code spans are matched first so that markers inside them stay literal.
   const pattern =
-    /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![A-Za-z0-9])__(?:(?!__)[^\n])+__(?![A-Za-z0-9]))|(\*[^*\n]+\*)|((?<![A-Za-z0-9])_[^_\n]+_(?![A-Za-z0-9]))|(\[[^\]\n]*\]\([^)\s]+\))/;
+    /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![A-Za-z0-9])__(?:(?!__)[^\n])+__(?![A-Za-z0-9]))|(\*[^*\n]+\*)|((?<![A-Za-z0-9])_[^_\n]+_(?![A-Za-z0-9]))|(\[[^\]\n]*\]\([^)\s]+\))|(\[S\d{1,3}\])/;
 
   while (rest.length > 0) {
     const hit = pattern.exec(rest);
@@ -33,7 +39,15 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
     const key = `${keyPrefix}-${index}`;
     index += 1;
 
-    if (token.startsWith('`')) {
+    const citationKey = /^\[(S\d{1,3})\]$/.exec(token);
+    if (citationKey) {
+      // A key the backend did not supply stays literal text rather than
+      // rendering as a source the student cannot trust.
+      const citation = citations?.get(citationKey[1]);
+      nodes.push(
+        citation ? <CitationChip citation={citation} key={key} /> : <span key={key}>{token}</span>,
+      );
+    } else if (token.startsWith('`')) {
       nodes.push(
         <code className={styles.code} key={key}>
           {token.slice(1, -1)}
@@ -67,7 +81,7 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
 // A single newline inside a paragraph is a soft wrap, not a line break — a model that
 // wraps its prose at some width should not produce ragged breaks on screen. Two trailing
 // spaces still force a break, which is how markdown says to ask for one.
-function withBreaks(lines: string[], keyPrefix: string): ReactNode[] {
+function withBreaks(lines: string[], keyPrefix: string, citations?: CitationIndex): ReactNode[] {
   const nodes: ReactNode[] = [];
 
   lines.forEach((line, position) => {
@@ -82,13 +96,14 @@ function withBreaks(lines: string[], keyPrefix: string): ReactNode[] {
       }
     }
 
-    nodes.push(...inline(text, `${keyPrefix}-${position}`));
+    nodes.push(...inline(text, `${keyPrefix}-${position}`, citations));
   });
 
   return nodes;
 }
 
-export function Markdown({ text, className }: MarkdownProps) {
+export function Markdown({ text, className, citations }: MarkdownProps) {
+  const index = citations && citations.length > 0 ? citationsByKey(citations) : undefined;
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const blocks: ReactNode[] = [];
 
@@ -126,7 +141,7 @@ export function Markdown({ text, className }: MarkdownProps) {
     const heading = /^(#{1,4})\s+(.*)$/.exec(line);
     if (heading) {
       const depth = heading[1].length;
-      const content = inline(heading[2], nextKey());
+      const content = inline(heading[2], nextKey(), index);
       blocks.push(
         depth <= 2 ? (
           <h3 className={styles.heading} key={nextKey()}>
@@ -156,7 +171,7 @@ export function Markdown({ text, className }: MarkdownProps) {
       }
       blocks.push(
         <blockquote className={styles.quote} key={nextKey()}>
-          {withBreaks(body, nextKey())}
+          {withBreaks(body, nextKey(), index)}
         </blockquote>,
       );
       continue;
@@ -174,7 +189,7 @@ export function Markdown({ text, className }: MarkdownProps) {
         cursor += 1;
       }
       const rendered = items.map((item, position) => (
-        <li key={`${position}-${item.slice(0, 12)}`}>{inline(item, `li${position}`)}</li>
+        <li key={`${position}-${item.slice(0, 12)}`}>{inline(item, `li${position}`, index)}</li>
       ));
       blocks.push(
         ordered ? (
@@ -206,7 +221,7 @@ export function Markdown({ text, className }: MarkdownProps) {
     if (paragraph.length > 0) {
       blocks.push(
         <p className={styles.paragraph} key={nextKey()}>
-          {withBreaks(paragraph, nextKey())}
+          {withBreaks(paragraph, nextKey(), index)}
         </p>,
       );
     }

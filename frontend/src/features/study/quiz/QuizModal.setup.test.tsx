@@ -197,7 +197,7 @@ describe('answering in writing', () => {
           question: 'Name a stable sort.',
           options: null,
           correct_option_index: null,
-          correct_answer: { type: 'short_answer', accepted_answers: ['Merge sort'] },
+          correct_answer: { type: 'short_answer', text: 'Merge sort', accepted_answers: ['Merge sort'] },
         }),
         question({
           question_id: 4,
@@ -235,7 +235,7 @@ describe('answering in writing', () => {
           question: 'Name a stable sort.',
           options: null,
           correct_option_index: null,
-          correct_answer: { type: 'short_answer', accepted_answers: ['Merge sort'] },
+          correct_answer: { type: 'short_answer', text: 'Merge sort', accepted_answers: ['Merge sort'] },
         }),
       ) as never,
     );

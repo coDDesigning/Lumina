@@ -1,33 +1,38 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import { COURSE, open } from './support'
 
 /**
- * The core learning interaction, end to end in a real browser: configure a
- * quiz, answer one of each supported type, hand it in, and read the review.
- * jsdom cannot catch a layout or focus defect in this flow; this can.
+ * The core learning interaction, end to end in a real browser. Opening a quiz
+ * from the course page configures it in a dialog and then hands off to
+ * `/courses/:id/practice/:quizId`, so the flow deliberately crosses that
+ * boundary rather than stopping at the modal.
  */
+
+async function generateQuiz(page: Page) {
+  await open(page, `/courses/${COURSE.id}`)
+
+  await page.getByRole('button', { name: 'Practice quiz' }).click()
+
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  await dialog.getByLabel(/How many questions/).selectOption('5')
+  await dialog.getByRole('button', { name: /start the quiz/i }).click()
+
+  await expect(page).toHaveURL(/\/practice\/4$/)
+  await expect(
+    page.getByText('Which algorithm finds the fewest-edge path in an unweighted graph?'),
+  ).toBeVisible()
+}
 
 test.describe('taking a practice quiz', () => {
   test('runs from setup to review, and never marks an unscored answer wrong', async ({ page }) => {
-    await open(page, `/courses/${COURSE.id}`)
-
-    await page.getByRole('button', { name: 'Practice quiz' }).click()
-
-    const dialog = page.getByRole('dialog')
-    await expect(dialog).toBeVisible()
-    await expect(dialog.getByRole('button', { name: /start the quiz/i })).toBeEnabled()
-
-    await dialog.getByLabel(/How many questions/).selectOption('5')
-    await dialog.getByRole('button', { name: /start the quiz/i }).click()
-
-    await expect(
-      page.getByText('Which algorithm finds the fewest-edge path in an unweighted graph?'),
-    ).toBeVisible()
+    await generateQuiz(page)
 
     await page.getByText('Breadth-first search', { exact: true }).click()
     await page.getByRole('button', { name: /next question/i }).click()
 
-    await expect(page.getByText('True', { exact: true })).toBeVisible()
+    await expect(page.getByText('False', { exact: true })).toBeVisible()
     await page.getByText('False', { exact: true }).click()
     await page.getByRole('button', { name: /next question/i }).click()
 
@@ -46,12 +51,9 @@ test.describe('taking a practice quiz', () => {
   })
 
   test('counts down against the clock while the quiz is being answered', async ({ page }) => {
-    await open(page, `/courses/${COURSE.id}`)
+    await generateQuiz(page)
 
-    await page.getByRole('button', { name: 'Practice quiz' }).click()
-    await page.getByRole('button', { name: /start the quiz/i }).click()
     await expect(page.getByRole('timer')).toBeVisible()
-
     const started = await page.getByRole('timer').getAttribute('aria-label')
 
     await page.getByText('Breadth-first search', { exact: true }).click()
@@ -60,23 +62,38 @@ test.describe('taking a practice quiz', () => {
     await expect(page.getByRole('timer')).not.toHaveAttribute('aria-label', started ?? '')
   })
 
-  test('can be answered without a pointer at all', async ({ page }) => {
-    await open(page, `/courses/${COURSE.id}`)
+  test('asks before handing in a quiz that is still unanswered', async ({ page }) => {
+    await generateQuiz(page)
 
-    await page.getByRole('button', { name: 'Practice quiz' }).click()
-    await page.getByRole('button', { name: /start the quiz/i }).click()
-    await expect(
-      page.getByText('Which algorithm finds the fewest-edge path in an unweighted graph?'),
-    ).toBeVisible()
+    await page.getByRole('button', { name: /next question/i }).click()
+    await page.getByRole('button', { name: /next question/i }).click()
+    await page.getByRole('button', { name: /hand it in/i }).click()
 
-    await page.keyboard.press('Tab')
-    const focused = await page.evaluate(() => document.activeElement?.tagName ?? '')
-    expect(focused).not.toBe('BODY')
+    await expect(page.getByText('Hand it in unfinished?')).toBeVisible()
   })
 })
 
-test.describe('the page behind the quiz', () => {
-  test('never scrolls sideways on a narrow phone', async ({ page }) => {
+test.describe('the quiz setup dialog', () => {
+  test('keeps the keyboard inside it while it is open', async ({ page }) => {
+    await open(page, `/courses/${COURSE.id}`)
+
+    await page.getByRole('button', { name: 'Practice quiz' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    for (let press = 0; press < 25; press += 1) {
+      await page.keyboard.press('Tab')
+
+      const inside = await page.evaluate(() => {
+        const active = document.activeElement
+        const dialog = document.querySelector('[role="dialog"]')
+        return active !== null && dialog !== null && dialog.contains(active)
+      })
+
+      expect(inside, `focus left the dialog after ${press + 1} tabs`).toBe(true)
+    }
+  })
+
+  test('never scrolls the page sideways on a narrow phone', async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 780 })
     await open(page, `/courses/${COURSE.id}`)
 

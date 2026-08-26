@@ -103,6 +103,10 @@ DEFAULT_OCR_MIN_TEXT_CHARACTERS = 20
 DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS = 1_200
 DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS = 200
 DEFAULT_MATERIAL_MAX_CHARACTERS = 120_000
+# A citing feature spends part of its budget on the per-passage citation
+# headers, so it reaches less material than it did before citations at the
+# same number. Flashcards emit no headers and keep the plain budget.
+DEFAULT_CITED_MATERIAL_MAX_CHARACTERS = 126_000
 DEFAULT_RETRIEVAL_CHUNK_LIMIT = 24
 DEFAULT_RETRIEVAL_MIN_SIMILARITY = 0.25
 DEFAULT_AI_GENERATION_TIMEOUT_SECONDS = 60
@@ -602,14 +606,14 @@ def load_settings() -> Settings:
     )
 
     material_budgets: dict[str, int] = {}
-    for name in (
-        "STUDY_GUIDE_MATERIAL_MAX_CHARS",
-        "QUIZ_MATERIAL_MAX_CHARS",
-        "FLASHCARD_MATERIAL_MAX_CHARS",
-        "AI_TUTOR_MATERIAL_MAX_CHARS",
-        "COURSE_QA_MATERIAL_MAX_CHARS",
+    for name, default in (
+        ("STUDY_GUIDE_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        ("QUIZ_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        ("FLASHCARD_MATERIAL_MAX_CHARS", DEFAULT_MATERIAL_MAX_CHARACTERS),
+        ("AI_TUTOR_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        ("COURSE_QA_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
     ):
-        budget = _positive_integer_setting(name, DEFAULT_MATERIAL_MAX_CHARACTERS)
+        budget = _positive_integer_setting(name, default)
         if budget < document_chunk_size_characters:
             raise ValueError(
                 f"{name} must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS "

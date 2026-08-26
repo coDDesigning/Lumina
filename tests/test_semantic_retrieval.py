@@ -69,6 +69,7 @@ def _seed_course(
     email: str,
     chunk_count: int,
     course: Course | None = None,
+    pages: list[tuple[int, int] | None] | None = None,
 ) -> tuple[Course, UploadedDocument, list[DocumentChunk]]:
     if course is None:
         role = session.scalar(select(Role).where(Role.name == "user"))
@@ -95,12 +96,15 @@ def _seed_course(
         storage_key=f"local/{document_id}.txt",
         status="ready",
     )
+    page_ranges = pages if pages is not None else [None] * chunk_count
     chunks = [
         DocumentChunk(
             document=document,
             course=course,
             chunk_index=index,
             text=f"Chunk {index}",
+            page_number=page_ranges[index][0] if page_ranges[index] else None,
+            end_page_number=page_ranges[index][1] if page_ranges[index] else None,
         )
         for index in range(chunk_count)
     ]
@@ -366,3 +370,29 @@ def test_retrieval_propagates_store_errors(
                 provider=provider,
                 store=retrieval_store,
             )
+
+
+def test_retrieval_carries_the_page_range_of_each_chunk(
+    retrieval_store, session_factory: sessionmaker[Session]
+) -> None:
+    with session_factory() as session:
+        _, document, chunks = _seed_course(
+            session,
+            email="sr-pages@example.com",
+            chunk_count=2,
+            pages=[(12, 12), None],
+        )
+        _replace(retrieval_store, session, document, chunks)
+        session.commit()
+
+        retrieved = retrieve_course_chunks(
+            session,
+            course_id=document.course_id,
+            query="chunk query",
+            limit=2,
+            provider=StubEmbeddingProvider(),
+            store=retrieval_store,
+        )
+
+        assert [chunk.page_number for chunk in retrieved] == [12, None]
+        assert [chunk.end_page_number for chunk in retrieved] == [12, None]

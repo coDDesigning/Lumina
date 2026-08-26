@@ -973,6 +973,8 @@ class ConversationMessage(Base):
         nullable=False,
     )
 
+    citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         server_default=func.now(),
@@ -1083,6 +1085,8 @@ class QuizQuestion(Base):
     difficulty: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     correct_answer: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     topic: Mapped[str | None] = mapped_column(String(200), nullable=True)
 

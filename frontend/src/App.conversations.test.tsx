@@ -333,6 +333,57 @@ describe('Workspace conversations', () => {
     );
   }, 15_000);
 
+  it('keeps the sources of a resumed thread', async () => {
+    const summary: ConversationSummary = {
+      id: 91,
+      course_id: 1,
+      user_id: 1,
+      conversation_type: 'ai_tutor',
+      preview: 'Teach me scheduling.',
+      message_count: 2,
+      created_at: '2026-08-20T10:00:00Z',
+      updated_at: '2026-08-20T10:05:00Z',
+    };
+    const detail: ConversationDetail = {
+      ...summary,
+      messages: [
+        {
+          id: 201,
+          role: 'user',
+          content: 'Teach me scheduling.',
+          created_at: '2026-08-20T10:00:00Z',
+          citations: [],
+        },
+        {
+          id: 202,
+          role: 'assistant',
+          content: 'Scheduling decides which ready process runs next. [S1]',
+          created_at: '2026-08-20T10:00:01Z',
+          citations: [
+            {
+              key: 'S1',
+              document_id: '11111111-1111-1111-1111-111111111111',
+              document_label: 'Lecture 4',
+              page_start: 12,
+              page_end: 12,
+            },
+          ],
+        },
+      ],
+    };
+    mockConversationList.mockResolvedValue([summary]);
+    mockConversationGet.mockResolvedValue(detail);
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Past threads' }));
+    await userEvent.click(await screen.findByRole('button', { name: /Tutoring 91/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Pick this up' }));
+
+    expect(await screen.findByText('Lecture 4 · p. 12')).toBeInTheDocument();
+  }, 15_000);
+
   it('restores the question when generation fails', async () => {
     mockQaAsk.mockRejectedValue(new Error('Provider unavailable'));
 

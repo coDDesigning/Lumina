@@ -1,0 +1,12 @@
+.list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+  vertical-align: baseline;
+}
+
+.chip {
+  font-weight: var(--weight-medium);
+}

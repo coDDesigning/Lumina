@@ -16,6 +16,8 @@ import type {
   StudyGuideResponse,
 } from '@/api/types';
 import { Alert } from '@/ui/Alert';
+import { CitationList } from '@/ui/CitationChip';
+import { citedCitations, citedText } from './citations';
 import { Badge } from '@/ui/Badge';
 import type { BadgeTone } from '@/ui/Badge';
 import styles from './StudyGuide.module.css';
@@ -83,7 +85,10 @@ export function StudyGuide({ guide, context = null }: StudyGuideProps) {
             {guide.coverage.status} · {guide.coverage.estimated_completeness}% of the material
           </Badge>
         </div>
-        <p className={styles.summary}>{guide.summary}</p>
+        <p className={styles.summary}>
+          {citedText(guide.summary)}
+          <CitationList citations={citedCitations(guide.summary)} />
+        </p>
         {guide.difficulty.reason ? (
           <p className={styles.aside}>{guide.difficulty.reason}</p>
         ) : null}
@@ -107,7 +112,10 @@ export function StudyGuide({ guide, context = null }: StudyGuideProps) {
         <Section icon={<Compass />} heading="What you should be able to do">
           <ul className={styles.list}>
             {guide.learning_objectives.map((objective, index) => (
-              <li key={index}>{objective}</li>
+              <li key={index}>
+                {citedText(objective)}
+                <CitationList citations={citedCitations(objective)} />
+              </li>
             ))}
           </ul>
         </Section>
@@ -117,7 +125,10 @@ export function StudyGuide({ guide, context = null }: StudyGuideProps) {
         <Section icon={<ListChecks />} heading="Key points">
           <ul className={styles.list}>
             {guide.key_points.map((point, index) => (
-              <li key={index}>{point}</li>
+              <li key={index}>
+                {citedText(point)}
+                <CitationList citations={citedCitations(point)} />
+              </li>
             ))}
           </ul>
         </Section>
@@ -129,7 +140,10 @@ export function StudyGuide({ guide, context = null }: StudyGuideProps) {
             {guide.important_terms.map((term, index) => (
               <div className={styles.term} key={index}>
                 <dt>{term.term}</dt>
-                <dd>{term.definition}</dd>
+                <dd>
+                  {term.definition}
+                  <CitationList citations={term.citations} />
+                </dd>
               </div>
             ))}
           </dl>
@@ -148,6 +162,7 @@ export function StudyGuide({ guide, context = null }: StudyGuideProps) {
                 <p className={styles.correction}>
                   <CircleCheck className={styles.correctionIcon} aria-hidden="true" />
                   {item.correction}
+                  <CitationList citations={item.citations} />
                 </p>
               </li>
             ))}
@@ -162,7 +177,10 @@ export function StudyGuide({ guide, context = null }: StudyGuideProps) {
               <h4 className={styles.subheading}>Said in your material</h4>
               <ul className={styles.list}>
                 {guide.exam_tips.lecture_based.map((tip, index) => (
-                  <li key={index}>{tip}</li>
+                  <li key={index}>
+                    {citedText(tip)}
+                    <CitationList citations={citedCitations(tip)} />
+                  </li>
                 ))}
               </ul>
             </>
@@ -184,7 +202,10 @@ export function StudyGuide({ guide, context = null }: StudyGuideProps) {
         <Section icon={<Layers3 />} heading="Assumed knowledge">
           <ul className={styles.list}>
             {guide.prerequisites.map((item, index) => (
-              <li key={index}>{item}</li>
+              <li key={index}>
+                {citedText(item)}
+                <CitationList citations={citedCitations(item)} />
+              </li>
             ))}
           </ul>
         </Section>

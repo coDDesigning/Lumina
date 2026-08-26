@@ -242,7 +242,7 @@ def test_owner_reads_typed_detail_with_chronological_messages(upload_api) -> Non
     ]
     assert message_times == sorted(message_times)
     assert all(
-        set(message) == {"id", "role", "content", "created_at"}
+        set(message) == {"id", "role", "content", "created_at", "citations"}
         for message in detail["messages"]
     )
 

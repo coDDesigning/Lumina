@@ -29,6 +29,7 @@ from backend.app.models import (
     QuizQuestion,
 )
 from schemas.ai_usage import ErrorCategory, GenerationType
+from schemas.citation import Citation
 from schemas.quiz import (
     MULTIPLE_CHOICE_OPTION_COUNT,
     QuizCorrectAnswer,
@@ -41,6 +42,7 @@ from schemas.quiz import (
     QuizView,
 )
 from services.ai_usage_logger import AiUsageLogger
+from services.citations import SuppliedCitation, resolve_citations
 from services.course_material import count_available_chunks
 from services.profile_knowledge import (
     ProfileKnowledgeContext,
@@ -115,7 +117,8 @@ QUESTION_TYPE_SCHEMAS: dict[QuizQuestionType, str] = {
         '  "difficulty": "easy | medium | hard",\n'
         '  "options": ["...", "...", "...", "..."],\n'
         '  "correct_option_index": 0,\n'
-        '  "explanation": "..."\n'
+        '  "explanation": "...",\n'
+        '  "citations": ["S1"]\n'
         "}"
     ),
     QuizQuestionType.TRUE_FALSE: (
@@ -126,7 +129,8 @@ QUESTION_TYPE_SCHEMAS: dict[QuizQuestionType, str] = {
         '  "question": "...",\n'
         '  "difficulty": "easy | medium | hard",\n'
         '  "correct_answer": true,\n'
-        '  "explanation": "..."\n'
+        '  "explanation": "...",\n'
+        '  "citations": ["S1"]\n'
         "}"
     ),
     QuizQuestionType.SHORT_ANSWER: (
@@ -138,7 +142,8 @@ QUESTION_TYPE_SCHEMAS: dict[QuizQuestionType, str] = {
         '  "difficulty": "easy | medium | hard",\n'
         '  "correct_answer": "...",\n'
         '  "accepted_answers": ["...", "..."],\n'
-        '  "explanation": "..."\n'
+        '  "explanation": "...",\n'
+        '  "citations": ["S1"]\n'
         "}"
     ),
     QuizQuestionType.OPEN_ENDED: (
@@ -149,7 +154,8 @@ QUESTION_TYPE_SCHEMAS: dict[QuizQuestionType, str] = {
         '  "question": "...",\n'
         '  "difficulty": "easy | medium | hard",\n'
         '  "reference_answer": "...",\n'
-        '  "explanation": "..."\n'
+        '  "explanation": "...",\n'
+        '  "citations": ["S1"]\n'
         "}"
     ),
 }
@@ -214,6 +220,24 @@ def parse_correct_answer(row: QuizQuestion) -> QuizCorrectAnswer | None:
         return None
 
 
+def parse_citations(row: QuizQuestion) -> list[Citation]:
+    """Read one question's stored citations, or ``[]`` if unusable.
+
+    A row whose document cannot be read loses its attribution rather than
+    failing the quiz read, the same way an unreadable answer document does.
+    """
+    if not row.citations:
+        return []
+    try:
+        return [Citation.model_validate(item) for item in row.citations]
+    except (ValidationError, TypeError):
+        logger.warning(
+            "quiz_questions.citations for row %s is not a valid citation document",
+            row.id,
+        )
+        return []
+
+
 class QuizService:
     PROMPT_TEMPLATE_NAME = "quiz"
     PROMPT_PATH = Path(__file__).resolve().parents[1] / "app" / "prompts" / "quiz.json"
@@ -229,6 +253,7 @@ class QuizService:
             limit=settings.retrieval_chunk_limit,
             min_similarity=settings.retrieval_min_similarity,
             max_characters=settings.quiz_material_max_chars,
+            include_citations=True,
         )
 
     @staticmethod
@@ -511,6 +536,7 @@ class QuizService:
         model_used: str | None = None,
         generation_settings: str | None = None,
         generation_context: str | None = None,
+        citations: dict[str, SuppliedCitation] | None = None,
         commit: bool = True,
     ) -> Quiz:
         """Write the quiz and all of its questions in one transaction.
@@ -545,6 +571,12 @@ class QuizService:
                         correct_answer=question.stored_answer().model_dump(mode="json"),
                         topic=question.topic,
                         explanation=question.explanation,
+                        citations=[
+                            citation.model_dump(mode="json")
+                            for citation in resolve_citations(
+                                question.citations, citations or {}
+                            )
+                        ],
                     )
                 )
 
@@ -623,6 +655,7 @@ class QuizService:
             correct_option_index=row.correct_option_index,
             correct_answer=parse_correct_answer(row),
             explanation=row.explanation or "",
+            citations=parse_citations(row),
         )
 
     @classmethod

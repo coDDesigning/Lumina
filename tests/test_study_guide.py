@@ -23,6 +23,7 @@ from schemas.study_guide import (
     DetailLevel,
     StudyGuideGenerationSettings,
     StudyGuideRequest,
+    StudyGuideResponse,
     SummaryFormat,
     SummaryLength,
     SummaryMode,
@@ -125,11 +126,13 @@ def _add_ready_material(
     file_hash: str,
     retrieval_env,
     seeds: list[float] | None = None,
+    file_name: str | None = None,
+    pages: list[tuple[int, int] | None] | None = None,
 ) -> UploadedDocument:
     course = session.get(Course, course_id)
     assert course is not None
     document = UploadedDocument(
-        original_file_name=f"{file_hash[:6]}.txt",
+        original_file_name=file_name or f"{file_hash[:6]}.txt",
         file_type="txt",
         mime_type="text/plain",
         file_size=10,
@@ -142,15 +145,19 @@ def _add_ready_material(
     )
     session.add(document)
     session.flush()
+    page_ranges = pages if pages is not None else [None] * len(texts)
     chunks = [
         DocumentChunk(
             document=document,
             course=course,
             chunk_index=index,
-            page_number=None,
-            text=text,
+            page_number=page_range[0] if page_range else None,
+            end_page_number=page_range[1] if page_range else None,
+            text=chunk_text,
         )
-        for index, text in enumerate(texts)
+        for index, (chunk_text, page_range) in enumerate(
+            zip(texts, page_ranges, strict=True)
+        )
     ]
     session.add_all(chunks)
     session.flush()
@@ -677,7 +684,7 @@ def test_generate_bounds_the_prompt_to_the_configured_budget(
         retrieval_env=retrieval_env,
     )
 
-    monkeypatch.setattr(study_guide_service, "settings", _bounded_settings(100))
+    monkeypatch.setattr(study_guide_service, "settings", _bounded_settings(130))
 
     captured: list[str] = []
 
@@ -693,7 +700,7 @@ def test_generate_bounds_the_prompt_to_the_configured_budget(
     assert generation.material.truncated is True
     assert generation.material.chunks_used == 2
     assert generation.material.chunks_available == 5
-    assert len(generation.material.text) <= 100
+    assert len(generation.material.text) <= 130
     assert "chunk-0" in captured[0]
     assert "chunk-4" not in captured[0]
 
@@ -1046,7 +1053,7 @@ def test_study_guide_endpoint_reports_truncated_context(
             retrieval_env=retrieval_env,
         )
 
-    monkeypatch.setattr(study_guide_service, "settings", _bounded_settings(100))
+    monkeypatch.setattr(study_guide_service, "settings", _bounded_settings(130))
     provider = _install_provider(monkeypatch, CountingProvider())
 
     response = upload_api.client.post(
@@ -1721,3 +1728,99 @@ def test_study_guide_defaults_to_system_when_no_course_settings(
     assert stored["summary_length"] == "medium"
     assert stored["detail_level"] == "standard"
     assert stored["summary_mode"] == "general"
+
+
+def _cited_study_guide(keys):
+    return {
+        **VALID_STUDY_GUIDE,
+        "summary": {"text": "Example summary", "citations": keys},
+        "key_points": [{"text": "Trees are acyclic", "citations": keys}],
+        "important_terms": [
+            {"term": "Tree", "definition": "An acyclic graph", "citations": keys}
+        ],
+        "common_mistakes": [
+            {"mistake": "Cycles", "correction": "Trees have none", "citations": keys}
+        ],
+        "exam_tips": {
+            "lecture_based": [{"text": "Know the definition", "citations": keys}],
+            "ai_suggestions": ["Practice drawing one"],
+        },
+        "prerequisites": [{"text": "Graphs", "citations": keys}],
+        "learning_objectives": [{"text": "Define a tree", "citations": keys}],
+    }
+
+
+def _generate_cited_guide(db_session, model_graph, retrieval_env, keys):
+    _add_ready_material(
+        db_session,
+        model_graph.course.id,
+        ["Trees are acyclic graphs."],
+        file_hash="c" * 64,
+        retrieval_env=retrieval_env,
+        file_name="lecture-04.pdf",
+        pages=[(12, 12)],
+    )
+
+    class CitingProvider:
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            return _cited_study_guide(keys)
+
+    return StudyGuideService.generate(
+        db_session, model_graph.course.id, _request(), CitingProvider()
+    )
+
+
+def test_a_generated_study_guide_carries_resolved_citations(
+    db_session, model_graph, retrieval_env
+) -> None:
+    generation = _generate_cited_guide(db_session, model_graph, retrieval_env, ["S1"])
+
+    guide = generation.study_guide
+    citation = guide.summary.citations[0]
+
+    assert citation.key == "S1"
+    assert citation.document_label == "Lecture 4"
+    assert citation.page_start == 12
+    assert citation.page_end == 12
+    assert guide.key_points[0].citations[0].document_label == "Lecture 4"
+    assert guide.important_terms[0].citations[0].key == "S1"
+    assert guide.common_mistakes[0].citations[0].key == "S1"
+    assert guide.exam_tips.lecture_based[0].citations[0].key == "S1"
+    assert guide.prerequisites[0].citations[0].key == "S1"
+    assert guide.learning_objectives[0].citations[0].key == "S1"
+    assert guide.exam_tips.ai_suggestions == ["Practice drawing one"]
+
+
+def test_a_study_guide_citing_an_unsupplied_key_drops_that_citation(
+    db_session, model_graph, retrieval_env
+) -> None:
+    generation = _generate_cited_guide(
+        db_session, model_graph, retrieval_env, ["S1", "S99"]
+    )
+
+    guide = generation.study_guide
+
+    assert [citation.key for citation in guide.summary.citations] == ["S1"]
+    assert [citation.key for citation in guide.key_points[0].citations] == ["S1"]
+    assert [citation.key for citation in guide.important_terms[0].citations] == ["S1"]
+
+
+def test_a_study_guide_citing_only_unsupplied_keys_carries_no_citations(
+    db_session, model_graph, retrieval_env
+) -> None:
+    generation = _generate_cited_guide(
+        db_session, model_graph, retrieval_env, ["S42", "S99"]
+    )
+
+    guide = generation.study_guide
+
+    assert guide.summary.citations == []
+    assert guide.key_points[0].citations == []
+    assert guide.summary.text == "Example summary"
+
+
+def test_a_legacy_plain_string_study_guide_still_validates() -> None:
+    guide = StudyGuideResponse.model_validate(VALID_STUDY_GUIDE)
+
+    assert guide.summary.text == "Example summary"
+    assert guide.summary.citations == []

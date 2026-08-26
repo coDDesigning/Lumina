@@ -111,6 +111,7 @@ def generate_quiz(
             model_used=generation.model_used,
             generation_settings=applied_settings,
             generation_context=applied_context,
+            citations=generation.material.citation_map,
             commit=False,
         )
 

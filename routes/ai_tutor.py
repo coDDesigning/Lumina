@@ -82,6 +82,7 @@ def ask_ai_tutor(
         message="AI tutor response generated successfully",
         data=AiTutorGenerationResult(
             answer=generation.response.answer,
+            citations=generation.response.citations,
             conversation_id=generation.conversation_id,
             context_truncated=generation.material.truncated,
             chunks_used=generation.material.chunks_used,

@@ -1,5 +1,6 @@
 from pydantic import AliasChoices, BaseModel, Field
 
+from schemas.citation import Citation
 from schemas.generation import RetrievedContext
 
 
@@ -22,8 +23,10 @@ class AiTutorRequest(BaseModel):
 
 class AiTutorResponse(BaseModel):
     answer: str
+    citations: list[Citation] = []
 
 
 class AiTutorGenerationResult(RetrievedContext):
     answer: str
+    citations: list[Citation] = []
     conversation_id: int

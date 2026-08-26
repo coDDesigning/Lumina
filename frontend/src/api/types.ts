@@ -283,18 +283,38 @@ export interface StudyGuideRequest {
   model?: string;
 }
 
+export interface Citation {
+  key: string;
+  document_id: string;
+  document_label: string;
+  page_start: number | null;
+  page_end: number | null;
+  version?: number;
+}
+
+export interface CitedText {
+  text: string;
+  citations: Citation[];
+}
+
+// A guide stored before citations existed holds plain strings in these fields,
+// and reopening one must still render, so every citable slot accepts both.
+export type MaybeCited = string | CitedText;
+
 export interface ImportantTerm {
   term: string;
   definition: string;
+  citations?: Citation[];
 }
 
 export interface CommonMistake {
   mistake: string;
   correction: string;
+  citations?: Citation[];
 }
 
 export interface ExamTips {
-  lecture_based: string[];
+  lecture_based: MaybeCited[];
   ai_suggestions: string[];
 }
 
@@ -318,15 +338,15 @@ export interface Coverage {
 
 export interface StudyGuideResponse {
   title: string;
-  summary: string;
-  key_points: string[];
+  summary: MaybeCited;
+  key_points: MaybeCited[];
   important_terms: ImportantTerm[];
   common_mistakes: CommonMistake[];
   exam_tips: ExamTips;
   difficulty: Difficulty;
   estimated_study_time: string;
-  prerequisites: string[];
-  learning_objectives: string[];
+  prerequisites: MaybeCited[];
+  learning_objectives: MaybeCited[];
   coverage: Coverage;
   confidence_notes: string;
 }
@@ -437,6 +457,7 @@ export interface QuizQuestionView {
   correct_option_index: number | null;
   correct_answer: QuizCorrectAnswer | null;
   explanation: string;
+  citations?: Citation[];
 }
 
 export interface QuizView {
@@ -628,6 +649,7 @@ export interface ConversationMessage {
   role: ConversationRole;
   content: string;
   created_at: string;
+  citations?: Citation[];
 }
 
 export interface ConversationSummary {
@@ -655,6 +677,7 @@ export interface CourseQARequest {
 
 export interface CourseQAGenerationResult extends RetrievedContext {
   answer: string;
+  citations?: Citation[];
   conversation_id: number;
 }
 
@@ -677,6 +700,7 @@ export interface AiTutorRequest {
 
 export interface AiTutorGenerationResult extends RetrievedContext {
   answer: string;
+  citations?: Citation[];
   conversation_id: number;
 }
 

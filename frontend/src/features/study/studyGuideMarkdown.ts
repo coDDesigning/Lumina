@@ -1,12 +1,18 @@
-import type { StudyGuideGenerationResult } from '../../api/types';
+import type { Citation, MaybeCited, StudyGuideGenerationResult } from '../../api/types';
+import { citationLabel, citedCitations, citedText } from './citations';
 
 function section(heading: string, lines: string[]): string[] {
   if (lines.length === 0) return [];
   return [`## ${heading}`, '', ...lines, ''];
 }
 
-function bullets(items: string[]): string[] {
-  return items.map((item) => `- ${item}`);
+function sources(citations: Citation[]): string {
+  if (citations.length === 0) return '';
+  return ` (${citations.map(citationLabel).join('; ')})`;
+}
+
+function bullets(items: MaybeCited[]): string[] {
+  return items.map((item) => `- ${citedText(item)}${sources(citedCitations(item))}`);
 }
 
 export function studyGuideFileName(courseName: string): string {
@@ -43,20 +49,32 @@ export function studyGuideToMarkdown(
     );
   }
 
-  lines.push('## Summary', '', guide.summary, '');
+  lines.push(
+    '## Summary',
+    '',
+    `${citedText(guide.summary)}${sources(citedCitations(guide.summary))}`,
+    '',
+  );
   lines.push(...section('Learning objectives', bullets(guide.learning_objectives)));
   lines.push(...section('Key points', bullets(guide.key_points)));
   lines.push(
     ...section(
       'Important terms',
-      guide.important_terms.flatMap((term) => [`### ${term.term}`, '', term.definition, '']),
+      guide.important_terms.flatMap((term) => [
+        `### ${term.term}`,
+        '',
+        `${term.definition}${sources(term.citations ?? [])}`,
+        '',
+      ]),
     ),
   );
   lines.push(
     ...section(
       'Common mistakes',
       guide.common_mistakes.map(
-        (item) => `- **Mistake:** ${item.mistake}\n  **Correction:** ${item.correction}`,
+        (item) =>
+          `- **Mistake:** ${item.mistake}\n  **Correction:** ${item.correction}` +
+          sources(item.citations ?? []),
       ),
     ),
   );

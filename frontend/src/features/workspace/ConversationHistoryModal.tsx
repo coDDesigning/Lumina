@@ -236,7 +236,11 @@ export function ConversationHistoryModal({
                           {message.role === 'user' ? 'You' : 'Lumina'}
                         </span>
                         {message.role === 'assistant' ? (
-                          <Markdown className={styles.body} text={message.content} />
+                          <Markdown
+                            className={styles.body}
+                            text={message.content}
+                            citations={message.citations}
+                          />
                         ) : (
                           <p className={styles.body}>{message.content}</p>
                         )}

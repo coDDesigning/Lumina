@@ -168,6 +168,14 @@ const AI_COSTS = {
   daily: [],
 }
 
+const CITATION = {
+  key: 'S1',
+  document_id: '11111111-1111-1111-1111-111111111111',
+  document_label: 'Lecture 4',
+  page_start: 12,
+  page_end: 14,
+}
+
 export const QUIZ = {
   quiz_id: 4,
   course_id: 1,
@@ -189,6 +197,7 @@ export const QUIZ = {
       correct_option_index: 1,
       correct_answer: { type: 'multiple_choice', option_index: 1 },
       explanation: 'BFS settles vertices in order of edge count.',
+      citations: [CITATION],
     },
     {
       question_id: 2,
@@ -300,6 +309,26 @@ const ROUTES: Answer[] = [
   [/^\/api\/courses\/(\d+)\/quizzes\/(\d+)$/, () => envelope(QUIZ)],
   [/^\/api\/courses\/(\d+)\/quizzes/, () => envelope([])],
   [/^\/api\/courses\/(\d+)\/quiz/, () => envelope({ ...CONTEXT, quiz: QUIZ })],
+  [
+    /^\/api\/courses\/(\d+)\/qa$/,
+    () =>
+      envelope({
+        ...CONTEXT,
+        answer: 'Breadth-first search settles vertices in order of edge count. [S1]',
+        citations: [CITATION],
+        conversation_id: 1,
+      }),
+  ],
+  [
+    /^\/api\/courses\/(\d+)\/ai-tutor$/,
+    () =>
+      envelope({
+        ...CONTEXT,
+        answer: 'Start by asking what a queue guarantees about order. [S1]',
+        citations: [CITATION],
+        conversation_id: 2,
+      }),
+  ],
   [
     /^\/api\/courses\/(\d+)$/,
     (match) => envelope(COURSES.find((course) => course.id === Number(match[1])) ?? COURSES[0]),

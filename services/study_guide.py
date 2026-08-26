@@ -9,14 +9,20 @@ from backend.app.config import settings
 from backend.app.models import Course, CourseSettings, GeneratedOutput
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.study_guide import (
+    CommonMistake,
     DetailLevel,
+    ExamTips,
+    GeneratedStudyGuideResponse,
+    ImportantTerm,
     StudyGuideRequest,
     StudyGuideResponse,
     SummaryFormat,
     SummaryLength,
     SummaryMode,
 )
+from schemas.citation import CitedText
 from services.ai_usage_logger import AiUsageLogger
+from services.citations import SuppliedCitation, resolve_citations
 from services.generated_output import GeneratedOutputService
 from services.profile_knowledge import (
     ProfileKnowledgeContext,
@@ -158,6 +164,7 @@ class StudyGuideService:
             limit=settings.retrieval_chunk_limit,
             min_similarity=settings.retrieval_min_similarity,
             max_characters=settings.study_guide_material_max_chars,
+            include_citations=True,
         )
 
     @staticmethod
@@ -382,7 +389,10 @@ class StudyGuideService:
                 raise
 
             try:
-                validated = StudyGuideResponse.model_validate(result)
+                validated = cls.resolve_citations(
+                    GeneratedStudyGuideResponse.model_validate(result),
+                    material.citation_map,
+                )
             except ValidationError as exc:
                 if resolved_user_id:
                     CreditService.refund(db, receipt)
@@ -411,6 +421,51 @@ class StudyGuideService:
                 profile_knowledge=generation_ctx.profile_knowledge,
                 charge_receipt=receipt,
             )
+
+    @staticmethod
+    def resolve_citations(
+        generated: GeneratedStudyGuideResponse,
+        supplied: dict[str, SuppliedCitation],
+    ) -> StudyGuideResponse:
+        def cited(value) -> CitedText:
+            return CitedText(
+                text=value.text,
+                citations=resolve_citations(value.citations, supplied),
+            )
+
+        return StudyGuideResponse(
+            title=generated.title,
+            summary=cited(generated.summary),
+            key_points=[cited(point) for point in generated.key_points],
+            important_terms=[
+                ImportantTerm(
+                    term=term.term,
+                    definition=term.definition,
+                    citations=resolve_citations(term.citations, supplied),
+                )
+                for term in generated.important_terms
+            ],
+            common_mistakes=[
+                CommonMistake(
+                    mistake=mistake.mistake,
+                    correction=mistake.correction,
+                    citations=resolve_citations(mistake.citations, supplied),
+                )
+                for mistake in generated.common_mistakes
+            ],
+            exam_tips=ExamTips(
+                lecture_based=[cited(tip) for tip in generated.exam_tips.lecture_based],
+                ai_suggestions=generated.exam_tips.ai_suggestions,
+            ),
+            difficulty=generated.difficulty,
+            estimated_study_time=generated.estimated_study_time,
+            prerequisites=[cited(item) for item in generated.prerequisites],
+            learning_objectives=[
+                cited(objective) for objective in generated.learning_objectives
+            ],
+            coverage=generated.coverage,
+            confidence_notes=generated.confidence_notes,
+        )
 
     @staticmethod
     def save_generated_output(

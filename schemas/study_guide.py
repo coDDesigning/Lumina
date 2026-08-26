@@ -3,6 +3,12 @@ from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+from schemas.citation import (
+    Citation,
+    CitationKeys,
+    MaybeCitedText,
+    MaybeGeneratedCitedText,
+)
 from schemas.generation import RetrievalGenerationContext, RetrievedContext
 
 
@@ -119,15 +125,17 @@ class StudyGuideGenerationContext(RetrievalGenerationContext):
 class ImportantTerm(BaseModel):
     term: str
     definition: str
+    citations: list[Citation] = []
 
 
 class CommonMistake(BaseModel):
     mistake: str
     correction: str
+    citations: list[Citation] = []
 
 
 class ExamTips(BaseModel):
-    lecture_based: list[str]
+    lecture_based: list[MaybeCitedText]
     ai_suggestions: list[str]
 
 
@@ -143,15 +151,55 @@ class Coverage(BaseModel):
 
 class StudyGuideResponse(BaseModel):
     title: str
-    summary: str
-    key_points: list[str]
+    summary: MaybeCitedText
+    key_points: list[MaybeCitedText]
     important_terms: list[ImportantTerm]
     common_mistakes: list[CommonMistake]
     exam_tips: ExamTips
     difficulty: Difficulty
     estimated_study_time: str
-    prerequisites: list[str]
-    learning_objectives: list[str]
+    prerequisites: list[MaybeCitedText]
+    learning_objectives: list[MaybeCitedText]
+    coverage: Coverage
+    confidence_notes: str
+
+
+class GeneratedImportantTerm(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    term: str
+    definition: str
+    citations: CitationKeys = []
+
+
+class GeneratedCommonMistake(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    mistake: str
+    correction: str
+    citations: CitationKeys = []
+
+
+class GeneratedExamTips(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    lecture_based: list[MaybeGeneratedCitedText]
+    ai_suggestions: list[str]
+
+
+class GeneratedStudyGuideResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    title: str
+    summary: MaybeGeneratedCitedText
+    key_points: list[MaybeGeneratedCitedText]
+    important_terms: list[GeneratedImportantTerm]
+    common_mistakes: list[GeneratedCommonMistake]
+    exam_tips: GeneratedExamTips
+    difficulty: Difficulty
+    estimated_study_time: str
+    prerequisites: list[MaybeGeneratedCitedText]
+    learning_objectives: list[MaybeGeneratedCitedText]
     coverage: Coverage
     confidence_notes: str
 

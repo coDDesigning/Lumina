@@ -59,6 +59,10 @@ from backend.app.config import (
     RECOGNIZED_IMAGE_PROVIDERS,
     VECTOR_BACKEND_CHROMA,
     VECTOR_BACKEND_PGVECTOR,
+    DEFAULT_COURSE_PURGE_INTERVAL_SECONDS,
+    DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS,
+    DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE,
+    DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS,
     load_settings,
 )
 from backend.app.database_config import load_database_url
@@ -141,10 +145,11 @@ CONFIGURATION_KEYS = (
     "VECTOR_BACKEND",
     "STUDY_GUIDE_MATERIAL_MAX_CHARS",
     "QUIZ_MATERIAL_MAX_CHARS",
-    "FLASHCARD_MATERIAL_MAX_CHARS",
-    "AI_TUTOR_MATERIAL_MAX_CHARS",
     "COURSE_QA_MATERIAL_MAX_CHARS",
-    "COURSE_QA_MATERIAL_MAX_CHARS",
+    "COURSE_PURGE_INTERVAL_SECONDS",
+    "EMBEDDING_BACKFILL_INTERVAL_SECONDS",
+    "EMBEDDING_BACKFILL_BATCH_SIZE",
+    "EMBEDDING_BACKFILL_PRUNE_ORPHANS",
 )
 
 
@@ -1768,3 +1773,53 @@ def test_default_model_catalog_reports_the_context_window_actually_sent(
 
     ollama_entry = settings.ai_model_catalog["ollama"][0]
     assert ollama_entry["context_window"] == 16384
+
+
+def test_periodic_reconciliation_settings_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    settings = load_settings()
+
+    assert settings.course_purge_interval_seconds == DEFAULT_COURSE_PURGE_INTERVAL_SECONDS
+    assert settings.embedding_backfill_interval_seconds == DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS
+    assert settings.embedding_backfill_batch_size == DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE
+    assert settings.embedding_backfill_prune_orphans == DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS
+
+
+def test_periodic_reconciliation_settings_are_configurable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("COURSE_PURGE_INTERVAL_SECONDS", "1800")
+    monkeypatch.setenv("EMBEDDING_BACKFILL_INTERVAL_SECONDS", "7200")
+    monkeypatch.setenv("EMBEDDING_BACKFILL_BATCH_SIZE", "128")
+    monkeypatch.setenv("EMBEDDING_BACKFILL_PRUNE_ORPHANS", "true")
+
+    settings = load_settings()
+
+    assert settings.course_purge_interval_seconds == 1800.0
+    assert settings.embedding_backfill_interval_seconds == 7200.0
+    assert settings.embedding_backfill_batch_size == 128
+    assert settings.embedding_backfill_prune_orphans is True
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("COURSE_PURGE_INTERVAL_SECONDS", "-1"),
+        ("COURSE_PURGE_INTERVAL_SECONDS", "invalid"),
+        ("EMBEDDING_BACKFILL_INTERVAL_SECONDS", "-5"),
+        ("EMBEDDING_BACKFILL_BATCH_SIZE", "0"),
+        ("EMBEDDING_BACKFILL_BATCH_SIZE", "-10"),
+        ("EMBEDDING_BACKFILL_PRUNE_ORPHANS", "maybe"),
+    ],
+)
+def test_invalid_periodic_reconciliation_settings_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, value: str
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError):
+        load_settings()

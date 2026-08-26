@@ -115,6 +115,30 @@ resource "aws_ecs_task_definition" "migrate" {
   tags                     = var.tags
 }
 
+resource "aws_ecs_task_definition" "course_purge" {
+  family                   = "${var.name_prefix}-course-purge"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.worker_cpu
+  memory                   = var.worker_memory
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.task.arn
+  container_definitions    = jsonencode([local.course_purge_container])
+  tags                     = var.tags
+}
+
+resource "aws_ecs_task_definition" "embedding_backfill" {
+  family                   = "${var.name_prefix}-embedding-backfill"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.worker_cpu
+  memory                   = var.worker_memory
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.task.arn
+  container_definitions    = jsonencode([local.embedding_backfill_container])
+  tags                     = var.tags
+}
+
 resource "aws_ecs_service" "api" {
   name             = "${var.name_prefix}-api"
   cluster          = aws_ecs_cluster.this.id

@@ -18,16 +18,24 @@ storage key must not block every other pending erasure.
 
 import argparse
 import logging
+import signal
+import threading
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.config import settings
+from backend.app.config import (
+    DEFAULT_COURSE_PURGE_INTERVAL_SECONDS,
+    settings,
+)
 from backend.app.database import SessionLocal
 from backend.app.models import Course
-from backend.app.observability import configure_logging
+from backend.app.observability import configure_logging, emit_emf_metrics
+from backend.app.readiness import ReadinessError, check_readiness
 from services.course import CourseDeletionError, CourseService
 from services.vector_store import VectorStore, get_vector_store
 from storage.base import Storage
@@ -36,6 +44,31 @@ from utils.exceptions import NotFoundException
 
 logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], Session]
+
+
+class StopEvent(Protocol):
+    def is_set(self) -> bool: ...
+
+    def wait(self, timeout: float) -> bool: ...
+
+
+class _SignalStopEvent:
+    """Lock-free stop flag written by Python's main-thread signal handler."""
+
+    def __init__(self) -> None:
+        self.requested = False
+
+    def is_set(self) -> bool:
+        return self.requested
+
+    def wait(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while not self.requested:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.1, remaining))
+        return self.requested
 
 
 @dataclass
@@ -58,6 +91,17 @@ def _tombstoned_course_ids(session: Session, *, course_id: int | None) -> list[i
     return list(session.scalars(statement).all())
 
 
+def check_purge_ready(
+    *,
+    session_factory: SessionFactory = SessionLocal,
+    storage: Storage | None = None,
+) -> None:
+    if storage is None:
+        storage = get_storage()
+    with session_factory() as session:
+        check_readiness(session, storage)
+
+
 def run_purge(
     *,
     session_factory: SessionFactory = SessionLocal,
@@ -65,6 +109,7 @@ def run_purge(
     vector_store: VectorStore | None = None,
     course_id: int | None = None,
     dry_run: bool = False,
+    stop_event: StopEvent | None = None,
 ) -> PurgeReport:
     if storage is None:
         storage = get_storage()
@@ -76,6 +121,8 @@ def run_purge(
         course_ids = _tombstoned_course_ids(session, course_id=course_id)
 
     for identifier in course_ids:
+        if stop_event is not None and stop_event.is_set():
+            break
         with session_factory() as session:
             course = session.get(Course, identifier)
             if course is None or not course.is_deleted:
@@ -98,8 +145,68 @@ def run_purge(
                 continue
             report.courses_purged += 1
 
+    emit_emf_metrics(
+        {
+            "CoursesExamined": report.courses_examined,
+            "CoursesPurged": report.courses_purged,
+            "CoursesFailed": report.courses_failed,
+        },
+        dimensions={"Service": "course_purge", "Environment": settings.app_env},
+    )
     logger.info("Course purge finished: %s", report.summary())
     return report
+
+
+def run_purge_worker(
+    *,
+    interval_seconds: float = DEFAULT_COURSE_PURGE_INTERVAL_SECONDS,
+    once: bool = False,
+    stop_event: StopEvent | None = None,
+    session_factory: SessionFactory = SessionLocal,
+    storage: Storage | None = None,
+    vector_store: VectorStore | None = None,
+    course_id: int | None = None,
+    dry_run: bool = False,
+) -> None:
+    stop = stop_event or threading.Event()
+    if stop.is_set():
+        return
+    if storage is None:
+        storage = get_storage()
+    if vector_store is None:
+        vector_store = get_vector_store()
+
+    check_purge_ready(session_factory=session_factory, storage=storage)
+    if stop.is_set():
+        return
+
+    logger.info("Course purge worker started (interval=%.1fs)", interval_seconds)
+    try:
+        while not stop.is_set():
+            try:
+                run_purge(
+                    session_factory=session_factory,
+                    storage=storage,
+                    vector_store=vector_store,
+                    course_id=course_id,
+                    dry_run=dry_run,
+                    stop_event=stop,
+                )
+            except Exception:
+                logger.exception("Course purge execution failed")
+            if once or stop.is_set():
+                break
+            stop.wait(interval_seconds)
+    finally:
+        logger.info("Course purge worker stopped")
+
+
+def _install_shutdown_handlers(stop_event: _SignalStopEvent) -> None:
+    def request_shutdown(_signum: int, _frame: object) -> None:
+        stop_event.requested = True
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -108,9 +215,53 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--course-id", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--interval-seconds",
+        type=float,
+        default=None,
+        help="Run continuously with given sleep interval in seconds.",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run at most one purge cycle and exit.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Check dependencies and readiness without purging.",
+    )
     arguments = parser.parse_args(argv)
 
     configure_logging(service="maintenance", environment=settings.app_env)
+
+    if arguments.check:
+        try:
+            check_purge_ready()
+        except ReadinessError as exc:
+            logger.error("Course purge readiness check failed: %s", exc)
+            raise SystemExit(1) from None
+        logger.info("Course purge readiness check succeeded")
+        return
+
+    if arguments.interval_seconds is not None:
+        if arguments.interval_seconds < 0:
+            parser.error("--interval-seconds must be a non-negative number")
+        stop_event = _SignalStopEvent()
+        _install_shutdown_handlers(stop_event)
+        try:
+            run_purge_worker(
+                interval_seconds=arguments.interval_seconds,
+                once=arguments.once,
+                stop_event=stop_event,
+                course_id=arguments.course_id,
+                dry_run=arguments.dry_run,
+            )
+        except ReadinessError as exc:
+            logger.error("Course purge readiness check failed: %s", exc)
+            raise SystemExit(1) from None
+        return
+
     report = run_purge(course_id=arguments.course_id, dry_run=arguments.dry_run)
     print(report.summary())
     if report.courses_failed:

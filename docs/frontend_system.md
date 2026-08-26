@@ -331,7 +331,7 @@ These are product rules, not style preferences.
 ## Looking at it in a browser
 
 Tests and contrast maths do not catch a bounced deep link or a chevron tiling across a
-focused select. Two throwaway tools under `.user/scripts/` make a real browser cheap:
+focused select. Three throwaway tools under `.user/scripts/` make a real browser cheap:
 
 - `stub_api.py` answers on :8000 with the shapes the client expects, so every authenticated
   screen renders without a database, a worker or a model provider — including the states a
@@ -339,16 +339,28 @@ focused select. Two throwaway tools under `.user/scripts/` make a real browser c
 - `shoot.mjs` drives headless Chrome over the DevTools Protocol with no dependencies at all,
   seeds an auth token, captures each route full height, and prints anything the page logged
   as an error.
+- `a11y-audit.mjs` drives the same browser the same way but measures instead of capturing:
+  per route, whether the page body scrolls sideways and what is sticking out, the heading
+  outline, the `<h1>` and `<main>` counts, and any control rendered without an accessible
+  name. It exits non-zero when a route has a problem, so it reads as a check rather than a
+  report.
 
 ```
 python .user/scripts/stub_api.py &
 npm --prefix frontend run dev &
 node .user/scripts/shoot.mjs /tmp/ui 1440 /dashboard /courses/1 /courses/1/progress
+node .user/scripts/a11y-audit.mjs 360 /dashboard /courses/1 /courses/1/settings
 ```
 
-Neither is used by the app, the tests or CI. Three real defects came out of the first two
+None is used by the app, the tests or CI. Three real defects came out of the first two
 runs: a course link opened cold bounced to the dashboard, a focused select tiled its chevron
 across the field, and one malformed poll response took the whole workspace down.
+
+The third exists because jsdom has no layout engine, so no vitest test can see a page that
+scrolls sideways. It found the one that did: a long course name inside a nowrap button
+pushed `/courses/:id/settings` to 413px in a 360px viewport. `Button` now takes `wrap` for
+the few labels that carry user text — the course name stays on the button, because naming
+what is about to be deleted is what stops a misclick.
 
 ## What the test suite enforces
 
@@ -440,6 +452,23 @@ associated by id, visible focus from `:focus-visible`, focus trapped and restore
 dialog, accessible names on every icon-only control, `aria-live` for async status changes
 (uploads, processing transitions, arriving answers), no colour-only status, and
 `prefers-reduced-motion` respected through the motion tokens.
+
+The `<h1>` rule holds on screens with no visual title slot too. The workspace and the course
+progress page carry their identity in the course chip and the breadcrumb, so both name
+themselves with a `visually-hidden` `<h1>`; without it every section heading on those screens
+was an orphaned `<h2>`. Reach for the same utility rather than inventing a visible title on a
+screen whose design does not have one.
+
+`AppShell` owns the single `<main>` for every screen inside it, which is why a page within
+the shell must not render its own. `AuthLayout` is a second shell rather than a page, sits
+outside `AppShell` entirely, and therefore owns a `<main>` of its own — sign-in and
+registration would otherwise have no main landmark at all.
+
+Two things this baseline deliberately does not claim: WCAG 2.1 AA has no target-size
+criterion (2.5.5 is AAA and 2.5.8 arrived in 2.2), and a screen at rest is allowed to have no
+live region — errors render `<Alert live="alert">` and successes go through `ToastProvider`,
+whose region is announced. Do not "fix" either against a standard this baseline has not
+adopted.
 
 ## Adding a new screen
 

@@ -541,7 +541,9 @@ def test_backfill_worker_cli_with_interval(monkeypatch) -> None:
         called_with.update(kwargs)
 
     monkeypatch.setattr(embedding_backfill, "run_backfill_worker", mock_worker)
-    embedding_backfill.main(["--interval-seconds", "600", "--once", "--batch-size", "32"])
+    embedding_backfill.main(
+        ["--interval-seconds", "600", "--once", "--batch-size", "32"]
+    )
 
     assert called_with["interval_seconds"] == 600.0
     assert called_with["once"] is True

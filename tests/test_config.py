@@ -1781,10 +1781,20 @@ def test_periodic_reconciliation_settings_default(
     _configure_production(monkeypatch, tmp_path)
     settings = load_settings()
 
-    assert settings.course_purge_interval_seconds == DEFAULT_COURSE_PURGE_INTERVAL_SECONDS
-    assert settings.embedding_backfill_interval_seconds == DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS
-    assert settings.embedding_backfill_batch_size == DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE
-    assert settings.embedding_backfill_prune_orphans == DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS
+    assert (
+        settings.course_purge_interval_seconds == DEFAULT_COURSE_PURGE_INTERVAL_SECONDS
+    )
+    assert (
+        settings.embedding_backfill_interval_seconds
+        == DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS
+    )
+    assert (
+        settings.embedding_backfill_batch_size == DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE
+    )
+    assert (
+        settings.embedding_backfill_prune_orphans
+        == DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS
+    )
 
 
 def test_periodic_reconciliation_settings_are_configurable(

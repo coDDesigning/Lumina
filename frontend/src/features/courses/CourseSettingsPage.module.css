@@ -89,7 +89,6 @@
   color: var(--destructive);
   line-height: var(--leading-relaxed);
   margin-top: var(--space-1);
-  opacity: 0.92;
 }
 
 .dangerAction {

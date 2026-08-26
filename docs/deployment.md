@@ -336,10 +336,11 @@ it up with the database, not separately: a restore that pairs an old
 longer exist, which `python -m workers.embedding_backfill --prune-orphans`
 resolves.
 
-After a storage or vector-store outage, run `python -m workers.course_purge` to
-finish course deletions that answered `500` while it was down. It is an
-occasional one-shot maintenance command, not a third supervised service, and
-rerunning it is always safe.
+After a storage or vector-store outage, `python -m workers.course_purge` finishes
+course deletions that answered `500` while it was down, and `python -m workers.embedding_backfill`
+re-indexes missing vectors. In production, the background worker automatically executes
+both reconciliation tasks periodically on configured intervals (`COURSE_PURGE_INTERVAL_SECONDS`
+and `EMBEDDING_BACKFILL_INTERVAL_SECONDS`, defaulting to 1 hour), and rerunning them is always safe.
 
 A hosted PostgreSQL deployment sets `VECTOR_BACKEND=pgvector` instead and stores
 vectors in the database, which requires the `vector` extension to be available to

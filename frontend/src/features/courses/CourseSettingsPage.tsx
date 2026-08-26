@@ -461,6 +461,7 @@ export default function CourseSettingsPage({
           <div className={styles.dangerAction}>
             <Button
               variant="destructive"
+              wrap
               onClick={() => {
                 setDeleteError(null);
                 setIsConfirmingDelete(true);

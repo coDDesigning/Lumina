@@ -13,6 +13,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   loadingLabel?: string;
   fullWidth?: boolean;
   alignStart?: boolean;
+  wrap?: boolean;
   icon?: ReactNode;
   iconAfter?: ReactNode;
 }
@@ -24,6 +25,7 @@ export function Button({
   loadingLabel,
   fullWidth = false,
   alignStart = false,
+  wrap = false,
   icon,
   iconAfter,
   className,
@@ -57,6 +59,7 @@ export function Button({
         styles[size],
         fullWidth && styles.fullWidth,
         alignStart && styles.alignStart,
+        wrap && styles.wrap,
         className,
       )}
     >

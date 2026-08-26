@@ -159,6 +159,15 @@ describe('Workspace conversations', () => {
     mockConversationList.mockResolvedValue([]);
   });
 
+  it('names the screen with a single top-level heading', async () => {
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveTextContent(/Operating Systems/);
+  });
+
   it('reuses the returned Q&A ID on turn two and clears it for a new conversation', async () => {
     mockQaAsk
       .mockResolvedValueOnce(qaResult('Virtual memory extends the address space.', 31))

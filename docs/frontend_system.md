@@ -331,7 +331,7 @@ These are product rules, not style preferences.
 ## Looking at it in a browser
 
 Tests and contrast maths do not catch a bounced deep link or a chevron tiling across a
-focused select. Three throwaway tools under `.user/scripts/` make a real browser cheap:
+focused select. Two throwaway tools under `.user/scripts/` make a real browser cheap:
 
 - `stub_api.py` answers on :8000 with the shapes the client expects, so every authenticated
   screen renders without a database, a worker or a model provider — including the states a
@@ -339,28 +339,16 @@ focused select. Three throwaway tools under `.user/scripts/` make a real browser
 - `shoot.mjs` drives headless Chrome over the DevTools Protocol with no dependencies at all,
   seeds an auth token, captures each route full height, and prints anything the page logged
   as an error.
-- `a11y-audit.mjs` drives the same browser the same way but measures instead of capturing:
-  per route, whether the page body scrolls sideways and what is sticking out, the heading
-  outline, the `<h1>` and `<main>` counts, and any control rendered without an accessible
-  name. It exits non-zero when a route has a problem, so it reads as a check rather than a
-  report.
 
 ```
 python .user/scripts/stub_api.py &
 npm --prefix frontend run dev &
 node .user/scripts/shoot.mjs /tmp/ui 1440 /dashboard /courses/1 /courses/1/progress
-node .user/scripts/a11y-audit.mjs 360 /dashboard /courses/1 /courses/1/settings
 ```
 
-None is used by the app, the tests or CI. Three real defects came out of the first two
+Neither is used by the app, the tests or CI. Three real defects came out of the first two
 runs: a course link opened cold bounced to the dashboard, a focused select tiled its chevron
 across the field, and one malformed poll response took the whole workspace down.
-
-The third exists because jsdom has no layout engine, so no vitest test can see a page that
-scrolls sideways. It found the one that did: a long course name inside a nowrap button
-pushed `/courses/:id/settings` to 413px in a 360px viewport. `Button` now takes `wrap` for
-the few labels that carry user text — the course name stays on the button, because naming
-what is about to be deleted is what stops a misclick.
 
 ## What the test suite enforces
 
@@ -415,6 +403,12 @@ Safari zooms the viewport when a focused control is smaller and pans the page aw
 the reader was typing. Wide content scrolls inside its own container; the page body never
 scrolls sideways, and a scrollable container carries `tabIndex={0}` and a name so it can be
 reached without a mouse.
+
+`Button` sets `white-space: nowrap`, which is right until a label carries user text: a long
+course name on the delete button pushed `/courses/:id/settings` to 413px in a 360px viewport.
+Such a label takes `wrap` instead of losing the name, because naming what is about to be
+deleted is what stops a misclick. jsdom has no layout engine, so no test in the suite can see
+this class of defect — only a real browser at a real width can.
 
 ## Server state
 

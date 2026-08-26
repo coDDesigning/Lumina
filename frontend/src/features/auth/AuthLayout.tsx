@@ -28,7 +28,7 @@ export function AuthLayout({
 
   return (
     <CourseLight courseId={tone} className={styles.shell}>
-      <div className={styles.panel}>
+      <main className={styles.panel}>
         <Link to="/" className={styles.back}>
           &larr; Back to Lumina
         </Link>
@@ -38,7 +38,7 @@ export function AuthLayout({
         {children}
         {footer ? <p className={styles.footer}>{footer}</p> : null}
         {note ? <p className={styles.note}>{note}</p> : null}
-      </div>
+      </main>
     </CourseLight>
   );
 }

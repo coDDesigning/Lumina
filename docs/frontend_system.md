@@ -404,6 +404,12 @@ the reader was typing. Wide content scrolls inside its own container; the page b
 scrolls sideways, and a scrollable container carries `tabIndex={0}` and a name so it can be
 reached without a mouse.
 
+`Button` sets `white-space: nowrap`, which is right until a label carries user text: a long
+course name on the delete button pushed `/courses/:id/settings` to 413px in a 360px viewport.
+Such a label takes `wrap` instead of losing the name, because naming what is about to be
+deleted is what stops a misclick. jsdom has no layout engine, so no test in the suite can see
+this class of defect — only a real browser at a real width can.
+
 ## Server state
 
 `src/lib/query/` is a ~450-line cache: keyed entries, one in-flight request per key,
@@ -440,6 +446,23 @@ associated by id, visible focus from `:focus-visible`, focus trapped and restore
 dialog, accessible names on every icon-only control, `aria-live` for async status changes
 (uploads, processing transitions, arriving answers), no colour-only status, and
 `prefers-reduced-motion` respected through the motion tokens.
+
+The `<h1>` rule holds on screens with no visual title slot too. The workspace and the course
+progress page carry their identity in the course chip and the breadcrumb, so both name
+themselves with a `visually-hidden` `<h1>`; without it every section heading on those screens
+was an orphaned `<h2>`. Reach for the same utility rather than inventing a visible title on a
+screen whose design does not have one.
+
+`AppShell` owns the single `<main>` for every screen inside it, which is why a page within
+the shell must not render its own. `AuthLayout` is a second shell rather than a page, sits
+outside `AppShell` entirely, and therefore owns a `<main>` of its own — sign-in and
+registration would otherwise have no main landmark at all.
+
+Two things this baseline deliberately does not claim: WCAG 2.1 AA has no target-size
+criterion (2.5.5 is AAA and 2.5.8 arrived in 2.2), and a screen at rest is allowed to have no
+live region — errors render `<Alert live="alert">` and successes go through `ToastProvider`,
+whose region is announced. Do not "fix" either against a standard this baseline has not
+adopted.
 
 ## Adding a new screen
 

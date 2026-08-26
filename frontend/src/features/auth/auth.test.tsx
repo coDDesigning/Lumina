@@ -175,3 +175,15 @@ describe('RegisterPage', () => {
     expect(screen.getByText('At least 8 characters, up to 72 bytes.')).toBeInTheDocument();
   });
 });
+
+describe('Auth pages landmarks', () => {
+  it('puts the sign-in form in a main landmark', () => {
+    renderAt(<LoginPage />, '/login');
+    expect(screen.getByRole('main')).toBeInTheDocument();
+  });
+
+  it('puts the registration form in a main landmark', () => {
+    renderAt(<RegisterPage />, '/register');
+    expect(screen.getByRole('main')).toBeInTheDocument();
+  });
+});

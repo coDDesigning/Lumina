@@ -131,3 +131,13 @@ describe('ProgressPage', () => {
     });
   });
 });
+
+describe('ProgressPage headings', () => {
+  it('names the screen with a single top-level heading', async () => {
+    renderPage();
+
+    const headings = await screen.findAllByRole('heading', { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveTextContent(/Algorithms/);
+  });
+});

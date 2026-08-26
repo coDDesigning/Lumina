@@ -475,6 +475,8 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
         }
       />
 
+      <h1 className="visually-hidden">{workspace.name} workspace</h1>
+
       <div className={styles.columns}>
         <section className={`${styles.panel} ${styles.sources}`} aria-label="Sources">
           <div className={styles.panelHead}>

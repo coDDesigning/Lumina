@@ -77,7 +77,7 @@ export function FlashcardModal({
       if (isAbortError(caught)) {
         return;
       }
-      const parsed = describeGenerationError(caught, 'flashcard');
+      const parsed = describeGenerationError(caught, 'The flashcards could not be written.');
       if (isInsufficientCredits(parsed)) {
         await refresh();
         setState({ phase: 'idle' });

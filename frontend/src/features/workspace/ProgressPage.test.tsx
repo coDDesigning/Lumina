@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { APIError } from '@/api/client';
 import { progressAPI } from '@/api/progress';
 import { quizAPI } from '@/api/quiz';
 import { userAPI } from '@/api/user';
@@ -139,5 +140,42 @@ describe('ProgressPage headings', () => {
     const headings = await screen.findAllByRole('heading', { level: 1 });
     expect(headings).toHaveLength(1);
     expect(headings[0]).toHaveTextContent(/Algorithms/);
+  });
+});
+
+describe('when progress cannot be read', () => {
+  it('says so rather than showing a course nobody has studied', async () => {
+    mockProgress.mockRejectedValue(new APIError(503, { detail: 'Progress is unavailable.' }));
+    renderPage();
+
+    expect(await screen.findByText('Progress is unavailable.')).toBeInTheDocument();
+    expect(screen.queryByText(/no quiz activity yet/i)).toBeNull();
+  });
+
+  it('offers a way to try the read again', async () => {
+    mockProgress.mockRejectedValueOnce(new APIError(503, { detail: 'Progress is unavailable.' }));
+    renderPage();
+
+    await screen.findByText('Progress is unavailable.');
+    await userEvent.click(screen.getByRole('button', { name: /try again/i }));
+
+    await waitFor(() => expect(mockProgress).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('button', { name: /Practice Graph Algorithms/ })).toBeInTheDocument();
+  });
+
+  it('claims no score at all when the course has never been graded', async () => {
+    mockProgress.mockResolvedValue({
+      status: 'ready',
+      attempts_count: 0,
+      average_score: null,
+      topic_mastery: [],
+      weak_topics: [],
+      quiz_history: [],
+    });
+    renderPage();
+
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByText('0%')).toBeNull();
+    expect(screen.queryByText('0')).toBeNull();
   });
 });

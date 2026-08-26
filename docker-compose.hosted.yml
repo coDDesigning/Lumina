@@ -56,6 +56,10 @@ x-lumina-environment: &lumina-environment
   GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
   EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
   EMBEDDING_TIMEOUT_SECONDS: ${EMBEDDING_TIMEOUT_SECONDS:-60}
+  COURSE_PURGE_INTERVAL_SECONDS: ${COURSE_PURGE_INTERVAL_SECONDS:-3600}
+  EMBEDDING_BACKFILL_INTERVAL_SECONDS: ${EMBEDDING_BACKFILL_INTERVAL_SECONDS:-3600}
+  EMBEDDING_BACKFILL_BATCH_SIZE: ${EMBEDDING_BACKFILL_BATCH_SIZE:-64}
+  EMBEDDING_BACKFILL_PRUNE_ORPHANS: ${EMBEDDING_BACKFILL_PRUNE_ORPHANS:-false}
 
 x-lumina-service: &lumina-service
   image: ${LUMINA_IMAGE:-lumina:local}
@@ -180,6 +184,39 @@ services:
     init: true
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-345s}
     restart: unless-stopped
+
+  course-purge:
+    <<: *lumina-service
+    profiles: ["maintenance"]
+    environment:
+      <<: *lumina-environment
+      JWT_SECRET_KEY: maintenance-does-not-serve-authentication
+      BOOTSTRAP_ADMIN_EMAIL: maintenance@example.com
+      BOOTSTRAP_ADMIN_TOKEN: maintenance-does-not-accept-admin-bootstrap
+      GEMINI_API_KEY: maintenance-does-not-call-ai-providers
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+    command: ["python", "-m", "workers.course_purge"]
+    restart: "no"
+
+  embedding-backfill:
+    <<: *lumina-service
+    profiles: ["maintenance"]
+    environment:
+      <<: *lumina-environment
+      JWT_SECRET_KEY: maintenance-does-not-serve-authentication
+      BOOTSTRAP_ADMIN_EMAIL: maintenance@example.com
+      BOOTSTRAP_ADMIN_TOKEN: maintenance-does-not-accept-admin-bootstrap
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+    command: ["python", "-m", "workers.embedding_backfill"]
+    restart: "no"
 
 volumes:
   pgdata:

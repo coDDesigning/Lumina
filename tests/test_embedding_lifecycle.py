@@ -18,6 +18,7 @@ from services.document import DocumentService
 from services.processing_jobs import enqueue_document_job
 from services.vector_store import ChromaVectorStore, PgVectorStore, VectorRecord
 from storage.local import LocalStorage
+from workers import embedding_backfill
 from workers.embedding_backfill import BackfillReport, run_backfill
 
 pytestmark = pytest.mark.database_contract
@@ -421,3 +422,127 @@ def test_backfill_report_counts_documents(
     assert isinstance(report, BackfillReport)
     assert report.documents_examined == 1
     assert report.documents_updated == 1
+
+
+def test_backfill_worker_runs_periodically_and_stops_cleanly(monkeypatch) -> None:
+    runs = 0
+    stop = embedding_backfill._SignalStopEvent()
+
+    def mock_run_backfill(**kwargs):
+        nonlocal runs
+        runs += 1
+        if runs >= 2:
+            stop.requested = True
+        return BackfillReport(documents_examined=1, documents_updated=1)
+
+    monkeypatch.setattr(embedding_backfill, "check_backfill_ready", lambda **k: None)
+    monkeypatch.setattr(embedding_backfill, "run_backfill", mock_run_backfill)
+
+    embedding_backfill.run_backfill_worker(
+        interval_seconds=0.01,
+        stop_event=stop,
+        session_factory=lambda: None,
+        vector_store=object(),
+        embedding_provider=object(),
+    )
+
+    assert runs == 2
+
+
+def test_backfill_worker_once_mode(monkeypatch) -> None:
+    runs = 0
+
+    def mock_run_backfill(**kwargs):
+        nonlocal runs
+        runs += 1
+        return BackfillReport()
+
+    monkeypatch.setattr(embedding_backfill, "check_backfill_ready", lambda **k: None)
+    monkeypatch.setattr(embedding_backfill, "run_backfill", mock_run_backfill)
+
+    embedding_backfill.run_backfill_worker(
+        interval_seconds=10.0,
+        once=True,
+        session_factory=lambda: None,
+        vector_store=object(),
+        embedding_provider=object(),
+    )
+
+    assert runs == 1
+
+
+def test_backfill_worker_survives_iteration_failure(monkeypatch) -> None:
+    runs = 0
+    stop = embedding_backfill._SignalStopEvent()
+
+    def mock_run_backfill(**kwargs):
+        nonlocal runs
+        runs += 1
+        if runs == 1:
+            raise RuntimeError("transient provider timeout")
+        stop.requested = True
+        return BackfillReport()
+
+    monkeypatch.setattr(embedding_backfill, "check_backfill_ready", lambda **k: None)
+    monkeypatch.setattr(embedding_backfill, "run_backfill", mock_run_backfill)
+
+    embedding_backfill.run_backfill_worker(
+        interval_seconds=0.01,
+        stop_event=stop,
+        session_factory=lambda: None,
+        vector_store=object(),
+        embedding_provider=object(),
+    )
+
+    assert runs == 2
+
+
+def test_backfill_worker_readiness_failure(monkeypatch) -> None:
+    def fail_readiness(**kwargs):
+        raise embedding_backfill.ReadinessError("database unavailable")
+
+    monkeypatch.setattr(embedding_backfill, "check_backfill_ready", fail_readiness)
+
+    with pytest.raises(embedding_backfill.ReadinessError):
+        embedding_backfill.run_backfill_worker(
+            interval_seconds=0.01,
+            session_factory=lambda: None,
+            vector_store=object(),
+            embedding_provider=object(),
+        )
+
+
+def test_backfill_check_cli(monkeypatch) -> None:
+    called = False
+
+    def mock_check():
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(embedding_backfill, "check_backfill_ready", mock_check)
+    embedding_backfill.main(["--check"])
+    assert called is True
+
+
+def test_backfill_check_cli_failure_exits_nonzero(monkeypatch) -> None:
+    def fail_check():
+        raise embedding_backfill.ReadinessError("storage unavailable")
+
+    monkeypatch.setattr(embedding_backfill, "check_backfill_ready", fail_check)
+    with pytest.raises(SystemExit) as exc:
+        embedding_backfill.main(["--check"])
+    assert exc.value.code == 1
+
+
+def test_backfill_worker_cli_with_interval(monkeypatch) -> None:
+    called_with = {}
+
+    def mock_worker(**kwargs):
+        called_with.update(kwargs)
+
+    monkeypatch.setattr(embedding_backfill, "run_backfill_worker", mock_worker)
+    embedding_backfill.main(["--interval-seconds", "600", "--once", "--batch-size", "32"])
+
+    assert called_with["interval_seconds"] == 600.0
+    assert called_with["once"] is True
+    assert called_with["batch_size"] == 32

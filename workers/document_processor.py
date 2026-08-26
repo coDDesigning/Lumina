@@ -52,6 +52,8 @@ from services.embeddings import EmbeddingProvider
 from services.vector_store import VectorStore, VectorStoreError
 from storage.base import Storage
 from storage.dependencies import get_storage
+from workers.course_purge import run_purge
+from workers.embedding_backfill import run_backfill
 
 logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], Session]
@@ -605,6 +607,10 @@ def run_worker(
         max(0.1, settings.processing_job_lease_seconds / 2),
     )
     next_recovery = 0.0
+    purge_interval = settings.course_purge_interval_seconds
+    backfill_interval = settings.embedding_backfill_interval_seconds
+    next_purge = 0.0 if purge_interval > 0 else float("inf")
+    next_backfill = 0.0 if backfill_interval > 0 else float("inf")
 
     logger.info("Document worker %s started", worker_id)
     try:
@@ -660,6 +666,35 @@ def run_worker(
                     if recovery_saturated
                     else monotonic_now + recovery_interval
                 )
+
+            if stop.is_set():
+                break
+
+            if purge_interval > 0 and monotonic_now >= next_purge:
+                try:
+                    run_purge(
+                        session_factory=session_factory,
+                        storage=storage,
+                        stop_event=stop,
+                    )
+                except Exception:
+                    logger.exception("Periodic course purge reconciliation failed")
+                next_purge = monotonic_now + purge_interval
+
+            if stop.is_set():
+                break
+
+            if backfill_interval > 0 and monotonic_now >= next_backfill:
+                try:
+                    run_backfill(
+                        session_factory=session_factory,
+                        batch_size=settings.embedding_backfill_batch_size,
+                        prune_orphans=settings.embedding_backfill_prune_orphans,
+                        stop_event=stop,
+                    )
+                except Exception:
+                    logger.exception("Periodic embedding backfill reconciliation failed")
+                next_backfill = monotonic_now + backfill_interval
 
             if stop.is_set():
                 break

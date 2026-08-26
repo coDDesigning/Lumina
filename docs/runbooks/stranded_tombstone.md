@@ -9,6 +9,8 @@ Course deletion in Lumina is permanent, owner-only, and executed via `CourseServ
 
 If a network timeout or crash interrupts steps 1 or 2, the course row remains tombstoned (`is_deleted = True`). The background utility `workers.course_purge` reconciles and finishes unfinished deletions idempotently.
 
+In production, the running worker automatically executes periodic purge reconciliation scans every `COURSE_PURGE_INTERVAL_SECONDS` (default: 3600 seconds / 1 hour). Stranded tombstones will clear on the next cycle without manual intervention. Standalone daemon execution is also supported via `python -m workers.course_purge --interval-seconds <SECONDS>`.
+
 ---
 
 ## 1. Diagnosis

@@ -34,6 +34,14 @@ output "migrate_task_definition_family" {
   value = aws_ecs_task_definition.migrate.family
 }
 
+output "course_purge_task_definition_family" {
+  value = aws_ecs_task_definition.course_purge.family
+}
+
+output "embedding_backfill_task_definition_family" {
+  value = aws_ecs_task_definition.embedding_backfill.family
+}
+
 output "ssm_paths" {
   description = "SSM parameter paths the ECS tasks read at start. Created by the secrets module."
   value       = local.ssm_paths

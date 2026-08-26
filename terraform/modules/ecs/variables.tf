@@ -108,6 +108,18 @@ variable "tmpfs_size_bytes" {
   type = number
 }
 
+variable "course_purge_interval_seconds" {
+  description = "Interval in seconds between background course purge reconciliation scans."
+  type        = number
+  default     = 3600
+}
+
+variable "embedding_backfill_interval_seconds" {
+  description = "Interval in seconds between background embedding backfill reconciliation scans."
+  type        = number
+  default     = 3600
+}
+
 variable "tags" {
   type = map(string)
 }

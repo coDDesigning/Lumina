@@ -333,3 +333,108 @@ def test_extraction_child_ignores_worker_sigterm() -> None:
         process.kill()
         process.join(timeout=5)
         parent_connection.close()
+
+
+def test_worker_runs_periodic_purge_and_backfill(monkeypatch) -> None:
+    stop = threading.Event()
+    purge_calls = 0
+    backfill_calls = 0
+
+    def mock_purge(**kwargs):
+        nonlocal purge_calls
+        purge_calls += 1
+
+    def mock_backfill(**kwargs):
+        nonlocal backfill_calls
+        backfill_calls += 1
+
+    def mock_process(**kwargs):
+        stop.set()
+        return False
+
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **k: None)
+    monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
+    monkeypatch.setattr(document_processor, "run_purge", mock_purge)
+    monkeypatch.setattr(document_processor, "run_backfill", mock_backfill)
+    monkeypatch.setattr(document_processor, "process_next_job", mock_process)
+
+    document_processor.run_worker(
+        once=False,
+        stop_event=stop,
+        session_factory=fake_session_factory,
+        storage=ReadyStorage(),
+    )
+
+    assert purge_calls == 1
+    assert backfill_calls == 1
+
+
+def test_worker_maintenance_failure_does_not_crash_loop(monkeypatch) -> None:
+    stop = threading.Event()
+
+    def fail_purge(**kwargs):
+        raise RuntimeError("purge error")
+
+    def fail_backfill(**kwargs):
+        raise RuntimeError("backfill error")
+
+    def mock_process(**kwargs):
+        stop.set()
+        return True
+
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **k: None)
+    monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
+    monkeypatch.setattr(document_processor, "run_purge", fail_purge)
+    monkeypatch.setattr(document_processor, "run_backfill", fail_backfill)
+    monkeypatch.setattr(document_processor, "process_next_job", mock_process)
+
+    document_processor.run_worker(
+        once=False,
+        stop_event=stop,
+        session_factory=fake_session_factory,
+        storage=ReadyStorage(),
+    )
+
+    assert stop.is_set()
+
+
+def test_worker_skips_maintenance_when_intervals_are_zero(monkeypatch) -> None:
+    stop = threading.Event()
+    purge_calls = 0
+    backfill_calls = 0
+
+    def mock_purge(**kwargs):
+        nonlocal purge_calls
+        purge_calls += 1
+
+    def mock_backfill(**kwargs):
+        nonlocal backfill_calls
+        backfill_calls += 1
+
+    def mock_process(**kwargs):
+        stop.set()
+        return False
+
+    import dataclasses
+
+    custom_settings = dataclasses.replace(
+        document_processor.settings,
+        course_purge_interval_seconds=0.0,
+        embedding_backfill_interval_seconds=0.0,
+    )
+    monkeypatch.setattr(document_processor, "settings", custom_settings)
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **k: None)
+    monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
+    monkeypatch.setattr(document_processor, "run_purge", mock_purge)
+    monkeypatch.setattr(document_processor, "run_backfill", mock_backfill)
+    monkeypatch.setattr(document_processor, "process_next_job", mock_process)
+
+    document_processor.run_worker(
+        once=False,
+        stop_event=stop,
+        session_factory=fake_session_factory,
+        storage=ReadyStorage(),
+    )
+
+    assert purge_calls == 0
+    assert backfill_calls == 0

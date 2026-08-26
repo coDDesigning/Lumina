@@ -74,6 +74,7 @@ LIMIT 20;
    ```bash
    docker compose run --rm worker python -m workers.embedding_backfill --document-id <DOCUMENT_UUID>
    ```
+   *Note*: The background worker automatically scans and backfills missing vectors every `EMBEDDING_BACKFILL_INTERVAL_SECONDS` (default: 3600 seconds / 1 hour).
 
 ### Hosted Environment (AWS ECS / RDS / S3)
 

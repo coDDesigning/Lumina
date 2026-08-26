@@ -137,6 +137,8 @@ module "ecs" {
   migrate_cpu                       = var.migrate_cpu
   migrate_memory                    = var.migrate_memory
   tmpfs_size_bytes                  = var.tmpfs_size_bytes
+  course_purge_interval_seconds     = var.course_purge_interval_seconds
+  embedding_backfill_interval_seconds = var.embedding_backfill_interval_seconds
   tags                              = local.tags
 }
 
@@ -162,6 +164,8 @@ module "github_oidc" {
     module.ecs.api_task_definition_family,
     module.ecs.worker_task_definition_family,
     module.ecs.migrate_task_definition_family,
+    module.ecs.course_purge_task_definition_family,
+    module.ecs.embedding_backfill_task_definition_family,
   ]
   ecs_task_role_arn      = module.ecs.task_role_arn
   ecs_execution_role_arn = module.ecs.execution_role_arn

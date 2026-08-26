@@ -56,6 +56,11 @@ DEFAULT_GEMINI_EMBEDDING_MODEL = "text-embedding-004"
 DEFAULT_EMBEDDING_BATCH_SIZE = 32
 DEFAULT_EMBEDDING_TIMEOUT_SECONDS = 60
 
+DEFAULT_COURSE_PURGE_INTERVAL_SECONDS = 3600.0
+DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS = 3600.0
+DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE = 64
+DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS = False
+
 IMAGE_PROVIDER_NONE = "none"
 IMAGE_PROVIDER_GEMINI = "gemini"
 IMAGE_PROVIDER_OLLAMA = "ollama"
@@ -245,6 +250,12 @@ class Settings:
     rate_limit_generation_window_seconds: int
     rate_limit_lockout_base_seconds: int
     rate_limit_lockout_max_seconds: int
+
+    # Periodic maintenance configuration
+    course_purge_interval_seconds: float
+    embedding_backfill_interval_seconds: float
+    embedding_backfill_batch_size: int
+    embedding_backfill_prune_orphans: bool
 
     @property
     def is_hosted(self) -> bool:
@@ -817,6 +828,23 @@ def load_settings() -> Settings:
             "RATE_LIMIT_LOCKOUT_BASE_SECONDS."
         )
 
+    course_purge_interval_seconds = _nonnegative_float_setting(
+        "COURSE_PURGE_INTERVAL_SECONDS",
+        DEFAULT_COURSE_PURGE_INTERVAL_SECONDS,
+    )
+    embedding_backfill_interval_seconds = _nonnegative_float_setting(
+        "EMBEDDING_BACKFILL_INTERVAL_SECONDS",
+        DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS,
+    )
+    embedding_backfill_batch_size = _positive_integer_setting(
+        "EMBEDDING_BACKFILL_BATCH_SIZE",
+        DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE,
+    )
+    embedding_backfill_prune_orphans = _boolean_setting(
+        "EMBEDDING_BACKFILL_PRUNE_ORPHANS",
+        default=DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS,
+    )
+
     return Settings(
         app_env=app_env,
         app_debug=app_debug,
@@ -911,6 +939,10 @@ def load_settings() -> Settings:
         rate_limit_generation_window_seconds=rate_limit_generation_window_seconds,
         rate_limit_lockout_base_seconds=rate_limit_lockout_base_seconds,
         rate_limit_lockout_max_seconds=rate_limit_lockout_max_seconds,
+        course_purge_interval_seconds=course_purge_interval_seconds,
+        embedding_backfill_interval_seconds=embedding_backfill_interval_seconds,
+        embedding_backfill_batch_size=embedding_backfill_batch_size,
+        embedding_backfill_prune_orphans=embedding_backfill_prune_orphans,
     )
 
 

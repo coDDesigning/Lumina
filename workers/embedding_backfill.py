@@ -8,28 +8,64 @@ safe, and it commits per document so an interrupted run keeps its progress.
 
 import argparse
 import logging
+import signal
+import threading
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Protocol
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.config import settings
+from backend.app.config import (
+    DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE,
+    DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS,
+    settings,
+)
 from backend.app.database import SessionLocal
 from backend.app.models import Course, DocumentChunk, UploadedDocument
-from backend.app.observability import configure_logging
+from backend.app.observability import configure_logging, emit_emf_metrics
+from backend.app.readiness import ReadinessError, check_readiness
 from services.embeddings import (
     EmbeddingProvider,
     configured_embedding_identity,
     get_embedding_provider,
 )
 from services.vector_store import VectorRecord, VectorStore, get_vector_store
+from storage.base import Storage
+from storage.dependencies import get_storage
 
 logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], Session]
 
-DEFAULT_BATCH_SIZE = 64
+DEFAULT_BATCH_SIZE = DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE
+
+
+class StopEvent(Protocol):
+    def is_set(self) -> bool: ...
+
+    def wait(self, timeout: float) -> bool: ...
+
+
+class _SignalStopEvent:
+    """Lock-free stop flag written by Python's main-thread signal handler."""
+
+    def __init__(self) -> None:
+        self.requested = False
+
+    def is_set(self) -> bool:
+        return self.requested
+
+    def wait(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while not self.requested:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.1, remaining))
+        return self.requested
 
 
 @dataclass
@@ -68,6 +104,23 @@ def _ready_document_ids(
     if document_id is not None:
         statement = statement.where(UploadedDocument.id == document_id)
     return list(session.scalars(statement).all())
+
+
+def check_backfill_ready(
+    *,
+    session_factory: SessionFactory = SessionLocal,
+    storage: Storage | None = None,
+    vector_store: VectorStore | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> None:
+    if storage is None:
+        storage = get_storage()
+    if vector_store is None:
+        vector_store = get_vector_store()
+    if embedding_provider is None:
+        embedding_provider = get_embedding_provider()
+    with session_factory() as session:
+        check_readiness(session, storage)
 
 
 def _backfill_document(
@@ -151,6 +204,7 @@ def run_backfill(
     batch_size: int = DEFAULT_BATCH_SIZE,
     dry_run: bool = False,
     prune_orphans: bool = False,
+    stop_event: StopEvent | None = None,
 ) -> BackfillReport:
     if vector_store is None:
         vector_store = get_vector_store()
@@ -166,9 +220,14 @@ def run_backfill(
         )
 
     for identifier in document_ids:
+        if stop_event is not None and stop_event.is_set():
+            break
         with session_factory() as session:
             document = session.get(UploadedDocument, identifier)
             if document is None or document.status != "ready":
+                continue
+            course = session.get(Course, document.course_id)
+            if course is None or course.is_deleted:
                 continue
             report.documents_examined += 1
             _backfill_document(
@@ -186,8 +245,89 @@ def run_backfill(
             else:
                 session.commit()
 
+    emit_emf_metrics(
+        {
+            "BackfillDocumentsExamined": report.documents_examined,
+            "BackfillDocumentsUpdated": report.documents_updated,
+            "BackfillVectorsMissing": report.vectors_missing,
+            "BackfillVectorsWritten": report.vectors_written,
+            "BackfillVectorsPruned": report.vectors_pruned,
+        },
+        dimensions={"Service": "embedding_backfill", "Environment": settings.app_env},
+    )
     logger.info("Embedding backfill finished: %s", report.summary())
     return report
+
+
+def run_backfill_worker(
+    *,
+    interval_seconds: float = DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS,
+    once: bool = False,
+    stop_event: StopEvent | None = None,
+    session_factory: SessionFactory = SessionLocal,
+    storage: Storage | None = None,
+    vector_store: VectorStore | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+    course_id: int | None = None,
+    document_id: UUID | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    dry_run: bool = False,
+    prune_orphans: bool = False,
+) -> None:
+    stop = stop_event or threading.Event()
+    if stop.is_set():
+        return
+    if storage is None:
+        storage = get_storage()
+    if vector_store is None:
+        vector_store = get_vector_store()
+    if embedding_provider is None:
+        embedding_provider = get_embedding_provider()
+
+    check_backfill_ready(
+        session_factory=session_factory,
+        storage=storage,
+        vector_store=vector_store,
+        embedding_provider=embedding_provider,
+    )
+    if stop.is_set():
+        return
+
+    logger.info(
+        "Embedding backfill worker started (interval=%.1fs, batch_size=%d, prune_orphans=%s)",
+        interval_seconds,
+        batch_size,
+        prune_orphans,
+    )
+    try:
+        while not stop.is_set():
+            try:
+                run_backfill(
+                    session_factory=session_factory,
+                    vector_store=vector_store,
+                    embedding_provider=embedding_provider,
+                    course_id=course_id,
+                    document_id=document_id,
+                    batch_size=batch_size,
+                    dry_run=dry_run,
+                    prune_orphans=prune_orphans,
+                    stop_event=stop,
+                )
+            except Exception:
+                logger.exception("Embedding backfill execution failed")
+            if once or stop.is_set():
+                break
+            stop.wait(interval_seconds)
+    finally:
+        logger.info("Embedding backfill worker stopped")
+
+
+def _install_shutdown_handlers(stop_event: _SignalStopEvent) -> None:
+    def request_shutdown(_signum: int, _frame: object) -> None:
+        stop_event.requested = True
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -199,12 +339,59 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--prune-orphans", action="store_true")
+    parser.add_argument(
+        "--interval-seconds",
+        type=float,
+        default=None,
+        help="Run continuously with given sleep interval in seconds.",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run at most one backfill cycle and exit.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Check dependencies and readiness without running backfill.",
+    )
     arguments = parser.parse_args(argv)
 
     if arguments.batch_size <= 0:
         parser.error("--batch-size must be a positive integer")
 
     configure_logging(service="maintenance", environment=settings.app_env)
+
+    if arguments.check:
+        try:
+            check_backfill_ready()
+        except ReadinessError as exc:
+            logger.error("Embedding backfill readiness check failed: %s", exc)
+            raise SystemExit(1) from None
+        logger.info("Embedding backfill readiness check succeeded")
+        return
+
+    if arguments.interval_seconds is not None:
+        if arguments.interval_seconds < 0:
+            parser.error("--interval-seconds must be a non-negative number")
+        stop_event = _SignalStopEvent()
+        _install_shutdown_handlers(stop_event)
+        try:
+            run_backfill_worker(
+                interval_seconds=arguments.interval_seconds,
+                once=arguments.once,
+                stop_event=stop_event,
+                course_id=arguments.course_id,
+                document_id=UUID(arguments.document_id) if arguments.document_id else None,
+                batch_size=arguments.batch_size,
+                dry_run=arguments.dry_run,
+                prune_orphans=arguments.prune_orphans,
+            )
+        except ReadinessError as exc:
+            logger.error("Embedding backfill readiness check failed: %s", exc)
+            raise SystemExit(1) from None
+        return
+
     report = run_backfill(
         course_id=arguments.course_id,
         document_id=UUID(arguments.document_id) if arguments.document_id else None,

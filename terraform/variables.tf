@@ -261,6 +261,18 @@ variable "runtime_secrets" {
   sensitive   = true
 }
 
+variable "course_purge_interval_seconds" {
+  description = "Interval in seconds between background course purge reconciliation scans."
+  type        = number
+  default     = 3600
+}
+
+variable "embedding_backfill_interval_seconds" {
+  description = "Interval in seconds between background embedding backfill reconciliation scans."
+  type        = number
+  default     = 3600
+}
+
 variable "alarm_email" {
   description = "Optional email subscribed to production alarms. Confirmation is required."
   type        = string

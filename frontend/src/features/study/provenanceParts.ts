@@ -15,7 +15,12 @@ export function provenanceParts(context: RetrievedContext): string[] {
     parts.push('some selected passages did not fit and were left out');
   }
   if (context.profile_knowledge_used) {
-    parts.push(`plus ${context.profile_knowledge_items_used} notes from your profile`);
+    const notes = context.profile_knowledge_items_used;
+    parts.push(
+      notes != null && notes > 0
+        ? `plus ${notes} notes from your profile`
+        : 'plus notes from your profile',
+    );
   }
 
   return parts;

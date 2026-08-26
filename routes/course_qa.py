@@ -82,6 +82,7 @@ def ask_course_question(
         message="Course Q&A answer generated successfully",
         data=CourseQAGenerationResult(
             answer=generation.response.answer,
+            citations=generation.response.citations,
             conversation_id=generation.conversation_id,
             context_truncated=generation.material.truncated,
             chunks_used=generation.material.chunks_used,

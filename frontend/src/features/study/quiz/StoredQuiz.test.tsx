@@ -142,3 +142,32 @@ describe('a quiz kept in the course history', () => {
     expect(screen.queryByText('null')).toBeNull();
   });
 });
+
+describe('sources on a stored quiz', () => {
+  const CITATION = {
+    key: 'S1',
+    document_id: '11111111-1111-1111-1111-111111111111',
+    document_label: 'Lecture 4',
+    page_start: 12,
+    page_end: 14,
+  };
+
+  it('names the document and pages a question came from', () => {
+    renderQuiz(quiz({ questions: [question({ citations: [CITATION] })] }));
+
+    expect(screen.getByText('Lecture 4 · pp. 12–14')).toBeInTheDocument();
+  });
+
+  it('shows no sources for a question that carries none', () => {
+    renderQuiz(quiz({ questions: [question({ citations: [] })] }));
+
+    expect(screen.queryByText(/Lecture 4/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Sources:')).not.toBeInTheDocument();
+  });
+
+  it('shows no sources for a quiz stored before citations existed', () => {
+    renderQuiz(quiz({ questions: [question()] }));
+
+    expect(screen.queryByText('Sources:')).not.toBeInTheDocument();
+  });
+});

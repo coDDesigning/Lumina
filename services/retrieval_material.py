@@ -13,6 +13,7 @@ The module reads no settings: every bound is supplied by the calling feature,
 the same way ``load_course_material`` takes its character budget today.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -32,6 +33,12 @@ from services.embeddings import (
     EmbeddingRateLimitError,
     EmbeddingTimeoutError,
 )
+from services.citations import (
+    SuppliedCitation,
+    build_supplied_citations,
+    citation_header,
+    document_label,
+)
 from services.semantic_retrieval import RetrievedChunk, retrieve_course_chunks
 from services.vector_store import VectorStore, VectorStoreError
 from utils.ai_errors import (
@@ -45,6 +52,8 @@ from utils.ai_errors import (
 )
 
 RETRIEVAL_FAILED_MESSAGE = "Course material could not be retrieved."
+
+CITATION_HEADER_SEPARATOR = "\n"
 
 READY_STATUS = "ready"
 
@@ -88,10 +97,15 @@ class RetrievedCourseMaterial(CourseMaterial):
     chunks_ranked: int = 0
     lowest_similarity: float | None = None
     highest_similarity: float | None = None
+    citations: tuple[SuppliedCitation, ...] = ()
 
     @property
     def retrieval_narrowed(self) -> bool:
         return self.chunks_used < self.chunks_available
+
+    @property
+    def citation_map(self) -> dict[str, SuppliedCitation]:
+        return {citation.key: citation for citation in self.citations}
 
 
 def _validate(
@@ -133,10 +147,16 @@ def _rank(
         raise MaterialRetrievalError(RETRIEVAL_FAILED_MESSAGE) from exc
 
 
-def _ready_document_order(
+@dataclass(frozen=True)
+class _ReadyDocument:
+    order: tuple[datetime, str]
+    file_name: str
+
+
+def _ready_documents(
     db: Session, document_ids: set[UUID]
-) -> dict[UUID, tuple[datetime, str]]:
-    """Corpus position of each ready document among ``document_ids``.
+) -> dict[UUID, _ReadyDocument]:
+    """Corpus position and file name of each ready document among ``document_ids``.
 
     Doubles as the ready-only filter. A document keeps its old chunks and vectors
     while it is being reprocessed, so ranking alone would surface material the
@@ -144,12 +164,63 @@ def _ready_document_order(
     rather than ordered.
     """
     rows = db.execute(
-        select(UploadedDocument.id, UploadedDocument.created_at).where(
+        select(
+            UploadedDocument.id,
+            UploadedDocument.created_at,
+            UploadedDocument.original_file_name,
+        ).where(
             UploadedDocument.id.in_(document_ids),
             UploadedDocument.status == READY_STATUS,
         )
     ).all()
-    return {row.id: (row.created_at, str(row.id)) for row in rows}
+    return {
+        row.id: _ReadyDocument(
+            order=(row.created_at, str(row.id)),
+            file_name=row.original_file_name,
+        )
+        for row in rows
+    }
+
+
+def _reserved_header_width(
+    survivors: list[RetrievedChunk], documents: dict[UUID, _ReadyDocument]
+) -> Callable[[RetrievedChunk], int]:
+    widest_key = "S" + "9" * len(str(len(survivors)))
+    labels = {
+        document_id: document_label(document.file_name)
+        for document_id, document in documents.items()
+    }
+
+    def reserve(chunk: RetrievedChunk) -> int:
+        header = citation_header(
+            key=widest_key,
+            label=labels[chunk.document_id],
+            page_start=chunk.page_number,
+            page_end=chunk.end_page_number,
+        )
+        return len(header) + len(CITATION_HEADER_SEPARATOR)
+
+    return reserve
+
+
+def _assemble_text(
+    kept: list[RetrievedChunk], citations: tuple[SuppliedCitation, ...]
+) -> str:
+    if not citations:
+        return CHUNK_SEPARATOR.join(chunk.text.strip() for chunk in kept)
+
+    passages = [
+        citation_header(
+            key=citation.key,
+            label=citation.document_label,
+            page_start=citation.page_start,
+            page_end=citation.page_end,
+        )
+        + CITATION_HEADER_SEPARATOR
+        + chunk.text.strip()
+        for chunk, citation in zip(kept, citations, strict=True)
+    ]
+    return CHUNK_SEPARATOR.join(passages)
 
 
 def load_retrieved_material(
@@ -160,6 +231,7 @@ def load_retrieved_material(
     limit: int,
     min_similarity: float,
     max_characters: int,
+    include_citations: bool,
     provider: EmbeddingProvider | None = None,
     store: VectorStore | None = None,
 ) -> RetrievedCourseMaterial:
@@ -184,11 +256,11 @@ def load_retrieved_material(
     if not ranked:
         raise MaterialNotIndexedError(MATERIAL_NOT_INDEXED_MESSAGE)
 
-    order = _ready_document_order(db, {chunk.document_id for chunk in ranked})
+    documents = _ready_documents(db, {chunk.document_id for chunk in ranked})
     survivors = [
         chunk
         for chunk in ranked
-        if chunk.document_id in order
+        if chunk.document_id in documents
         and chunk.similarity >= min_similarity
         and chunk.text
         and chunk.text.strip()
@@ -196,12 +268,18 @@ def load_retrieved_material(
     if not survivors:
         raise NoRelevantMaterialError(NO_RELEVANT_MATERIAL_MESSAGE)
 
+    reserve = (
+        _reserved_header_width(survivors, documents) if include_citations else None
+    )
+
     kept: list[RetrievedChunk] = []
     length = 0
     truncated = False
     for chunk in survivors:
         stripped = chunk.text.strip()
         addition = len(stripped) + (len(CHUNK_SEPARATOR) if kept else 0)
+        if reserve is not None:
+            addition += reserve(chunk)
         if length + addition > max_characters:
             truncated = True
             break
@@ -213,16 +291,27 @@ def load_retrieved_material(
 
     kept.sort(
         key=lambda chunk: (
-            order[chunk.document_id],
+            documents[chunk.document_id].order,
             chunk.chunk_index,
             chunk.chunk_id,
         )
     )
 
     similarities = [chunk.similarity for chunk in kept]
+    citations = (
+        build_supplied_citations(
+            kept,
+            documents={
+                document_id: document.file_name
+                for document_id, document in documents.items()
+            },
+        )
+        if include_citations
+        else ()
+    )
 
     return RetrievedCourseMaterial(
-        text=CHUNK_SEPARATOR.join(chunk.text.strip() for chunk in kept),
+        text=_assemble_text(kept, citations),
         chunks_used=len(kept),
         chunks_available=count_available_chunks(db, course_id),
         truncated=truncated,
@@ -231,4 +320,5 @@ def load_retrieved_material(
         chunks_ranked=len(ranked),
         lowest_similarity=min(similarities),
         highest_similarity=max(similarities),
+        citations=citations,
     )

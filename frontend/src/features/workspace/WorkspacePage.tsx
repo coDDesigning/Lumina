@@ -27,6 +27,7 @@ import type {
   ConversationRole,
   ConversationType,
   CreditSource,
+  Citation,
   RetrievedContext,
 } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
@@ -79,6 +80,7 @@ interface ThreadMessage {
   role: ConversationRole;
   content: string;
   context?: RetrievedContext;
+  citations?: Citation[];
 }
 
 interface Thread {
@@ -374,6 +376,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             {
               role: 'assistant',
               content: result.answer,
+              citations: result.citations,
               context: {
                 context_truncated: result.context_truncated,
                 chunks_used: result.chunks_used,
@@ -425,7 +428,15 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
       ...state,
       [conversation.conversation_type]: {
         conversationId: conversation.id,
-        messages: conversation.messages.map(({ role, content }) => ({ role, content })),
+        // The backend never stored per-message retrieval context, so a resumed
+        // turn has no provenance line: absent is honest, zero would not be.
+        // The backend never stored per-message retrieval context, so a resumed
+        // turn has no provenance line: absent is honest, zero would not be.
+        messages: conversation.messages.map(({ role, content, citations }) => ({
+          role,
+          content,
+          citations,
+        })),
         isLoading: false,
         error: null,
       },
@@ -612,7 +623,11 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                 </p>
               ) : (
                 <div key={index} className={styles.turnAssistant}>
-                  <Markdown className={styles.answer} text={message.content} />
+                  <Markdown
+                    className={styles.answer}
+                    text={message.content}
+                    citations={message.citations}
+                  />
                   {message.context ? (
                     <span className={styles.provenance}>
                       <FileText className={styles.provenanceIcon} aria-hidden="true" />

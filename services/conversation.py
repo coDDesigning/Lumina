@@ -1,19 +1,44 @@
 """Typed, course-scoped conversation persistence and history reads."""
 
+import logging
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.models import Conversation, ConversationMessage
+from schemas.citation import Citation
 from schemas.conversation import (
     ConversationDetail,
     ConversationMessageResponse,
     ConversationSummary,
     ConversationType,
 )
+from services.citations import strip_citation_markers
 from utils.exceptions import NotFoundException
+
+logger = logging.getLogger(__name__)
+
+
+def parse_message_citations(message: ConversationMessage) -> list[Citation]:
+    """Read one message's stored citations, or ``[]`` if unusable.
+
+    A message whose document cannot be read loses its attribution rather
+    than failing the whole thread read.
+    """
+    if not message.citations:
+        return []
+    try:
+        return [Citation.model_validate(item) for item in message.citations]
+    except (ValidationError, TypeError):
+        logger.warning(
+            "conversation_messages.citations for row %s is not a valid citation document",
+            message.id,
+        )
+        return []
+
 
 CONVERSATION_NOT_FOUND = "Conversation not found"
 CONVERSATION_PREVIEW_MAX_CHARS = 160
@@ -50,7 +75,8 @@ class ConversationService:
         if conversation is None:
             return ""
         history = "\n".join(
-            f"{'User' if message.role == 'user' else 'Assistant'}: {message.content}"
+            f"{'User' if message.role == 'user' else 'Assistant'}: "
+            f"{strip_citation_markers(message.content)}"
             for message in conversation.messages
         )
         if len(history) <= CONVERSATION_HISTORY_MAX_CHARS:
@@ -72,6 +98,7 @@ class ConversationService:
         conversation_type: ConversationType,
         question: str,
         answer: str,
+        citations: list[Citation] | None = None,
     ) -> Conversation:
         if conversation is None:
             conversation = Conversation(
@@ -95,6 +122,11 @@ class ConversationService:
                     conversation=conversation,
                     role="assistant",
                     content=answer,
+                    citations=[
+                        citation.model_dump(mode="json") for citation in citations
+                    ]
+                    if citations is not None
+                    else None,
                 ),
             ]
         )
@@ -222,6 +254,7 @@ class ConversationService:
                     role=message.role,
                     content=message.content,
                     created_at=message.created_at,
+                    citations=parse_message_citations(message),
                 )
                 for message in conversation.messages
             ],

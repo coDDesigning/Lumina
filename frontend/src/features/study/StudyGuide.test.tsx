@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { RetrievedContext, StudyGuideResponse } from '@/api/types';
 import { StudyGuide } from './StudyGuide';
+import { citedText } from './citations';
 
 const GUIDE: StudyGuideResponse = {
   title: 'Sorting Algorithms',
@@ -37,7 +38,7 @@ describe('StudyGuide', () => {
     render(<StudyGuide guide={GUIDE} />);
 
     expect(screen.getByRole('heading', { name: 'Sorting Algorithms' })).toBeInTheDocument();
-    expect(screen.getByText(GUIDE.summary)).toBeInTheDocument();
+    expect(screen.getByText(citedText(GUIDE.summary))).toBeInTheDocument();
     expect(screen.getByText('Medium')).toBeInTheDocument();
     expect(screen.getByText(GUIDE.difficulty.reason)).toBeInTheDocument();
     expect(screen.getByText('45 minutes')).toBeInTheDocument();
@@ -105,5 +106,55 @@ describe('StudyGuide', () => {
     expect(screen.queryByRole('heading', { name: 'Going into the exam' })).toBeNull();
     expect(screen.queryByRole('heading', { name: /unsure about/ })).toBeNull();
     expect(screen.getByRole('heading', { name: 'Key points' })).toBeInTheDocument();
+  });
+});
+
+describe('citations', () => {
+  const CITATION = {
+    key: 'S1',
+    document_id: '11111111-1111-1111-1111-111111111111',
+    document_label: 'Lecture 4',
+    page_start: 12,
+    page_end: 12,
+  };
+
+  const CITED_GUIDE: StudyGuideResponse = {
+    ...GUIDE,
+    summary: { text: 'How comparison sorts trade time against space.', citations: [CITATION] },
+    key_points: [{ text: 'Merge sort is stable', citations: [CITATION] }],
+    important_terms: [
+      { term: 'Stability', definition: 'Equal keys keep their order.', citations: [CITATION] },
+    ],
+    exam_tips: {
+      lecture_based: [{ text: 'Know the recurrence', citations: [CITATION] }],
+      ai_suggestions: ['Practice tracing a merge'],
+    },
+  };
+
+  it('renders a legacy guide of plain strings unchanged', () => {
+    render(<StudyGuide guide={GUIDE} />);
+
+    expect(screen.getByText('Merge sort is stable')).toBeInTheDocument();
+    expect(screen.queryByText(/Lecture 4/)).not.toBeInTheDocument();
+  });
+
+  it('names the document and page of a cited claim', () => {
+    render(<StudyGuide guide={CITED_GUIDE} />);
+
+    expect(screen.getAllByText('Lecture 4 · p. 12').length).toBeGreaterThan(0);
+  });
+
+  it('labels the group of sources for a screen reader', () => {
+    render(<StudyGuide guide={CITED_GUIDE} />);
+
+    expect(screen.getAllByText('Sources:').length).toBeGreaterThan(0);
+  });
+
+  it('puts no source on a tip that did not come from the material', () => {
+    render(<StudyGuide guide={CITED_GUIDE} />);
+
+    const suggestion = screen.getByText('Practice tracing a merge');
+
+    expect(suggestion.textContent).toBe('Practice tracing a merge');
   });
 });

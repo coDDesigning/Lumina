@@ -191,3 +191,30 @@ describe('QuizAttemptPage keyboard-only completion', () => {
     ]);
   });
 });
+
+describe('sources while the student is still answering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('never names the passage a question came from before it is answered', async () => {
+    // Showing the source mid-attempt would point straight at the answer.
+    const quiz = quizWith(1);
+    quiz.questions[0].citations = [
+      {
+        key: 'S1',
+        document_id: '11111111-1111-1111-1111-111111111111',
+        document_label: 'Lecture 4',
+        page_start: 12,
+        page_end: 12,
+      },
+    ];
+    mockGet.mockResolvedValue(quiz);
+
+    renderPage();
+    await screen.findByText('Question number 1');
+
+    expect(screen.queryByText(/Lecture 4/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Sources:')).not.toBeInTheDocument();
+  });
+});

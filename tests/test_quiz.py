@@ -35,6 +35,7 @@ from services.quiz import (
     NoReadyCourseMaterialError,
     QuizGenerationError,
     QuizService,
+    parse_citations,
 )
 from services.text_generation import (
     GenerationMetadata,
@@ -157,11 +158,13 @@ def _add_ready_material(
     file_hash: str,
     retrieval_env,
     seeds: list[float] | None = None,
+    file_name: str | None = None,
+    pages: list[tuple[int, int] | None] | None = None,
 ) -> UploadedDocument:
     course = session.get(Course, course_id)
     assert course is not None
     document = UploadedDocument(
-        original_file_name=f"{file_hash[:6]}.txt",
+        original_file_name=file_name or f"{file_hash[:6]}.txt",
         file_type="txt",
         mime_type="text/plain",
         file_size=10,
@@ -174,15 +177,19 @@ def _add_ready_material(
     )
     session.add(document)
     session.flush()
+    page_ranges = pages if pages is not None else [None] * len(texts)
     chunks = [
         DocumentChunk(
             document=document,
             course=course,
             chunk_index=index,
-            page_number=None,
-            text=text,
+            page_number=page_range[0] if page_range else None,
+            end_page_number=page_range[1] if page_range else None,
+            text=chunk_text,
         )
-        for index, text in enumerate(texts)
+        for index, (chunk_text, page_range) in enumerate(
+            zip(texts, page_ranges, strict=True)
+        )
     ]
     session.add_all(chunks)
     session.flush()
@@ -737,7 +744,7 @@ def test_generate_rejects_a_difficulty_mismatch(
 def test_generate_bounds_the_prompt_to_the_configured_budget(
     db_session, model_graph, retrieval_env, monkeypatch
 ) -> None:
-    monkeypatch.setattr(quiz_service, "settings", _bounded_settings(40))
+    monkeypatch.setattr(quiz_service, "settings", _bounded_settings(60))
     _add_ready_material(
         db_session,
         model_graph.course.id,
@@ -1928,3 +1935,93 @@ def test_get_quiz_loads_stored_quiz_view(upload_api) -> None:
     )
     assert data["questions"][0]["options"] == ["O(1)", "O(log n)", "O(n)", "O(n^2)"]
     assert data["questions"][0]["correct_option_index"] == 1
+
+
+def _generate_cited_quiz(db_session, model_graph, retrieval_env, keys):
+    _add_ready_material(
+        db_session,
+        model_graph.course.id,
+        ["Binary search halves the range each step."],
+        file_hash="e" * 64,
+        retrieval_env=retrieval_env,
+        file_name="lecture-04.pdf",
+        pages=[(12, 14)],
+    )
+    payload = {
+        "title": "Example Quiz",
+        "questions": [
+            _question(1, "multiple_choice", citations=keys),
+            _question(2, "multiple_choice", citations=[]),
+        ],
+    }
+    provider = CountingProvider(result=payload)
+    generation = QuizService.generate(
+        db_session, model_graph.course.id, _request(question_count=2), provider
+    )
+    quiz = QuizService.save_generated_quiz(
+        db_session,
+        model_graph.course.id,
+        generation.quiz,
+        citations=generation.material.citation_map,
+    )
+    return QuizService.build_quiz_view(quiz)
+
+
+def test_a_generated_question_carries_resolved_citations(
+    db_session, model_graph, retrieval_env
+) -> None:
+    view = _generate_cited_quiz(db_session, model_graph, retrieval_env, ["S1"])
+
+    citation = view.questions[0].citations[0]
+
+    assert citation.key == "S1"
+    assert citation.document_label == "Lecture 4"
+    assert citation.page_start == 12
+    assert citation.page_end == 14
+    assert view.questions[1].citations == []
+
+
+def test_a_question_citing_an_unsupplied_key_keeps_only_the_supplied_ones(
+    db_session, model_graph, retrieval_env
+) -> None:
+    view = _generate_cited_quiz(db_session, model_graph, retrieval_env, ["S1", "S99"])
+
+    assert [citation.key for citation in view.questions[0].citations] == ["S1"]
+
+
+def test_a_question_citing_only_unsupplied_keys_carries_no_citations(
+    db_session, model_graph, retrieval_env
+) -> None:
+    view = _generate_cited_quiz(db_session, model_graph, retrieval_env, ["S77"])
+
+    assert view.questions[0].citations == []
+
+
+def test_a_question_type_still_rejects_an_unknown_extra_field() -> None:
+    with pytest.raises(ValidationError):
+        QuizGenerationResponse.model_validate(
+            {
+                "title": "Example Quiz",
+                "questions": [_question(1, "true_false", invented_field="nope")],
+            }
+        )
+
+
+def test_a_stored_citation_document_that_is_not_readable_reads_as_none(
+    db_session, model_graph
+) -> None:
+    quiz = Quiz(course_id=model_graph.course.id, title="Broken")
+    db_session.add(quiz)
+    db_session.flush()
+    row = QuizQuestion(
+        quiz_id=quiz.id,
+        question_index=0,
+        question_type="true_false",
+        question_text="Is it readable?",
+        correct_answer={"type": "true_false", "value": True},
+        citations=["not-a-citation-document"],
+    )
+    db_session.add(row)
+    db_session.flush()
+
+    assert parse_citations(row) == []

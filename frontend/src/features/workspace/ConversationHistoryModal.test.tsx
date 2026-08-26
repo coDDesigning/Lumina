@@ -182,3 +182,55 @@ describe('ConversationHistoryModal', () => {
     );
   });
 });
+
+describe('sources in a past thread', () => {
+  const CITED_DETAIL: ConversationDetail = {
+    ...TUTOR_SUMMARY,
+    messages: [
+      {
+        id: 61,
+        role: 'user',
+        content: 'Teach me graph traversal.',
+        created_at: '2026-08-20T10:00:00Z',
+        citations: [],
+      },
+      {
+        id: 62,
+        role: 'assistant',
+        content: 'Start with breadth-first search. [S1]',
+        created_at: '2026-08-20T10:00:01Z',
+        citations: [
+          {
+            key: 'S1',
+            document_id: '11111111-1111-1111-1111-111111111111',
+            document_label: 'Lecture 4',
+            page_start: 12,
+            page_end: 12,
+          },
+        ],
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    mockList.mockResolvedValue([QA_SUMMARY, TUTOR_SUMMARY]);
+  });
+
+  it('names the source instead of leaving a raw marker in the text', async () => {
+    mockGet.mockResolvedValue(CITED_DETAIL);
+
+    render(
+      <ConversationHistoryModal
+        courseId={7}
+        courseName="Algorithms"
+        onClose={vi.fn()}
+        onResume={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: /Tutoring 18/ }));
+
+    expect(await screen.findByText('Lecture 4 · p. 12')).toBeInTheDocument();
+    expect(screen.queryByText('[S1]')).not.toBeInTheDocument();
+  });
+});

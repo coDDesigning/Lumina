@@ -179,3 +179,70 @@ describe('Markdown', () => {
     expect(container.textContent).toContain('total_questions');
   });
 });
+
+describe('citation markers', () => {
+  const CITATION = {
+    key: 'S1',
+    document_id: '11111111-1111-1111-1111-111111111111',
+    document_label: 'Lecture 4',
+    page_start: 12,
+    page_end: 12,
+  };
+
+  it('turns a supplied marker into a named source', () => {
+    render(<Markdown text="Trees are acyclic. [S1]" citations={[CITATION]} />);
+
+    expect(screen.getByText('Lecture 4 · p. 12')).toBeInTheDocument();
+  });
+
+  it('leaves a key nothing supplied as literal text', () => {
+    render(<Markdown text="Trees are acyclic. [S9]" citations={[CITATION]} />);
+
+    expect(screen.getByText('[S9]')).toBeInTheDocument();
+    expect(screen.queryByText(/Lecture 4/)).not.toBeInTheDocument();
+  });
+
+  it('leaves every marker literal when no citations are supplied', () => {
+    render(<Markdown text="Trees are acyclic. [S1]" />);
+
+    expect(screen.getByText('[S1]')).toBeInTheDocument();
+  });
+
+  it('keeps a marker inside a code span literal', () => {
+    render(<Markdown text="Write `[S1]` to cite." citations={[CITATION]} />);
+
+    expect(screen.getByText('[S1]')).toBeInTheDocument();
+    expect(screen.queryByText(/Lecture 4/)).not.toBeInTheDocument();
+  });
+
+  it('still renders a markdown link rather than reading it as a marker', () => {
+    render(
+      <Markdown text="See [S1](https://example.com) for more." citations={[CITATION]} />,
+    );
+
+    expect(screen.getByRole('link', { name: 'S1' })).toHaveAttribute(
+      'href',
+      'https://example.com',
+    );
+  });
+
+  it('renders a marker inside a list item', () => {
+    render(<Markdown text={'- Trees are acyclic [S1]'} citations={[CITATION]} />);
+
+    expect(screen.getByText('Lecture 4 · p. 12')).toBeInTheDocument();
+  });
+
+  it('renders two adjacent markers as two sources', () => {
+    const second = { ...CITATION, key: 'S2', page_start: 13, page_end: 13 };
+    render(<Markdown text="Both hold. [S1][S2]" citations={[CITATION, second]} />);
+
+    expect(screen.getByText('Lecture 4 · p. 12')).toBeInTheDocument();
+    expect(screen.getByText('Lecture 4 · p. 13')).toBeInTheDocument();
+  });
+
+  it('leaves an ordinary bracket alone', () => {
+    render(<Markdown text="See [figure 2] for details." citations={[CITATION]} />);
+
+    expect(screen.getByText(/See \[figure 2\] for details\./)).toBeInTheDocument();
+  });
+});

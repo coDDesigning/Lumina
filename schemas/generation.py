@@ -46,6 +46,7 @@ class RetrievalGenerationContext(BaseModel):
     profile_knowledge_items_used: int = 0
     profile_knowledge_characters_used: int = 0
     profile_knowledge_truncated: bool = False
+    citations_supplied: int = 0
 
     @classmethod
     def from_material(
@@ -72,4 +73,5 @@ class RetrievalGenerationContext(BaseModel):
             profile_knowledge_truncated=(
                 profile_knowledge.truncated if profile_knowledge else False
             ),
+            citations_supplied=len(getattr(material, "citations", ())),
         )

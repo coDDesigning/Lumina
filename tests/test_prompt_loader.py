@@ -60,7 +60,7 @@ SHARED_PROMPT_VARIABLES = {
 def test_load_valid_study_guide_template() -> None:
     template = PromptLoader.load_template("study_guide", reload=True)
     assert template.name == "study_guide"
-    assert template.version == "2.2.0"
+    assert template.version == "2.3.0"
     assert template.required_variables == [
         "EDUCATION_LEVEL",
         "COURSE_TITLE",
@@ -94,12 +94,12 @@ def test_load_valid_study_guide_template() -> None:
 
 
 EXPECTED_TEMPLATE_VERSIONS = {
-    "study_guide": "2.2.0",
-    "quiz": "3.2.0",
+    "study_guide": "2.3.0",
+    "quiz": "3.3.0",
     "quiz_grading": "2.0.0",
     "flashcard": "2.2.0",
-    "ai_tutor": "2.2.0",
-    "course_qa": "2.2.0",
+    "ai_tutor": "2.3.0",
+    "course_qa": "2.3.0",
     "prompt_generator": "2.0.0",
     "exam_style_question": "1.2.0",
     "image_description": "1.0.0",
@@ -440,7 +440,7 @@ def test_get_render_metadata_returns_safe_telemetry() -> None:
         },
     )
     assert meta["template_name"] == "study_guide"
-    assert meta["template_version"] == "2.2.0"
+    assert meta["template_version"] == "2.3.0"
     assert meta["output_schema_ref"] == "StudyGuideResponse"
     assert "TEXT" in meta["applied_variables"]
 

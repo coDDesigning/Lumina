@@ -104,6 +104,8 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "exam_style_question": "1.2.0",
     "exam_topic_analysis": "2.0.0",
     "past_exam_question_extraction": "1.0.0",
+    "exam_topic_guide": "1.0.0",
+    "exam_topic_summary": "1.0.0",
     "image_description": "1.0.0",
     "visual_content": "2.1.0",
     "ocr_cleanup": "1.1.0",
@@ -519,6 +521,18 @@ SAMPLE_TEMPLATE_INPUTS = {
         **SHARED_PROMPT_VARIABLES,
         "TEXT": "Examination paper text",
     },
+    "exam_topic_guide": {
+        **SHARED_PROMPT_VARIABLES,
+        "TOPIC_LABEL": "Graph Traversal",
+        "PRIORITY_NOTE": "Priority note",
+        "TEXT": "Course material text",
+    },
+    "exam_topic_summary": {
+        **SHARED_PROMPT_VARIABLES,
+        "TOPIC_LABEL": "Graph Traversal",
+        "PRIORITY_NOTE": "Priority note",
+        "TEXT": "Course material text",
+    },
     "flashcard": {
         **SHARED_PROMPT_VARIABLES,
         "TEXT": "Course material text",
@@ -867,6 +881,8 @@ ACTIVE_TEMPLATE_OWNERS = {
         "services.exam_question_extraction",
         "PastExamExtractionService.PROMPT_TEMPLATE_NAME",
     ),
+    "exam_topic_guide": ("services.exam_topic_study", "GUIDE_TEMPLATE_NAME"),
+    "exam_topic_summary": ("services.exam_topic_study", "SUMMARY_TEMPLATE_NAME"),
 }
 
 

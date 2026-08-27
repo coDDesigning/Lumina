@@ -139,6 +139,12 @@ const GENERATION_FAILURES: Record<string, FailureCopy> = {
     retryable: false,
     remedy: 'see_sources',
   },
+  exam_plan_required: {
+    title: 'Create your plan first',
+    message: 'Build an exam plan for this course before studying one of its topics.',
+    retryable: false,
+    remedy: null,
+  },
   exam_topic_selection_required: {
     title: 'Choose what to study',
     message: 'Select at least one topic before creating the plan.',

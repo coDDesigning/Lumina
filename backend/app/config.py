@@ -240,6 +240,8 @@ class Settings:
     course_qa_material_max_chars: int
     exam_analysis_material_max_chars: int
     exam_past_paper_max_chars: int
+    exam_topic_guide_material_max_chars: int
+    exam_topic_summary_material_max_chars: int
 
     # Credit lifecycle. See docs/credits.md.
     credit_metering_enabled: bool
@@ -619,6 +621,11 @@ def load_settings() -> Settings:
             DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
         ),
         ("EXAM_PAST_PAPER_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        ("EXAM_TOPIC_GUIDE_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_TOPIC_SUMMARY_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
     ):
         budget = _positive_integer_setting(name, default)
         if budget < document_chunk_size_characters:
@@ -942,6 +949,12 @@ def load_settings() -> Settings:
             "EXAM_ANALYSIS_MATERIAL_MAX_CHARS"
         ],
         exam_past_paper_max_chars=material_budgets["EXAM_PAST_PAPER_MAX_CHARS"],
+        exam_topic_guide_material_max_chars=material_budgets[
+            "EXAM_TOPIC_GUIDE_MATERIAL_MAX_CHARS"
+        ],
+        exam_topic_summary_material_max_chars=material_budgets[
+            "EXAM_TOPIC_SUMMARY_MATERIAL_MAX_CHARS"
+        ],
         credit_metering_enabled=credit_metering_enabled,
         credit_initial_grant=credit_initial_grant,
         credit_periodic_grant=credit_periodic_grant,

@@ -12,8 +12,10 @@ from schemas.prompt_context import (
 )
 from services.ai_tutor import AiTutorService
 from services.course_qa import CourseQAService
+from services.exam_artifacts import PlannedTopic
 from services.exam_question_extraction import PastExamExtractionService
 from services.exam_source_analysis import ExamSourceAnalysisService
+from services.exam_topic_study import GUIDE_SPEC, SUMMARY_SPEC
 from services.flashcard import FlashcardService
 from services.prompt_generator import PromptGeneratorService
 from services.quiz import QuizService
@@ -90,6 +92,27 @@ def _past_exam_extraction_prompt(context: PromptContext) -> str:
     return PastExamExtractionService.build_prompt("paper", context=context)
 
 
+_PLANNED_TOPIC = PlannedTopic(
+    plan_output_id=1,
+    analysis_output_id=1,
+    topic_key="graph-traversal",
+    display_label="Graph Traversal",
+    rank=1,
+    priority_band="high",
+    is_high_priority=False,
+    mastery_percentage=None,
+    document_ids=(),
+)
+
+
+def _exam_topic_guide_prompt(context: PromptContext) -> str:
+    return GUIDE_SPEC.build_prompt("material", _PLANNED_TOPIC, context)
+
+
+def _exam_topic_summary_prompt(context: PromptContext) -> str:
+    return SUMMARY_SPEC.build_prompt("material", _PLANNED_TOPIC, context)
+
+
 BUILDERS = {
     "study_guide": _study_guide_prompt,
     "quiz": _quiz_prompt,
@@ -99,6 +122,8 @@ BUILDERS = {
     "prompt_generator": _prompt_generator_prompt,
     "exam_topic_analysis": _exam_topic_analysis_prompt,
     "past_exam_question_extraction": _past_exam_extraction_prompt,
+    "exam_topic_guide": _exam_topic_guide_prompt,
+    "exam_topic_summary": _exam_topic_summary_prompt,
 }
 
 

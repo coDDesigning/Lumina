@@ -14,7 +14,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from schemas.citation import Citation, CitationKeys
+from schemas.citation import (
+    Citation,
+    CitationKeys,
+    MaybeCitedText,
+    MaybeGeneratedCitedText,
+)
 from schemas.generation import RetrievalGenerationContext, RetrievedContext
 from schemas.study_guide import Coverage
 
@@ -27,6 +32,9 @@ MAX_QUESTION_SUBPARTS = 26
 MAX_MARKING_POINTS = 20
 MAX_QUESTION_VISUALS = 8
 MAX_QUESTION_TOPICS = 6
+MAX_GUIDE_SECTIONS = 12
+MAX_GUIDE_ITEMS = 12
+MAX_SUMMARY_POINTS = 10
 
 DEFAULT_TOPIC_FOCUS = "All Topics"
 
@@ -524,3 +532,197 @@ class ExamPlanDocument(BaseModel):
 
 class ExamPlanCreationResult(BaseModel):
     plan: ExamPlanView
+
+
+# --------------------------------------------------------------- per-topic study
+
+
+class GeneratedTopicSection(BaseModel):
+    """One section of a per-topic study guide, as the provider reported it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    heading: str = Field(min_length=1, max_length=200)
+    body: MaybeGeneratedCitedText
+    key_points: list[MaybeGeneratedCitedText] = Field(
+        default_factory=list, max_length=MAX_GUIDE_ITEMS
+    )
+
+
+class GeneratedTopicTerm(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    term: str = Field(min_length=1, max_length=200)
+    definition: str = Field(min_length=1)
+    citations: CitationKeys = []
+
+
+class GeneratedTopicPitfall(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    mistake: str = Field(min_length=1)
+    correction: str = Field(min_length=1)
+    citations: CitationKeys = []
+
+
+class GeneratedExamTopicGuide(BaseModel):
+    """A study guide for one planned topic, as the provider reported it.
+
+    Deliberately not the course-wide ``GeneratedStudyGuideResponse``. That one
+    carries an ``estimated_study_time`` and a whole-course difficulty, which
+    would be a guess about a topic the plan already placed in a band, and it
+    has no field for the thing a topic guide exists to give: what a student
+    should be able to do with this topic once they have studied it.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str = Field(min_length=1, max_length=200)
+    overview: MaybeGeneratedCitedText
+    sections: list[GeneratedTopicSection] = Field(
+        min_length=1, max_length=MAX_GUIDE_SECTIONS
+    )
+    key_terms: list[GeneratedTopicTerm] = Field(
+        default_factory=list, max_length=MAX_GUIDE_ITEMS
+    )
+    common_pitfalls: list[GeneratedTopicPitfall] = Field(
+        default_factory=list, max_length=MAX_GUIDE_ITEMS
+    )
+    what_to_be_able_to_do: list[MaybeGeneratedCitedText] = Field(
+        default_factory=list, max_length=MAX_GUIDE_ITEMS
+    )
+    coverage: Coverage
+    confidence_notes: str = ""
+
+
+class GeneratedExamTopicSummary(BaseModel):
+    """The short-form sibling: what this topic is, in a form worth rereading."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str = Field(min_length=1, max_length=200)
+    summary: MaybeGeneratedCitedText
+    key_points: list[MaybeGeneratedCitedText] = Field(
+        min_length=1, max_length=MAX_SUMMARY_POINTS
+    )
+    coverage: Coverage
+    confidence_notes: str = ""
+
+
+class ExamTopicSection(BaseModel):
+    heading: str
+    body: MaybeCitedText
+    key_points: list[MaybeCitedText] = []
+
+
+class ExamTopicTerm(BaseModel):
+    term: str
+    definition: str
+    citations: list[Citation] = []
+
+
+class ExamTopicPitfall(BaseModel):
+    mistake: str
+    correction: str
+    citations: list[Citation] = []
+
+
+class ExamTopicGuideDocument(BaseModel):
+    """The ``generated_outputs.content`` payload of one per-topic guide."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    version: Literal[1] = 1
+    output_type: Literal["exam_topic_guide"] = "exam_topic_guide"
+    topic_key: str
+    display_label: str
+    plan_output_id: int
+    rank: int = 0
+    priority_band: str = ""
+    title: str
+    overview: MaybeCitedText
+    sections: list[ExamTopicSection] = []
+    key_terms: list[ExamTopicTerm] = []
+    common_pitfalls: list[ExamTopicPitfall] = []
+    what_to_be_able_to_do: list[MaybeCitedText] = []
+    coverage: Coverage | None = None
+    confidence_notes: str = ""
+
+
+class ExamTopicSummaryDocument(BaseModel):
+    """The ``generated_outputs.content`` payload of one per-topic summary."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    version: Literal[1] = 1
+    output_type: Literal["exam_topic_summary"] = "exam_topic_summary"
+    topic_key: str
+    display_label: str
+    plan_output_id: int
+    rank: int = 0
+    priority_band: str = ""
+    title: str
+    summary: MaybeCitedText
+    key_points: list[MaybeCitedText] = []
+    coverage: Coverage | None = None
+    confidence_notes: str = ""
+
+
+class ExamArtifactGenerationSettings(BaseModel):
+    """What one per-topic artifact was generated from.
+
+    ``topic_key`` is here rather than in a column because it belongs to this
+    contract: ``generated_outputs`` stays a table of generations rather than a
+    table of Exam Mode, and the reopen path matches on this field.
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    version: Literal[1] = 1
+    output_type: str
+    topic_key: str
+    display_label: str
+    plan_output_id: int
+    analysis_output_id: int
+    document_ids_requested: list[UUID] = []
+    retrieval_limit: int
+    retrieval_min_similarity: float
+    material_max_characters: int
+    topic_key_version: int
+    prompt_template: str
+    prompt_version: str
+
+
+class ExamArtifactGenerationContext(RetrievalGenerationContext):
+    """What retrieval actually produced for one per-topic artifact."""
+
+    plan_output_id: int = 0
+    topic_key: str = ""
+
+
+class ExamTopicArtifactRequest(BaseModel):
+    plan_output_id: int | None = Field(
+        default=None,
+        ge=1,
+        description="The plan to study from, or omit to use the current one",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Explicit model override, or omit to use the preferred model",
+    )
+
+
+class ExamTopicGuideResult(RetrievedContext):
+    guide: ExamTopicGuideDocument
+    generated_output_id: int
+    created_at: datetime
+    model_used: str | None = None
+    credits_charged: float = 0.0
+
+
+class ExamTopicSummaryResult(RetrievedContext):
+    summary: ExamTopicSummaryDocument
+    generated_output_id: int
+    created_at: datetime
+    model_used: str | None = None
+    credits_charged: float = 0.0

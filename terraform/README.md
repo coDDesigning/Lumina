@@ -169,16 +169,33 @@ deployments from `main` only before applying the role; the workflow independentl
 rejects non-`main` refs. The role can publish the frontend, invalidate its
 distribution, push to the one ECR repository, register and run ECS task
 definitions, update the two services, and pass the two ECS roles only to ECS;
-it cannot read runtime secrets. Set the role ARN as `AWS_DEPLOY_ROLE_ARN` on
-the production environment and set the Terraform outputs as its variables.
+it can also create/tag/prune managed RDS snapshots. It cannot restore or delete
+RDS instances, retarget the proxy, or read runtime secrets. Set the role ARN as
+`AWS_DEPLOY_ROLE_ARN` on the production environment.
+
+The module also creates `<prefix>-github-recovery`, trusted only by the protected
+production environment. It can manage tagged recovery resources and run/stop the
+dedicated verifier definition, passing only the verifier's read-only S3 task role
+and migration-secret-only execution role. The separate unattended
+`<prefix>-github-reconciler` role cannot create or run resources and can only
+stop/delete resources already carrying both recovery safety tags. Set
+`github_recovery_role_arn` as `AWS_RECOVERY_ROLE_ARN` in production and
+`github_reconciler_role_arn` as `AWS_RECONCILER_ROLE_ARN` in
+`production-recovery`.
 
 ## Outputs used by the deploy pipeline
 
 `ecr_repository_url`, `ecs_cluster_name`, `api_service_name`,
 `worker_service_name`, `api_task_definition_family`,
 `worker_task_definition_family`, `migrate_task_definition_family`,
+`hosted_restore_task_definition_family`,
 `private_subnet_ids_csv`, `ecs_security_group_id`, `frontend_bucket_name`,
-`cloudfront_distribution_id`, and `frontend_url` feed the deploy workflow. Use
+`cloudfront_distribution_id`, `frontend_url`, `rds_instance_identifier`,
+`rds_subnet_group_name`, `rds_security_group_id`,
+`restore_verifier_security_group_id`, `github_recovery_role_arn`,
+`github_reconciler_role_arn`,
+`rds_parameter_group_name`, and `rds_option_group_name` feed the deployment and
+hosted recovery workflows. Use
 `cloudfront_url` instead of `frontend_url` for the first pre-cutover deploy. The
 workflow uses one commit SHA for the backend image and frontend release, and
 does not re-run Terraform. For the first apply the initial task definitions

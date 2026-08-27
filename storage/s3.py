@@ -1,6 +1,7 @@
 """S3-compatible object storage for uploaded documents."""
 
 import re
+from collections.abc import Iterator
 from io import BytesIO
 from typing import Any, BinaryIO
 from uuid import UUID, uuid4
@@ -183,6 +184,25 @@ class S3Storage(Storage):
             raise
         except Exception as exc:
             raise StorageError("Unable to open stored document.") from exc
+
+    def iter_chunks(self, key: str, chunk_size: int) -> Iterator[bytes]:
+        """Stream an object body without buffering the complete object."""
+        validate_portable_key(key)
+        if type(chunk_size) is not int or chunk_size <= 0:
+            raise ValueError("chunk_size must be a positive integer")
+        body = None
+        try:
+            response = self._client.get_object(Bucket=self._bucket, Key=key)
+            body = response["Body"]
+            while chunk := body.read(chunk_size):
+                yield chunk
+        except StorageError:
+            raise
+        except Exception as exc:
+            raise StorageError("Unable to stream stored document.") from exc
+        finally:
+            if body is not None:
+                body.close()
 
     def read(self, key: str) -> bytes:
         """Read and return all bytes for a stored document."""

@@ -1,6 +1,7 @@
 """Interfaces shared by document storage providers."""
 
 import re
+from collections.abc import Iterator
 from typing import BinaryIO, Protocol, runtime_checkable
 from uuid import UUID
 
@@ -78,6 +79,8 @@ class Storage(Protocol):
     def save(self, key: str, source: BinaryIO) -> None: ...
 
     def open(self, key: str) -> BinaryIO: ...
+
+    def iter_chunks(self, key: str, chunk_size: int) -> Iterator[bytes]: ...
 
     def read(self, key: str) -> bytes: ...
 

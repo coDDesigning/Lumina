@@ -199,8 +199,9 @@ per process, so raising replica maxima multiplies upstream AI/embedding load.
 
 Deployments use one commit SHA for the backend image, frontend release, and
 sanitized task-definition documents. The workflow archives the frontend and
-task definitions before runtime mutation, runs the one-off `migrate` task,
-rolls out both ECS services, then promotes an exact copy of the static output
+task definitions before runtime mutation, creates and verifies a 30-day manual
+RDS snapshot, runs the one-off `migrate` task, rolls out both ECS services, then
+promotes an exact copy of the static output
 and uploads `index.html` last. ECS deployment circuit breakers and the workflow
 restore both previous service revisions if either rollout fails. The state
 bucket is passed to Terraform with
@@ -249,7 +250,13 @@ secrets on the `production` environment:
 | `vars.AWS_REGION`, `vars.ECR_REPOSITORY`, `vars.ECS_CLUSTER` | Terraform outputs |
 | `vars.API_SERVICE`, `vars.WORKER_SERVICE` | Terraform outputs |
 | `vars.API_TASK_DEFINITION`, `vars.WORKER_TASK_DEFINITION`, `vars.MIGRATE_TASK_DEFINITION` | Terraform outputs |
+| `vars.RDS_INSTANCE_IDENTIFIER` | `rds_instance_identifier` output; required for the predeployment snapshot |
+| `vars.RDS_SUBNET_GROUP`, `vars.RDS_SECURITY_GROUP` | `rds_subnet_group_name`, `rds_security_group_id` outputs; required for restore drills |
+| `vars.RDS_PARAMETER_GROUP`, `vars.RDS_OPTION_GROUP` | `rds_parameter_group_name`, `rds_option_group_name` outputs; preserve production database behavior during drills |
 | `vars.PRIVATE_SUBNETS`, `vars.ECS_SECURITY_GROUP` | `private_subnet_ids_csv`, `ecs_security_group_id` outputs |
+| `vars.HOSTED_RESTORE_TASK_DEFINITION`, `vars.RESTORE_VERIFIER_SECURITY_GROUP` | `hosted_restore_task_definition_family`, `restore_verifier_security_group_id` outputs |
+| `vars.AWS_RECOVERY_ROLE_ARN` | `github_recovery_role_arn` output; not a secret |
+| `vars.AWS_RECONCILER_ROLE_ARN` | `github_reconciler_role_arn` output; deletion-only role for `production-recovery` |
 | `vars.FRONTEND_BUCKET` | `frontend_bucket_name` output |
 | `vars.CLOUDFRONT_DISTRIBUTION_ID` | `cloudfront_distribution_id` output |
 | `vars.FRONTEND_URL` | `cloudfront_url` before DNS cutover; `frontend_url` afterward |
@@ -258,8 +265,10 @@ secrets on the `production` environment:
 
 The workflow builds the image and frontend for `github.sha`, uploads immutable
 checksummed frontend and task-definition archives under `releases/<sha>/`,
-registers those task definition revisions, runs migration, rolls out both
-services, and then publishes the matching frontend below `current/`. Hashed
+registers those task definition revisions, creates and waits for a verified
+`<source>-predeploy-<sha8>-<run-id>-<attempt>` RDS snapshot, runs migration,
+rolls out both services, and then publishes the matching frontend below
+`current/`. Snapshot failure blocks migration. Hashed
 assets are immutable; unhashed files revalidate; `index.html` is the final
 upload; the distribution is invalidated; and only then are stale current files
 deleted.
@@ -274,13 +283,29 @@ deploys the archived API/worker task-definition documents. Publishing the older
 frontend first preserves the already-qualified
 old-frontend/new-backend compatibility direction if ECS rollback fails. Database
 schema is never downgraded, so migrations must remain backward compatible with
-the retained rollback window. Production smoke checks exercise the SPA root,
+the retained rollback window. There is no automatic database rollback.
+Production smoke checks exercise the SPA root,
 a deep link, an asset, an unauthenticated API request, and an API 404 through
 CloudFront; the raw ALB hostname is not used as an HTTPS client hostname. A
 failed rollout, publication, or smoke check restores the previously captured
 task definitions and exact frontend contents as needed, preserving the
 qualified compatibility direction during both deployment and rollback
 restoration.
+
+Manual predeployment and restore-drill snapshots have a 30-day retention
+period enforced by a protected daily retention workflow. The quarterly
+protected restore workflow shares the deployment
+concurrency lock, restores only a run-scoped RDS target, runs the current
+deployed API image in a read-only verifier task against that target, and always attempts guarded target
+cleanup; incomplete cleanup is a failed control requiring operator escalation,
+and the unattended `production-recovery` environment runs the daily retention
+workflow to reconcile stale tagged restore tasks and targets.
+Its selected integrity scope is current S3 objects referenced by active database
+rows; deleting/tombstoned rows are excluded. It does not provide production
+cutover, exact historical S3 version recovery, cross-region/account recovery,
+or automatic database rollback. See
+[`hosted-backup-restore.md`](runbooks/hosted-backup-restore.md) for the exact
+GitHub variables, evidence requirements, and escalation procedure.
 
 ## Transition from the experimental stack
 

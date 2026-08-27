@@ -29,6 +29,7 @@ class FakeS3Client:
         self.return_wrong_content = False
         self.version_id: str | None = None
         self.version_ids: list[str] = []
+        self.read_sizes: list[int] = []
 
     def put_object(self, *, Bucket: str, Key: str, Body: object) -> dict:
         self.put_object_calls.append((Bucket, Key))
@@ -54,7 +55,16 @@ class FakeS3Client:
             content = self.objects[(Bucket, Key)]
         except KeyError as exc:
             raise _client_error("NoSuchKey") from exc
-        return {"Body": BytesIO(b"wrong" if self.return_wrong_content else content)}
+        client = self
+
+        class RecordingBody(BytesIO):
+            def read(self, size=-1):
+                client.read_sizes.append(size)
+                return super().read(size)
+
+        return {
+            "Body": RecordingBody(b"wrong" if self.return_wrong_content else content)
+        }
 
     def head_object(self, *, Bucket: str, Key: str) -> dict:
         if (Bucket, Key) not in self.objects:
@@ -139,6 +149,9 @@ def test_save_read_open_exists_and_delete() -> None:
     assert storage.read(key) == content
     with storage.open(key) as stored_file:
         assert stored_file.read(9) == content[:9]
+    client.read_sizes.clear()
+    assert b"".join(storage.iter_chunks(key, 9)) == content
+    assert set(client.read_sizes) == {9}
 
     storage.delete(key)
     assert storage.exists(key) is False

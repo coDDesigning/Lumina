@@ -1,0 +1,82 @@
+name: Hosted snapshot retention
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  snapshot-retention:
+    name: Reconcile hosted recovery resources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: production-recovery
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_RECONCILER_ROLE_ARN: ${{ vars.AWS_RECONCILER_ROLE_ARN }}
+      RDS_INSTANCE_IDENTIFIER: ${{ vars.RDS_INSTANCE_IDENTIFIER }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      HOSTED_RESTORE_TASK_DEFINITION: ${{ vars.HOSTED_RESTORE_TASK_DEFINITION }}
+    steps:
+      - name: Validate retention configuration
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Hosted snapshot retention must run from the main branch."
+            exit 1
+          fi
+          for name in AWS_REGION RDS_INSTANCE_IDENTIFIER ECS_CLUSTER HOSTED_RESTORE_TASK_DEFINITION AWS_RECONCILER_ROLE_ARN; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Required production variable $name is not configured."
+              exit 1
+            fi
+          done
+
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@bcd4089080cf41e4db9dad11fce2a9397e670bbd # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_RECONCILER_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+
+      - name: Stop stale isolated verifier tasks
+        run: |
+          set -euo pipefail
+          python ops/aws_rds_recovery.py prune-verifiers \
+            --cluster "$ECS_CLUSTER" \
+            --family "$HOSTED_RESTORE_TASK_DEFINITION" \
+            --max-age-hours 6 \
+            | tee "$RUNNER_TEMP/verifier-retention.json"
+          jq -e 'type == "object"' "$RUNNER_TEMP/verifier-retention.json" >/dev/null
+
+      - name: Delete stale isolated restore targets
+        run: |
+          set -euo pipefail
+          python ops/aws_rds_recovery.py prune-restores \
+            --source "$RDS_INSTANCE_IDENTIFIER" \
+            --max-age-hours 6 \
+            | tee "$RUNNER_TEMP/restore-retention.json"
+          jq -e 'type == "object"' "$RUNNER_TEMP/restore-retention.json" >/dev/null
+
+      - name: Prune expired managed snapshots
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          python ops/aws_rds_recovery.py prune-snapshots \
+            --source "$RDS_INSTANCE_IDENTIFIER" \
+            --retention-days 30 \
+            | tee "$RUNNER_TEMP/snapshot-retention.json"
+          jq -e 'type == "object"' "$RUNNER_TEMP/snapshot-retention.json" >/dev/null

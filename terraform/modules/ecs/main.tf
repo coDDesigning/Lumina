@@ -76,6 +76,16 @@ locals {
     { name = "GEMINI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.gemini_api_key}" },
   ]
 
+  restore_secrets = [
+    { name = "DATABASE_URL", valueFrom = var.migration_database_url_secret_arn },
+  ]
+
+  restore_env = concat(local.common_env, [
+    { name = "BOOTSTRAP_ADMIN_EMAIL", value = "restore-verifier@example.invalid" },
+    { name = "BOOTSTRAP_ADMIN_TOKEN", value = "restore-verifier-bootstrap-not-used" },
+    { name = "JWT_SECRET_KEY", value = "restore-verifier-jwt-secret-not-used" },
+  ])
+
   api_env = concat(local.common_env, [
     { name = "BOOTSTRAP_ADMIN_EMAIL", value = var.bootstrap_admin_email },
     { name = "CORS_ALLOWED_ORIGINS", value = join(",", var.cors_allowed_origins) },
@@ -133,6 +143,14 @@ locals {
     environment = local.common_env
     secrets     = local.migrate_secrets
     command     = ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check"]
+  })
+
+  hosted_restore_container = merge(local.container_base, {
+    name        = "hosted-restore"
+    environment = local.restore_env
+    secrets     = local.restore_secrets
+    command     = ["python", "-m", "workers.hosted_restore", "--verify", "--output", "json"]
+    stopTimeout = 120
   })
 
   course_purge_container = merge(local.container_base, {

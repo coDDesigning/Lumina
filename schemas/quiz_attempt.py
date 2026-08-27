@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from schemas.progress import CourseStatus
 from schemas.quiz import QuizCorrectAnswer, QuizQuestionType
+from schemas.reverse_quiz import Misconception
 
 MAX_TIME_SPENT_SECONDS = 86400
 MAX_ANSWER_TEXT_CHARS = 10000
@@ -104,8 +105,9 @@ class OpenEndedVerdict(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     question_number: int = Field(ge=1)
-    score: float = Field(ge=0.0, le=1.0)
+    score: float | None = Field(default=None, ge=0.0, le=1.0)
     feedback: str = ""
+    misconceptions: list[Misconception] = Field(default_factory=list)
 
 
 class OpenEndedGradingResponse(BaseModel):

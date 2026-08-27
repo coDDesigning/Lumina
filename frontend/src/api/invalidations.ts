@@ -53,3 +53,8 @@ export function afterCourseDeleted(courseId: number): void {
   void queryCache.invalidate(queryKeys.coursesProgress());
   void queryCache.invalidate(queryKeys.activityAll());
 }
+
+export function afterExamRoadmapGenerated(courseId: number): void {
+  void queryCache.invalidate(queryKeys.courseOutputs(courseId));
+  void queryCache.invalidate(queryKeys.activityAll());
+}

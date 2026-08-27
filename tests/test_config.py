@@ -150,6 +150,18 @@ CONFIGURATION_KEYS = (
     "EMBEDDING_BACKFILL_INTERVAL_SECONDS",
     "EMBEDDING_BACKFILL_BATCH_SIZE",
     "EMBEDDING_BACKFILL_PRUNE_ORPHANS",
+    "CREDIT_METERING_ENABLED",
+    "CREDIT_INITIAL_GRANT",
+    "CREDIT_PERIODIC_GRANT",
+    "CREDIT_MAX_BALANCE",
+    "RATE_LIMIT_LOGIN_MAX_ATTEMPTS",
+    "RATE_LIMIT_LOGIN_WINDOW_SECONDS",
+    "RATE_LIMIT_REGISTER_MAX_ATTEMPTS",
+    "RATE_LIMIT_REGISTER_WINDOW_SECONDS",
+    "RATE_LIMIT_GENERATION_MAX_ATTEMPTS",
+    "RATE_LIMIT_GENERATION_WINDOW_SECONDS",
+    "RATE_LIMIT_LOCKOUT_BASE_SECONDS",
+    "RATE_LIMIT_LOCKOUT_MAX_SECONDS",
 )
 
 
@@ -1195,6 +1207,53 @@ def test_env_example_advertises_every_active_ollama_setting() -> None:
         "OLLAMA_MODEL",
     ):
         assert f"{name}=" in section, f"{name} is read by config.py but not documented."
+
+
+def test_all_config_keys_are_declared_in_env_example() -> None:
+    import ast
+    import re
+
+    config_source = (PROJECT_ROOT / "backend" / "app" / "config.py").read_text(
+        encoding="utf-8"
+    )
+    env_example_lines = (
+        (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
+    )
+
+    env_declared_keys = set()
+    for line in env_example_lines:
+        line = line.strip()
+        match = re.match(r"^(?:#\s*)?([A-Z0-9_]+)=", line)
+        if match:
+            env_declared_keys.add(match.group(1))
+
+    tree = ast.parse(config_source)
+    ast_read_keys = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "getenv":
+                if (
+                    node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    ast_read_keys.add(node.args[0].value)
+            elif isinstance(node.func, ast.Name) and "setting" in node.func.id:
+                if (
+                    node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    ast_read_keys.add(node.args[0].value)
+
+    all_read_keys = ast_read_keys | set(CONFIGURATION_KEYS)
+    missing = all_read_keys - env_declared_keys
+
+    assert not missing, (
+        f"Environment variable(s) read by backend/app/config.py are not declared in .env.example: "
+        f"{sorted(missing)}.\n"
+        f"Every environment variable must be declared (or commented as a placeholder) in .env.example."
+    )
 
 
 def test_gemini_provider_does_not_require_ollama_configuration(

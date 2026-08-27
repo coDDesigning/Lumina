@@ -21,6 +21,7 @@ from schemas.citation import (
     MaybeGeneratedCitedText,
 )
 from schemas.generation import RetrievalGenerationContext, RetrievedContext
+from schemas.quiz import QuizView
 from schemas.study_guide import Coverage
 
 MAX_SELECTED_DOCUMENTS = 50
@@ -693,6 +694,20 @@ class ExamArtifactGenerationSettings(BaseModel):
     prompt_version: str
 
 
+class ExamQuizGenerationSettings(ExamArtifactGenerationSettings):
+    """What one quiz-backed per-topic artifact was generated from.
+
+    ``answers_hidden`` is recorded rather than derived, because it is a
+    property of the quiz a student sat: a topic exam served with its answers
+    showing would not be the same assessment, and a reader of the history has
+    to be able to tell which one it was.
+    """
+
+    question_count: int
+    question_types: list[str] = []
+    answers_hidden: bool = False
+
+
 class ExamArtifactGenerationContext(RetrievalGenerationContext):
     """What retrieval actually produced for one per-topic artifact."""
 
@@ -710,6 +725,24 @@ class ExamTopicArtifactRequest(BaseModel):
         default=None,
         description="Explicit model override, or omit to use the preferred model",
     )
+
+
+class ExamTopicQuizRequest(ExamTopicArtifactRequest):
+    question_count: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="How many questions to write, or omit to use the default",
+    )
+
+
+class ExamTopicQuizResult(RetrievedContext):
+    quiz: QuizView
+    generated_output_id: int
+    created_at: datetime
+    model_used: str | None = None
+    credits_charged: float = 0.0
+    answers_hidden: bool = False
 
 
 class ExamTopicGuideResult(RetrievedContext):

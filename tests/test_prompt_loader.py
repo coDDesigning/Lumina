@@ -106,6 +106,8 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "past_exam_question_extraction": "1.0.0",
     "exam_topic_guide": "1.0.0",
     "exam_topic_summary": "1.0.0",
+    "exam_topic_practice": "1.0.0",
+    "exam_topic_exam": "1.0.0",
     "image_description": "1.0.0",
     "visual_content": "2.1.0",
     "ocr_cleanup": "1.1.0",
@@ -533,6 +535,25 @@ SAMPLE_TEMPLATE_INPUTS = {
         "PRIORITY_NOTE": "Priority note",
         "TEXT": "Course material text",
     },
+    "exam_topic_practice": {
+        **SHARED_PROMPT_VARIABLES,
+        "TOPIC_LABEL": "Graph Traversal",
+        "QUESTION_COUNT": "10",
+        "DIFFICULTY_DIRECTIVE": "Mixed difficulty directive",
+        "QUESTION_TYPE_DIRECTIVES": "Type directives",
+        "QUESTION_TYPE_SCHEMAS": "Type schemas",
+        "TEXT": "Course material text",
+    },
+    "exam_topic_exam": {
+        **SHARED_PROMPT_VARIABLES,
+        "TOPIC_LABEL": "Graph Traversal",
+        "QUESTION_COUNT": "10",
+        "DIFFICULTY_DIRECTIVE": "Mixed difficulty directive",
+        "QUESTION_TYPE_DIRECTIVES": "Type directives",
+        "QUESTION_TYPE_SCHEMAS": "Type schemas",
+        "PAST_QUESTION_STYLE": "Past question style",
+        "TEXT": "Course material text",
+    },
     "flashcard": {
         **SHARED_PROMPT_VARIABLES,
         "TEXT": "Course material text",
@@ -883,6 +904,8 @@ ACTIVE_TEMPLATE_OWNERS = {
     ),
     "exam_topic_guide": ("services.exam_topic_study", "GUIDE_TEMPLATE_NAME"),
     "exam_topic_summary": ("services.exam_topic_study", "SUMMARY_TEMPLATE_NAME"),
+    "exam_topic_practice": ("services.exam_quiz", "PRACTICE_TEMPLATE_NAME"),
+    "exam_topic_exam": ("services.exam_quiz", "EXAM_TEMPLATE_NAME"),
 }
 
 

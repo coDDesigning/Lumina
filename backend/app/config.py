@@ -242,6 +242,8 @@ class Settings:
     exam_past_paper_max_chars: int
     exam_topic_guide_material_max_chars: int
     exam_topic_summary_material_max_chars: int
+    exam_topic_quiz_material_max_chars: int
+    exam_quiz_default_question_count: int
 
     # Credit lifecycle. See docs/credits.md.
     credit_metering_enabled: bool
@@ -626,6 +628,7 @@ def load_settings() -> Settings:
             "EXAM_TOPIC_SUMMARY_MATERIAL_MAX_CHARS",
             DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
         ),
+        ("EXAM_TOPIC_QUIZ_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
     ):
         budget = _positive_integer_setting(name, default)
         if budget < document_chunk_size_characters:
@@ -789,6 +792,10 @@ def load_settings() -> Settings:
             raise ValueError(
                 "Production CHROMA_PERSIST_DIRECTORY must use an absolute path."
             )
+
+    exam_quiz_default_question_count = _bounded_positive_integer_setting(
+        "EXAM_QUIZ_DEFAULT_QUESTION_COUNT", 10, minimum=1, maximum=20
+    )
 
     credit_metering_enabled = _boolean_setting(
         "CREDIT_METERING_ENABLED",
@@ -955,6 +962,10 @@ def load_settings() -> Settings:
         exam_topic_summary_material_max_chars=material_budgets[
             "EXAM_TOPIC_SUMMARY_MATERIAL_MAX_CHARS"
         ],
+        exam_topic_quiz_material_max_chars=material_budgets[
+            "EXAM_TOPIC_QUIZ_MATERIAL_MAX_CHARS"
+        ],
+        exam_quiz_default_question_count=exam_quiz_default_question_count,
         credit_metering_enabled=credit_metering_enabled,
         credit_initial_grant=credit_initial_grant,
         credit_periodic_grant=credit_periodic_grant,

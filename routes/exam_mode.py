@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
 from backend.app.models import (
+    OUTPUT_TYPE_EXAM_TOPIC_EXAM,
     OUTPUT_TYPE_EXAM_TOPIC_GUIDE,
+    OUTPUT_TYPE_EXAM_TOPIC_PRACTICE,
     OUTPUT_TYPE_EXAM_TOPIC_SUMMARY,
 )
 from schemas.citation import Citation
@@ -39,6 +41,8 @@ from schemas.exam_mode import (
     ExamTopicCandidateView,
     ExamTopicGuideDocument,
     ExamTopicGuideResult,
+    ExamTopicQuizRequest,
+    ExamTopicQuizResult,
     ExamTopicSummaryDocument,
     ExamTopicSummaryResult,
 )
@@ -47,6 +51,7 @@ from schemas.user import UserResponse
 from services.credits import CreditService
 from services.exam_artifacts import ExamArtifactError, ExamArtifactService
 from services.exam_plan import ExamPlanService
+from services.exam_quiz import ExamQuizService
 from services.exam_source_analysis import ExamModeError, ExamSourceAnalysisService
 from services.exam_topic_study import ExamTopicStudyService
 from services.retrieval_material import RetrievalMaterialError
@@ -69,6 +74,8 @@ FEATURE_RESCAN = "exam_topic_analysis_rescan"
 FEATURE_PLAN = "exam_plan"
 FEATURE_TOPIC_GUIDE = "exam_topic_guide"
 FEATURE_TOPIC_SUMMARY = "exam_topic_summary"
+FEATURE_TOPIC_PRACTICE = "exam_topic_practice"
+FEATURE_TOPIC_EXAM = "exam_topic_exam"
 
 MAX_TOPIC_KEY_LENGTH = 120
 
@@ -780,4 +787,148 @@ def get_topic_summary(
         success=True,
         message="Topic summary retrieved successfully",
         data=_stored_document(output, ExamTopicSummaryDocument),
+    )
+
+
+# --------------------------------------------------------------- topic quizzes
+
+
+def _topic_quiz(
+    course,
+    topic_key: str,
+    request: ExamTopicQuizRequest,
+    current_user: UserResponse,
+    db: Session,
+    *,
+    output_type: str,
+    feature: str,
+    message: str,
+) -> BaseResponse[ExamTopicQuizResult]:
+    """Generate one quiz-backed artifact for a planned topic.
+
+    An examination is served through Exam Mode's own answers-hidden view. The
+    ordinary quiz read always exposes the answer, and an examination a student
+    can read the answers to is not an examination; grading still reads the rows,
+    so nothing downstream changes.
+    """
+    try:
+        topic = ExamArtifactService.resolve_topic(
+            db, course.id, topic_key, plan_output_id=request.plan_output_id
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise ai_generation_http_exception(exc, feature=feature) from exc
+
+    question_count = ExamQuizService.resolve_question_count(request.question_count)
+
+    try:
+        effective_model = resolve_effective_model(
+            request.model,
+            current_user.preferred_model,
+            required_capability="quiz",
+        )
+        try:
+            provider = get_text_generation_provider(effective_model=effective_model)
+        except TypeError:
+            provider = get_text_generation_provider()
+
+        generation = ExamQuizService.generate(
+            db,
+            course.id,
+            topic,
+            provider,
+            user_id=current_user.id,
+            output_type=output_type,
+            question_count=question_count,
+        )
+        persisted = ExamQuizService.persist(
+            db,
+            course.id,
+            generation,
+            user_id=current_user.id,
+            output_type=output_type,
+            question_count=question_count,
+        )
+    except HTTPException:
+        raise
+    except (
+        TextGenerationError,
+        ExamArtifactError,
+        ExamModeError,
+        RetrievalMaterialError,
+        Exception,
+    ) as exc:
+        raise ai_generation_http_exception(exc, feature=feature) from exc
+
+    hidden = output_type == OUTPUT_TYPE_EXAM_TOPIC_EXAM
+    view = ExamQuizService.hide_answers(persisted.view) if hidden else persisted.view
+    material = generation.material
+    return BaseResponse(
+        success=True,
+        message=message,
+        data=ExamTopicQuizResult(
+            quiz=view,
+            generated_output_id=persisted.output.id,
+            created_at=persisted.output.created_at,
+            model_used=persisted.output.model_used,
+            credits_charged=persisted.credits_charged,
+            answers_hidden=hidden,
+            context_truncated=material.truncated,
+            chunks_used=material.chunks_used,
+            chunks_available=material.chunks_available,
+            retrieval_narrowed=material.retrieval_narrowed,
+            lowest_similarity=material.lowest_similarity,
+            highest_similarity=material.highest_similarity,
+        ),
+    )
+
+
+@router.post(
+    "/{course_id}/exam-mode/topics/{topic_key}/practice",
+    response_model=BaseResponse[ExamTopicQuizResult],
+    dependencies=[Depends(rate_limit_generation(FEATURE_TOPIC_PRACTICE))],
+    responses=TOPIC_GENERATION_RESPONSES,
+)
+def generate_topic_practice(
+    course: OwnedCourse,
+    topic_key: Annotated[str, Path(max_length=MAX_TOPIC_KEY_LENGTH)],
+    request: ExamTopicQuizRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamTopicQuizResult]:
+    return _topic_quiz(
+        course,
+        topic_key,
+        request,
+        current_user,
+        db,
+        output_type=OUTPUT_TYPE_EXAM_TOPIC_PRACTICE,
+        feature=FEATURE_TOPIC_PRACTICE,
+        message="Practice questions generated successfully",
+    )
+
+
+@router.post(
+    "/{course_id}/exam-mode/topics/{topic_key}/exam",
+    response_model=BaseResponse[ExamTopicQuizResult],
+    dependencies=[Depends(rate_limit_generation(FEATURE_TOPIC_EXAM))],
+    responses=TOPIC_GENERATION_RESPONSES,
+)
+def generate_topic_exam(
+    course: OwnedCourse,
+    topic_key: Annotated[str, Path(max_length=MAX_TOPIC_KEY_LENGTH)],
+    request: ExamTopicQuizRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamTopicQuizResult]:
+    return _topic_quiz(
+        course,
+        topic_key,
+        request,
+        current_user,
+        db,
+        output_type=OUTPUT_TYPE_EXAM_TOPIC_EXAM,
+        feature=FEATURE_TOPIC_EXAM,
+        message="Topic exam generated successfully",
     )

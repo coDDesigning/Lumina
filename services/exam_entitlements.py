@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.models import ExamTopicUnlock
-from services.credits import GENERATION_CREDIT_COSTS, CreditService
+from services.credits import GENERATION_CREDIT_COSTS, ChargeReceipt, CreditService
 from utils.ai_errors import InsufficientCreditsError
 
 logger = logging.getLogger(__name__)
@@ -36,11 +36,18 @@ INSUFFICIENT_CREDITS_MESSAGE = "Insufficient credits."
 
 @dataclass(frozen=True)
 class TopicUnlock:
-    """One topic's access, and whether this call is what bought it."""
+    """One topic's access, and whether this call is what bought it.
+
+    ``receipt`` is the handle ``release`` reverses, and it is present only when
+    this call made the purchase. A caller cannot undo an unlock somebody else's
+    request paid for, which is the point.
+    """
 
     topic_key: str
     charged: bool
     amount: float
+    unlock_id: int | None = None
+    receipt: ChargeReceipt | None = None
 
 
 class ExamEntitlementService:
@@ -77,12 +84,10 @@ class ExamEntitlementService:
         Returns without charging when the row exists, which is what makes the
         second artifact for a topic free and a regenerated plan free.
 
-        Commits the unlock on its own. The alternative — carrying the charge
-        inside the generation's transaction — would mean a student paid twice
-        for a topic whose first generation failed after the charge and rolled
-        it back, because the retry would find no row. Paying once and keeping
-        the entitlement is the honest failure mode: the price bought access to
-        the topic, and access is what survives.
+        Commits on its own, because the row has to exist before the work it
+        pays for starts and that work owns its own transaction. A generation
+        that then fails calls ``release``, so a failed first artifact leaves
+        the student neither charged nor unlocked.
 
         A concurrent request that wins the unique key first is treated as the
         same purchase rather than a second one; its charge is reversed so two
@@ -105,15 +110,14 @@ class ExamEntitlementService:
         if receipt is None:
             raise InsufficientCreditsError(INSUFFICIENT_CREDITS_MESSAGE)
 
-        db.add(
-            ExamTopicUnlock(
-                course_id=course_id,
-                user_id=user_id,
-                topic_key=topic_key,
-                credit_transaction_id=receipt.transaction_id,
-                amount=price,
-            )
+        row = ExamTopicUnlock(
+            course_id=course_id,
+            user_id=user_id,
+            topic_key=topic_key,
+            credit_transaction_id=receipt.transaction_id,
+            amount=price,
         )
+        db.add(row)
         try:
             db.commit()
         except IntegrityError:
@@ -125,4 +129,32 @@ class ExamEntitlementService:
             )
             return TopicUnlock(topic_key=topic_key, charged=False, amount=0.0)
 
-        return TopicUnlock(topic_key=topic_key, charged=True, amount=price)
+        return TopicUnlock(
+            topic_key=topic_key,
+            charged=True,
+            amount=price,
+            unlock_id=row.id,
+            receipt=receipt,
+        )
+
+    @staticmethod
+    def release(db: Session, unlock: TopicUnlock | None) -> None:
+        """Undo an unlock this request made, after the work it paid for failed.
+
+        Does nothing for a topic that was already unlocked: that purchase
+        belongs to an earlier, successful request and reversing it here would
+        take away access somebody else's credit bought.
+        """
+        if unlock is None or not unlock.charged or unlock.unlock_id is None:
+            return
+
+        db.rollback()
+        row = db.get(ExamTopicUnlock, unlock.unlock_id)
+        if row is not None:
+            db.delete(row)
+        CreditService.refund(db, unlock.receipt)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("An exam topic unlock could not be released")

@@ -15,6 +15,8 @@ class GenerationType(str, Enum):
     QUIZ_GRADING = "quiz_grading"
     EXAM_TOPIC_ANALYSIS = "exam_topic_analysis"
     PAST_EXAM_EXTRACTION = "past_exam_extraction"
+    EXAM_TOPIC_GUIDE = "exam_topic_guide"
+    EXAM_TOPIC_SUMMARY = "exam_topic_summary"
 
 
 class ErrorCategory(str, Enum):

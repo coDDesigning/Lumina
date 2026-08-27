@@ -244,6 +244,16 @@ TEMPLATE_EXTRA_VARIABLES: dict[str, dict[str, str]] = {
     "past_exam_question_extraction": {
         "TEXT": "Examination paper body",
     },
+    "exam_topic_guide": {
+        "TOPIC_LABEL": "Graph Traversal",
+        "PRIORITY_NOTE": "Priority note body",
+        "TEXT": "Course material body",
+    },
+    "exam_topic_summary": {
+        "TOPIC_LABEL": "Graph Traversal",
+        "PRIORITY_NOTE": "Priority note body",
+        "TEXT": "Course material body",
+    },
     "flashcard": {
         "PROFILE_CONTEXT": PROFILE_CONTEXT_FIXTURE,
         "TEXT": "Course material body",

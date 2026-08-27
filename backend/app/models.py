@@ -62,6 +62,8 @@ _DOCUMENT_MATERIAL_KINDS_SQL = ", ".join(
 
 OUTPUT_TYPE_EXAM_TOPIC_ANALYSIS = "exam_topic_analysis"
 OUTPUT_TYPE_EXAM_PLAN = "exam_plan"
+OUTPUT_TYPE_EXAM_TOPIC_GUIDE = "exam_topic_guide"
+OUTPUT_TYPE_EXAM_TOPIC_SUMMARY = "exam_topic_summary"
 
 EXAM_QUESTION_TYPES = (
     "multiple_choice",

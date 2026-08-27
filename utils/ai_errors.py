@@ -74,6 +74,15 @@ class ExamAnalysisRequiredError(RuntimeError):
     """
 
 
+class ExamPlanRequiredError(RuntimeError):
+    """The operation needs an exam plan this course does not have yet.
+
+    A conflict rather than a not-found for the same reason an analysis is: the
+    course exists, the topic may well exist, and the remedy is a named next
+    action that a 404 would hide.
+    """
+
+
 class ExamTopicSelectionRequiredError(RuntimeError):
     """An exam plan was requested without choosing any topic to study."""
 
@@ -110,6 +119,7 @@ class AiErrorCode(str, Enum):
     EXAM_DATE_MISSING = "exam_date_missing"
     EXAM_DATE_NOT_FUTURE = "exam_date_not_future"
     EXAM_ANALYSIS_REQUIRED = "exam_analysis_required"
+    EXAM_PLAN_REQUIRED = "exam_plan_required"
     EXAM_TOPIC_SELECTION_REQUIRED = "exam_topic_selection_required"
     EXAM_TOPIC_NOT_DISCOVERED = "exam_topic_not_discovered"
     GENERATION_FAILED = "generation_failed"
@@ -135,6 +145,9 @@ EXAM_DATE_NOT_FUTURE_MESSAGE = (
 )
 EXAM_ANALYSIS_REQUIRED_MESSAGE = (
     "Analyse this course's exam sources before creating an exam plan."
+)
+EXAM_PLAN_REQUIRED_MESSAGE = (
+    "Create an exam plan for this course before studying one of its topics."
 )
 EXAM_TOPIC_SELECTION_REQUIRED_MESSAGE = (
     "Select at least one topic to study before creating an exam plan."
@@ -174,6 +187,7 @@ PUBLIC_MESSAGES: dict[AiErrorCode, str] = {
     AiErrorCode.EXAM_DATE_MISSING: EXAM_DATE_MISSING_MESSAGE,
     AiErrorCode.EXAM_DATE_NOT_FUTURE: EXAM_DATE_NOT_FUTURE_MESSAGE,
     AiErrorCode.EXAM_ANALYSIS_REQUIRED: EXAM_ANALYSIS_REQUIRED_MESSAGE,
+    AiErrorCode.EXAM_PLAN_REQUIRED: EXAM_PLAN_REQUIRED_MESSAGE,
     AiErrorCode.EXAM_TOPIC_SELECTION_REQUIRED: (EXAM_TOPIC_SELECTION_REQUIRED_MESSAGE),
     AiErrorCode.EXAM_TOPIC_NOT_DISCOVERED: EXAM_TOPIC_NOT_DISCOVERED_MESSAGE,
     AiErrorCode.GENERATION_FAILED: (
@@ -197,6 +211,7 @@ STATUS_CODES: dict[AiErrorCode, int] = {
     AiErrorCode.EXAM_DATE_MISSING: status.HTTP_400_BAD_REQUEST,
     AiErrorCode.EXAM_DATE_NOT_FUTURE: status.HTTP_400_BAD_REQUEST,
     AiErrorCode.EXAM_ANALYSIS_REQUIRED: status.HTTP_409_CONFLICT,
+    AiErrorCode.EXAM_PLAN_REQUIRED: status.HTTP_409_CONFLICT,
     AiErrorCode.EXAM_TOPIC_SELECTION_REQUIRED: status.HTTP_409_CONFLICT,
     AiErrorCode.EXAM_TOPIC_NOT_DISCOVERED: status.HTTP_409_CONFLICT,
     AiErrorCode.GENERATION_FAILED: status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -228,6 +243,8 @@ def classify_generation_error(exc: BaseException) -> AiErrorCode:
             return AiErrorCode.EXAM_DATE_NOT_FUTURE
         if isinstance(error, ExamAnalysisRequiredError):
             return AiErrorCode.EXAM_ANALYSIS_REQUIRED
+        if isinstance(error, ExamPlanRequiredError):
+            return AiErrorCode.EXAM_PLAN_REQUIRED
         if isinstance(error, ExamTopicSelectionRequiredError):
             return AiErrorCode.EXAM_TOPIC_SELECTION_REQUIRED
         if isinstance(error, ExamTopicNotDiscoveredError):

@@ -13,11 +13,15 @@ credit and reaches no provider.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from fastapi.exceptions import HTTPException
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
+from backend.app.models import (
+    OUTPUT_TYPE_EXAM_TOPIC_GUIDE,
+    OUTPUT_TYPE_EXAM_TOPIC_SUMMARY,
+)
 from schemas.citation import Citation
 from schemas.exam_mode import (
     ExamAnalysisRequest,
@@ -31,13 +35,20 @@ from schemas.exam_mode import (
     ExamQuestionView,
     ExamSelectionCarryOver,
     ExamSourceInventory,
+    ExamTopicArtifactRequest,
     ExamTopicCandidateView,
+    ExamTopicGuideDocument,
+    ExamTopicGuideResult,
+    ExamTopicSummaryDocument,
+    ExamTopicSummaryResult,
 )
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.credits import CreditService
+from services.exam_artifacts import ExamArtifactError, ExamArtifactService
 from services.exam_plan import ExamPlanService
 from services.exam_source_analysis import ExamModeError, ExamSourceAnalysisService
+from services.exam_topic_study import ExamTopicStudyService
 from services.retrieval_material import RetrievalMaterialError
 from services.text_generation import (
     TextGenerationError,
@@ -56,6 +67,10 @@ router = APIRouter(prefix="/api/courses", tags=["Exam Mode"])
 FEATURE_ANALYSIS = "exam_topic_analysis"
 FEATURE_RESCAN = "exam_topic_analysis_rescan"
 FEATURE_PLAN = "exam_plan"
+FEATURE_TOPIC_GUIDE = "exam_topic_guide"
+FEATURE_TOPIC_SUMMARY = "exam_topic_summary"
+
+MAX_TOPIC_KEY_LENGTH = 120
 
 MAX_QUESTION_PAGE_SIZE = 100
 
@@ -79,6 +94,17 @@ GENERATION_RESPONSES = {
 READ_RESPONSES = {
     401: {"description": "Authentication required"},
     404: {"description": "Course not found"},
+}
+
+TOPIC_GENERATION_RESPONSES = {
+    **GENERATION_RESPONSES,
+    409: {
+        "description": (
+            "This course has no exam plan yet, the topic is not one the plan "
+            "ranked, no course material matched the request, or the course "
+            "material is not searchable yet"
+        )
+    },
 }
 
 
@@ -541,4 +567,217 @@ def get_exam_plan(
         success=True,
         message="Exam plan retrieved successfully",
         data=_plan_view(ExamPlanService.readout(db, course.id, output)),
+    )
+
+
+# --------------------------------------------------------------- per-topic study
+
+
+def _topic_artifact(
+    course,
+    topic_key: str,
+    request: ExamTopicArtifactRequest,
+    current_user: UserResponse,
+    db: Session,
+    *,
+    output_type: str,
+    feature: str,
+):
+    """Generate one per-topic artifact, or map the refusal to a stable code.
+
+    The topic is resolved before anything is spent, so asking for a topic this
+    course never planned costs nothing and says which of the two things is
+    wrong: there is no plan, or that is not one of its topics.
+    """
+    try:
+        topic = ExamArtifactService.resolve_topic(
+            db, course.id, topic_key, plan_output_id=request.plan_output_id
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise ai_generation_http_exception(exc, feature=feature) from exc
+
+    try:
+        effective_model = resolve_effective_model(
+            request.model,
+            current_user.preferred_model,
+            required_capability="study_guide",
+        )
+        try:
+            provider = get_text_generation_provider(effective_model=effective_model)
+        except TypeError:
+            provider = get_text_generation_provider()
+
+        generation = ExamTopicStudyService.generate(
+            db,
+            course.id,
+            topic,
+            provider,
+            user_id=current_user.id,
+            output_type=output_type,
+        )
+        return ExamTopicStudyService.persist(
+            db,
+            course.id,
+            generation,
+            user_id=current_user.id,
+            output_type=output_type,
+        ), generation
+    except HTTPException:
+        raise
+    except (
+        TextGenerationError,
+        ExamArtifactError,
+        ExamModeError,
+        RetrievalMaterialError,
+        Exception,
+    ) as exc:
+        raise ai_generation_http_exception(exc, feature=feature) from exc
+
+
+def _stored_document(output, model):
+    stored = (
+        parse_json_object(
+            output.content,
+            field="content",
+            table="generated_outputs",
+            row_id=output.id,
+        )
+        or {}
+    )
+    return model.model_validate(stored)
+
+
+@router.post(
+    "/{course_id}/exam-mode/topics/{topic_key}/guide",
+    response_model=BaseResponse[ExamTopicGuideResult],
+    dependencies=[Depends(rate_limit_generation(FEATURE_TOPIC_GUIDE))],
+    responses=TOPIC_GENERATION_RESPONSES,
+)
+def generate_topic_guide(
+    course: OwnedCourse,
+    topic_key: Annotated[str, Path(max_length=MAX_TOPIC_KEY_LENGTH)],
+    request: ExamTopicArtifactRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamTopicGuideResult]:
+    persisted, generation = _topic_artifact(
+        course,
+        topic_key,
+        request,
+        current_user,
+        db,
+        output_type=OUTPUT_TYPE_EXAM_TOPIC_GUIDE,
+        feature=FEATURE_TOPIC_GUIDE,
+    )
+    material = generation.material
+    return BaseResponse(
+        success=True,
+        message="Topic study guide generated successfully",
+        data=ExamTopicGuideResult(
+            guide=persisted.document,
+            generated_output_id=persisted.output.id,
+            created_at=persisted.output.created_at,
+            model_used=persisted.output.model_used,
+            credits_charged=persisted.credits_charged,
+            context_truncated=material.truncated,
+            chunks_used=material.chunks_used,
+            chunks_available=material.chunks_available,
+            retrieval_narrowed=material.retrieval_narrowed,
+            lowest_similarity=material.lowest_similarity,
+            highest_similarity=material.highest_similarity,
+        ),
+    )
+
+
+@router.get(
+    "/{course_id}/exam-mode/topics/{topic_key}/guide",
+    response_model=BaseResponse[ExamTopicGuideDocument],
+    responses={
+        **READ_RESPONSES,
+        404: {"description": "Course or topic study guide not found"},
+    },
+)
+def get_topic_guide(
+    course: AuthorizedCourse,
+    topic_key: Annotated[str, Path(max_length=MAX_TOPIC_KEY_LENGTH)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamTopicGuideDocument]:
+    output = ExamTopicStudyService.latest(
+        db, course.id, OUTPUT_TYPE_EXAM_TOPIC_GUIDE, topic_key=topic_key
+    )
+    if output is None:
+        raise NotFoundException(detail="Topic study guide not found")
+    return BaseResponse(
+        success=True,
+        message="Topic study guide retrieved successfully",
+        data=_stored_document(output, ExamTopicGuideDocument),
+    )
+
+
+@router.post(
+    "/{course_id}/exam-mode/topics/{topic_key}/summary",
+    response_model=BaseResponse[ExamTopicSummaryResult],
+    dependencies=[Depends(rate_limit_generation(FEATURE_TOPIC_SUMMARY))],
+    responses=TOPIC_GENERATION_RESPONSES,
+)
+def generate_topic_summary(
+    course: OwnedCourse,
+    topic_key: Annotated[str, Path(max_length=MAX_TOPIC_KEY_LENGTH)],
+    request: ExamTopicArtifactRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamTopicSummaryResult]:
+    persisted, generation = _topic_artifact(
+        course,
+        topic_key,
+        request,
+        current_user,
+        db,
+        output_type=OUTPUT_TYPE_EXAM_TOPIC_SUMMARY,
+        feature=FEATURE_TOPIC_SUMMARY,
+    )
+    material = generation.material
+    return BaseResponse(
+        success=True,
+        message="Topic summary generated successfully",
+        data=ExamTopicSummaryResult(
+            summary=persisted.document,
+            generated_output_id=persisted.output.id,
+            created_at=persisted.output.created_at,
+            model_used=persisted.output.model_used,
+            credits_charged=persisted.credits_charged,
+            context_truncated=material.truncated,
+            chunks_used=material.chunks_used,
+            chunks_available=material.chunks_available,
+            retrieval_narrowed=material.retrieval_narrowed,
+            lowest_similarity=material.lowest_similarity,
+            highest_similarity=material.highest_similarity,
+        ),
+    )
+
+
+@router.get(
+    "/{course_id}/exam-mode/topics/{topic_key}/summary",
+    response_model=BaseResponse[ExamTopicSummaryDocument],
+    responses={
+        **READ_RESPONSES,
+        404: {"description": "Course or topic summary not found"},
+    },
+)
+def get_topic_summary(
+    course: AuthorizedCourse,
+    topic_key: Annotated[str, Path(max_length=MAX_TOPIC_KEY_LENGTH)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamTopicSummaryDocument]:
+    output = ExamTopicStudyService.latest(
+        db, course.id, OUTPUT_TYPE_EXAM_TOPIC_SUMMARY, topic_key=topic_key
+    )
+    if output is None:
+        raise NotFoundException(detail="Topic summary not found")
+    return BaseResponse(
+        success=True,
+        message="Topic summary retrieved successfully",
+        data=_stored_document(output, ExamTopicSummaryDocument),
     )

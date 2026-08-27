@@ -33,8 +33,8 @@ resource "aws_security_group_rule" "egress_all" {
 }
 
 resource "aws_db_parameter_group" "this" {
-  name_prefix = "${var.name_prefix}-pg16"
-  family      = "postgres16"
+  name_prefix = "${var.name_prefix}-pg15"
+  family      = "postgres15"
   description = "Lumina PostgreSQL runtime and observability settings"
   parameter {
     name  = "log_min_duration_statement"
@@ -54,10 +54,6 @@ resource "aws_db_parameter_group" "this" {
   }
   parameter {
     name  = "autovacuum"
-    value = "1"
-  }
-  parameter {
-    name  = "track_counts"
     value = "1"
   }
   parameter {
@@ -91,7 +87,7 @@ resource "aws_db_instance" "this" {
   db_subnet_group_name            = aws_db_subnet_group.this.name
   vpc_security_group_ids          = [aws_security_group.this.id]
   multi_az                        = var.multi_az
-  backup_retention_period         = 7
+  backup_retention_period         = 0
   backup_window                   = "03:00-04:00"
   maintenance_window              = "sun:05:00-sun:06:00"
   deletion_protection             = true

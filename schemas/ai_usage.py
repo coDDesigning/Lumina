@@ -13,6 +13,7 @@ class GenerationType(str, Enum):
     PROMPT_GENERATOR = "prompt_generator"
     COURSE_QA = "course_qa"
     QUIZ_GRADING = "quiz_grading"
+    EXAM_TOPIC_ANALYSIS = "exam_topic_analysis"
 
 
 class ErrorCategory(str, Enum):

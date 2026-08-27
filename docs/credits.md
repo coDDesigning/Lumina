@@ -159,6 +159,8 @@ server owns.
 | AI tutor | 1 |
 | Course Q&A | 1 |
 | Prompt generator | 1 |
+| Exam Mode source analysis | 1 |
+| Exam Mode rescan | 0.5 |
 
 Open-ended answers are graded by the provider, which costs real money every time
 an attempt is submitted. That grading is **prepaid at generation**, which is why
@@ -174,6 +176,20 @@ free.
 
 Consequently `quiz_grading` no longer charges. The reason still exists because
 the ledger is append-only and historical rows carry it.
+
+Exam Mode charges only where a provider is actually reached. Analysing a
+course's chosen sources is one provider call that both discovers the topics and
+transcribes any past exam questions, so it costs 1. Scanning again after
+changing the sources costs 0.5, because a student who uploads a paper the week
+before an exam should not be discouraged from re-reading it.
+
+Creating an exam plan from an analysis that already exists charges **nothing**:
+ranking is arithmetic over values the analysis already persisted, no model is
+involved, and no model is credited for it. Reopening a plan is a database read
+and charges nothing either, however long ago it was written. `exam_plan` is
+therefore rate limited but deliberately absent from the price table; the two
+mechanisms are independent, and a free operation with no entry is not an
+omission.
 
 ### Charging and refunding
 

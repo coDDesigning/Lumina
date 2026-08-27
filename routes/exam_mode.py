@@ -60,6 +60,7 @@ from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.credits import CreditService
 from services.exam_artifacts import ExamArtifactError, ExamArtifactService
+from services.exam_entitlements import ExamEntitlementService
 from services.exam_course_artifacts import (
     ExamMockExamService,
     ExamReviewSheetService,
@@ -625,6 +626,7 @@ def _topic_artifact(
     except Exception as exc:
         raise ai_generation_http_exception(exc, feature=feature) from exc
 
+    generation = None
     try:
         effective_model = resolve_effective_model(
             request.model,
@@ -652,6 +654,7 @@ def _topic_artifact(
             output_type=output_type,
         ), generation
     except HTTPException:
+        _release(db, generation)
         raise
     except (
         TextGenerationError,
@@ -660,7 +663,34 @@ def _topic_artifact(
         RetrievalMaterialError,
         Exception,
     ) as exc:
+        _release(db, generation)
         raise ai_generation_http_exception(exc, feature=feature) from exc
+
+
+def _release(db: Session, generation) -> None:
+    """Give back whatever a generation took, once it is known to have failed.
+
+    ``ExamArtifactService`` already undoes its own failures. This covers the
+    window after a generation succeeds and before its row is written: without
+    it a database error while persisting would leave a student charged for an
+    artifact that does not exist, and the retry free — the exact outcome
+    releasing exists to prevent.
+
+    A per-topic artifact gives back its unlock; a course-level one refunds its
+    own charge. Both are safe to call on a generation that already released,
+    because the unlock row is gone and a refund is recorded at most once.
+    """
+    if generation is None:
+        return
+    if generation.unlock is not None:
+        ExamEntitlementService.release(db, generation.unlock)
+        return
+    db.rollback()
+    CreditService.refund(db, generation.charge_receipt)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 def _stored_document(output, model):
@@ -842,6 +872,7 @@ def _topic_quiz(
 
     question_count = ExamQuizService.resolve_question_count(request.question_count)
 
+    generation = None
     try:
         effective_model = resolve_effective_model(
             request.model,
@@ -871,6 +902,7 @@ def _topic_quiz(
             question_count=question_count,
         )
     except HTTPException:
+        _release(db, generation)
         raise
     except (
         TextGenerationError,
@@ -879,6 +911,7 @@ def _topic_quiz(
         RetrievalMaterialError,
         Exception,
     ) as exc:
+        _release(db, generation)
         raise ai_generation_http_exception(exc, feature=feature) from exc
 
     hidden = output_type == OUTPUT_TYPE_EXAM_TOPIC_EXAM
@@ -988,6 +1021,7 @@ def generate_similar_questions(
             exc, feature=FEATURE_SIMILAR_QUESTIONS
         ) from exc
 
+    generation = None
     try:
         effective_model = resolve_effective_model(
             request.model,
@@ -1015,6 +1049,7 @@ def generate_similar_questions(
             originals=originals,
         )
     except HTTPException:
+        _release(db, generation)
         raise
     except (
         TextGenerationError,
@@ -1023,6 +1058,7 @@ def generate_similar_questions(
         RetrievalMaterialError,
         Exception,
     ) as exc:
+        _release(db, generation)
         raise ai_generation_http_exception(
             exc, feature=FEATURE_SIMILAR_QUESTIONS
         ) from exc
@@ -1105,6 +1141,7 @@ def generate_mock_exam(
     plan = _resolve_plan(course, request, db, FEATURE_MOCK_EXAM)
     question_count = ExamMockExamService.resolve_question_count(request.question_count)
 
+    generation = None
     try:
         effective_model = resolve_effective_model(
             request.model,
@@ -1132,6 +1169,7 @@ def generate_mock_exam(
             question_count=question_count,
         )
     except HTTPException:
+        _release(db, generation)
         raise
     except (
         TextGenerationError,
@@ -1140,6 +1178,7 @@ def generate_mock_exam(
         RetrievalMaterialError,
         Exception,
     ) as exc:
+        _release(db, generation)
         raise ai_generation_http_exception(exc, feature=FEATURE_MOCK_EXAM) from exc
 
     material = generation.material
@@ -1177,6 +1216,7 @@ def generate_review_sheet(
 ) -> BaseResponse[ExamReviewSheetResult]:
     plan = _resolve_plan(course, request, db, FEATURE_REVIEW_SHEET)
 
+    generation = None
     try:
         effective_model = resolve_effective_model(
             request.model,
@@ -1195,6 +1235,7 @@ def generate_review_sheet(
             db, course.id, generation, user_id=current_user.id
         )
     except HTTPException:
+        _release(db, generation)
         raise
     except (
         TextGenerationError,
@@ -1203,6 +1244,7 @@ def generate_review_sheet(
         RetrievalMaterialError,
         Exception,
     ) as exc:
+        _release(db, generation)
         raise ai_generation_http_exception(exc, feature=FEATURE_REVIEW_SHEET) from exc
 
     material = generation.material

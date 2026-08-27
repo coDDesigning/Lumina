@@ -626,7 +626,7 @@ label to override with.
 
 ### The generated output types
 
-Exam Mode writes eight kinds of row into `generated_outputs`:
+Exam Mode writes ten kinds of row into `generated_outputs`:
 `exam_topic_analysis`, `exam_plan`, `exam_roadmap`, `exam_topic_guide`,
 `exam_topic_summary`, `exam_topic_practice`, `exam_topic_exam`,
 `exam_similar_questions`, `exam_mock_exam`, and `exam_review_sheet`. The

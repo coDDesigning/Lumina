@@ -319,6 +319,27 @@ def test_an_invalid_structure_releases_the_unlock_too(
     assert unlocks(authz_api.session_factory, authz_api.a_course_id) == []
 
 
+def test_a_failure_while_persisting_releases_the_unlock_too(
+    authz_api, planned_course, monkeypatch
+) -> None:
+    """The window between a successful generation and a written row."""
+    before = balance_of(authz_api.session_factory, authz_api.user_a_id)
+
+    def exploding_record(*args, **kwargs):
+        raise RuntimeError("the database went away")
+
+    monkeypatch.setattr(
+        "services.exam_artifacts.GeneratedOutputService.record", exploding_record
+    )
+    response, _ = ask(authz_api, "guide", monkeypatch)
+
+    assert response.status_code >= 500
+    assert balance_of(authz_api.session_factory, authz_api.user_a_id) == before
+    assert unlocks(authz_api.session_factory, authz_api.a_course_id) == []
+    with authz_api.session_factory() as session:
+        assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
 def test_a_released_unlock_leaves_the_retry_priced_as_a_first_purchase(
     authz_api, planned_course, monkeypatch
 ) -> None:

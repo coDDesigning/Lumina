@@ -39,6 +39,7 @@ from utils.ai_errors import ERROR_CODE_HEADER, PUBLIC_MESSAGES, AiErrorCode
 
 ROUTES_DIR = Path(__file__).resolve().parents[1] / "routes"
 AI_ROUTE_FILES = [
+    "exam_roadmap.py",
     "study_guide.py",
     "flashcard.py",
     "quiz.py",

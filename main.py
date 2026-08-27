@@ -33,6 +33,7 @@ from routes import (
     course_qa,
     course_settings,
     document,
+    exam_roadmap,
     flashcard,
     generated_output,
     profile_knowledge,
@@ -79,6 +80,7 @@ app.include_router(ai_models.router)
 app.include_router(profile_knowledge.router)
 app.include_router(document.router)
 app.include_router(study_guide.router)
+app.include_router(exam_roadmap.router)
 app.include_router(generated_output.router)
 app.include_router(conversation.router)
 app.include_router(quiz.router)

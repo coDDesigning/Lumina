@@ -8,6 +8,7 @@ CITING_TEMPLATES = (
     "course_qa",
     "ai_tutor",
     "exam_topic_analysis",
+    "past_exam_question_extraction",
 )
 
 

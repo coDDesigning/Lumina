@@ -44,7 +44,7 @@ wrong passage.
 | AI Tutor | inline `[S1]` markers in the answer text | `conversation_messages.citations` |
 | Flashcards | none | — |
 | Exam Mode topics | `citations` array per discovered topic | `exam_topic_candidates.citations` |
-| Exam Mode past questions | `citations` array per question | `past_exam_questions.citations` |
+| Past exam paper questions | `citations` array per question | `past_exam_questions.citations` |
 
 Flashcards opt out at the retrieval seam: `load_retrieved_material` takes a
 required `include_citations` flag, so a card back can never pick up a stray

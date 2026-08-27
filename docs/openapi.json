@@ -3614,6 +3614,15 @@
             "title": "Analysis Output Id",
             "type": "integer"
           },
+          "document_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Document Ids",
+            "type": "array"
+          },
           "limit": {
             "title": "Limit",
             "type": "integer"
@@ -3677,16 +3686,9 @@
             "title": "Difficulty"
           },
           "document_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Document Id"
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
           },
           "marking_points": {
             "default": [],
@@ -3804,6 +3806,7 @@
         },
         "required": [
           "position",
+          "document_id",
           "question_text",
           "question_type"
         ],

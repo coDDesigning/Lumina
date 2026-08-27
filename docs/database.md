@@ -524,11 +524,10 @@ evidence one analysis found, and the plan a student built from it. Both live
 under `generated_outputs`, and both are immutable.
 
 An analysis writes one `generated_outputs` row with `output_type =
-'exam_topic_analysis'`, carrying the model attribution and a summary, plus
-`exam_topic_candidates` and `past_exam_questions` rows hanging off it. Those two
-are real tables rather than JSON because they are genuinely queried: a plan
-validates a topic selection against the candidates in the same statement that
-scopes them to the course, and a later feature will filter questions by topic.
+'exam_topic_analysis'`, carrying the model attribution and a summary, plus the
+`exam_topic_candidates` rows hanging off it. Those are a real table rather than
+JSON because they are genuinely queried: a plan validates a topic selection
+against the candidates in the same statement that scopes them to the course.
 
 A plan writes one `generated_outputs` row with `output_type = 'exam_plan'` whose
 `content` is a versioned JSON document. A plan is read whole, reopened whole and
@@ -537,37 +536,63 @@ never queried by its parts, so it needs no table of its own. Its `model_used` is
 and the model that produced the evidence is credited on the analysis the plan
 names.
 
+### Questions belong to the paper, not to the analysis
+
+`past_exam_questions` hangs off `uploaded_documents` instead. A question is a
+property of the paper it was printed in, so it is read once, in the upload
+worker, and every later analysis counts the same rows. Owning them by analysis
+would re-read an unchanged paper on every rescan and would let two analyses of
+one paper disagree about what it asks.
+
+`document_id` is therefore `NOT NULL` and `(document_id, position)` is the
+unique key: a question nobody can attribute to a paper is not a question this
+system records. A composite foreign key `(document_id, course_id)` into
+`uploaded_documents` carries the course with it, so a question can never be
+attributed to another course's paper.
+
+`topic_key` is computed by `services/exam_topics.canonical_topic_key` from the
+label the extractor gave the question, which is why extraction needs to know
+nothing about any analysis. An analysis resolves those keys against its own
+candidates later, exactly as it already does for mastery labels.
+
+Extraction is best-effort and free, and it never fails an upload. How it went is
+recorded on the document itself: `uploaded_documents.exam_extraction_status` is
+one of `not_applicable`, `pending`, `succeeded`, `failed`, `not_configured`, or
+`skipped`, with `exam_extraction_error_code` holding the stable category of a
+failure. Neither column carries a `CHECK`: constraining a column on an existing
+table would force a `batch_alter_table` rebuild on SQLite, and
+`generated_outputs.output_type` is the standing precedent for a discriminator
+the application owns. A paper that is still `pending` or `failed` is given one
+more attempt the first time Exam Mode selects it, which is also how papers
+uploaded before extraction existed reach the ranking.
+
 ### Course-scoped denormalization
 
-Both new tables carry `course_id` alongside `analysis_output_id`, so every read
-after the authorization boundary is a plain `WHERE course_id = ?` with no join.
-The pair is held true by a composite foreign key into `generated_outputs`, which
-is why migration `a6d3f81c9b47` adds a unique index on `(id, course_id)` there.
-Without it a bug could write a candidate whose `course_id` disagreed with its
-analysis, and a course-scoped read would surface another course's row after the
-boundary had already passed. It is a unique **index** rather than a constraint
-because SQLite has no `ALTER TABLE ... ADD CONSTRAINT`, and rebuilding a table
-holding every generation a deployment has produced is not worth a spelling.
+`exam_topic_candidates` carries `course_id` alongside `analysis_output_id`, so
+every read after the authorization boundary is a plain `WHERE course_id = ?`
+with no join. The pair is held true by a composite foreign key into
+`generated_outputs`, which is why migration `a6d3f81c9b47` adds a unique index
+on `(id, course_id)` there. Without it a bug could write a candidate whose
+`course_id` disagreed with its analysis, and a course-scoped read would surface
+another course's row after the boundary had already passed. It is a unique
+**index** rather than a constraint because SQLite has no `ALTER TABLE ... ADD
+CONSTRAINT`, and rebuilding a table holding every generation a deployment has
+produced is not worth a spelling.
 
-`past_exam_questions` carries a second composite foreign key,
-`(document_id, course_id)` into `uploaded_documents`. Together the two force the
-analysis and the source paper into the same course, so a question can never be
-attributed to another course's exam. `document_id` is nullable, because the
-model sometimes transcribes a real question whose page it cannot cite; a null in
-either half leaves that key unchecked, and `page_requires_document` stops such a
-row claiming a page it cannot attribute.
-
-Deleting a past exam therefore retracts the questions extracted from it, while
-the candidate aggregates keep their counts. That is deliberate: keeping verbatim
+Deleting a past exam retracts the questions extracted from it, while the
+candidate aggregates keep their counts. That is deliberate: keeping verbatim
 exam text alive after the student deleted the source is a retention claim this
 system does not make. The disagreement is reported rather than hidden, because
 the plan's staleness fingerprint records which past exams it used.
 
 ### Append-only
 
-The application never issues an `UPDATE` against either table. A rescan writes a
-new analysis and a fresh set of rows; a regenerated plan writes a new row naming
-the one it supersedes. Historical plans stay readable, which is the point: a
+The application never issues an `UPDATE` against `exam_topic_candidates`. A
+rescan writes a new analysis and a fresh set of rows; a regenerated plan writes
+a new row naming the one it supersedes. `past_exam_questions` is replaced rather
+than updated: re-reading a paper deletes its questions and writes them again,
+because a reprocessed document has new chunks and a question read from text that
+no longer exists would outlive the page it cites. Historical plans stay readable, which is the point: a
 plan records what the sources were, what the mastery was, and why each topic
 landed where it did, and rewriting that would erase the reasoning the student
 actually studied from.

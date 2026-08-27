@@ -237,12 +237,12 @@ TEMPLATE_EXTRA_VARIABLES: dict[str, dict[str, str]] = {
     },
     "exam_topic_analysis": {
         "TOPIC_FOCUS": "All Topics",
-        "PAST_EXAM_DIRECTIVE": (
-            "The supplied material includes at least one past examination paper."
-        ),
         "DECLARED_TOPICS": "Declared topics body",
         "SYLLABUS_TEXT": "Syllabus body",
         "TEXT": "Course material body",
+    },
+    "past_exam_question_extraction": {
+        "TEXT": "Examination paper body",
     },
     "flashcard": {
         "PROFILE_CONTEXT": PROFILE_CONTEXT_FIXTURE,

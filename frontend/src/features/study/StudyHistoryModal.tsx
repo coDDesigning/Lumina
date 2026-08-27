@@ -4,6 +4,7 @@ import { generatedOutputsAPI } from '@/api/generatedOutputs';
 import { queryKeys } from '@/api/queryKeys';
 import { useQuery } from '@/lib/query/useQuery';
 import type {
+  ExamRoadmap,
   GeneratedOutputDetail,
   GeneratedOutputSummary,
   RetrievedContext,
@@ -19,6 +20,7 @@ import {
   DetailPlaceholder,
   MasterDetail,
 } from '@/ui/MasterDetail';
+import { ExamRoadmapView } from './ExamRoadmapView';
 import { FlashcardDeck } from './FlashcardDeck';
 import { StoredQuiz } from './quiz/StoredQuiz';
 import { StudyGuide } from './StudyGuide';
@@ -50,9 +52,11 @@ type DetailState =
 
 const OUTPUT_TYPE_LABELS: Record<string, string> = {
   study_guide: 'Study guide',
+  last_minute_review: 'Last-minute review',
   flashcards: 'Flashcards',
   flashcard: 'Flashcards',
   quiz: 'Practice quiz',
+  exam_roadmap: 'Exam roadmap',
 };
 
 function outputLabel(output: GeneratedOutputSummary): string {
@@ -85,6 +89,16 @@ function settingBadges(output: GeneratedOutputSummary): string[] {
 function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
   const { content } = output;
 
+  if (output.output_type === 'exam_roadmap') {
+    const roadmap =
+      typeof content === 'string'
+        ? (tryParseJson(content) as unknown as ExamRoadmap | null)
+        : (content as unknown as ExamRoadmap | null);
+    if (roadmap && typeof roadmap === 'object' && Array.isArray(roadmap.days)) {
+      return <ExamRoadmapView roadmap={roadmap} />;
+    }
+  }
+
   if (output.output_type === 'flashcards' || output.output_type === 'flashcard') {
     const cards = extractFlashcards(content);
     if (cards) {
@@ -99,7 +113,10 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
     }
   }
 
-  if (output.output_type === 'study_guide' && isRenderableStudyGuide(content)) {
+  if (
+    (output.output_type === 'study_guide' || output.output_type === 'last_minute_review') &&
+    isRenderableStudyGuide(content)
+  ) {
     const parsedGuide =
       typeof content === 'string'
         ? (tryParseJson(content) as StudyGuideResponse)

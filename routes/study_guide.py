@@ -83,6 +83,7 @@ def generate_study_guide(
             generation.study_guide,
             user_id=current_user.id,
             model_used=generation.model_used,
+            summary_mode=generation.effective_request.summary_mode,
             generation_settings=applied_settings.model_dump_json(),
             generation_context=StudyGuideGenerationContext.from_material(
                 generation.material,

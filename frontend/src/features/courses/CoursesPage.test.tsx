@@ -199,6 +199,50 @@ describe('CoursesPage', () => {
     });
   });
 
+  it('creates a course whose topic contains a comma without splitting it', async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn().mockResolvedValue({ ...mockWorkspaces[0], id: '5' });
+    renderPage({ onCreate });
+
+    await user.click(openCreate());
+    await user.type(screen.getByLabelText('Course name'), 'Data Structures');
+
+    const topics = screen.getByLabelText(/^Topics/);
+    await user.type(topics, 'Trees, Heaps and Priority Queues{Enter}');
+    await user.type(topics, 'Shortest Paths{Enter}');
+
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Create course' }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'Data Structures',
+          topics: ['Trees, Heaps and Priority Queues', 'Shortest Paths'],
+        }),
+      );
+    });
+  });
+
+  it('keeps a topic that was typed but never confirmed with Enter', async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn().mockResolvedValue({ ...mockWorkspaces[0], id: '6' });
+    renderPage({ onCreate });
+
+    await user.click(openCreate());
+    await user.type(screen.getByLabelText('Course name'), 'Compilers');
+    await user.type(screen.getByLabelText(/^Topics/), 'Parsing');
+
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Create course' }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Compilers', topics: ['Parsing'] }),
+      );
+    });
+  });
+
   it('submits the chosen education level and subject area', async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn().mockResolvedValue({ ...mockWorkspaces[0], id: '4' });

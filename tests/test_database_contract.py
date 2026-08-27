@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -66,7 +66,7 @@ def test_unloaded_user_delete_cascades_complete_relational_graph(
             owner=user,
             title="Contract course",
             semester="Fall",
-            exam_date="2026",
+            exam_date=date(2026, 6, 15),
         )
         document = UploadedDocument(
             id=document_id,
@@ -281,7 +281,7 @@ def test_unloaded_course_delete_cascades_every_course_branch(
             owner=user,
             title="Course cascade contract",
             semester="Fall",
-            exam_date="2026",
+            exam_date=date(2026, 6, 15),
         )
         document = UploadedDocument(
             id=document_id,

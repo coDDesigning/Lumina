@@ -1,6 +1,6 @@
 import math
 import struct
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
@@ -9,6 +9,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -257,8 +258,7 @@ class Course(Base):
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     semester: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    exam_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    topics: Mapped[str | None] = mapped_column(Text, nullable=True)
+    exam_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     syllabus: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
@@ -282,6 +282,10 @@ class Course(Base):
     @property
     def owner_name(self) -> str | None:
         return self.owner.name if self.owner is not None else None
+
+    @property
+    def topics(self) -> list[str]:
+        return [topic.name for topic in self.topic_rows]
 
     @property
     def owner_email(self) -> str | None:
@@ -336,6 +340,30 @@ class Course(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+    topic_rows: Mapped[list["CourseTopic"]] = relationship(
+        back_populates="course",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="CourseTopic.position",
+    )
+
+
+class CourseTopic(Base):
+    __tablename__ = "course_topics"
+    __table_args__ = (
+        UniqueConstraint("course_id", "name", name="uq_course_topics_course_id_name"),
+        CheckConstraint("position >= 0", name="position_nonnegative"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(100))
+
+    course: Mapped["Course"] = relationship(back_populates="topic_rows")
 
 
 class CourseSettings(Base):

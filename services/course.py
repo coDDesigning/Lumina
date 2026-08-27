@@ -1,9 +1,9 @@
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from backend.app.database import begin_serialized_write
-from backend.app.models import Course, UploadedDocument
+from backend.app.models import Course, CourseTopic, UploadedDocument
 from schemas.course import CourseCreate, CourseResponse, CourseUpdate
 from schemas.user import UserResponse
 from services.processing_jobs import fence_course_jobs
@@ -41,7 +41,8 @@ class CourseService:
         statement = (
             select(Course)
             .where(Course.owner_id == user_id, Course.is_deleted.is_(False))
-            .order_by(Course.id)
+            .order_by(Course.exam_date.is_(None), Course.exam_date, Course.id)
+            .options(selectinload(Course.topic_rows))
         )
         return [
             CourseResponse.model_validate(course)
@@ -49,14 +50,27 @@ class CourseService:
         ]
 
     @staticmethod
+    def _replace_topics(db: Session, course: Course, names: list[str]) -> None:
+        if course.topic_rows:
+            course.topic_rows.clear()
+            db.flush()
+        course.topic_rows = [
+            CourseTopic(position=position, name=name)
+            for position, name in enumerate(names)
+        ]
+
+    @staticmethod
     def create_course(
         db: Session, course_data: CourseCreate, owner_id: int
     ) -> CourseResponse:
+        fields = course_data.model_dump()
+        topics = fields.pop("topics")
         course = Course(
-            **course_data.model_dump(),
+            **fields,
             owner_id=owner_id,
             is_deleted=False,
         )
+        CourseService._replace_topics(db, course, topics)
         db.add(course)
         db.flush()
         db.refresh(course)
@@ -89,8 +103,11 @@ class CourseService:
         if course is None:
             raise NotFoundException(detail="Course not found")
 
+        topics = updates.pop("topics", None)
         for field, value in updates.items():
             setattr(course, field, value)
+        if topics is not None:
+            CourseService._replace_topics(db, course, topics)
 
         db.commit()
         db.refresh(course)

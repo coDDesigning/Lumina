@@ -133,7 +133,7 @@ export interface Course {
   semester: string | null;
   exam_date: string | null;
   syllabus: string | null;
-  topics: string | null;
+  topics: string[];
   is_archived?: boolean;
 }
 
@@ -143,9 +143,9 @@ export interface CourseCreate {
   education_level?: EducationLevel;
   description?: string;
   semester?: string;
-  exam_date?: string;
+  exam_date?: string | null;
   syllabus?: string;
-  topics?: string;
+  topics?: string[];
   is_archived?: boolean;
 }
 
@@ -155,9 +155,9 @@ export interface CourseUpdate {
   education_level?: EducationLevel;
   description?: string;
   semester?: string;
-  exam_date?: string;
+  exam_date?: string | null;
   syllabus?: string;
-  topics?: string;
+  topics?: string[];
   is_archived?: boolean;
 }
 

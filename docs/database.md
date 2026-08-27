@@ -119,7 +119,7 @@ immutable `pgvector/pgvector` image digest; the pgvector extension is required
 because the schema declares a `vector` column and an HNSW index. The live job
 verifies the complete Alembic upgrade/downgrade/re-upgrade cycle, schema drift,
 role seeds, readiness, UUID and timezone round trips, unloaded database cascades
-across all 22 tables, pgvector provisioning and cosine ranking, and
+across all 23 tables, pgvector provisioning and cosine ranking, and
 `SKIP LOCKED` worker claims. Tests marked `database_contract` run unchanged
 against copies of an Alembic-migrated SQLite database and the disposable
 PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other
@@ -221,10 +221,44 @@ course therefore needs no administrator involvement and admits none.
 A course workspace carries `title`, `description`, `semester`, `exam_date`,
 `topics`, `syllabus`, `subject_area`, `education_level`, `is_archived`, `created_at` and
 `updated_at`. `syllabus` is nullable free
-text for the course outline; it is distinct from `topics`, which holds the
-comma-separated topic labels the study features consume. `updated_at` is
+text for the course outline; it is distinct from `topics`, which the study
+features consume. `updated_at` is
 maintained by the ORM through `onupdate`, so any course modification advances it
 while `created_at` stays fixed.
+
+`exam_date` is a nullable `DATE`. The database validates it and `ORDER BY
+exam_date` is chronological, so course listing sorts by exam date with undated
+courses last rather than by insertion order. The API accepts and returns an ISO
+`YYYY-MM-DD` string; an empty string is read as absent so clearing the field in
+a form does not fail validation.
+
+Migration `e2b7c94f1a03` converted the former `String(20)` column. **A legacy
+value converts only if it matches `^\d{4}-\d{2}-\d{2}$` and parses as a real
+date.** The regular expression is checked first on purpose: CPython 3.11 widened
+`date.fromisoformat` to accept forms such as `20260904`, and the conversion rule
+must not depend on which interpreter runs the migration. Every other value --
+the empty string, a bare year such as `2026`, a partial date such as `2026-09`,
+an impossible date such as `2026-02-30`, and free text -- became NULL and was
+logged as `course id=<id> exam_date=<original> discarded: not an ISO date`.
+**The remediation for a discarded value is to re-enter that date from the
+migration log**; the migration deliberately did not coerce `2026` into
+`2026-01-01`, because that shows a student an exam date they never entered.
+
+`topics` is not a column. Topic labels are rows in `course_topics`
+(`course_id`, `position`, `name`), so a topic containing a comma keeps its
+boundaries and a course-scoped topic lookup is an ordinary join rather than a
+substring match. `position` preserves the order the student wrote and is not
+unique, because the course form replaces the whole set. Uniqueness is
+`(course_id, name)` rather than a functional index on `lower(name)` so the
+constraint is identical on SQLite and PostgreSQL; case-insensitive
+de-duplication happens in the service layer, keeping the first casing. A course
+holds at most 50 topics of at most 100 characters each. Deleting a course
+cascades its topics.
+
+The API carries `topics` as a JSON array of strings on read and write, and the
+frontend edits it with the `TagInput` primitive. Neither side splits or joins on
+a comma. Migration `f3c8d05a2b16` performed that split one final time when it
+backfilled the legacy column.
 
 `is_archived` is a boolean flag indicating whether the course is archived by its owner.
 Archiving is non-destructive and reversible: archived courses remain fully accessible for reads,

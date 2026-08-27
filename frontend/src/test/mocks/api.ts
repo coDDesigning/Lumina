@@ -34,7 +34,7 @@ export function createMockCourse(overrides: Partial<Course> = {}): Course {
     semester: 'Fall 2026',
     exam_date: '2026-12-15',
     syllabus: 'Topics include processes, threads, virtual memory, and caching.',
-    topics: 'Architecture, Operating Systems, Memory Hierarchy',
+    topics: ['Architecture', 'Process Scheduling', 'Memory Hierarchy'],
     ...overrides,
   };
 }

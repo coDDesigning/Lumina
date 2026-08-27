@@ -828,3 +828,29 @@ export interface ExamRoadmapResult {
   roadmap: ExamRoadmap;
   generated_output_id: number;
 }
+
+export type ConceptStatus =
+  | 'unsupported'
+  | 'absent'
+  | 'partially_correct'
+  | 'contradicted';
+
+export interface Misconception {
+  concept: string;
+  status: LooseUnion<ConceptStatus>;
+  detail: string;
+}
+
+export interface ReverseQuizRequest {
+  topic: string;
+  explanation: string;
+}
+
+export interface ReverseQuizResponse {
+  id: number;
+  course_id: number;
+  topic: string;
+  explanation: string;
+  feedback: string;
+  misconceptions: Misconception[];
+}

@@ -34,6 +34,7 @@ from schemas.quiz_attempt import (
 from services.ai_usage_logger import AiUsageLogger
 from schemas.prompt_context import PromptContext
 from services.prompt_context import resolve_prompt_context
+from schemas.reverse_quiz import Misconception
 from services.prompt_loader import PromptLoader
 from services.quiz import parse_correct_answer
 from services.text_generation import TextGenerationProvider
@@ -54,6 +55,7 @@ class GradedAnswer:
     is_correct: bool | None
     score: float | None
     feedback: str | None
+    misconceptions: list[Misconception] | None = None
 
 
 Verdict = tuple[bool | None, float | None]
@@ -151,6 +153,7 @@ class QuizGradingService:
                     is_correct=is_correct,
                     score=score,
                     feedback=None,
+                    misconceptions=None,
                 )
             )
 
@@ -262,9 +265,10 @@ class QuizGradingService:
                 text_response=answer.text_response,
                 correct_option_index=answer.correct_option_index,
                 correct_answer=answer.correct_answer,
-                is_correct=verdict.score >= OPEN_ENDED_PASS_THRESHOLD,
+                is_correct=verdict.score >= OPEN_ENDED_PASS_THRESHOLD if verdict.score is not None else None,
                 score=verdict.score,
                 feedback=verdict.feedback or None,
+                misconceptions=verdict.misconceptions,
             )
 
         if user_id:

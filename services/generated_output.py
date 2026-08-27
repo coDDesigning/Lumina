@@ -47,6 +47,7 @@ class GeneratedOutputService:
         model_used: str | None = None,
         generation_settings: str | None = None,
         generation_context: str | None = None,
+        commit: bool = True,
     ) -> GeneratedOutput:
         """Store one generation, with the user and model that actually produced it."""
         generated_output = GeneratedOutput(
@@ -61,7 +62,8 @@ class GeneratedOutputService:
         db.add(generated_output)
         db.flush()
         db.refresh(generated_output)
-        db.commit()
+        if commit:
+            db.commit()
 
         return generated_output
 

@@ -36,6 +36,16 @@ from schemas.exam_mode import (
     ExamQuestionPage,
     ExamQuestionView,
     ExamSelectionCarryOver,
+    ExamMockExamRequest,
+    ExamMockExamResult,
+    ExamPlanArtifactRequest,
+    ExamReviewSheetDocument,
+    ExamReviewSheetResult,
+    ExamRoadmapDocument,
+    ExamRoadmapRequest,
+    ExamRoadmapResult,
+    ExamSimilarQuestionsDocument,
+    ExamSimilarQuestionsResult,
     ExamSourceInventory,
     ExamTopicArtifactRequest,
     ExamTopicCandidateView,
@@ -50,8 +60,14 @@ from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.credits import CreditService
 from services.exam_artifacts import ExamArtifactError, ExamArtifactService
+from services.exam_course_artifacts import (
+    ExamMockExamService,
+    ExamReviewSheetService,
+)
 from services.exam_plan import ExamPlanService
 from services.exam_quiz import ExamQuizService
+from services.exam_similar_questions import ExamSimilarQuestionsService
+from services.exam_study_roadmap import ExamStudyRoadmapService
 from services.exam_source_analysis import ExamModeError, ExamSourceAnalysisService
 from services.exam_topic_study import ExamTopicStudyService
 from services.retrieval_material import RetrievalMaterialError
@@ -76,6 +92,10 @@ FEATURE_TOPIC_GUIDE = "exam_topic_guide"
 FEATURE_TOPIC_SUMMARY = "exam_topic_summary"
 FEATURE_TOPIC_PRACTICE = "exam_topic_practice"
 FEATURE_TOPIC_EXAM = "exam_topic_exam"
+FEATURE_SIMILAR_QUESTIONS = "exam_similar_questions"
+FEATURE_MOCK_EXAM = "exam_mock_exam"
+FEATURE_REVIEW_SHEET = "exam_review_sheet"
+FEATURE_ROADMAP = "exam_roadmap"
 
 MAX_TOPIC_KEY_LENGTH = 120
 
@@ -931,4 +951,365 @@ def generate_topic_exam(
         output_type=OUTPUT_TYPE_EXAM_TOPIC_EXAM,
         feature=FEATURE_TOPIC_EXAM,
         message="Topic exam generated successfully",
+    )
+
+
+# --------------------------------------------------------------- similar questions
+
+
+@router.post(
+    "/{course_id}/exam-mode/topics/{topic_key}/similar-questions",
+    response_model=BaseResponse[ExamSimilarQuestionsResult],
+    dependencies=[Depends(rate_limit_generation(FEATURE_SIMILAR_QUESTIONS))],
+    responses=TOPIC_GENERATION_RESPONSES,
+)
+def generate_similar_questions(
+    course: OwnedCourse,
+    topic_key: Annotated[str, Path(max_length=MAX_TOPIC_KEY_LENGTH)],
+    request: ExamTopicArtifactRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamSimilarQuestionsResult]:
+    """Write a fresh question in the mould of each of this topic's past ones.
+
+    The originals are checked before the topic is unlocked, so a topic this
+    course has never examined is a conflict naming what to do about it rather
+    than a charge for an empty page.
+    """
+    try:
+        topic = ExamArtifactService.resolve_topic(
+            db, course.id, topic_key, plan_output_id=request.plan_output_id
+        )
+        originals = ExamSimilarQuestionsService.source_questions(db, course.id, topic)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise ai_generation_http_exception(
+            exc, feature=FEATURE_SIMILAR_QUESTIONS
+        ) from exc
+
+    try:
+        effective_model = resolve_effective_model(
+            request.model,
+            current_user.preferred_model,
+            required_capability="quiz",
+        )
+        try:
+            provider = get_text_generation_provider(effective_model=effective_model)
+        except TypeError:
+            provider = get_text_generation_provider()
+
+        generation = ExamSimilarQuestionsService.generate(
+            db,
+            course.id,
+            topic,
+            provider,
+            user_id=current_user.id,
+            originals=originals,
+        )
+        persisted = ExamSimilarQuestionsService.persist(
+            db,
+            course.id,
+            generation,
+            user_id=current_user.id,
+            originals=originals,
+        )
+    except HTTPException:
+        raise
+    except (
+        TextGenerationError,
+        ExamArtifactError,
+        ExamModeError,
+        RetrievalMaterialError,
+        Exception,
+    ) as exc:
+        raise ai_generation_http_exception(
+            exc, feature=FEATURE_SIMILAR_QUESTIONS
+        ) from exc
+
+    material = generation.material
+    return BaseResponse(
+        success=True,
+        message="Similar questions generated successfully",
+        data=ExamSimilarQuestionsResult(
+            similar_questions=persisted.document,
+            generated_output_id=persisted.output.id,
+            created_at=persisted.output.created_at,
+            model_used=persisted.output.model_used,
+            credits_charged=persisted.credits_charged,
+            context_truncated=material.truncated,
+            chunks_used=material.chunks_used,
+            chunks_available=material.chunks_available,
+            retrieval_narrowed=material.retrieval_narrowed,
+            lowest_similarity=material.lowest_similarity,
+            highest_similarity=material.highest_similarity,
+        ),
+    )
+
+
+@router.get(
+    "/{course_id}/exam-mode/topics/{topic_key}/similar-questions",
+    response_model=BaseResponse[ExamSimilarQuestionsDocument],
+    responses={
+        **READ_RESPONSES,
+        404: {"description": "Course or similar questions not found"},
+    },
+)
+def get_similar_questions(
+    course: AuthorizedCourse,
+    topic_key: Annotated[str, Path(max_length=MAX_TOPIC_KEY_LENGTH)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamSimilarQuestionsDocument]:
+    output = ExamSimilarQuestionsService.latest(db, course.id, topic_key=topic_key)
+    if output is None:
+        raise NotFoundException(detail="Similar questions not found")
+    return BaseResponse(
+        success=True,
+        message="Similar questions retrieved successfully",
+        data=_stored_document(output, ExamSimilarQuestionsDocument),
+    )
+
+
+# --------------------------------------------------------------- whole-plan work
+
+
+def _resolve_plan(course, request: ExamPlanArtifactRequest, db: Session, feature: str):
+    try:
+        return ExamArtifactService.resolve_plan(
+            db, course.id, plan_output_id=request.plan_output_id
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise ai_generation_http_exception(exc, feature=feature) from exc
+
+
+@router.post(
+    "/{course_id}/exam-mode/mock-exam",
+    response_model=BaseResponse[ExamMockExamResult],
+    dependencies=[Depends(rate_limit_generation(FEATURE_MOCK_EXAM))],
+    responses=TOPIC_GENERATION_RESPONSES,
+)
+def generate_mock_exam(
+    course: OwnedCourse,
+    request: ExamMockExamRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamMockExamResult]:
+    """Write one paper across the whole plan, weighted by its own ranking.
+
+    Priced on its own rather than under a topic's unlock: a student who paid for
+    one topic has not paid for a paper covering twelve. Served with its answers
+    hidden, because a paper you can read the answers to is not a mock exam.
+    """
+    plan = _resolve_plan(course, request, db, FEATURE_MOCK_EXAM)
+    question_count = ExamMockExamService.resolve_question_count(request.question_count)
+
+    try:
+        effective_model = resolve_effective_model(
+            request.model,
+            current_user.preferred_model,
+            required_capability="quiz",
+        )
+        try:
+            provider = get_text_generation_provider(effective_model=effective_model)
+        except TypeError:
+            provider = get_text_generation_provider()
+
+        generation = ExamMockExamService.generate(
+            db,
+            course.id,
+            plan,
+            provider,
+            user_id=current_user.id,
+            question_count=question_count,
+        )
+        persisted = ExamMockExamService.persist(
+            db,
+            course.id,
+            generation,
+            user_id=current_user.id,
+            question_count=question_count,
+        )
+    except HTTPException:
+        raise
+    except (
+        TextGenerationError,
+        ExamArtifactError,
+        ExamModeError,
+        RetrievalMaterialError,
+        Exception,
+    ) as exc:
+        raise ai_generation_http_exception(exc, feature=FEATURE_MOCK_EXAM) from exc
+
+    material = generation.material
+    return BaseResponse(
+        success=True,
+        message="Mock exam generated successfully",
+        data=ExamMockExamResult(
+            quiz=ExamQuizService.hide_answers(persisted.view),
+            generated_output_id=persisted.output.id,
+            created_at=persisted.output.created_at,
+            model_used=persisted.output.model_used,
+            credits_charged=persisted.credits_charged,
+            answers_hidden=True,
+            context_truncated=material.truncated,
+            chunks_used=material.chunks_used,
+            chunks_available=material.chunks_available,
+            retrieval_narrowed=material.retrieval_narrowed,
+            lowest_similarity=material.lowest_similarity,
+            highest_similarity=material.highest_similarity,
+        ),
+    )
+
+
+@router.post(
+    "/{course_id}/exam-mode/review-sheet",
+    response_model=BaseResponse[ExamReviewSheetResult],
+    dependencies=[Depends(rate_limit_generation(FEATURE_REVIEW_SHEET))],
+    responses=TOPIC_GENERATION_RESPONSES,
+)
+def generate_review_sheet(
+    course: OwnedCourse,
+    request: ExamPlanArtifactRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamReviewSheetResult]:
+    plan = _resolve_plan(course, request, db, FEATURE_REVIEW_SHEET)
+
+    try:
+        effective_model = resolve_effective_model(
+            request.model,
+            current_user.preferred_model,
+            required_capability="study_guide",
+        )
+        try:
+            provider = get_text_generation_provider(effective_model=effective_model)
+        except TypeError:
+            provider = get_text_generation_provider()
+
+        generation = ExamReviewSheetService.generate(
+            db, course.id, plan, provider, user_id=current_user.id
+        )
+        persisted = ExamReviewSheetService.persist(
+            db, course.id, generation, user_id=current_user.id
+        )
+    except HTTPException:
+        raise
+    except (
+        TextGenerationError,
+        ExamArtifactError,
+        ExamModeError,
+        RetrievalMaterialError,
+        Exception,
+    ) as exc:
+        raise ai_generation_http_exception(exc, feature=FEATURE_REVIEW_SHEET) from exc
+
+    material = generation.material
+    return BaseResponse(
+        success=True,
+        message="Review sheet generated successfully",
+        data=ExamReviewSheetResult(
+            review_sheet=persisted.document,
+            generated_output_id=persisted.output.id,
+            created_at=persisted.output.created_at,
+            model_used=persisted.output.model_used,
+            credits_charged=persisted.credits_charged,
+            context_truncated=material.truncated,
+            chunks_used=material.chunks_used,
+            chunks_available=material.chunks_available,
+            retrieval_narrowed=material.retrieval_narrowed,
+            lowest_similarity=material.lowest_similarity,
+            highest_similarity=material.highest_similarity,
+        ),
+    )
+
+
+@router.get(
+    "/{course_id}/exam-mode/review-sheet",
+    response_model=BaseResponse[ExamReviewSheetDocument],
+    responses={
+        **READ_RESPONSES,
+        404: {"description": "Course or review sheet not found"},
+    },
+)
+def get_review_sheet(
+    course: AuthorizedCourse,
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamReviewSheetDocument]:
+    output = ExamReviewSheetService.latest(db, course.id)
+    if output is None:
+        raise NotFoundException(detail="Review sheet not found")
+    return BaseResponse(
+        success=True,
+        message="Review sheet retrieved successfully",
+        data=_stored_document(output, ExamReviewSheetDocument),
+    )
+
+
+# --------------------------------------------------------------- roadmap
+
+
+@router.post(
+    "/{course_id}/exam-mode/roadmap",
+    response_model=BaseResponse[ExamRoadmapResult],
+    dependencies=[Depends(rate_limit_generation(FEATURE_ROADMAP))],
+    responses={
+        **READ_RESPONSES,
+        409: {"description": "This course has no exam plan yet"},
+        422: {"description": "Invalid roadmap request"},
+        429: {"description": "Per-user generation rate limited"},
+    },
+)
+def create_roadmap(
+    course: OwnedCourse,
+    request: ExamRoadmapRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamRoadmapResult]:
+    """Spread the plan's topics across the days that are left.
+
+    Free and deterministic: arithmetic over an order the plan already settled,
+    with no provider and no credit. It writes a row, which is why it is a write
+    and rate limited, and why `exam_roadmap` is deliberately absent from the
+    price table.
+    """
+    plan = _resolve_plan(course, request, db, FEATURE_ROADMAP)
+    persisted = ExamStudyRoadmapService.create(
+        db,
+        course.id,
+        plan,
+        user_id=current_user.id,
+        requested_days=request.day_count,
+    )
+    return BaseResponse(
+        success=True,
+        message="Study roadmap created successfully",
+        data=ExamRoadmapResult(
+            roadmap=persisted.document,
+            generated_output_id=persisted.output.id,
+            created_at=persisted.output.created_at,
+        ),
+    )
+
+
+@router.get(
+    "/{course_id}/exam-mode/roadmap",
+    response_model=BaseResponse[ExamRoadmapDocument],
+    responses={
+        **READ_RESPONSES,
+        404: {"description": "Course or study roadmap not found"},
+    },
+)
+def get_roadmap(
+    course: AuthorizedCourse,
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamRoadmapDocument]:
+    output = ExamStudyRoadmapService.latest(db, course.id)
+    if output is None:
+        raise NotFoundException(detail="Study roadmap not found")
+    return BaseResponse(
+        success=True,
+        message="Study roadmap retrieved successfully",
+        data=_stored_document(output, ExamRoadmapDocument),
     )

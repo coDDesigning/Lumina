@@ -36,6 +36,9 @@ MAX_QUESTION_TOPICS = 6
 MAX_GUIDE_SECTIONS = 12
 MAX_GUIDE_ITEMS = 12
 MAX_SUMMARY_POINTS = 10
+MAX_SIMILAR_QUESTIONS = 20
+MAX_REVIEW_TOPICS = 60
+MAX_REVIEW_ITEMS = 12
 
 DEFAULT_TOPIC_FOCUS = "All Topics"
 
@@ -759,3 +762,246 @@ class ExamTopicSummaryResult(RetrievedContext):
     created_at: datetime
     model_used: str | None = None
     credits_charged: float = 0.0
+
+
+# --------------------------------------------------------------- similar questions
+
+
+class GeneratedSimilarQuestion(BaseModel):
+    """One fresh question written in the mould of an original.
+
+    ``source_number`` is the position the prompt printed against the original,
+    not a database identifier. A model is never shown a row id and never asked
+    to echo one back; the application resolves the number against the questions
+    it actually supplied, exactly as it resolves a citation key.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    source_number: int = Field(ge=1)
+    question_text: str = Field(min_length=1)
+    reference_answer: str = Field(min_length=1)
+    what_changed: str = ""
+    difficulty: ExamDifficulty = ExamDifficulty.MEDIUM
+    citations: CitationKeys = []
+
+
+class GeneratedSimilarQuestions(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    questions: list[GeneratedSimilarQuestion] = Field(
+        default_factory=list, max_length=MAX_SIMILAR_QUESTIONS
+    )
+    confidence_notes: str = ""
+
+
+class ExamSimilarQuestion(BaseModel):
+    """One generated question beside the one it was modelled on."""
+
+    source_question_id: int
+    source_question_text: str
+    source_page_start: int | None = None
+    source_page_end: int | None = None
+    question_text: str
+    reference_answer: str
+    what_changed: str = ""
+    difficulty: str = "medium"
+    citations: list[Citation] = []
+
+
+class ExamSimilarQuestionsDocument(BaseModel):
+    """The ``generated_outputs.content`` payload of one similar-question run."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    version: Literal[1] = 1
+    output_type: Literal["exam_similar_questions"] = "exam_similar_questions"
+    topic_key: str
+    display_label: str
+    plan_output_id: int
+    source_question_ids: list[int] = []
+    questions: list[ExamSimilarQuestion] = []
+    confidence_notes: str = ""
+
+
+class ExamSimilarQuestionsResult(RetrievedContext):
+    similar_questions: ExamSimilarQuestionsDocument
+    generated_output_id: int
+    created_at: datetime
+    model_used: str | None = None
+    credits_charged: float = 0.0
+
+
+# --------------------------------------------------------------- course-level
+
+
+class GeneratedReviewTopic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    topic_label: str = Field(min_length=1, max_length=200)
+    must_remember: list[MaybeGeneratedCitedText] = Field(
+        default_factory=list, max_length=MAX_REVIEW_ITEMS
+    )
+    traps: list[MaybeGeneratedCitedText] = Field(
+        default_factory=list, max_length=MAX_REVIEW_ITEMS
+    )
+
+
+class GeneratedExamReviewSheet(BaseModel):
+    """The last-minute sheet, as the provider reported it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str = Field(min_length=1, max_length=200)
+    topics: list[GeneratedReviewTopic] = Field(
+        min_length=1, max_length=MAX_REVIEW_TOPICS
+    )
+    final_checks: list[MaybeGeneratedCitedText] = Field(
+        default_factory=list, max_length=MAX_REVIEW_ITEMS
+    )
+    confidence_notes: str = ""
+
+
+class ExamReviewTopic(BaseModel):
+    topic_key: str = ""
+    topic_label: str
+    must_remember: list[MaybeCitedText] = []
+    traps: list[MaybeCitedText] = []
+
+
+class ExamReviewSheetDocument(BaseModel):
+    """The ``generated_outputs.content`` payload of one review sheet."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    version: Literal[1] = 1
+    output_type: Literal["exam_review_sheet"] = "exam_review_sheet"
+    plan_output_id: int
+    exam_date: date | None = None
+    days_until_exam: int | None = None
+    title: str
+    topics: list[ExamReviewTopic] = []
+    final_checks: list[MaybeCitedText] = []
+    confidence_notes: str = ""
+
+
+class ExamPlanArtifactRequest(BaseModel):
+    plan_output_id: int | None = Field(
+        default=None,
+        ge=1,
+        description="The plan to work from, or omit to use the current one",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Explicit model override, or omit to use the preferred model",
+    )
+
+
+class ExamMockExamRequest(ExamPlanArtifactRequest):
+    question_count: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="How many questions the paper should hold, or omit for the default",
+    )
+
+
+class ExamCourseArtifactSettings(BaseModel):
+    """What one course-level Exam Mode artifact was generated from."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    version: Literal[1] = 1
+    output_type: str
+    plan_output_id: int
+    analysis_output_id: int
+    topic_keys: list[str] = []
+    document_ids_requested: list[UUID] = []
+    retrieval_limit: int
+    retrieval_min_similarity: float
+    material_max_characters: int
+    topic_key_version: int
+    prompt_template: str
+    prompt_version: str
+    question_count: int | None = None
+    answers_hidden: bool = False
+
+
+class ExamCourseArtifactContext(RetrievalGenerationContext):
+    plan_output_id: int = 0
+    topic_count: int = 0
+
+
+class ExamMockExamResult(RetrievedContext):
+    quiz: QuizView
+    generated_output_id: int
+    created_at: datetime
+    model_used: str | None = None
+    credits_charged: float = 0.0
+    answers_hidden: bool = True
+
+
+class ExamReviewSheetResult(RetrievedContext):
+    review_sheet: ExamReviewSheetDocument
+    generated_output_id: int
+    created_at: datetime
+    model_used: str | None = None
+    credits_charged: float = 0.0
+
+
+# --------------------------------------------------------------- roadmap
+
+
+class ExamRoadmapTopic(BaseModel):
+    topic_key: str
+    display_label: str
+    rank: int
+    priority_band: str = ""
+    is_high_priority: bool = False
+
+
+class ExamRoadmapDay(BaseModel):
+    day: int
+    label: str
+    title: str
+    focus: str
+    is_review: bool = False
+    topics: list[ExamRoadmapTopic] = []
+
+
+class ExamRoadmapDocument(BaseModel):
+    """The ``generated_outputs.content`` payload of one study roadmap.
+
+    ``model_used`` on the row is null and stays null: Python produced this, and
+    the model that produced the evidence is credited on the analysis the plan
+    names. Day labels are generic on purpose, so the roadmap survives a student
+    starting late and stays readable after the exam date passes.
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    version: Literal[1] = 1
+    output_type: Literal["exam_roadmap"] = "exam_roadmap"
+    plan_output_id: int
+    roadmap_version: int
+    exam_date: date | None = None
+    days_until_exam: int | None = None
+    day_count: int
+    topic_count: int
+    days: list[ExamRoadmapDay] = []
+    unscheduled_topic_keys: list[str] = []
+
+
+class ExamRoadmapRequest(ExamPlanArtifactRequest):
+    day_count: int | None = Field(
+        default=None,
+        ge=1,
+        le=30,
+        description="How many days to spread over, or omit to use the days remaining",
+    )
+
+
+class ExamRoadmapResult(BaseModel):
+    roadmap: ExamRoadmapDocument
+    generated_output_id: int
+    created_at: datetime

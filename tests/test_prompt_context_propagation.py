@@ -12,8 +12,10 @@ from schemas.prompt_context import (
 )
 from services.ai_tutor import AiTutorService
 from services.course_qa import CourseQAService
-from services.exam_artifacts import PlannedTopic
+from services.exam_artifacts import PlannedExam, PlannedTopic
+import services.exam_course_artifacts as exam_course_artifacts
 import services.exam_quiz as exam_quiz
+import services.exam_similar_questions as exam_similar_questions
 from services.exam_question_extraction import PastExamExtractionService
 from services.exam_source_analysis import ExamSourceAnalysisService
 from services.exam_topic_study import GUIDE_SPEC, SUMMARY_SPEC
@@ -125,6 +127,39 @@ def _exam_topic_practice_prompt(context: PromptContext) -> str:
     )
 
 
+_PLANNED_EXAM = PlannedExam(
+    plan_output_id=1,
+    analysis_output_id=1,
+    exam_date=None,
+    days_until_exam=None,
+    topics=(_PLANNED_TOPIC,),
+    document_ids=(),
+)
+
+
+def _exam_mock_exam_prompt(context: PromptContext) -> str:
+    return exam_course_artifacts._mock_prompt(
+        "material",
+        _PLANNED_EXAM,
+        context,
+        question_count=20,
+        style="Past question style",
+    )
+
+
+def _exam_review_sheet_prompt(context: PromptContext) -> str:
+    return exam_course_artifacts._review_prompt("material", _PLANNED_EXAM, context)
+
+
+def _exam_similar_questions_prompt(context: PromptContext) -> str:
+    return exam_similar_questions._build_prompt(
+        "material",
+        _PLANNED_TOPIC,
+        context,
+        originals="1. Explain breadth-first search.",
+    )
+
+
 def _exam_topic_exam_prompt(context: PromptContext) -> str:
     return exam_quiz._build_prompt(
         exam_quiz.EXAM,
@@ -149,6 +184,9 @@ BUILDERS = {
     "exam_topic_summary": _exam_topic_summary_prompt,
     "exam_topic_practice": _exam_topic_practice_prompt,
     "exam_topic_exam": _exam_topic_exam_prompt,
+    "exam_similar_questions": _exam_similar_questions_prompt,
+    "exam_mock_exam": _exam_mock_exam_prompt,
+    "exam_review_sheet": _exam_review_sheet_prompt,
 }
 
 

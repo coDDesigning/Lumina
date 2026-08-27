@@ -54,6 +54,9 @@ All templates reside in `app/prompts/<task_name>.json`:
 | `exam_topic_summary` | `1.0.0` | active | `services/exam_topic_study.py` | Exam Mode per-topic summary | `GeneratedExamTopicSummary` |
 | `exam_topic_practice` | `1.0.0` | active | `services/exam_quiz.py` | Exam Mode per-topic practice questions | `QuizGenerationResponse` |
 | `exam_topic_exam` | `1.0.0` | active | `services/exam_quiz.py` | Exam Mode per-topic examination | `QuizGenerationResponse` |
+| `exam_similar_questions` | `1.0.0` | active | `services/exam_similar_questions.py` | Fresh questions in the mould of the course's own past ones | `GeneratedSimilarQuestions` |
+| `exam_mock_exam` | `1.0.0` | active | `services/exam_course_artifacts.py` | Mock examination across a whole exam plan | `QuizGenerationResponse` |
+| `exam_review_sheet` | `1.0.0` | active | `services/exam_course_artifacts.py` | Last-minute review sheet across a whole exam plan | `GeneratedExamReviewSheet` |
 | `quiz_grading` | `2.0.0` | active | `services/quiz_grading.py` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
 | `flashcard` | `2.2.0` | active | `services/flashcard.py` | Active recall flashcard decks | `FlashcardGenerationResponse` |
 | `ai_tutor` | `2.3.0` | active | `services/ai_tutor.py` | Hint-first tutoring with stepwise guidance | `AiTutorResponse` |

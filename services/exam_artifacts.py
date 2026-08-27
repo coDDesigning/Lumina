@@ -1,18 +1,23 @@
-"""The one ladder every per-topic Exam Mode artifact climbs.
+"""The one ladder every generated Exam Mode artifact climbs.
 
 A study guide for a topic, a summary of it, its practice questions, its topic
-exam, and its similar questions all do the same seven things: resolve the plan,
-check the topic is in it, unlock the topic, retrieve material narrowed to the
-plan's own sources, generate, validate, and persist. Written five times that
-would be five chances for one of them to charge without refunding, to reach a
-document the plan never selected, or to accept a topic nobody planned.
+exam, its similar questions, the course's mock exam and its review sheet all do
+the same things: resolve the plan, pay for the work, retrieve material narrowed
+to the plan's own sources, generate, validate, and persist. Written seven times
+that would be seven chances for one of them to charge without refunding, to
+reach a document the plan never selected, or to accept a topic nobody planned.
 
 So it is written once. Each artifact supplies a specification — its prompt, its
 response model, its output type — and nothing else.
 
+The two entry points differ only in what they charge for. A per-topic artifact
+unlocks its topic, which buys every artifact of that topic at once; a
+course-level one charges its own price and refunds it on every failure. Both
+release what they took if the work does not arrive.
+
 Two things are load-bearing here. Retrieval is narrowed to the documents the
 plan's analysis was given, so a guide for "Graph Traversal" cannot quietly
-answer from a course the student excluded from their exam scope. And the topic
+answer from a course the student excluded from their exam scope. And a topic
 must be one the plan actually ranked: a topic key that is merely well-formed
 buys nothing, because the price of a topic is the price of the plan's topic.
 """
@@ -20,6 +25,7 @@ buys nothing, because the price of a topic is the price of the plan's topic.
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import date
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
@@ -32,6 +38,7 @@ from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.prompt_context import PromptContext
 from services.ai_usage_logger import AiUsageLogger
 from services.document_lock import acquire_generation_locks
+from services.credits import GENERATION_CREDIT_COSTS, ChargeReceipt, CreditService
 from services.exam_entitlements import ExamEntitlementService, TopicUnlock
 from services.exam_plan import ExamPlanService
 from services.generated_output import GeneratedOutputService
@@ -108,6 +115,26 @@ class PlannedTopic:
 
 
 @dataclass(frozen=True)
+class PlannedExam:
+    """One whole plan, for the artifacts that draw on all of it at once."""
+
+    plan_output_id: int
+    analysis_output_id: int
+    exam_date: date | None
+    days_until_exam: int | None
+    topics: tuple[PlannedTopic, ...]
+    document_ids: tuple[UUID, ...]
+
+    @property
+    def retrieval_scope(self) -> tuple[UUID, ...] | None:
+        return self.document_ids or None
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        return tuple(topic.display_label for topic in self.topics)
+
+
+@dataclass(frozen=True)
 class ExamArtifactSpec:
     """Everything that differs between one per-topic artifact and another."""
 
@@ -115,7 +142,7 @@ class ExamArtifactSpec:
     generation_type: GenerationType
     prompt_template: str
     response_model: type[BaseModel]
-    build_prompt: Callable[[str, PlannedTopic, PromptContext], str]
+    build_prompt: Callable[[str, object, PromptContext], str]
     retrieval_query_suffix: str
     material_max_characters: int
     provider_failed_message: str
@@ -129,9 +156,19 @@ class ExamArtifactGeneration:
     validated: BaseModel
     material: RetrievedCourseMaterial
     model_used: str
-    topic: PlannedTopic
-    unlock: TopicUnlock
     prompt_version: str
+    topic: PlannedTopic | None = None
+    plan: PlannedExam | None = None
+    unlock: TopicUnlock | None = None
+    charge_receipt: ChargeReceipt | None = None
+
+    @property
+    def credits_charged(self) -> float:
+        if self.unlock is not None:
+            return self.unlock.amount
+        if self.charge_receipt is not None:
+            return self.charge_receipt.amount
+        return 0.0
 
 
 class ExamArtifactService:
@@ -196,6 +233,80 @@ class ExamArtifactService:
                 else None
             ),
             document_ids=_analysis_scope(db, analysis_output_id),
+        )
+
+    @classmethod
+    def resolve_plan(
+        cls, db: Session, course_id: int, *, plan_output_id: int | None = None
+    ) -> PlannedExam:
+        """The whole plan, for the artifacts that draw on all of it at once.
+
+        Topics come back in the order the plan ranked them, so an artifact that
+        wants "the most important five" takes the first five rather than
+        re-deriving a priority the plan already settled deterministically.
+        """
+        if plan_output_id is not None:
+            plan = ExamPlanService.get_plan(db, course_id, plan_output_id)
+        else:
+            plan = ExamPlanService.latest_plan(db, course_id)
+            if plan is None:
+                raise ExamArtifactPlanMissingError(EXAM_PLAN_REQUIRED_MESSAGE)
+
+        stored = (
+            parse_json_object(
+                plan.content,
+                field="content",
+                table="generated_outputs",
+                row_id=plan.id,
+            )
+            or {}
+        )
+        analysis_output_id = stored.get("analysis_output_id")
+        scope = _analysis_scope(db, analysis_output_id)
+        entries = [
+            entry for entry in stored.get("topics", []) if isinstance(entry, dict)
+        ]
+        entries.sort(key=lambda entry: entry.get("rank") or 0)
+
+        topics = tuple(
+            PlannedTopic(
+                plan_output_id=plan.id,
+                analysis_output_id=(
+                    analysis_output_id if isinstance(analysis_output_id, int) else 0
+                ),
+                topic_key=str(entry.get("topic_key") or ""),
+                display_label=str(
+                    entry.get("display_label") or entry.get("topic_key") or ""
+                ),
+                rank=int(entry.get("rank") or 0),
+                priority_band=str(entry.get("priority_band") or ""),
+                is_high_priority=bool(entry.get("is_high_priority")),
+                mastery_percentage=(
+                    entry.get("mastery_percentage")
+                    if isinstance(entry.get("mastery_percentage"), int)
+                    else None
+                ),
+                document_ids=scope,
+            )
+            for entry in entries
+            if entry.get("topic_key")
+        )
+        if not topics:
+            raise ExamArtifactPlanMissingError(EXAM_PLAN_REQUIRED_MESSAGE)
+
+        return PlannedExam(
+            plan_output_id=plan.id,
+            analysis_output_id=(
+                analysis_output_id if isinstance(analysis_output_id, int) else 0
+            ),
+            exam_date=_as_date(stored.get("exam_date")),
+            days_until_exam=(
+                stored.get("days_until_exam")
+                if isinstance(stored.get("days_until_exam"), int)
+                else None
+            ),
+            topics=topics,
+            document_ids=scope,
         )
 
     @staticmethod
@@ -338,6 +449,134 @@ class ExamArtifactService:
                 prompt_version=PromptLoader.load_template(spec.prompt_template).version,
             )
 
+    @classmethod
+    def generate_for_plan(
+        cls,
+        db: Session,
+        course_id: int,
+        plan: PlannedExam,
+        provider: TextGenerationProvider,
+        *,
+        user_id: int,
+        spec: ExamArtifactSpec,
+        price_key: str,
+        query_subject: str,
+    ) -> ExamArtifactGeneration:
+        """Charge for one course-level artifact and produce it.
+
+        This is the ordinary generation ladder: charge, retrieve, generate,
+        validate, and refund on every branch that does not reach the end. It is
+        separate from the per-topic path only because what it takes is a price
+        rather than an unlock, and a price is refunded where an unlock is
+        released.
+        """
+        course = db.get(Course, course_id)
+
+        def log_failure(category: ErrorCategory, **extra) -> None:
+            AiUsageLogger.log_failure(
+                db,
+                user_id=user_id,
+                course_id=course_id,
+                generation_type=spec.generation_type,
+                error_category=category,
+                **extra,
+            )
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+
+        receipt = CreditService.charge(
+            db, user_id, GENERATION_CREDIT_COSTS[price_key], source_type=price_key
+        )
+        if receipt is None:
+            log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
+            raise InsufficientCreditsError("Insufficient credits.")
+
+        query = build_retrieval_query(
+            course, query_subject, suffix=spec.retrieval_query_suffix
+        )
+
+        try:
+            material = cls.get_course_material(
+                db,
+                course_id,
+                query=query,
+                document_ids=plan.retrieval_scope,
+                max_characters=spec.material_max_characters,
+            )
+        except MaterialNotIndexedError:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
+            raise
+        except NoRelevantMaterialError:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
+            raise
+        except MaterialRetrievalError:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            log_failure(ErrorCategory.RETRIEVAL_ERROR)
+            raise
+        except Exception:
+            db.rollback()
+            CreditService.refund(db, receipt)
+            raise
+
+        with (
+            CreditService.refund_on_error(db, receipt),
+            acquire_generation_locks(material.document_ids),
+        ):
+            prompt_context = resolve_prompt_context(db, course=course, user_id=user_id)
+            prompt = spec.build_prompt(material.text, plan, prompt_context)
+
+            metadata = None
+            try:
+                if hasattr(provider, "generate_json_with_metadata"):
+                    result, metadata = provider.generate_json_with_metadata(prompt)
+                else:
+                    result = provider.generate_json(prompt)
+            except TextGenerationError as exc:
+                CreditService.refund(db, receipt)
+                log_failure(
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
+                )
+                raise ExamArtifactError(spec.provider_failed_message) from exc
+            except Exception:
+                CreditService.refund(db, receipt)
+                raise
+
+            try:
+                validated = spec.response_model.model_validate(result)
+            except ValidationError as exc:
+                CreditService.refund(db, receipt)
+                log_failure(
+                    ErrorCategory.INVALID_STRUCTURE,
+                    latency_ms=metadata.latency_ms if metadata else None,
+                )
+                raise InvalidExamArtifactStructureError(
+                    spec.invalid_structure_message
+                ) from exc
+
+            AiUsageLogger.log_success(
+                db,
+                user_id=user_id,
+                course_id=course_id,
+                generation_type=spec.generation_type,
+                metadata=metadata,
+            )
+
+            return ExamArtifactGeneration(
+                validated=validated,
+                material=material,
+                model_used=model_identifier(metadata),
+                prompt_version=PromptLoader.load_template(spec.prompt_template).version,
+                plan=plan,
+                charge_receipt=receipt,
+            )
+
     @staticmethod
     def persist(
         db: Session,
@@ -363,14 +602,15 @@ class ExamArtifactService:
 
     @staticmethod
     def latest(
-        db: Session, course_id: int, output_type: str, *, topic_key: str
+        db: Session, course_id: int, output_type: str, *, topic_key: str | None = None
     ) -> GeneratedOutput | None:
-        """The newest artifact of this kind for this topic, or nothing.
+        """The newest artifact of this kind, optionally for one topic.
 
-        Matched through the stored settings document rather than a column,
-        because the topic key belongs to the artifact's own contract and
-        ``generated_outputs`` stays a table of generations rather than a table
-        of Exam Mode.
+        A topic is matched through the stored settings document rather than a
+        column, because the topic key belongs to the artifact's own contract
+        and ``generated_outputs`` stays a table of generations rather than a
+        table of Exam Mode. Course-level artifacts pass no key and take the
+        newest row.
         """
         rows = db.scalars(
             select(GeneratedOutput)
@@ -380,6 +620,8 @@ class ExamArtifactService:
             )
             .order_by(GeneratedOutput.created_at.desc(), GeneratedOutput.id.desc())
         ).all()
+        if topic_key is None:
+            return rows[0] if rows else None
         for row in rows:
             stored = (
                 parse_json_object(
@@ -408,6 +650,15 @@ class ExamArtifactService:
         if output is None:
             raise NotFoundException(detail="Exam Mode output not found")
         return output
+
+
+def _as_date(value: object) -> date | None:
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _analysis_scope(db: Session, analysis_output_id: object) -> tuple[UUID, ...]:

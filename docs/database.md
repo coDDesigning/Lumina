@@ -619,7 +619,29 @@ something about rows nobody classified.
 Exam-mode quizzes are **not** hidden from the course's quiz list, and their
 attempts count toward progress and mastery like any other. That is the point:
 mastery measured on an exam-mode quiz flows straight back into the next plan's
-ranking.
+ranking. A per-topic quiz carries `exam_topic_key` and has every question tagged
+with the plan's own `display_label`; a mock exam carries no topic key and keeps
+each question's own label, because a paper spanning twelve topics has no single
+label to override with.
+
+### The generated output types
+
+Exam Mode writes eight kinds of row into `generated_outputs`:
+`exam_topic_analysis`, `exam_plan`, `exam_roadmap`, `exam_topic_guide`,
+`exam_topic_summary`, `exam_topic_practice`, `exam_topic_exam`,
+`exam_similar_questions`, `exam_mock_exam`, and `exam_review_sheet`. The
+quiz-backed three (`exam_topic_practice`, `exam_topic_exam`, `exam_mock_exam`)
+carry a rendered `QuizView` as their content and their real rows live in
+`quizzes`; the rest carry a versioned JSON document.
+
+`exam_plan` and `exam_roadmap` both store a **null** `model_used`, and that is a
+truth claim rather than a gap: Python produced both, and the model that produced
+the evidence is credited on the analysis the plan names.
+
+A per-topic artifact records its `topic_key` inside its stored
+`generation_settings` rather than in a column, so `generated_outputs` stays a
+table of generations rather than a table of Exam Mode. Reopening one matches on
+that field and serves the newest row for the topic.
 
 ### Append-only
 

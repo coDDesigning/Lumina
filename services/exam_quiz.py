@@ -156,30 +156,38 @@ def _schema_block(types: tuple[QuizQuestionType, ...]) -> str:
     return "\n\n".join(QUESTION_TYPE_SCHEMAS[kind] for kind in types)
 
 
-def past_question_style(db: Session, course_id: int, topic: PlannedTopic) -> str:
-    """A few of this course's own questions on this topic, verbatim.
+def topic_past_questions(
+    db: Session, course_id: int, topic: PlannedTopic
+) -> list[PastExamQuestion]:
+    """This course's own past questions on one planned topic.
 
-    Read from the rows extraction already wrote, so writing an examination
-    reaches no provider twice and costs nothing extra. The extractor keyed each
-    question by whatever the paper made it call the topic, so the plan's key is
-    matched through ``match_topic_key`` rather than compared directly.
-
-    A course with no past paper gets an honest statement that there is no house
-    style, rather than an invented one.
+    Read from the rows extraction already wrote, so nothing here reaches a
+    provider. The extractor keyed each question by whatever the paper made it
+    call the topic, which is rarely the wording the plan chose, so the plan's
+    key is matched through ``match_topic_key`` rather than compared directly.
     """
     papers = ExamSourceAnalysisService.past_exam_document_ids(
         db, course_id, topic.retrieval_scope
     )
     if not papers:
-        return NO_PAST_QUESTIONS
+        return []
 
     questions, _ = PastExamExtractionService.load_questions(db, course_id, papers)
     index = {topic.topic_key: topic.topic_key}
-    matched = [
+    return [
         question
         for question in questions
         if _matches_topic(question, topic.topic_key, index)
     ]
+
+
+def past_question_style(db: Session, course_id: int, topic: PlannedTopic) -> str:
+    """A few of this course's own questions on this topic, verbatim.
+
+    A course with no past paper gets an honest statement that there is no house
+    style, rather than an invented one.
+    """
+    matched = topic_past_questions(db, course_id, topic)
     if not matched:
         return NO_PAST_QUESTIONS
 

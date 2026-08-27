@@ -66,6 +66,10 @@ OUTPUT_TYPE_EXAM_TOPIC_GUIDE = "exam_topic_guide"
 OUTPUT_TYPE_EXAM_TOPIC_SUMMARY = "exam_topic_summary"
 OUTPUT_TYPE_EXAM_TOPIC_PRACTICE = "exam_topic_practice"
 OUTPUT_TYPE_EXAM_TOPIC_EXAM = "exam_topic_exam"
+OUTPUT_TYPE_EXAM_SIMILAR_QUESTIONS = "exam_similar_questions"
+OUTPUT_TYPE_EXAM_MOCK_EXAM = "exam_mock_exam"
+OUTPUT_TYPE_EXAM_REVIEW_SHEET = "exam_review_sheet"
+OUTPUT_TYPE_EXAM_ROADMAP = "exam_roadmap"
 
 EXAM_QUESTION_TYPES = (
     "multiple_choice",

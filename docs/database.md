@@ -124,7 +124,7 @@ immutable `pgvector/pgvector` image digest; the pgvector extension is required
 because the schema declares a `vector` column and an HNSW index. The live job
 verifies the complete Alembic upgrade/downgrade/re-upgrade cycle, schema drift,
 role seeds, readiness, UUID and timezone round trips, unloaded database cascades
-across all 23 tables, pgvector provisioning and cosine ranking, and
+across all 25 tables, pgvector provisioning and cosine ranking, and
 `SKIP LOCKED` worker claims. Tests marked `database_contract` run unchanged
 against copies of an Alembic-migrated SQLite database and the disposable
 PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other
@@ -516,6 +516,76 @@ recorded ungraded rather than wrong, is excluded from the attempt score's
 denominator, and is skipped by topic mastery. Losing a student's written work
 because a grading model timed out would be a much worse outcome than an unscored
 answer, so a grading failure never fails the attempt.
+
+## Exam Mode
+
+Exam Mode turns a course's existing sources into two durable records: the
+evidence one analysis found, and the plan a student built from it. Both live
+under `generated_outputs`, and both are immutable.
+
+An analysis writes one `generated_outputs` row with `output_type =
+'exam_topic_analysis'`, carrying the model attribution and a summary, plus
+`exam_topic_candidates` and `past_exam_questions` rows hanging off it. Those two
+are real tables rather than JSON because they are genuinely queried: a plan
+validates a topic selection against the candidates in the same statement that
+scopes them to the course, and a later feature will filter questions by topic.
+
+A plan writes one `generated_outputs` row with `output_type = 'exam_plan'` whose
+`content` is a versioned JSON document. A plan is read whole, reopened whole and
+never queried by its parts, so it needs no table of its own. Its `model_used` is
+**null**, and that is a truth claim rather than a gap: Python produced the row,
+and the model that produced the evidence is credited on the analysis the plan
+names.
+
+### Course-scoped denormalization
+
+Both new tables carry `course_id` alongside `analysis_output_id`, so every read
+after the authorization boundary is a plain `WHERE course_id = ?` with no join.
+The pair is held true by a composite foreign key into `generated_outputs`, which
+is why migration `a6d3f81c9b47` adds a unique index on `(id, course_id)` there.
+Without it a bug could write a candidate whose `course_id` disagreed with its
+analysis, and a course-scoped read would surface another course's row after the
+boundary had already passed. It is a unique **index** rather than a constraint
+because SQLite has no `ALTER TABLE ... ADD CONSTRAINT`, and rebuilding a table
+holding every generation a deployment has produced is not worth a spelling.
+
+`past_exam_questions` carries a second composite foreign key,
+`(document_id, course_id)` into `uploaded_documents`. Together the two force the
+analysis and the source paper into the same course, so a question can never be
+attributed to another course's exam. `document_id` is nullable, because the
+model sometimes transcribes a real question whose page it cannot cite; a null in
+either half leaves that key unchecked, and `page_requires_document` stops such a
+row claiming a page it cannot attribute.
+
+Deleting a past exam therefore retracts the questions extracted from it, while
+the candidate aggregates keep their counts. That is deliberate: keeping verbatim
+exam text alive after the student deleted the source is a retention claim this
+system does not make. The disagreement is reported rather than hidden, because
+the plan's staleness fingerprint records which past exams it used.
+
+### Append-only
+
+The application never issues an `UPDATE` against either table. A rescan writes a
+new analysis and a fresh set of rows; a regenerated plan writes a new row naming
+the one it supersedes. Historical plans stay readable, which is the point: a
+plan records what the sources were, what the mastery was, and why each topic
+landed where it did, and rewriting that would erase the reasoning the student
+actually studied from.
+
+### Topic identity
+
+`exam_topic_candidates.topic_key` is produced by
+`services/exam_topics.canonical_topic_key`, a pure function of one label. It is
+what lets three vocabularies that have never agreed resolve to one topic:
+`course_topics.name` is student-entered, `quiz_questions.topic` is
+model-generated free text, and the analysis model invents its own wording. The
+key is computed at read time as well as write time, so a mastery label recorded
+months earlier can still find its topic without anything having been stored to
+connect them.
+
+Nothing references `course_topics.id`. Saving a course deletes and reinserts
+every one of its topic rows, so those identifiers churn; the names are re-read
+and re-keyed instead.
 
 ## Credit ledger
 

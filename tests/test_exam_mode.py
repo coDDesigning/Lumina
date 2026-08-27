@@ -26,6 +26,7 @@ from backend.app.models import (
     User,
 )
 from services.credits import GENERATION_CREDIT_COSTS
+from services.exam_question_extraction import PastExamExtractionService
 from services.text_generation import GenerationMetadata, TextGenerationError
 from utils.ai_errors import AiErrorCode
 
@@ -59,12 +60,18 @@ def analysis_payload(**overrides) -> dict:
                 "citations": ["S1"],
             },
         ],
-        "past_exam_questions": [],
         "coverage": {"status": "Partial", "estimated_completeness": 60},
         "confidence_notes": "Based on the selected sources.",
     }
     payload.update(overrides)
     return payload
+
+
+def extraction_payload(*questions) -> dict:
+    return {
+        "questions": list(questions) if questions else [past_exam_question()],
+        "confidence_notes": "Read the whole paper.",
+    }
 
 
 def past_exam_question(**overrides) -> dict:
@@ -103,6 +110,42 @@ class CountingProvider:
         if self._error is not None:
             raise self._error
         return self._result, STUB_METADATA
+
+
+def extract_questions(session_factory, document_id, payload=None):
+    """Run the real extraction service against a stub provider."""
+    provider = CountingProvider(
+        payload if payload is not None else extraction_payload()
+    )
+    with session_factory() as session:
+        outcome = PastExamExtractionService.run(
+            session, document_id, provider_factory=lambda: provider
+        )
+    return outcome, provider
+
+
+def extraction_state(session_factory, document_id):
+    with session_factory() as session:
+        document = session.get(UploadedDocument, document_id)
+        return document.exam_extraction_status, document.exam_extraction_error_code
+
+
+def questions_of(session_factory, document_id):
+    with session_factory() as session:
+        return session.scalars(
+            select(PastExamQuestion)
+            .where(PastExamQuestion.document_id == document_id)
+            .order_by(PastExamQuestion.position)
+        ).all()
+
+
+def session_scoped_extraction_log(session_factory):
+    with session_factory() as session:
+        return session.scalars(
+            select(AiUsageLog).where(
+                AiUsageLog.generation_type == "past_exam_extraction"
+            )
+        ).one_or_none()
 
 
 def install_provider(monkeypatch, provider: CountingProvider) -> CountingProvider:
@@ -247,7 +290,12 @@ def exam_course(authz_api, retrieval_env):
             material_kind="past_exam",
             file_name="Past Exam 2024.txt",
         )
-        return {"lecture_id": lecture.id, "paper_id": paper.id}
+        identifiers = {"lecture_id": lecture.id, "paper_id": paper.id}
+
+    # The paper gives up its questions when it is uploaded, exactly as the
+    # worker does it, so every analysis below reads rows that already exist.
+    extract_questions(authz_api.session_factory, identifiers["paper_id"])
+    return identifiers
 
 
 def run_analysis(authz_api, monkeypatch, *, payload=None, json=None, rescan=False):
@@ -297,11 +345,7 @@ def test_the_source_inventory_reports_what_the_course_can_supply(
 def test_an_owner_can_analyse_and_the_evidence_is_persisted_as_rows(
     authz_api, exam_course, monkeypatch
 ) -> None:
-    response, provider = run_analysis(
-        authz_api,
-        monkeypatch,
-        payload=analysis_payload(past_exam_questions=[past_exam_question()]),
-    )
+    response, provider = run_analysis(authz_api, monkeypatch)
 
     assert response.status_code == 200, response.text
     assert provider.calls == 1
@@ -473,94 +517,104 @@ def test_only_the_selected_documents_reach_the_prompt(
 # --------------------------------------------------------------- past exams
 
 
-def test_a_past_exam_question_is_extracted_with_its_stated_values(
+def test_a_past_exam_question_is_recorded_with_its_stated_values(
+    authz_api, exam_course
+) -> None:
+    rows = questions_of(authz_api.session_factory, exam_course["paper_id"])
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.question_text.startswith("Explain breadth-first search")
+    assert row.question_type == "structured"
+    assert row.difficulty == "medium"
+    assert row.marks == 10.0
+    assert row.answer_guidance == "Award marks for the queue invariant."
+    assert row.marking_points == ["Queue invariant", "O(V+E)"]
+    assert row.visual_refs == [
+        {"page_number": 2, "visual_index": 0, "visual_type": "diagram"}
+    ]
+    assert row.topic_key == "graph-traversal"
+    assert row.document_id == exam_course["paper_id"]
+    assert row.page_start == 1
+    assert row.citations
+
+
+def test_an_analysis_serves_the_questions_of_the_papers_it_had_in_scope(
     authz_api, exam_course, monkeypatch
 ) -> None:
     response, _ = run_analysis(
         authz_api,
         monkeypatch,
-        payload=analysis_payload(past_exam_questions=[past_exam_question()]),
         json={"document_ids": [str(exam_course["paper_id"])]},
     )
     analysis_id = response.json()["data"]["analysis"]["generated_output_id"]
 
-    questions = authz_api.client.get(
+    page = authz_api.client.get(
         f"/api/courses/{authz_api.a_course_id}"
         f"/exam-mode/analysis/{analysis_id}/questions",
         headers=authz_api.authorization_a,
-    ).json()["data"]["questions"]
+    ).json()["data"]
 
-    assert len(questions) == 1
-    question = questions[0]
-    assert question["question_text"].startswith("Explain breadth-first search")
-    assert question["question_type"] == "structured"
-    assert question["difficulty"] == "medium"
-    assert question["marks"] == 10.0
-    assert question["answer_guidance"] == "Award marks for the queue invariant."
-    assert question["marking_points"] == ["Queue invariant", "O(V+E)"]
-    assert question["visual_refs"] == [
-        {"page_number": 2, "visual_index": 0, "visual_type": "diagram"}
-    ]
-    assert question["topic_key"] == "graph-traversal"
-    assert question["document_id"] == str(exam_course["paper_id"])
-    assert question["page_start"] == 1
-    assert question["citations"]
+    assert page["document_ids"] == [str(exam_course["paper_id"])]
+    assert len(page["questions"]) == 1
+    assert page["questions"][0]["topic_key"] == "graph-traversal"
 
 
 def test_an_absent_mark_or_answer_stays_null_rather_than_being_invented(
-    authz_api, exam_course, monkeypatch
+    authz_api, exam_course
 ) -> None:
-    response, _ = run_analysis(
-        authz_api,
-        monkeypatch,
-        payload=analysis_payload(
-            past_exam_questions=[
-                past_exam_question(
-                    marks=None,
-                    difficulty=None,
-                    answer_guidance=None,
-                    marking_points=[],
-                    visual_refs=[],
-                    subparts=[],
-                )
-            ]
+    extract_questions(
+        authz_api.session_factory,
+        exam_course["paper_id"],
+        extraction_payload(
+            past_exam_question(
+                marks=None,
+                difficulty=None,
+                answer_guidance=None,
+                marking_points=[],
+                visual_refs=[],
+                subparts=[],
+            )
         ),
-        json={"document_ids": [str(exam_course["paper_id"])]},
     )
-    analysis_id = response.json()["data"]["analysis"]["generated_output_id"]
 
-    question = authz_api.client.get(
-        f"/api/courses/{authz_api.a_course_id}"
-        f"/exam-mode/analysis/{analysis_id}/questions",
-        headers=authz_api.authorization_a,
-    ).json()["data"]["questions"][0]
+    row = questions_of(authz_api.session_factory, exam_course["paper_id"])[0]
 
-    assert question["marks"] is None
-    assert question["difficulty"] is None
-    assert question["answer_guidance"] is None
-    assert question["marking_points"] == []
-    assert question["visual_refs"] == []
+    assert row.marks is None
+    assert row.difficulty is None
+    assert row.answer_guidance is None
+    assert row.marking_points is None
+    assert row.visual_refs is None
 
 
-def test_a_document_that_is_not_a_past_exam_never_becomes_exam_evidence(
+def test_a_document_that_is_not_a_past_exam_is_never_read_for_questions(
+    authz_api, exam_course
+) -> None:
+    """Only the past_exam material kind qualifies, however exam-like the prose."""
+    outcome, provider = extract_questions(
+        authz_api.session_factory, exam_course["lecture_id"]
+    )
+
+    assert outcome.status == "not_applicable"
+    assert provider.calls == 0
+    assert questions_of(authz_api.session_factory, exam_course["lecture_id"]) == []
+    assert extraction_state(authz_api.session_factory, exam_course["lecture_id"]) == (
+        "not_applicable",
+        None,
+    )
+
+
+def test_a_lecture_in_scope_contributes_no_past_exam_evidence(
     authz_api, exam_course, monkeypatch
 ) -> None:
-    """Only the past_exam material kind counts, however exam-like the prose is."""
     response, _ = run_analysis(
         authz_api,
         monkeypatch,
-        payload=analysis_payload(past_exam_questions=[past_exam_question()]),
         json={"document_ids": [str(exam_course["lecture_id"])]},
     )
     analysis_id = response.json()["data"]["analysis"]["generated_output_id"]
 
     with authz_api.session_factory() as session:
-        rows = session.scalars(
-            select(PastExamQuestion).where(
-                PastExamQuestion.analysis_output_id == analysis_id
-            )
-        ).all()
-        assert all(row.document_id is None for row in rows)
         candidates = session.scalars(
             select(ExamTopicCandidate).where(
                 ExamTopicCandidate.analysis_output_id == analysis_id
@@ -570,39 +624,190 @@ def test_a_document_that_is_not_a_past_exam_never_becomes_exam_evidence(
         assert all(candidate.in_past_exams is False for candidate in candidates)
 
 
-def test_an_unknown_citation_key_is_dropped_before_persistence(
-    authz_api, exam_course, monkeypatch
+def test_an_unknown_citation_key_is_dropped_without_orphaning_the_question(
+    authz_api, exam_course
 ) -> None:
-    response, _ = run_analysis(
-        authz_api,
-        monkeypatch,
-        payload=analysis_payload(
-            past_exam_questions=[past_exam_question(citations=["S999"])]
-        ),
-        json={"document_ids": [str(exam_course["paper_id"])]},
+    """A key nobody supplied costs the page, never the paper it came from."""
+    extract_questions(
+        authz_api.session_factory,
+        exam_course["paper_id"],
+        extraction_payload(past_exam_question(citations=["S999"])),
     )
-    analysis_id = response.json()["data"]["analysis"]["generated_output_id"]
+
+    row = questions_of(authz_api.session_factory, exam_course["paper_id"])[0]
+
+    assert row.citations is None
+    assert row.page_start is None
+    assert row.document_id == exam_course["paper_id"]
+
+
+def test_a_question_on_the_last_page_survives_the_character_budget(
+    authz_api, retrieval_env, exam_course
+) -> None:
+    """A paper is read in order, so the budget must reach its final question."""
+    with authz_api.session_factory() as session:
+        paper = add_material(
+            session,
+            authz_api.a_course_id,
+            [
+                "Question 1. Define a graph.",
+                "Question 2. Prove the handshake lemma.",
+                "Question 9. State and prove the max-flow min-cut theorem.",
+            ],
+            file_hash="c3" + "3" * 62,
+            retrieval_env=retrieval_env,
+            material_kind="past_exam",
+            file_name="Final 2023.txt",
+        )
+        paper_id = paper.id
+
+    _, provider = extract_questions(
+        authz_api.session_factory,
+        paper_id,
+        extraction_payload(
+            past_exam_question(question_number=1, citations=["S1"]),
+            past_exam_question(question_number=9, citations=["S3"]),
+        ),
+    )
+
+    assert "max-flow min-cut" in provider.prompt
+    rows = questions_of(authz_api.session_factory, paper_id)
+    assert [row.question_number for row in rows] == [1, 9]
+    assert rows[1].page_start == 3
+
+
+def test_a_provider_failure_records_the_reason_and_leaves_the_paper_usable(
+    authz_api, exam_course
+) -> None:
+    provider = CountingProvider(error=TextGenerationError("the provider is down"))
+    with authz_api.session_factory() as session:
+        outcome = PastExamExtractionService.run(
+            session, exam_course["paper_id"], provider_factory=lambda: provider
+        )
+
+    assert outcome.status == "failed"
+    assert outcome.error_code == "provider_error"
+    status, code = extraction_state(authz_api.session_factory, exam_course["paper_id"])
+    assert (status, code) == ("failed", "provider_error")
+    with authz_api.session_factory() as session:
+        assert session.get(UploadedDocument, exam_course["paper_id"]).status == "ready"
+
+
+def test_an_unconfigured_provider_is_reported_rather_than_retried_forever(
+    authz_api, exam_course
+) -> None:
+    def unavailable():
+        raise RuntimeError("no provider is configured")
 
     with authz_api.session_factory() as session:
-        row = session.scalar(
-            select(PastExamQuestion).where(
-                PastExamQuestion.analysis_output_id == analysis_id
-            )
+        outcome = PastExamExtractionService.run(
+            session, exam_course["paper_id"], provider_factory=unavailable
         )
-        assert row.citations is None
-        assert row.document_id is None
-        assert row.page_start is None
+        document = session.get(UploadedDocument, exam_course["paper_id"])
+
+        assert outcome.status == "not_configured"
+        assert PastExamExtractionService.needs_extraction(document) is False
+
+
+def test_a_structurally_invalid_response_is_refused_without_writing_rows(
+    authz_api, exam_course
+) -> None:
+    before = len(questions_of(authz_api.session_factory, exam_course["paper_id"]))
+
+    outcome, _ = extract_questions(
+        authz_api.session_factory,
+        exam_course["paper_id"],
+        {"questions": [{"question_text": ""}]},
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.error_code == "invalid_structure"
+    assert (
+        len(questions_of(authz_api.session_factory, exam_course["paper_id"])) == before
+    )
+
+
+def test_a_rescan_never_reads_a_paper_it_has_already_read(
+    authz_api, exam_course, monkeypatch
+) -> None:
+    """Extraction belongs to the paper, so an unchanged paper costs nothing again."""
+    run_analysis(authz_api, monkeypatch)
+
+    calls = []
+
+    def forbidden():
+        calls.append(1)
+        raise AssertionError("an already-extracted paper must not be re-read")
+
+    monkeypatch.setattr(
+        "services.exam_question_extraction.get_text_generation_provider", forbidden
+    )
+    response, _ = run_analysis(authz_api, monkeypatch, rescan=True)
+
+    assert response.status_code == 200, response.text
+    assert calls == []
+    assert len(questions_of(authz_api.session_factory, exam_course["paper_id"])) == 1
+
+
+def test_a_paper_that_was_never_read_is_healed_the_first_time_it_is_used(
+    authz_api, retrieval_env, exam_course, monkeypatch
+) -> None:
+    """Papers uploaded before extraction existed still reach the ranking."""
+    with authz_api.session_factory() as session:
+        legacy = add_material(
+            session,
+            authz_api.a_course_id,
+            ["Question 1. Trace breadth-first search on this graph."],
+            file_hash="d4" + "4" * 62,
+            retrieval_env=retrieval_env,
+            material_kind="past_exam",
+            file_name="Legacy Paper.txt",
+        )
+        legacy_id = legacy.id
+
+    assert questions_of(authz_api.session_factory, legacy_id) == []
+
+    healer = CountingProvider(extraction_payload())
+    monkeypatch.setattr(
+        "services.exam_question_extraction.get_text_generation_provider",
+        lambda *a, **k: healer,
+    )
+    response, _ = run_analysis(
+        authz_api, monkeypatch, json={"document_ids": [str(legacy_id)]}
+    )
+
+    assert response.status_code == 200, response.text
+    assert healer.calls == 1
+    assert len(questions_of(authz_api.session_factory, legacy_id)) == 1
+    assert extraction_state(authz_api.session_factory, legacy_id) == (
+        "succeeded",
+        None,
+    )
+
+
+def test_re_reading_a_paper_replaces_its_questions_rather_than_doubling_them(
+    authz_api, exam_course
+) -> None:
+    extract_questions(
+        authz_api.session_factory,
+        exam_course["paper_id"],
+        extraction_payload(
+            past_exam_question(question_number=1),
+            past_exam_question(question_number=2, question_text="Define a tree."),
+        ),
+    )
+
+    rows = questions_of(authz_api.session_factory, exam_course["paper_id"])
+
+    assert [row.question_number for row in rows] == [1, 2]
+    assert [row.position for row in rows] == [0, 1]
 
 
 # --------------------------------------------------------------- plans
 
 
 def _analyse_then_plan(authz_api, monkeypatch, *, body=None, payload=None):
-    response, _ = run_analysis(
-        authz_api,
-        monkeypatch,
-        payload=payload or analysis_payload(past_exam_questions=[past_exam_question()]),
-    )
+    response, _ = run_analysis(authz_api, monkeypatch, payload=payload)
     assert response.status_code == 200, response.text
     analysis_id = response.json()["data"]["analysis"]["generated_output_id"]
     return analysis_id, create_plan(
@@ -1374,11 +1579,7 @@ def test_the_exam_prices_are_served_rather_than_left_for_a_client_to_guess(
 def test_the_usage_log_records_the_feature_without_any_of_its_content(
     authz_api, exam_course, monkeypatch
 ) -> None:
-    run_analysis(
-        authz_api,
-        monkeypatch,
-        payload=analysis_payload(past_exam_questions=[past_exam_question()]),
-    )
+    run_analysis(authz_api, monkeypatch)
 
     with authz_api.session_factory() as session:
         entries = session.scalars(
@@ -1394,19 +1595,26 @@ def test_the_usage_log_records_the_feature_without_any_of_its_content(
     assert entry.user_id == authz_api.user_a_id
     assert entry.provider == "ollama"
 
+    extraction = session_scoped_extraction_log(authz_api.session_factory)
+    assert extraction is not None
+    assert extraction.success is True
+    assert extraction.course_id == authz_api.a_course_id
+
     forbidden = (
         "Explain breadth-first search",
         "Award marks for the queue invariant",
         "Graph traversal covers BFS",
         "Week 1 Graph Traversal",
+        "Past exam 2024 question one",
     )
     recorded = " ".join(
         str(value)
+        for row in (entry, extraction)
         for value in (
-            entry.generation_type,
-            entry.provider,
-            entry.model,
-            entry.error_category,
+            row.generation_type,
+            row.provider,
+            row.model,
+            row.error_category,
         )
         if value is not None
     )

@@ -172,7 +172,7 @@ def _analysis_view(db: Session, course_id: int, output) -> ExamAnalysisView:
         )
         or {}
     )
-    _, question_total = ExamSourceAnalysisService.load_questions(
+    _, question_total, _ = ExamSourceAnalysisService.load_questions(
         db, course_id, output.id, limit=0, offset=0
     )
     documents = stored.get("documents_analysed")
@@ -399,7 +399,7 @@ def list_past_exam_questions(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> BaseResponse[ExamQuestionPage]:
     analysis = ExamSourceAnalysisService.get_analysis(db, course.id, output_id)
-    rows, total = ExamSourceAnalysisService.load_questions(
+    rows, total, document_ids = ExamSourceAnalysisService.load_questions(
         db,
         course.id,
         analysis.id,
@@ -412,6 +412,7 @@ def list_past_exam_questions(
         message="Past exam questions retrieved successfully",
         data=ExamQuestionPage(
             analysis_output_id=analysis.id,
+            document_ids=document_ids,
             total=total,
             limit=limit,
             offset=offset,

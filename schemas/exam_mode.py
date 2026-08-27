@@ -58,7 +58,9 @@ class GeneratedTopicCandidate(BaseModel):
 
     There is no score, rank, priority, or ordering field, and ``extra`` is
     ignored, so a model that invents one has it discarded before it can reach
-    the ranking engine.
+    the ranking engine. There is no ``in_past_exams`` field either: past-exam
+    evidence is counted from the questions already extracted from the papers,
+    which is evidence a reader can go and check.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -67,7 +69,6 @@ class GeneratedTopicCandidate(BaseModel):
     aliases: list[str] = Field(default_factory=list, max_length=MAX_TOPIC_ALIASES)
     in_syllabus: bool = False
     in_course_topics: bool = False
-    in_past_exams: bool = False
     in_material: bool = False
     syllabus_weight_percent: float | None = Field(default=None, ge=0, le=100)
     syllabus_mention_count: int = Field(default=0, ge=0)
@@ -122,8 +123,28 @@ class GeneratedPastExamQuestion(BaseModel):
     citations: CitationKeys = []
 
 
+class GeneratedPastExamExtraction(BaseModel):
+    """The whole provider response for one past paper.
+
+    ``questions`` may be empty, and that is a real answer rather than a
+    failure: a document the student tagged as a past exam may turn out not to
+    be one, and inventing a question would be the worse outcome.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    questions: list[GeneratedPastExamQuestion] = Field(
+        default_factory=list, max_length=MAX_EXTRACTED_QUESTIONS
+    )
+    confidence_notes: str = ""
+
+
 class GeneratedExamAnalysisResponse(BaseModel):
     """The whole provider response for one source analysis.
+
+    Topic discovery only. The questions in a past paper are read once, when
+    the paper is uploaded, so there is no field here for the model to report
+    one and no way for two analyses of one paper to disagree about it.
 
     ``topics`` requires at least one entry, so a response that discovered
     nothing usable is an invalid structure rather than an empty analysis a
@@ -134,9 +155,6 @@ class GeneratedExamAnalysisResponse(BaseModel):
 
     topics: list[GeneratedTopicCandidate] = Field(
         min_length=1, max_length=MAX_DISCOVERED_TOPICS
-    )
-    past_exam_questions: list[GeneratedPastExamQuestion] = Field(
-        default_factory=list, max_length=MAX_EXTRACTED_QUESTIONS
     )
     coverage: Coverage
     confidence_notes: str = ""
@@ -234,7 +252,7 @@ class ExamTopicCandidateView(BaseModel):
 
 class ExamQuestionView(BaseModel):
     position: int
-    document_id: UUID | None = None
+    document_id: UUID
     page_start: int | None = None
     page_end: int | None = None
     question_label: str | None = None
@@ -254,6 +272,7 @@ class ExamQuestionView(BaseModel):
 
 class ExamQuestionPage(BaseModel):
     analysis_output_id: int
+    document_ids: list[UUID] = []
     total: int
     limit: int
     offset: int

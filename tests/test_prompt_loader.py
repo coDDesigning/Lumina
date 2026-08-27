@@ -102,7 +102,8 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "course_qa": "2.3.0",
     "prompt_generator": "2.0.0",
     "exam_style_question": "1.2.0",
-    "exam_topic_analysis": "1.1.0",
+    "exam_topic_analysis": "2.0.0",
+    "past_exam_question_extraction": "1.0.0",
     "image_description": "1.0.0",
     "visual_content": "2.1.0",
     "ocr_cleanup": "1.1.0",
@@ -510,10 +511,13 @@ SAMPLE_TEMPLATE_INPUTS = {
     "exam_topic_analysis": {
         **SHARED_PROMPT_VARIABLES,
         "TOPIC_FOCUS": "All Topics",
-        "PAST_EXAM_DIRECTIVE": "Past exam directive",
         "DECLARED_TOPICS": "Declared topics",
         "SYLLABUS_TEXT": "Syllabus text",
         "TEXT": "Course material text",
+    },
+    "past_exam_question_extraction": {
+        **SHARED_PROMPT_VARIABLES,
+        "TEXT": "Examination paper text",
     },
     "flashcard": {
         **SHARED_PROMPT_VARIABLES,
@@ -858,6 +862,10 @@ ACTIVE_TEMPLATE_OWNERS = {
     "exam_topic_analysis": (
         "services.exam_source_analysis",
         "ExamSourceAnalysisService.PROMPT_TEMPLATE_NAME",
+    ),
+    "past_exam_question_extraction": (
+        "services.exam_question_extraction",
+        "PastExamExtractionService.PROMPT_TEMPLATE_NAME",
     ),
 }
 

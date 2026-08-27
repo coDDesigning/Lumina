@@ -2437,7 +2437,6 @@ def test_exam_mode_migration_adds_only_tables_and_round_trips(tmp_path: Path) ->
             "created_at",
         }
         assert _exam_mode_columns(connection, "past_exam_questions") >= {
-            "analysis_output_id",
             "course_id",
             "document_id",
             "page_start",
@@ -2449,6 +2448,13 @@ def test_exam_mode_migration_adds_only_tables_and_round_trips(tmp_path: Path) ->
             "visual_refs",
             "topic_key",
             "citations",
+        }
+        assert "analysis_output_id" not in _exam_mode_columns(
+            connection, "past_exam_questions"
+        )
+        assert _exam_mode_columns(connection, "uploaded_documents") >= {
+            "exam_extraction_status",
+            "exam_extraction_error_code",
         }
         indexes = {
             row[1] for row in connection.execute("PRAGMA index_list(generated_outputs)")
@@ -2466,6 +2472,10 @@ def test_exam_mode_migration_adds_only_tables_and_round_trips(tmp_path: Path) ->
         }
         assert "exam_topic_candidates" not in remaining
         assert "past_exam_questions" not in remaining
+        assert not _exam_mode_columns(connection, "uploaded_documents") & {
+            "exam_extraction_status",
+            "exam_extraction_error_code",
+        }
         indexes = {
             row[1] for row in connection.execute("PRAGMA index_list(generated_outputs)")
         }
@@ -2515,9 +2525,10 @@ def test_exam_mode_migration_leaves_legacy_generated_outputs_alone(
         )
 
 
-def test_exam_mode_rows_cascade_from_their_analysis_and_their_course(
+def test_exam_mode_rows_cascade_from_their_owner_and_their_course(
     tmp_path: Path,
 ) -> None:
+    """Candidates follow their analysis; questions follow the paper they came from."""
     database_path = tmp_path / "exam-mode-cascade.sqlite3"
     run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
 
@@ -2535,6 +2546,23 @@ def test_exam_mode_rows_cascade_from_their_analysis_and_their_course(
             " VALUES (?, ?, ?)",
             (course_id, "exam_topic_analysis", "{}"),
         ).lastrowid
+        document_id = str(uuid4())
+        connection.execute(
+            "INSERT INTO uploaded_documents "
+            "(id, original_file_name, file_type, mime_type, file_size, file_hash, "
+            "user_id, course_id, storage_provider, storage_key, status, "
+            "material_kind) "
+            "VALUES (?, ?, 'pdf', 'application/pdf', 7, ?, ?, ?, 'local:test', ?, "
+            "'ready', 'past_exam')",
+            (
+                document_id,
+                "final-2024.pdf",
+                "e" * 64,
+                user_id,
+                course_id,
+                "final-2024.pdf",
+            ),
+        )
         connection.execute(
             "INSERT INTO exam_topic_candidates"
             " (analysis_output_id, course_id, position, topic_key, display_label,"
@@ -2545,9 +2573,9 @@ def test_exam_mode_rows_cascade_from_their_analysis_and_their_course(
         )
         connection.execute(
             "INSERT INTO past_exam_questions"
-            " (analysis_output_id, course_id, position, question_text, question_type)"
+            " (document_id, course_id, position, question_text, question_type)"
             " VALUES (?, ?, 0, 'Explain BFS.', 'structured')",
-            (analysis_id, course_id),
+            (document_id, course_id),
         )
 
         connection.execute("DELETE FROM generated_outputs WHERE id = ?", (analysis_id,))
@@ -2558,10 +2586,68 @@ def test_exam_mode_rows_cascade_from_their_analysis_and_their_course(
             ]
             == 0
         )
+        # A question outlives the analysis that ranked from it, because it
+        # belongs to the paper rather than to any one reading of it.
+        assert (
+            connection.execute("SELECT COUNT(*) FROM past_exam_questions").fetchone()[0]
+            == 1
+        )
+
+        connection.execute(
+            "DELETE FROM uploaded_documents WHERE id = ?", (document_id,)
+        )
+
         assert (
             connection.execute("SELECT COUNT(*) FROM past_exam_questions").fetchone()[0]
             == 0
         )
+
+
+def test_a_past_exam_question_cannot_disagree_with_its_paper_about_the_course(
+    tmp_path: Path,
+) -> None:
+    """The composite key is what stops a question naming another course's paper."""
+    database_path = tmp_path / "exam-question-composite.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        user_id = insert_legacy_user(
+            connection, email="exam-question-composite@example.com", credits=10.0
+        )
+        first = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("First", user_id),
+        ).lastrowid
+        second = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Second", user_id),
+        ).lastrowid
+        document_id = str(uuid4())
+        connection.execute(
+            "INSERT INTO uploaded_documents "
+            "(id, original_file_name, file_type, mime_type, file_size, file_hash, "
+            "user_id, course_id, storage_provider, storage_key, status, "
+            "material_kind) "
+            "VALUES (?, ?, 'pdf', 'application/pdf', 7, ?, ?, ?, 'local:test', ?, "
+            "'ready', 'past_exam')",
+            (
+                document_id,
+                "midterm.pdf",
+                "d" * 64,
+                user_id,
+                first,
+                "midterm.pdf",
+            ),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO past_exam_questions"
+                " (document_id, course_id, position, question_text, question_type)"
+                " VALUES (?, ?, 0, 'Explain BFS.', 'structured')",
+                (document_id, second),
+            )
 
 
 def test_an_exam_candidate_cannot_disagree_with_its_analysis_about_the_course(

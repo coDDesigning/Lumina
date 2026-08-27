@@ -12,6 +12,7 @@ from schemas.prompt_context import (
 )
 from services.ai_tutor import AiTutorService
 from services.course_qa import CourseQAService
+from services.exam_question_extraction import PastExamExtractionService
 from services.exam_source_analysis import ExamSourceAnalysisService
 from services.flashcard import FlashcardService
 from services.prompt_generator import PromptGeneratorService
@@ -81,9 +82,12 @@ def _exam_topic_analysis_prompt(context: PromptContext) -> str:
         ExamAnalysisRequest(topic_focus="All Topics"),
         declared_topics=["Graph Traversal"],
         syllabus="Week 1 Graph Traversal",
-        past_exam_present=True,
         context=context,
     )
+
+
+def _past_exam_extraction_prompt(context: PromptContext) -> str:
+    return PastExamExtractionService.build_prompt("paper", context=context)
 
 
 BUILDERS = {
@@ -94,6 +98,7 @@ BUILDERS = {
     "course_qa": _course_qa_prompt,
     "prompt_generator": _prompt_generator_prompt,
     "exam_topic_analysis": _exam_topic_analysis_prompt,
+    "past_exam_question_extraction": _past_exam_extraction_prompt,
 }
 
 

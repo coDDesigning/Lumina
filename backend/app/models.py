@@ -76,6 +76,21 @@ EXAM_QUESTION_TYPES = (
 _EXAM_QUESTION_TYPES_SQL = ", ".join(f"'{kind}'" for kind in EXAM_QUESTION_TYPES)
 
 EXAM_QUESTION_DIFFICULTIES = ("easy", "medium", "hard")
+
+EXAM_EXTRACTION_NOT_APPLICABLE = "not_applicable"
+EXAM_EXTRACTION_PENDING = "pending"
+EXAM_EXTRACTION_SUCCEEDED = "succeeded"
+EXAM_EXTRACTION_FAILED = "failed"
+EXAM_EXTRACTION_NOT_CONFIGURED = "not_configured"
+EXAM_EXTRACTION_SKIPPED = "skipped"
+EXAM_EXTRACTION_STATUSES = (
+    EXAM_EXTRACTION_NOT_APPLICABLE,
+    EXAM_EXTRACTION_PENDING,
+    EXAM_EXTRACTION_SUCCEEDED,
+    EXAM_EXTRACTION_FAILED,
+    EXAM_EXTRACTION_NOT_CONFIGURED,
+    EXAM_EXTRACTION_SKIPPED,
+)
 _EXAM_QUESTION_DIFFICULTIES_SQL = ", ".join(
     f"'{level}'" for level in EXAM_QUESTION_DIFFICULTIES
 )
@@ -473,6 +488,14 @@ class UploadedDocument(Base):
         String(20), default="uploaded", server_default="uploaded"
     )
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    exam_extraction_status: Mapped[str] = mapped_column(
+        String(20),
+        default=EXAM_EXTRACTION_NOT_APPLICABLE,
+        server_default=EXAM_EXTRACTION_NOT_APPLICABLE,
+    )
+    exam_extraction_error_code: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )
@@ -500,6 +523,13 @@ class UploadedDocument(Base):
         back_populates="document",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    past_exam_questions: Mapped[list["PastExamQuestion"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="PastExamQuestion.position",
+        overlaps="course,past_exam_questions",
     )
 
 
@@ -965,13 +995,6 @@ class GeneratedOutput(Base):
         order_by="ExamTopicCandidate.position",
     )
 
-    past_exam_questions: Mapped[list["PastExamQuestion"]] = relationship(
-        back_populates="analysis_output",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        order_by="PastExamQuestion.position",
-    )
-
 
 class ExamTopicCandidate(Base):
     """One candidate exam topic discovered by one Exam Mode analysis run.
@@ -1092,30 +1115,35 @@ class ExamTopicCandidate(Base):
 
 
 class PastExamQuestion(Base):
-    """One question extracted from one past exam paper by one analysis run.
+    """One question extracted from one past exam paper.
 
-    Two composite foreign keys both carry ``course_id``, which together force
-    the analysis and the source document into the same course, so a question
-    can never be attributed to a paper belonging to another course.
+    A question belongs to the paper it was printed in, not to whichever
+    analysis happened to read that paper. It is extracted once, when the
+    document is uploaded, and every later analysis reads these same rows: a
+    rescan re-extracts nothing, and two analyses of one paper cannot disagree
+    about what it asks.
 
-    ``document_id`` is nullable because the model sometimes extracts a real
-    question whose page it cannot cite. A null in either half of the pair
-    leaves that foreign key unchecked, so the constraint still binds every row
-    that names a document, and ``page_requires_document`` stops a row claiming
-    a page it cannot attribute.
+    ``document_id`` is therefore mandatory. A composite foreign key carries
+    ``course_id`` with it, so a question can never be attributed to a paper
+    belonging to another course, and deleting the paper retracts its questions.
 
     Visual references are stored as the stable ``page_number`` /
     ``visual_index`` descriptor rather than a ``document_visuals`` identifier,
     because reprocessing a document deletes and reinserts its pages and those
     identifiers do not survive it.
+
+    ``topic_key`` is computed by ``services/exam_topics.canonical_topic_key``
+    from the label the extractor gave the question, so extraction needs to know
+    nothing about any analysis. An analysis resolves those keys against its own
+    candidates later, exactly as it already does for mastery labels.
     """
 
     __tablename__ = "past_exam_questions"
     __table_args__ = (
         UniqueConstraint(
-            "analysis_output_id",
+            "document_id",
             "position",
-            name="uq_past_exam_questions_analysis_output_id_position",
+            name="uq_past_exam_questions_document_id_position",
         ),
         CheckConstraint("position >= 0", name="position_nonnegative"),
         CheckConstraint(
@@ -1132,10 +1160,6 @@ class PastExamQuestion(Base):
             name="page_range_valid",
         ),
         CheckConstraint(
-            "document_id IS NOT NULL OR (page_start IS NULL AND page_end IS NULL)",
-            name="page_requires_document",
-        ),
-        CheckConstraint(
             "question_number IS NULL OR question_number >= 0",
             name="question_number_nonnegative",
         ),
@@ -1149,12 +1173,6 @@ class PastExamQuestion(Base):
             name="difficulty_valid",
         ),
         ForeignKeyConstraint(
-            ["analysis_output_id", "course_id"],
-            ["generated_outputs.id", "generated_outputs.course_id"],
-            name="fk_past_exam_questions_analysis_course_generated_outputs",
-            ondelete="CASCADE",
-        ),
-        ForeignKeyConstraint(
             ["document_id", "course_id"],
             ["uploaded_documents.id", "uploaded_documents.course_id"],
             name="fk_past_exam_questions_document_course_uploaded_documents",
@@ -1163,13 +1181,10 @@ class PastExamQuestion(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    analysis_output_id: Mapped[int] = mapped_column(Integer, index=True)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), index=True)
     course_id: Mapped[int] = mapped_column(Integer, index=True)
     position: Mapped[int] = mapped_column(Integer)
 
-    document_id: Mapped[UUID | None] = mapped_column(
-        Uuid(as_uuid=True), nullable=True, index=True
-    )
     page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -1200,8 +1215,9 @@ class PastExamQuestion(Base):
         UTCDateTime(), server_default=func.now()
     )
 
-    analysis_output: Mapped["GeneratedOutput"] = relationship(
-        back_populates="past_exam_questions"
+    document: Mapped["UploadedDocument"] = relationship(
+        back_populates="past_exam_questions",
+        overlaps="course,past_exam_questions",
     )
 
 

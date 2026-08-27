@@ -1,16 +1,20 @@
 """Reading a course's chosen exam sources into durable, queryable evidence.
 
-An analysis is the only part of Exam Mode that calls a provider, and it calls
-it once. Discovering what topics the material covers and transcribing the
-questions in a past paper are the same pass over the same passages: splitting
-them would double the price and let the two halves disagree about what a topic
-is, after which every question's topic would have to be re-derived by matching
-strings against a list the second call never saw.
+An analysis discovers topics. It does not read past papers: their questions
+were transcribed once, when each paper was uploaded, and this pass counts the
+rows that already exist. That split is what makes a rescan cheap and what stops
+two analyses of one paper disagreeing about what it asks.
+
+The two halves still meet on one vocabulary. ``canonical_topic_key`` is a pure
+function of a label, so a question keyed by its extractor months ago resolves
+against today's candidates with nothing stored to connect them, exactly as a
+mastery label does.
 
 Nothing here reprocesses a document. The course's material is already
 extracted, chunked, and embedded; "analyse these sources" means read what is
 already indexed, narrowed to the documents the student chose, and never widen
-that to material they did not ask about.
+that to material they did not ask about. A selected paper that never got its
+questions read is healed here, once, and the result belongs to the paper.
 
 The result is immutable. A later scan writes a new analysis rather than editing
 this one, so a plan built today can still be reopened against the evidence it
@@ -46,7 +50,6 @@ from schemas.exam_mode import (
     ExamSourceDocument,
     ExamSourceInventory,
     GeneratedExamAnalysisResponse,
-    GeneratedPastExamQuestion,
 )
 from schemas.prompt_context import PromptContext
 from services.ai_usage_logger import AiUsageLogger
@@ -54,6 +57,7 @@ from services.citations import SuppliedCitation, document_label, resolve_citatio
 from services.course_material import count_available_chunks
 from services.credits import GENERATION_CREDIT_COSTS, ChargeReceipt, CreditService
 from services.document_lock import acquire_generation_locks
+from services.exam_question_extraction import PastExamExtractionService
 from services.exam_topics import (
     TOPIC_KEY_VERSION,
     KeyedCandidate,
@@ -89,6 +93,7 @@ from utils.ai_errors import (
     SourceDocumentNotReadyError,
 )
 from utils.exceptions import NotFoundException
+from utils.json_documents import parse_json_object
 
 READY_STATUS = "ready"
 PAST_EXAM_MATERIAL_KIND = "past_exam"
@@ -100,15 +105,6 @@ RETRIEVAL_QUERY_SUFFIX = "exam scope assessed topics examination questions"
 
 NO_SYLLABUS_TEXT = "No syllabus text was supplied for this course."
 NO_DECLARED_TOPICS_TEXT = "The student has not declared any course topics."
-
-PAST_EXAM_PRESENT_DIRECTIVE = (
-    "The supplied material includes at least one past examination paper. "
-    "Transcribe the questions it contains."
-)
-PAST_EXAM_ABSENT_DIRECTIVE = (
-    "The supplied material includes no past examination paper. Return an empty "
-    "past_exam_questions list; do not invent one."
-)
 
 MAX_SYLLABUS_PROMPT_CHARS = 20_000
 MAX_DECLARED_TOPICS_PROMPT_CHARS = 4_000
@@ -135,7 +131,7 @@ class ExamAnalysisGeneration:
     """One completed analysis, not yet written to the database."""
 
     candidates: tuple[KeyedCandidate, ...]
-    questions: tuple[dict, ...]
+    question_count: int
     material: RetrievedCourseMaterial
     model_used: str
     coverage: object
@@ -290,7 +286,6 @@ class ExamSourceAnalysisService:
         *,
         declared_topics: Sequence[str],
         syllabus: str | None,
-        past_exam_present: bool,
         context: PromptContext,
     ) -> str:
         topics_text = ", ".join(name for name in declared_topics if name.strip())
@@ -300,11 +295,6 @@ class ExamSourceAnalysisService:
             {
                 **context.as_variables(),
                 "TOPIC_FOCUS": request.topic_focus,
-                "PAST_EXAM_DIRECTIVE": (
-                    PAST_EXAM_PRESENT_DIRECTIVE
-                    if past_exam_present
-                    else PAST_EXAM_ABSENT_DIRECTIVE
-                ),
                 # Rendered last so a placeholder appearing inside student text
                 # or course material can never be filled in by a later
                 # substitution.
@@ -318,79 +308,6 @@ class ExamSourceAnalysisService:
                 "TEXT": course_material,
             },
         )
-
-    @staticmethod
-    def _question_rows(
-        questions: Sequence[GeneratedPastExamQuestion],
-        *,
-        supplied: dict[str, SuppliedCitation],
-        past_exam_documents: set[UUID],
-        topic_index: dict[str, str],
-    ) -> tuple[dict, ...]:
-        """Turn validated provider questions into rows, resolving every source.
-
-        Pages come from citations, never from the model: a model cannot know a
-        PDF's page numbering, and a citation has already been checked against
-        the passages actually supplied. A question whose citations resolve to
-        no past-exam document keeps null attribution rather than borrowing one.
-        """
-        rows: list[dict] = []
-        for question in questions:
-            citations = resolve_citations(question.citations, supplied)
-            origin = next(
-                (
-                    citation
-                    for citation in citations
-                    if citation.document_id in past_exam_documents
-                ),
-                None,
-            )
-            mapped = [
-                key
-                for key in (
-                    match_topic_key(label, topic_index) for label in question.topics
-                )
-                if key
-            ]
-            rows.append(
-                {
-                    "document_id": origin.document_id if origin else None,
-                    "page_start": origin.page_start if origin else None,
-                    "page_end": (
-                        (origin.page_end or origin.page_start) if origin else None
-                    ),
-                    "question_label": question.question_label,
-                    "question_number": question.question_number,
-                    "question_text": question.question_text.strip(),
-                    "subparts": [
-                        subpart.model_dump(mode="json") for subpart in question.subparts
-                    ]
-                    or None,
-                    "question_type": question.question_type.value,
-                    "difficulty": (
-                        question.difficulty.value if question.difficulty else None
-                    ),
-                    "marks": question.marks,
-                    "answer_guidance": question.answer_guidance,
-                    "marking_points": list(question.marking_points) or None,
-                    "visual_refs": [
-                        visual.model_dump(mode="json")
-                        for visual in question.visual_refs
-                    ]
-                    or None,
-                    "topic_key": mapped[0] if mapped else None,
-                    "topic_mappings": [
-                        {"topic_key": key, "display_label": label}
-                        for key, label in zip(mapped, question.topics, strict=False)
-                    ]
-                    or None,
-                    "citations": [
-                        citation.model_dump(mode="json") for citation in citations
-                    ]
-                    or None,
-                }
-            )
-        return tuple(rows)
 
     @classmethod
     def _promote_declared_topics(
@@ -452,6 +369,53 @@ class ExamSourceAnalysisService:
         return marked + tuple(promoted), len(promoted)
 
     @classmethod
+    def ensure_questions_extracted(
+        cls, db: Session, document_ids: Sequence[UUID]
+    ) -> None:
+        """Give any selected paper that never got read one attempt, now.
+
+        Papers uploaded before extraction existed, and papers whose extraction
+        failed, would otherwise contribute nothing to the past-exam signal
+        forever. The attempt is free, best-effort, and belongs to the paper, so
+        it is made once and every later analysis reads the result.
+        """
+        for document_id in document_ids:
+            document = db.get(UploadedDocument, document_id)
+            if document is None or not cls.is_extractable(document):
+                continue
+            if PastExamExtractionService.needs_extraction(document):
+                PastExamExtractionService.run(db, document_id)
+
+    @staticmethod
+    def is_extractable(document: UploadedDocument) -> bool:
+        return PastExamExtractionService.is_extractable(document)
+
+    @staticmethod
+    def past_exam_evidence(
+        db: Session, course_id: int, document_ids: Sequence[UUID]
+    ) -> dict[str, tuple[int, float | None]]:
+        """How often each extracted topic label appears across these papers.
+
+        Keyed by the question's own ``topic_key``, which was computed from the
+        label its extractor gave it. Nothing is matched against a candidate
+        here; that happens once the analysis knows what its candidates are.
+        """
+        questions, _ = PastExamExtractionService.load_questions(
+            db, course_id, list(document_ids)
+        )
+        counts: dict[str, int] = {}
+        marks: dict[str, float] = {}
+        for question in questions:
+            for mapping in question.topic_mappings or []:
+                key = mapping.get("topic_key") if isinstance(mapping, dict) else None
+                if not key:
+                    continue
+                counts[key] = counts.get(key, 0) + 1
+                if question.marks is not None:
+                    marks[key] = marks.get(key, 0.0) + float(question.marks)
+        return {key: (count, marks.get(key)) for key, count in counts.items()}
+
+    @classmethod
     def analyse(
         cls,
         db: Session,
@@ -490,7 +454,8 @@ class ExamSourceAnalysisService:
             log_failure(ErrorCategory.NO_READY_MATERIAL)
             raise NoExamSourceMaterialError(NO_READY_MATERIAL_MESSAGE)
 
-        past_exams = set(cls.past_exam_document_ids(db, course_id, selected or None))
+        past_exams = list(cls.past_exam_document_ids(db, course_id, selected or None))
+        cls.ensure_questions_extracted(db, past_exams)
         declared = list(
             db.scalars(
                 select(CourseTopic.name)
@@ -552,7 +517,6 @@ class ExamSourceAnalysisService:
                 request,
                 declared_topics=declared,
                 syllabus=course.syllabus if course is not None else None,
-                past_exam_present=bool(past_exams),
                 context=prompt_context,
             )
 
@@ -584,7 +548,6 @@ class ExamSourceAnalysisService:
                     "Generated exam analysis has an invalid structure."
                 ) from exc
 
-            supplied = material.citation_map
             candidates = key_candidates(
                 [
                     RawCandidate(
@@ -593,7 +556,6 @@ class ExamSourceAnalysisService:
                         evidence=TopicEvidence(
                             in_syllabus=topic.in_syllabus,
                             in_course_topics=topic.in_course_topics,
-                            in_past_exams=topic.in_past_exams and bool(past_exams),
                             in_material=topic.in_material,
                             discovery_confidence=topic.discovery_confidence,
                             syllabus_weight_percent=topic.syllabus_weight_percent,
@@ -608,14 +570,14 @@ class ExamSourceAnalysisService:
             )
             candidates, promoted = cls._promote_declared_topics(candidates, declared)
 
-            topic_index = build_topic_index(candidates)
-            questions = cls._question_rows(
-                validated.past_exam_questions,
-                supplied=supplied,
-                past_exam_documents=past_exams,
-                topic_index=topic_index,
+            # Every selected paper counts, whether or not its own prose won a
+            # place in the retrieved material. Its questions were read whole
+            # when it was uploaded, and a retrieval budget is not allowed to
+            # decide what an exam has asked.
+            evidence = cls.past_exam_evidence(db, course_id, past_exams)
+            candidates = _apply_question_counts(
+                candidates, evidence, build_topic_index(candidates)
             )
-            candidates = _apply_question_counts(candidates, questions)
 
             AiUsageLogger.log_success(
                 db,
@@ -627,17 +589,16 @@ class ExamSourceAnalysisService:
 
             return ExamAnalysisGeneration(
                 candidates=candidates,
-                questions=questions,
+                question_count=sum(
+                    candidate.evidence.past_exam_question_count
+                    for candidate in candidates
+                ),
                 material=material,
                 model_used=model_identifier(metadata),
                 coverage=validated.coverage,
                 confidence_notes=validated.confidence_notes,
                 documents_analysed=tuple(material.document_ids),
-                past_exam_documents=tuple(
-                    document_id
-                    for document_id in material.document_ids
-                    if document_id in past_exams
-                ),
+                past_exam_documents=tuple(past_exams),
                 syllabus_present=bool(
                     course is not None and (course.syllabus or "").strip()
                 ),
@@ -656,7 +617,7 @@ class ExamSourceAnalysisService:
         """The three JSON documents one analysis row carries."""
         summary = ExamAnalysisSummaryDocument(
             candidate_count=len(generation.candidates),
-            past_exam_question_count=len(generation.questions),
+            past_exam_question_count=generation.question_count,
             documents_analysed=list(generation.documents_analysed),
             past_exam_documents_analysed=list(generation.past_exam_documents),
             syllabus_present=generation.syllabus_present,
@@ -681,7 +642,7 @@ class ExamSourceAnalysisService:
                 "documents_analysed": list(generation.documents_analysed),
                 "past_exam_documents_analysed": list(generation.past_exam_documents),
                 "candidates_discovered": len(generation.candidates),
-                "questions_extracted": len(generation.questions),
+                "questions_extracted": generation.question_count,
                 "course_topics_promoted": generation.course_topics_promoted,
             }
         )
@@ -705,8 +666,8 @@ class ExamSourceAnalysisService:
 
         Nothing here may partially succeed. An analysis row with no candidates
         would claim an analysis happened while ranking nothing, and because
-        these tables are append-only there would be no later write to repair
-        it. ``GeneratedOutputService.record`` therefore stages the parent row
+        this table is append-only there would be no later write to repair it.
+        ``GeneratedOutputService.record`` therefore stages the parent row
         without committing and this function owns the single commit, the same
         arrangement quiz generation already uses in the opposite direction.
         """
@@ -753,15 +714,6 @@ class ExamSourceAnalysisService:
                     ),
                 )
                 for position, candidate in enumerate(generation.candidates)
-            )
-            db.add_all(
-                PastExamQuestion(
-                    analysis_output_id=output.id,
-                    course_id=course_id,
-                    position=position,
-                    **question,
-                )
-                for position, question in enumerate(generation.questions)
             )
             db.flush()
             db.commit()
@@ -819,22 +771,50 @@ class ExamSourceAnalysisService:
         topic_key: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> tuple[Sequence[PastExamQuestion], int]:
-        predicates = [
-            PastExamQuestion.course_id == course_id,
-            PastExamQuestion.analysis_output_id == analysis_output_id,
+    ) -> tuple[Sequence[PastExamQuestion], int, list[UUID]]:
+        """The questions of the papers one analysis had in scope.
+
+        Scoped by paper rather than by analysis, because that is who owns
+        them. Which papers were in scope is recorded in the analysis's own
+        summary document, so reopening an older analysis still shows the
+        questions it actually ranked from even after newer papers arrived.
+        """
+        output = db.get(GeneratedOutput, analysis_output_id)
+        summary = (
+            parse_json_object(
+                output.content,
+                field="content",
+                table="generated_outputs",
+                row_id=output.id,
+            )
+            or {}
+            if output is not None
+            else {}
+        )
+        raw = summary.get("past_exam_documents_analysed") or []
+        document_ids = [
+            identifier
+            for identifier in (_as_uuid(value) for value in raw)
+            if identifier is not None
         ]
-        if topic_key:
-            predicates.append(PastExamQuestion.topic_key == topic_key)
-        total = len(db.scalars(select(PastExamQuestion.id).where(*predicates)).all())
-        rows = db.scalars(
-            select(PastExamQuestion)
-            .where(*predicates)
-            .order_by(PastExamQuestion.position)
-            .offset(offset)
-            .limit(limit)
-        ).all()
-        return rows, total
+        rows, total = PastExamExtractionService.load_questions(
+            db,
+            course_id,
+            document_ids,
+            topic_key=topic_key,
+            limit=limit,
+            offset=offset,
+        )
+        return rows, total, document_ids
+
+
+def _as_uuid(value: object) -> UUID | None:
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _candidate_citations(
@@ -845,26 +825,33 @@ def _candidate_citations(
 
 
 def _apply_question_counts(
-    candidates: tuple[KeyedCandidate, ...], questions: Sequence[dict]
+    candidates: tuple[KeyedCandidate, ...],
+    evidence: dict[str, tuple[int, float | None]],
+    topic_index: dict[str, str],
 ) -> tuple[KeyedCandidate, ...]:
-    """Fold the extracted questions back into per-topic past-exam evidence.
+    """Fold the papers' recorded questions into per-topic past-exam evidence.
 
-    Counted from the questions actually persisted rather than from anything the
-    model asserted, so the frequency signal can never exceed the evidence a
-    reader could go and check.
+    An extractor keys a question by whatever the paper made it call the topic,
+    which is rarely the wording this analysis chose. Both sides went through
+    ``canonical_topic_key``, so the two vocabularies meet: a key that is not
+    already a candidate is matched through the analysis's own topic index,
+    which also resolves the aliases the model reported.
+
+    Counted from questions actually recorded against a paper rather than from
+    anything a model asserted, so the frequency signal can never exceed the
+    evidence a reader could go and check.
     """
     counts: dict[str, int] = {}
     marks: dict[str, float] = {}
-    for question in questions:
-        key = question.get("topic_key")
-        # A question that resolved to no past exam document is not past-exam
-        # evidence, however exam-like it reads. It is kept for its text and
-        # left out of the frequency signal a reader could not go and check.
-        if not key or question.get("document_id") is None:
+    known = {candidate.topic_key for candidate in candidates}
+
+    for key, (count, total_marks) in evidence.items():
+        resolved = key if key in known else match_topic_key(key, topic_index)
+        if resolved is None:
             continue
-        counts[key] = counts.get(key, 0) + 1
-        if question.get("marks") is not None:
-            marks[key] = marks.get(key, 0.0) + float(question["marks"])
+        counts[resolved] = counts.get(resolved, 0) + count
+        if total_marks is not None:
+            marks[resolved] = marks.get(resolved, 0.0) + total_marks
 
     return tuple(
         replace(

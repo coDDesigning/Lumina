@@ -47,6 +47,7 @@ wrong passage.
 | Past exam paper questions | `citations` array per question | `past_exam_questions.citations` |
 | Exam Mode topic guide | `citations` array per claim | inside `generated_outputs.content` |
 | Exam Mode topic summary | `citations` array per claim | inside `generated_outputs.content` |
+| Exam Mode practice questions and topic exams | `citations` array per question | `quiz_questions.citations` |
 
 Flashcards opt out at the retrieval seam: `load_retrieved_material` takes a
 required `include_citations` flag, so a card back can never pick up a stray

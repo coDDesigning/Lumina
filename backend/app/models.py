@@ -64,6 +64,8 @@ OUTPUT_TYPE_EXAM_TOPIC_ANALYSIS = "exam_topic_analysis"
 OUTPUT_TYPE_EXAM_PLAN = "exam_plan"
 OUTPUT_TYPE_EXAM_TOPIC_GUIDE = "exam_topic_guide"
 OUTPUT_TYPE_EXAM_TOPIC_SUMMARY = "exam_topic_summary"
+OUTPUT_TYPE_EXAM_TOPIC_PRACTICE = "exam_topic_practice"
+OUTPUT_TYPE_EXAM_TOPIC_EXAM = "exam_topic_exam"
 
 EXAM_QUESTION_TYPES = (
     "multiple_choice",

@@ -155,6 +155,16 @@ def _requests_against_owner_a(context) -> list[tuple[str, str, dict]]:
             f"/api/courses/{course_id}/exam-mode/topics/graph-traversal/summary",
             {},
         ),
+        (
+            "POST",
+            f"/api/courses/{course_id}/exam-mode/topics/graph-traversal/practice",
+            {"json": {}},
+        ),
+        (
+            "POST",
+            f"/api/courses/{course_id}/exam-mode/topics/graph-traversal/exam",
+            {"json": {}},
+        ),
     ]
 
 
@@ -305,7 +315,7 @@ def test_administrator_cannot_write_to_another_owners_course(authz_api):
         entry for entry in _requests_against_owner_a(authz_api) if entry[0] != "GET"
     ]
     # Generated-output and conversation endpoints are reads, so they are absent.
-    assert len(writes) == 16
+    assert len(writes) == 18
     for method, url, kwargs in writes:
         response = authz_api.client.request(
             method, url, headers=authz_api.authorization_admin, **kwargs
@@ -456,7 +466,7 @@ def test_every_course_route_requires_authentication_in_openapi():
         for method, operation in methods.items()
     ]
 
-    assert len(operations) == 40
+    assert len(operations) == 42
     for method, path, operation in operations:
         assert operation["security"] == [{"OAuth2PasswordBearer": []}], (
             f"{method.upper()} {path} is not documented as authenticated"
@@ -526,7 +536,7 @@ def test_course_scoped_routes_cannot_bypass_the_boundary():
     course_routes = [
         route for route in api_routes(app) if route.path.startswith("/api/courses")
     ]
-    assert len(course_routes) == 40
+    assert len(course_routes) == 42
 
     for route in course_routes:
         names = dependency_names(route.dependant)

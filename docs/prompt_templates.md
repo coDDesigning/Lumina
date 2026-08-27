@@ -52,6 +52,8 @@ All templates reside in `app/prompts/<task_name>.json`:
 | `past_exam_question_extraction` | `1.0.0` | active | `services/exam_question_extraction.py` | Transcribes the questions printed in one past examination paper | `GeneratedPastExamExtraction` |
 | `exam_topic_guide` | `1.0.0` | active | `services/exam_topic_study.py` | Exam Mode per-topic study guide | `GeneratedExamTopicGuide` |
 | `exam_topic_summary` | `1.0.0` | active | `services/exam_topic_study.py` | Exam Mode per-topic summary | `GeneratedExamTopicSummary` |
+| `exam_topic_practice` | `1.0.0` | active | `services/exam_quiz.py` | Exam Mode per-topic practice questions | `QuizGenerationResponse` |
+| `exam_topic_exam` | `1.0.0` | active | `services/exam_quiz.py` | Exam Mode per-topic examination | `QuizGenerationResponse` |
 | `quiz_grading` | `2.0.0` | active | `services/quiz_grading.py` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
 | `flashcard` | `2.2.0` | active | `services/flashcard.py` | Active recall flashcard decks | `FlashcardGenerationResponse` |
 | `ai_tutor` | `2.3.0` | active | `services/ai_tutor.py` | Hint-first tutoring with stepwise guidance | `AiTutorResponse` |

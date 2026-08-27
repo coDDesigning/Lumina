@@ -254,6 +254,23 @@ TEMPLATE_EXTRA_VARIABLES: dict[str, dict[str, str]] = {
         "PRIORITY_NOTE": "Priority note body",
         "TEXT": "Course material body",
     },
+    "exam_topic_practice": {
+        "TOPIC_LABEL": "Graph Traversal",
+        "QUESTION_COUNT": "10",
+        "DIFFICULTY_DIRECTIVE": "Mixed difficulty body",
+        "QUESTION_TYPE_DIRECTIVES": "Type directives body",
+        "QUESTION_TYPE_SCHEMAS": "Type schemas body",
+        "TEXT": "Course material body",
+    },
+    "exam_topic_exam": {
+        "TOPIC_LABEL": "Graph Traversal",
+        "QUESTION_COUNT": "10",
+        "DIFFICULTY_DIRECTIVE": "Mixed difficulty body",
+        "QUESTION_TYPE_DIRECTIVES": "Type directives body",
+        "QUESTION_TYPE_SCHEMAS": "Type schemas body",
+        "PAST_QUESTION_STYLE": "Past question style body",
+        "TEXT": "Course material body",
+    },
     "flashcard": {
         "PROFILE_CONTEXT": PROFILE_CONTEXT_FIXTURE,
         "TEXT": "Course material body",

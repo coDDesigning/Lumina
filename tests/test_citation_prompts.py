@@ -11,6 +11,8 @@ CITING_TEMPLATES = (
     "past_exam_question_extraction",
     "exam_topic_guide",
     "exam_topic_summary",
+    "exam_topic_practice",
+    "exam_topic_exam",
 )
 
 

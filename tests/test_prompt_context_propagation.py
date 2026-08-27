@@ -13,6 +13,7 @@ from schemas.prompt_context import (
 from services.ai_tutor import AiTutorService
 from services.course_qa import CourseQAService
 from services.exam_artifacts import PlannedTopic
+import services.exam_quiz as exam_quiz
 from services.exam_question_extraction import PastExamExtractionService
 from services.exam_source_analysis import ExamSourceAnalysisService
 from services.exam_topic_study import GUIDE_SPEC, SUMMARY_SPEC
@@ -113,6 +114,28 @@ def _exam_topic_summary_prompt(context: PromptContext) -> str:
     return SUMMARY_SPEC.build_prompt("material", _PLANNED_TOPIC, context)
 
 
+def _exam_topic_practice_prompt(context: PromptContext) -> str:
+    return exam_quiz._build_prompt(
+        exam_quiz.PRACTICE,
+        "material",
+        _PLANNED_TOPIC,
+        context,
+        question_count=10,
+        style=None,
+    )
+
+
+def _exam_topic_exam_prompt(context: PromptContext) -> str:
+    return exam_quiz._build_prompt(
+        exam_quiz.EXAM,
+        "material",
+        _PLANNED_TOPIC,
+        context,
+        question_count=10,
+        style="Past question style",
+    )
+
+
 BUILDERS = {
     "study_guide": _study_guide_prompt,
     "quiz": _quiz_prompt,
@@ -124,6 +147,8 @@ BUILDERS = {
     "past_exam_question_extraction": _past_exam_extraction_prompt,
     "exam_topic_guide": _exam_topic_guide_prompt,
     "exam_topic_summary": _exam_topic_summary_prompt,
+    "exam_topic_practice": _exam_topic_practice_prompt,
+    "exam_topic_exam": _exam_topic_exam_prompt,
 }
 
 

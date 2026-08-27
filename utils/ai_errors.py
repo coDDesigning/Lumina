@@ -57,6 +57,50 @@ class InsufficientCreditsError(RuntimeError):
     pass
 
 
+class SourceDocumentNotReadyError(RuntimeError):
+    """A document the request explicitly selected has not finished processing.
+
+    Distinct from every material error: the course has material, the request
+    matched it, and the remedy is neither uploading nor broadening the topic.
+    It is waiting.
+    """
+
+
+class ExamAnalysisRequiredError(RuntimeError):
+    """The operation needs a completed exam topic analysis that does not exist.
+
+    A conflict rather than a not-found, because the course is fine and the
+    remedy is a named next action that a 404 would hide.
+    """
+
+
+class ExamPlanRequiredError(RuntimeError):
+    """The operation needs an exam plan this course does not have yet.
+
+    A conflict rather than a not-found for the same reason an analysis is: the
+    course exists, the topic may well exist, and the remedy is a named next
+    action that a 404 would hide.
+    """
+
+
+class ExamTopicSelectionRequiredError(RuntimeError):
+    """An exam plan was requested without choosing any topic to study."""
+
+
+class ExamTopicNotDiscoveredError(RuntimeError):
+    """A selected topic does not belong to the analysis it was selected from."""
+
+
+class ExamDateMissingError(RuntimeError):
+    """The course has no exam date, so there is no exam to plan for."""
+
+
+class ExamDateNotFutureError(RuntimeError):
+    """The course exam date has already passed, so a first plan cannot start.
+
+    Only the first plan is gated. An existing plan stays readable forever, as
+    a study resource does not expire with the exam it was built for.
+    """
 class ExamPlanUnavailableError(RuntimeError):
     """A course cannot be planned from in the state it is currently in.
 
@@ -90,6 +134,13 @@ class AiErrorCode(str, Enum):
     INSUFFICIENT_CREDITS = "insufficient_credits"
     UNAVAILABLE_MODEL = "unavailable_model"
     INCOMPATIBLE_MODEL = "incompatible_model"
+    SOURCE_NOT_READY = "source_not_ready"
+    EXAM_DATE_MISSING = "exam_date_missing"
+    EXAM_DATE_NOT_FUTURE = "exam_date_not_future"
+    EXAM_ANALYSIS_REQUIRED = "exam_analysis_required"
+    EXAM_PLAN_REQUIRED = "exam_plan_required"
+    EXAM_TOPIC_SELECTION_REQUIRED = "exam_topic_selection_required"
+    EXAM_TOPIC_NOT_DISCOVERED = "exam_topic_not_discovered"
     EXAM_DATE_REQUIRED = "exam_date_required"
     EXAM_DATE_PASSED = "exam_date_passed"
     EXAM_TOPICS_REQUIRED = "exam_topics_required"
@@ -103,6 +154,29 @@ NO_RELEVANT_MATERIAL_MESSAGE = (
 MATERIAL_NOT_INDEXED_MESSAGE = (
     "This course's material is not searchable yet. If it does not become "
     "available shortly, its documents need to be processed again."
+)
+SOURCE_NOT_READY_MESSAGE = (
+    "A selected document is still being processed. Try again once it is ready."
+)
+EXAM_DATE_MISSING_MESSAGE = (
+    "Set an exam date for this course before creating an exam plan."
+)
+EXAM_DATE_NOT_FUTURE_MESSAGE = (
+    "This course's exam date is not in the future. Update it before creating "
+    "an exam plan."
+)
+EXAM_ANALYSIS_REQUIRED_MESSAGE = (
+    "Analyse this course's exam sources before creating an exam plan."
+)
+EXAM_PLAN_REQUIRED_MESSAGE = (
+    "Create an exam plan for this course before studying one of its topics."
+)
+EXAM_TOPIC_SELECTION_REQUIRED_MESSAGE = (
+    "Select at least one topic to study before creating an exam plan."
+)
+EXAM_TOPIC_NOT_DISCOVERED_MESSAGE = (
+    "A selected topic is not part of this analysis. Review the discovered "
+    "topics and try again."
 )
 EXAM_DATE_REQUIRED_MESSAGE = (
     "This course has no exam date, so there are no days to plan across. Set one "
@@ -142,6 +216,13 @@ PUBLIC_MESSAGES: dict[AiErrorCode, str] = {
     AiErrorCode.INCOMPATIBLE_MODEL: (
         "The requested AI model does not support the required output format."
     ),
+    AiErrorCode.SOURCE_NOT_READY: SOURCE_NOT_READY_MESSAGE,
+    AiErrorCode.EXAM_DATE_MISSING: EXAM_DATE_MISSING_MESSAGE,
+    AiErrorCode.EXAM_DATE_NOT_FUTURE: EXAM_DATE_NOT_FUTURE_MESSAGE,
+    AiErrorCode.EXAM_ANALYSIS_REQUIRED: EXAM_ANALYSIS_REQUIRED_MESSAGE,
+    AiErrorCode.EXAM_PLAN_REQUIRED: EXAM_PLAN_REQUIRED_MESSAGE,
+    AiErrorCode.EXAM_TOPIC_SELECTION_REQUIRED: (EXAM_TOPIC_SELECTION_REQUIRED_MESSAGE),
+    AiErrorCode.EXAM_TOPIC_NOT_DISCOVERED: EXAM_TOPIC_NOT_DISCOVERED_MESSAGE,
     AiErrorCode.EXAM_DATE_REQUIRED: EXAM_DATE_REQUIRED_MESSAGE,
     AiErrorCode.EXAM_DATE_PASSED: EXAM_DATE_PASSED_MESSAGE,
     AiErrorCode.EXAM_TOPICS_REQUIRED: EXAM_TOPICS_REQUIRED_MESSAGE,
@@ -162,6 +243,13 @@ STATUS_CODES: dict[AiErrorCode, int] = {
     AiErrorCode.INSUFFICIENT_CREDITS: status.HTTP_402_PAYMENT_REQUIRED,
     AiErrorCode.UNAVAILABLE_MODEL: status.HTTP_400_BAD_REQUEST,
     AiErrorCode.INCOMPATIBLE_MODEL: status.HTTP_400_BAD_REQUEST,
+    AiErrorCode.SOURCE_NOT_READY: status.HTTP_409_CONFLICT,
+    AiErrorCode.EXAM_DATE_MISSING: status.HTTP_400_BAD_REQUEST,
+    AiErrorCode.EXAM_DATE_NOT_FUTURE: status.HTTP_400_BAD_REQUEST,
+    AiErrorCode.EXAM_ANALYSIS_REQUIRED: status.HTTP_409_CONFLICT,
+    AiErrorCode.EXAM_PLAN_REQUIRED: status.HTTP_409_CONFLICT,
+    AiErrorCode.EXAM_TOPIC_SELECTION_REQUIRED: status.HTTP_409_CONFLICT,
+    AiErrorCode.EXAM_TOPIC_NOT_DISCOVERED: status.HTTP_409_CONFLICT,
     AiErrorCode.EXAM_DATE_REQUIRED: status.HTTP_409_CONFLICT,
     AiErrorCode.EXAM_DATE_PASSED: status.HTTP_409_CONFLICT,
     AiErrorCode.EXAM_TOPICS_REQUIRED: status.HTTP_409_CONFLICT,
@@ -186,6 +274,20 @@ def classify_generation_error(exc: BaseException) -> AiErrorCode:
             return AiErrorCode.UNAVAILABLE_MODEL
         if isinstance(error, InsufficientCreditsError):
             return AiErrorCode.INSUFFICIENT_CREDITS
+        if isinstance(error, SourceDocumentNotReadyError):
+            return AiErrorCode.SOURCE_NOT_READY
+        if isinstance(error, ExamDateMissingError):
+            return AiErrorCode.EXAM_DATE_MISSING
+        if isinstance(error, ExamDateNotFutureError):
+            return AiErrorCode.EXAM_DATE_NOT_FUTURE
+        if isinstance(error, ExamAnalysisRequiredError):
+            return AiErrorCode.EXAM_ANALYSIS_REQUIRED
+        if isinstance(error, ExamPlanRequiredError):
+            return AiErrorCode.EXAM_PLAN_REQUIRED
+        if isinstance(error, ExamTopicSelectionRequiredError):
+            return AiErrorCode.EXAM_TOPIC_SELECTION_REQUIRED
+        if isinstance(error, ExamTopicNotDiscoveredError):
+            return AiErrorCode.EXAM_TOPIC_NOT_DISCOVERED
         if isinstance(error, ExamDateRequiredError):
             return AiErrorCode.EXAM_DATE_REQUIRED
         if isinstance(error, ExamDatePassedError):

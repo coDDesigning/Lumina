@@ -253,6 +253,16 @@ class Settings:
     flashcard_material_max_chars: int
     ai_tutor_material_max_chars: int
     course_qa_material_max_chars: int
+    exam_analysis_material_max_chars: int
+    exam_past_paper_max_chars: int
+    exam_topic_guide_material_max_chars: int
+    exam_topic_summary_material_max_chars: int
+    exam_topic_quiz_material_max_chars: int
+    exam_similar_questions_material_max_chars: int
+    exam_mock_exam_material_max_chars: int
+    exam_review_sheet_material_max_chars: int
+    exam_mock_exam_question_count: int
+    exam_quiz_default_question_count: int
 
     # Credit lifecycle. See docs/credits.md.
     credit_metering_enabled: bool
@@ -647,6 +657,26 @@ def load_settings() -> Settings:
         ("FLASHCARD_MATERIAL_MAX_CHARS", DEFAULT_MATERIAL_MAX_CHARACTERS),
         ("AI_TUTOR_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
         ("COURSE_QA_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_ANALYSIS_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
+        ("EXAM_PAST_PAPER_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        ("EXAM_TOPIC_GUIDE_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_TOPIC_SUMMARY_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
+        ("EXAM_TOPIC_QUIZ_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_SIMILAR_QUESTIONS_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
+        ("EXAM_MOCK_EXAM_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_REVIEW_SHEET_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
     ):
         budget = _positive_integer_setting(name, default)
         if budget < document_chunk_size_characters:
@@ -817,6 +847,13 @@ def load_settings() -> Settings:
                 "Production CHROMA_PERSIST_DIRECTORY must use an absolute path."
             )
 
+    exam_quiz_default_question_count = _bounded_positive_integer_setting(
+        "EXAM_QUIZ_DEFAULT_QUESTION_COUNT", 10, minimum=1, maximum=20
+    )
+    exam_mock_exam_question_count = _bounded_positive_integer_setting(
+        "EXAM_MOCK_EXAM_QUESTION_COUNT", 20, minimum=1, maximum=20
+    )
+
     credit_metering_enabled = _boolean_setting(
         "CREDIT_METERING_ENABLED",
         default=mode == MODE_HOSTED,
@@ -983,6 +1020,30 @@ def load_settings() -> Settings:
         flashcard_material_max_chars=material_budgets["FLASHCARD_MATERIAL_MAX_CHARS"],
         ai_tutor_material_max_chars=material_budgets["AI_TUTOR_MATERIAL_MAX_CHARS"],
         course_qa_material_max_chars=material_budgets["COURSE_QA_MATERIAL_MAX_CHARS"],
+        exam_analysis_material_max_chars=material_budgets[
+            "EXAM_ANALYSIS_MATERIAL_MAX_CHARS"
+        ],
+        exam_past_paper_max_chars=material_budgets["EXAM_PAST_PAPER_MAX_CHARS"],
+        exam_topic_guide_material_max_chars=material_budgets[
+            "EXAM_TOPIC_GUIDE_MATERIAL_MAX_CHARS"
+        ],
+        exam_topic_summary_material_max_chars=material_budgets[
+            "EXAM_TOPIC_SUMMARY_MATERIAL_MAX_CHARS"
+        ],
+        exam_topic_quiz_material_max_chars=material_budgets[
+            "EXAM_TOPIC_QUIZ_MATERIAL_MAX_CHARS"
+        ],
+        exam_similar_questions_material_max_chars=material_budgets[
+            "EXAM_SIMILAR_QUESTIONS_MATERIAL_MAX_CHARS"
+        ],
+        exam_mock_exam_material_max_chars=material_budgets[
+            "EXAM_MOCK_EXAM_MATERIAL_MAX_CHARS"
+        ],
+        exam_review_sheet_material_max_chars=material_budgets[
+            "EXAM_REVIEW_SHEET_MATERIAL_MAX_CHARS"
+        ],
+        exam_mock_exam_question_count=exam_mock_exam_question_count,
+        exam_quiz_default_question_count=exam_quiz_default_question_count,
         credit_metering_enabled=credit_metering_enabled,
         credit_initial_grant=credit_initial_grant,
         credit_periodic_grant=credit_periodic_grant,

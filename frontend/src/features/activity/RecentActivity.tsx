@@ -23,6 +23,8 @@ const ACTION_LABELS: Record<string, string> = {
   quiz: 'Practice quiz',
   flashcards: 'Flashcards',
   quiz_attempt: 'Quiz attempt',
+  exam_topic_analysis: 'Exam source analysis',
+  exam_plan: 'Exam plan',
 };
 
 function actionLabel(item: ActivityItem): string {

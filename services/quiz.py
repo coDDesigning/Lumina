@@ -541,12 +541,28 @@ class QuizService:
         citations: dict[str, SuppliedCitation] | None = None,
         record_output: bool = True,
         commit: bool = True,
+        topic_override: str | None = None,
+        purpose: str | None = None,
+        exam_plan_output_id: int | None = None,
+        exam_topic_key: str | None = None,
     ) -> Quiz:
         """Write the quiz, its questions, and its generated output record in one transaction.
 
-        Nothing here can partially succeed: a failure on any question or the output
-        record rolls the whole transaction back, so a quiz never exists partially
-        persisted without its questions or history row.
+        Nothing here can partially succeed: a failure on any question or the
+        output record rolls the whole transaction back, so a quiz never exists
+        partially persisted without its questions or history row.
+
+        ``topic_override`` replaces the model-supplied ``topic`` on every
+        question with one the caller already knows. Ordinary quiz generation
+        leaves it alone, because the model's own labels are the only topic
+        information a course-wide quiz has. Exam Mode always supplies it: a
+        quiz generated for one planned topic must carry that topic's own label,
+        or the attempt's mastery would be filed under whatever the model
+        happened to write and the next exam plan would count it as unmapped.
+
+        ``record_output`` writes the ``quiz`` history row. Exam Mode turns it
+        off and writes its own row under its own output type, so one generated
+        quiz never appears twice in a course's history under two names.
         """
         quiz = Quiz(
             course_id=course_id,
@@ -555,6 +571,9 @@ class QuizService:
             model_used=model_used,
             generation_settings=generation_settings,
             generation_context=generation_context,
+            purpose=purpose,
+            exam_plan_output_id=exam_plan_output_id,
+            exam_topic_key=exam_topic_key,
         )
 
         try:
@@ -572,7 +591,7 @@ class QuizService:
                         options=question.stored_options(),
                         correct_option_index=question.stored_option_index(),
                         correct_answer=question.stored_answer().model_dump(mode="json"),
-                        topic=question.topic,
+                        topic=topic_override or question.topic,
                         explanation=question.explanation,
                         citations=[
                             citation.model_dump(mode="json")

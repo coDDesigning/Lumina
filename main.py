@@ -40,6 +40,7 @@ from routes import (
     progress,
     prompt_generator,
     quiz,
+    reverse_quiz,
     study_guide,
     user,
 )
@@ -84,6 +85,7 @@ app.include_router(exam_roadmap.router)
 app.include_router(generated_output.router)
 app.include_router(conversation.router)
 app.include_router(quiz.router)
+app.include_router(reverse_quiz.router)
 app.include_router(flashcard.router)
 app.include_router(prompt_generator.router)
 app.include_router(ai_tutor.router)

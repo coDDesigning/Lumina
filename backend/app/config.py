@@ -69,6 +69,8 @@ DEFAULT_COURSE_PURGE_INTERVAL_SECONDS = 3600.0
 DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS = 3600.0
 DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE = 64
 DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS = False
+DEFAULT_AI_USAGE_RETENTION_DAYS = 90
+DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE = 1000
 
 IMAGE_PROVIDER_NONE = "none"
 IMAGE_PROVIDER_GEMINI = "gemini"
@@ -273,6 +275,8 @@ class Settings:
     embedding_backfill_interval_seconds: float
     embedding_backfill_batch_size: int
     embedding_backfill_prune_orphans: bool
+    ai_usage_retention_days: int
+    ai_usage_cleanup_batch_size: int
 
     @property
     def is_hosted(self) -> bool:
@@ -885,6 +889,14 @@ def load_settings() -> Settings:
         "EMBEDDING_BACKFILL_PRUNE_ORPHANS",
         default=DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS,
     )
+    ai_usage_retention_days = _positive_integer_setting(
+        "AI_USAGE_RETENTION_DAYS",
+        DEFAULT_AI_USAGE_RETENTION_DAYS,
+    )
+    ai_usage_cleanup_batch_size = _positive_integer_setting(
+        "AI_USAGE_CLEANUP_BATCH_SIZE",
+        DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE,
+    )
 
     return Settings(
         app_env=app_env,
@@ -987,6 +999,8 @@ def load_settings() -> Settings:
         embedding_backfill_interval_seconds=embedding_backfill_interval_seconds,
         embedding_backfill_batch_size=embedding_backfill_batch_size,
         embedding_backfill_prune_orphans=embedding_backfill_prune_orphans,
+        ai_usage_retention_days=ai_usage_retention_days,
+        ai_usage_cleanup_batch_size=ai_usage_cleanup_batch_size,
     )
 
 

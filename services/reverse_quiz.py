@@ -4,7 +4,8 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
-from backend.app.models import Course, GeneratedOutput, User
+from backend.app.models import Course, User
+from services.generated_output import GeneratedOutputService
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.quiz import OpenEndedAnswer
 from schemas.prompt_context import PromptContext
@@ -138,15 +139,15 @@ class ReverseQuizService:
             misconceptions=misconceptions,
         )
 
-        output = GeneratedOutput(
+        output = GeneratedOutputService.record(
+            db,
             course_id=course_id,
             user_id=user.id,
             model_used=provider.name,
             output_type="reverse_quiz",
             content=response_model.model_dump_json(),
+            commit=False,
         )
-        db.add(output)
-        db.flush()
         
         response_model.id = output.id
         return response_model

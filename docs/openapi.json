@@ -315,6 +315,14 @@
             "title": "Chunks Used",
             "type": "integer"
           },
+          "citations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
           "context_truncated": {
             "title": "Context Truncated",
             "type": "boolean"
@@ -1438,8 +1446,88 @@
         "title": "Body_upload_document_api_courses__course_id__documents_post",
         "type": "object"
       },
+      "Citation": {
+        "properties": {
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "document_label": {
+            "title": "Document Label",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "page_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "page_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Start"
+          },
+          "version": {
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "document_id",
+          "document_label"
+        ],
+        "title": "Citation",
+        "type": "object"
+      },
+      "CitedText": {
+        "properties": {
+          "citations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "CitedText",
+        "type": "object"
+      },
       "CommonMistake": {
         "properties": {
+          "citations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
           "correction": {
             "title": "Correction",
             "type": "string"
@@ -1515,6 +1603,14 @@
       },
       "ConversationMessageResponse": {
         "properties": {
+          "citations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
           "content": {
             "title": "Content",
             "type": "string"
@@ -1875,6 +1971,14 @@
           "chunks_used": {
             "title": "Chunks Used",
             "type": "integer"
+          },
+          "citations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
           },
           "context_truncated": {
             "title": "Context Truncated",
@@ -2754,7 +2858,7 @@
           },
           "lecture_based": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/CitedText"
             },
             "title": "Lecture Based",
             "type": "array"
@@ -3119,6 +3223,14 @@
       },
       "ImportantTerm": {
         "properties": {
+          "citations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
           "definition": {
             "title": "Definition",
             "type": "string"
@@ -3867,6 +3979,14 @@
       },
       "QuizQuestionView": {
         "properties": {
+          "citations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
           "correct_answer": {
             "anyOf": [
               {
@@ -4407,28 +4527,27 @@
           },
           "key_points": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/CitedText"
             },
             "title": "Key Points",
             "type": "array"
           },
           "learning_objectives": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/CitedText"
             },
             "title": "Learning Objectives",
             "type": "array"
           },
           "prerequisites": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/CitedText"
             },
             "title": "Prerequisites",
             "type": "array"
           },
           "summary": {
-            "title": "Summary",
-            "type": "string"
+            "$ref": "#/components/schemas/CitedText"
           },
           "title": {
             "title": "Title",

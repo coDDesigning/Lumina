@@ -28,17 +28,35 @@ AI usage rows remain privacy-safe product telemetry in PostgreSQL/SQLite; they
 are not operational logs. A telemetry write uses a nested transaction so a
 failed best-effort flush cannot poison the caller's transaction.
 
-## Worker metrics
+## Worker and service metrics
 
-The worker emits CloudWatch Embedded Metric Format events under
-`Lumina/Worker`, dimensioned by `Service=worker` and `Environment`:
+Lumina emits CloudWatch Embedded Metric Format events under `Lumina/Worker` and `Lumina/AI`:
 
-| Metric | Unit | Statistic |
-| --- | --- | --- |
-| `QueuedJobs`, `RunningJobs`, `FailedJobs` | Count | Maximum |
-| `OldestQueuedAgeSeconds` | Seconds | Maximum |
-| `RecoveredJobs`, `JobsRetried`, `JobsFailed`, `JobsSucceeded` | Count | Sum |
-| `ProcessingDurationMs` | Milliseconds | p95/Average |
+### Document worker (`Lumina/Worker`, `Service=worker`, `Environment`)
+
+| Metric | Unit | Statistic | Description / Dimensions |
+| --- | --- | --- | --- |
+| `QueuedJobs`, `RunningJobs`, `FailedJobs` | Count | Maximum | Queue gauges from periodic recovery snapshot |
+| `OldestQueuedAgeSeconds` | Seconds | Maximum | Oldest queued job age in seconds |
+| `RecoveredJobs`, `JobsRetried`, `JobsFailed`, `JobsSucceeded` | Count | Sum | Job lifecycle outcome event counters |
+| `StageFailed`, `StageRetried` | Count | Sum | Per-stage failures, dimensioned by `Stage` |
+| `ProcessingDurationMs` | Milliseconds | p95/Average | End-to-end extraction and embedding duration |
+
+### AI provider health (`Lumina/AI`, `Service=api`, `Environment`)
+
+| Metric | Unit | Statistic | Description / Dimensions |
+| --- | --- | --- | --- |
+| `ProviderCalls` | Count | Sum | Total AI generation calls, dimensioned by `Provider` |
+| `ProviderLatencyMs` | Milliseconds | p95/Average | Provider response latency in milliseconds |
+| `ProviderErrors` | Count | Sum | Failed AI generation calls, dimensioned by `Provider` and `ErrorCategory` |
+
+### Course purge and maintenance (`Lumina/Worker`, `Service=course_purge`, `Environment`)
+
+| Metric | Unit | Statistic | Description / Dimensions |
+| --- | --- | --- | --- |
+| `CoursesExamined`, `CoursesPurged`, `CoursesFailed` | Count | Sum | Course tombstone purge execution counts |
+| `AgedTombstones` | Count | Maximum | Number of tombstones exceeding the purge threshold |
+| `OldestTombstoneAgeSeconds` | Seconds | Maximum | Oldest unpurged course tombstone age in seconds |
 
 Each worker reports the same queue snapshot, so dashboards and alarms use
 `Maximum`, never `Sum`, for queue gauges. Outcome metrics are event counters and
@@ -56,8 +74,9 @@ confirm it through SNS. The baseline alarms cover:
 - API CPU and missing worker tasks;
 - RDS CPU, free memory, and free storage;
 - RDS Proxy session pinning;
-- oldest queued-job age; and
-- permanently failed document jobs.
+- oldest queued-job age;
+- permanently failed document jobs; and
+- aged course tombstones (`AgedTombstones >= 1`).
 
 Thresholds are conservative starting values. Change them from observed
 production baselines and record the reason in review; do not disable missing

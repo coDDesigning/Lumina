@@ -123,3 +123,104 @@ def test_maintenance_logging_uses_structured_json() -> None:
     assert payload["service"] == "maintenance"
     assert payload["level"] == "INFO"
     assert "Course purge finished" in payload["message"]
+
+
+def test_ai_provider_emf_metrics_schema() -> None:
+    records: list[logging.LogRecord] = []
+
+    class CapturingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("lumina.metrics")
+    handler = CapturingHandler()
+    logger.addHandler(handler)
+    try:
+        emit_emf_metrics(
+            {"ProviderCalls": 1, "ProviderLatencyMs": 142.5, "ProviderErrors": 1},
+            dimensions={
+                "Service": "api",
+                "Environment": "production",
+                "Provider": "gemini",
+            },
+            units={"ProviderLatencyMs": "Milliseconds"},
+            namespace="Lumina/AI",
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    record = records[-1]
+    emf = record.emf
+    assert record.event == "cloudwatch_emf"
+    assert emf["_aws"]["CloudWatchMetrics"][0]["Namespace"] == "Lumina/AI"
+    assert emf["Provider"] == "gemini"
+    assert emf["ProviderCalls"] == 1
+    assert emf["ProviderLatencyMs"] == 142.5
+    assert emf["ProviderErrors"] == 1
+    definitions = emf["_aws"]["CloudWatchMetrics"][0]["Metrics"]
+    units_by_name = {item["Name"]: item["Unit"] for item in definitions}
+    assert units_by_name["ProviderLatencyMs"] == "Milliseconds"
+    assert units_by_name["ProviderCalls"] == "Count"
+
+
+def test_stage_failure_emf_metrics_schema() -> None:
+    records: list[logging.LogRecord] = []
+
+    class CapturingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("lumina.metrics")
+    handler = CapturingHandler()
+    logger.addHandler(handler)
+    try:
+        emit_emf_metrics(
+            {"StageFailed": 1},
+            dimensions={
+                "Service": "worker",
+                "Environment": "production",
+                "Stage": "extracting_text",
+            },
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    record = records[-1]
+    emf = record.emf
+    assert record.event == "cloudwatch_emf"
+    assert emf["_aws"]["CloudWatchMetrics"][0]["Namespace"] == "Lumina/Worker"
+    assert emf["Stage"] == "extracting_text"
+    assert emf["StageFailed"] == 1
+
+
+def test_course_purge_aged_tombstone_emf_metrics_schema() -> None:
+    records: list[logging.LogRecord] = []
+
+    class CapturingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("lumina.metrics")
+    handler = CapturingHandler()
+    logger.addHandler(handler)
+    try:
+        emit_emf_metrics(
+            {
+                "CoursesExamined": 2,
+                "CoursesPurged": 1,
+                "CoursesFailed": 1,
+                "AgedTombstones": 1,
+                "OldestTombstoneAgeSeconds": 7200.0,
+            },
+            dimensions={"Service": "course_purge", "Environment": "production"},
+            units={"OldestTombstoneAgeSeconds": "Seconds"},
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    record = records[-1]
+    emf = record.emf
+    assert record.event == "cloudwatch_emf"
+    assert emf["Service"] == "course_purge"
+    assert emf["AgedTombstones"] == 1
+    assert emf["OldestTombstoneAgeSeconds"] == 7200.0

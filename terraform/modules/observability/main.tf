@@ -152,6 +152,19 @@ locals {
       treat_missing_data  = "notBreaching"
       dimensions          = { Service = "worker", Environment = var.environment }
     }
+    aged_tombstones = {
+      namespace           = "Lumina/Worker"
+      metric_name         = "AgedTombstones"
+      statistic           = "Maximum"
+      extended_statistic  = null
+      period              = 300
+      evaluation_periods  = 1
+      datapoints_to_alarm = 1
+      threshold           = 1
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      treat_missing_data  = "notBreaching"
+      dimensions          = { Service = "course_purge", Environment = var.environment }
+    }
   }
 }
 
@@ -230,6 +243,36 @@ resource "aws_cloudwatch_dashboard" "this" {
             ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", var.rds_instance_identifier],
             [".", "DatabaseConnections", ".", "."],
             [".", "DatabaseConnectionsCurrentlySessionPinned", "DBProxyName", var.rds_proxy_name],
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        width  = 12
+        height = 6
+        properties = {
+          title  = "AI provider health"
+          region = data.aws_region.current.name
+          metrics = [
+            ["Lumina/AI", "ProviderCalls", "Service", "api", "Environment", var.environment, { stat = "Sum" }],
+            [".", "ProviderLatencyMs", ".", ".", ".", ".", { stat = "p95", yAxis = "right" }],
+            [".", "ProviderErrors", ".", ".", ".", ".", { stat = "Sum" }],
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Course purge & tombstones"
+          region = data.aws_region.current.name
+          metrics = [
+            ["Lumina/Worker", "CoursesExamined", "Service", "course_purge", "Environment", var.environment, { stat = "Sum" }],
+            [".", "CoursesPurged", ".", ".", ".", ".", { stat = "Sum" }],
+            [".", "CoursesFailed", ".", ".", ".", ".", { stat = "Sum" }],
+            [".", "AgedTombstones", ".", ".", ".", ".", { stat = "Maximum", yAxis = "right" }],
+            [".", "OldestTombstoneAgeSeconds", ".", ".", ".", ".", { stat = "Maximum", yAxis = "right" }],
           ]
         }
       },

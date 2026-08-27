@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import MAX_AI_EVENT_ESTIMATED_COST_USD, settings
 from backend.app.models import AiUsageLog
+from backend.app.observability import emit_emf_metrics
 from schemas.ai_usage import ErrorCategory, GenerationType
 from services.text_generation import (
     GenerationMetadata,
@@ -131,6 +132,42 @@ class AiUsageLogger:
             estimated_cost_usd=estimated_cost_usd,
             pricing_version=pricing_version,
         )
+        try:
+            metrics: dict[str, float | int] = {"ProviderCalls": 1}
+            units: dict[str, str] = {"ProviderCalls": "Count"}
+            if latency_ms is not None and latency_ms >= 0:
+                metrics["ProviderLatencyMs"] = latency_ms
+                units["ProviderLatencyMs"] = "Milliseconds"
+            if not success:
+                metrics["ProviderErrors"] = 1
+                units["ProviderErrors"] = "Count"
+            emit_emf_metrics(
+                metrics,
+                dimensions={
+                    "Service": "api",
+                    "Environment": settings.app_env,
+                    "Provider": provider,
+                },
+                units=units,
+                namespace="Lumina/AI",
+            )
+            if not success and err_cat_str:
+                emit_emf_metrics(
+                    {"ProviderErrors": 1},
+                    dimensions={
+                        "Service": "api",
+                        "Environment": settings.app_env,
+                        "Provider": provider,
+                        "ErrorCategory": err_cat_str,
+                    },
+                    namespace="Lumina/AI",
+                )
+        except Exception:
+            logger.warning(
+                "Failed to emit AI provider health metrics",
+                extra={"event": "ai_metrics_emit_failed"},
+            )
+
         try:
             with db.begin_nested():
                 db.add(log_entry)

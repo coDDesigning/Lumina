@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import { Calendar, Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Calendar } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { describeError } from '@/api/errors';
 import { examRoadmapAPI } from '@/api/examRoadmap';
@@ -11,6 +11,7 @@ import { Checkbox } from '@/ui/Checkbox';
 import { Dialog } from '@/ui/Dialog';
 import { Select } from '@/ui/Input';
 import { ExamRoadmapView } from './ExamRoadmapView';
+import { GeneratingState } from './GenerationStates';
 import styles from './ExamRoadmapModal.module.css';
 
 export interface ExamRoadmapModalProps {
@@ -49,8 +50,18 @@ export function ExamRoadmapModal({
   const [maxTopicsPerDay, setMaxTopicsPerDay] = useState(3);
   const [includeMaterials, setIncludeMaterials] = useState(true);
   const [state, setState] = useState<ModalPhase>({ phase: 'idle' });
+  const [elapsed, setElapsed] = useState(0);
 
   const hasExamDate = Boolean(examDate && examDate.trim());
+
+  useEffect(() => {
+    if (state.phase !== 'generating') {
+      return;
+    }
+    setElapsed(0);
+    const timer = setInterval(() => setElapsed((seconds) => seconds + 1), 1000);
+    return () => clearInterval(timer);
+  }, [state.phase]);
 
   const handleGenerate = useCallback(async () => {
     setState({ phase: 'generating' });
@@ -103,9 +114,10 @@ export function ExamRoadmapModal({
               <Button
                 variant="primary"
                 onClick={handleGenerate}
-                disabled={state.phase === 'generating'}
+                isLoading={state.phase === 'generating'}
+                loadingLabel="Planning..."
               >
-                {state.phase === 'generating' ? 'Planning...' : 'Generate Roadmap'}
+                Generate Roadmap
               </Button>
             ) : null}
           </div>
@@ -114,13 +126,11 @@ export function ExamRoadmapModal({
     >
       <div className={styles.container}>
         {state.phase === 'generating' ? (
-          <div className={styles.loadingArea}>
-            <Loader2 size={32} className="spin" aria-hidden="true" />
-            <h3 className={styles.loadingTitle}>Allocating daily goals...</h3>
-            <p className={styles.loadingText}>
-              Balancing topic importance, quiz mastery, and prerequisites against your remaining days.
-            </p>
-          </div>
+          <GeneratingState
+            heading="Allocating daily goals..."
+            detail="Balancing topic importance, quiz mastery, and prerequisites against your remaining days."
+            elapsed={elapsed}
+          />
         ) : state.phase === 'success' ? (
           <ExamRoadmapView roadmap={state.roadmap} />
         ) : (

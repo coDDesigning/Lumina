@@ -675,6 +675,34 @@
         "title": "BaseResponse[CreditStatusResponse]",
         "type": "object"
       },
+      "BaseResponse_ExamRoadmapResult_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamRoadmapResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamRoadmapResult]",
+        "type": "object"
+      },
       "BaseResponse_FlashcardGenerationResult_": {
         "properties": {
           "data": {
@@ -2712,6 +2740,35 @@
         "title": "CreditTransactionResponse",
         "type": "object"
       },
+      "DeferralReason": {
+        "enum": [
+          "horizon_too_short"
+        ],
+        "title": "DeferralReason",
+        "type": "string"
+      },
+      "DeferredTopic": {
+        "properties": {
+          "priority": {
+            "title": "Priority",
+            "type": "number"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/DeferralReason"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "priority",
+          "reason"
+        ],
+        "title": "DeferredTopic",
+        "type": "object"
+      },
       "DetailLevel": {
         "enum": [
           "basic",
@@ -2863,6 +2920,161 @@
         ],
         "title": "EducationLevel",
         "type": "string"
+      },
+      "ExamRoadmap": {
+        "description": "One persisted roadmap version, self-describing on the way back out.",
+        "properties": {
+          "adapted_from_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adapted From Output Id"
+          },
+          "attempts_considered": {
+            "default": 0,
+            "title": "Attempts Considered",
+            "type": "integer"
+          },
+          "course_id": {
+            "title": "Course Id",
+            "type": "integer"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/RoadmapDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "days_until_exam": {
+            "title": "Days Until Exam",
+            "type": "integer"
+          },
+          "deferred_topics": {
+            "items": {
+              "$ref": "#/components/schemas/DeferredTopic"
+            },
+            "title": "Deferred Topics",
+            "type": "array"
+          },
+          "exam_date": {
+            "format": "date",
+            "title": "Exam Date",
+            "type": "string"
+          },
+          "generated_on": {
+            "format": "date",
+            "title": "Generated On",
+            "type": "string"
+          },
+          "horizon": {
+            "$ref": "#/components/schemas/RoadmapHorizon"
+          },
+          "lead_in_days": {
+            "default": 0,
+            "title": "Lead In Days",
+            "type": "integer"
+          },
+          "materials_available": {
+            "title": "Materials Available",
+            "type": "boolean"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "output_type": {
+            "const": "exam_roadmap",
+            "default": "exam_roadmap",
+            "title": "Output Type",
+            "type": "string"
+          },
+          "ranked_topics": {
+            "items": {
+              "$ref": "#/components/schemas/RankedTopicView"
+            },
+            "title": "Ranked Topics",
+            "type": "array"
+          },
+          "roadmap_version": {
+            "minimum": 1.0,
+            "title": "Roadmap Version",
+            "type": "integer"
+          },
+          "scheduled_days": {
+            "title": "Scheduled Days",
+            "type": "integer"
+          },
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "course_id",
+          "exam_date",
+          "generated_on",
+          "starts_on",
+          "days_until_exam",
+          "scheduled_days",
+          "horizon",
+          "materials_available",
+          "roadmap_version"
+        ],
+        "title": "ExamRoadmap",
+        "type": "object"
+      },
+      "ExamRoadmapRequest": {
+        "description": "Options for one roadmap generation.\n\nThe exam date is deliberately not a request field: the course owns it, and a\nplan a student can act on is the one their course date produces.",
+        "properties": {
+          "include_materials": {
+            "default": true,
+            "description": "Resolve course material and citations for each scheduled topic. Disabling it skips retrieval entirely.",
+            "title": "Include Materials",
+            "type": "boolean"
+          },
+          "max_topics_per_day": {
+            "default": 3,
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Max Topics Per Day",
+            "type": "integer"
+          }
+        },
+        "title": "ExamRoadmapRequest",
+        "type": "object"
+      },
+      "ExamRoadmapResult": {
+        "properties": {
+          "generated_output_id": {
+            "title": "Generated Output Id",
+            "type": "integer"
+          },
+          "roadmap": {
+            "$ref": "#/components/schemas/ExamRoadmap"
+          }
+        },
+        "required": [
+          "roadmap",
+          "generated_output_id"
+        ],
+        "title": "ExamRoadmapResult",
+        "type": "object"
       },
       "ExamTips": {
         "properties": {
@@ -4353,6 +4565,250 @@
         "title": "QuizView",
         "type": "object"
       },
+      "RankedTopicView": {
+        "description": "One entry of the ranked plan the schedule consumed.",
+        "properties": {
+          "importance": {
+            "title": "Importance",
+            "type": "number"
+          },
+          "mastery_percentage": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mastery Percentage"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "number"
+          },
+          "questions_answered": {
+            "default": 0,
+            "title": "Questions Answered",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TopicSource"
+          },
+          "syllabus_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Syllabus Position"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "source",
+          "importance",
+          "priority"
+        ],
+        "title": "RankedTopicView",
+        "type": "object"
+      },
+      "RoadmapDay": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "day_index": {
+            "minimum": 1.0,
+            "title": "Day Index",
+            "type": "integer"
+          },
+          "focus": {
+            "title": "Focus",
+            "type": "string"
+          },
+          "is_exam_day": {
+            "default": false,
+            "title": "Is Exam Day",
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RoadmapDayKind"
+          },
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/RoadmapTopic"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "day_index",
+          "date",
+          "kind",
+          "focus"
+        ],
+        "title": "RoadmapDay",
+        "type": "object"
+      },
+      "RoadmapDayKind": {
+        "description": "What one scheduled day is for.",
+        "enum": [
+          "study",
+          "review",
+          "final_review",
+          "last_minute"
+        ],
+        "title": "RoadmapDayKind",
+        "type": "string"
+      },
+      "RoadmapHorizon": {
+        "description": "How much time the plan had to work with.\n\n``ZERO_DAY`` and ``ONE_DAY`` are the triage horizons: they produce a valid\nlast-minute plan rather than an error. ``LONG`` means the plan was capped and\nstarts after today.",
+        "enum": [
+          "zero_day",
+          "one_day",
+          "standard",
+          "long"
+        ],
+        "title": "RoadmapHorizon",
+        "type": "string"
+      },
+      "RoadmapMaterial": {
+        "description": "One document a scheduled topic should be studied from.\n\nDenormalized like a citation, and for the same reason: the reference must\nstill resolve after the document it names is deleted, so it is never a link.",
+        "properties": {
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "document_label": {
+            "title": "Document Label",
+            "type": "string"
+          },
+          "page_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "page_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Start"
+          }
+        },
+        "required": [
+          "document_id",
+          "document_label"
+        ],
+        "title": "RoadmapMaterial",
+        "type": "object"
+      },
+      "RoadmapTopic": {
+        "description": "One topic on one day, with the goal and the sources it is studied from.",
+        "properties": {
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          },
+          "importance": {
+            "title": "Importance",
+            "type": "number"
+          },
+          "mastery_percentage": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mastery Percentage"
+          },
+          "material_status": {
+            "$ref": "#/components/schemas/TopicMaterialStatus"
+          },
+          "materials": {
+            "items": {
+              "$ref": "#/components/schemas/RoadmapMaterial"
+            },
+            "title": "Materials",
+            "type": "array"
+          },
+          "pass_number": {
+            "minimum": 1.0,
+            "title": "Pass Number",
+            "type": "integer"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "number"
+          },
+          "questions_answered": {
+            "default": 0,
+            "title": "Questions Answered",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TopicSource"
+          },
+          "syllabus_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Syllabus Position"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "goal",
+          "pass_number",
+          "source",
+          "importance",
+          "priority",
+          "material_status"
+        ],
+        "title": "RoadmapTopic",
+        "type": "object"
+      },
       "Role": {
         "description": "Defines available user roles in the system.",
         "enum": [
@@ -4610,7 +5066,8 @@
       "SummaryMode": {
         "enum": [
           "general",
-          "exam_focused"
+          "exam_focused",
+          "last_minute"
         ],
         "title": "SummaryMode",
         "type": "string"
@@ -4664,6 +5121,26 @@
         ],
         "title": "TopicMastery",
         "type": "object"
+      },
+      "TopicMaterialStatus": {
+        "description": "Why a scheduled topic does or does not name course material.\n\nA topic without material is scheduled anyway and says why, because a plan\nthat hides a gap is worse than one that names it.",
+        "enum": [
+          "resolved",
+          "no_match",
+          "not_indexed",
+          "no_material",
+          "not_requested"
+        ],
+        "title": "TopicMaterialStatus",
+        "type": "string"
+      },
+      "TopicSource": {
+        "enum": [
+          "syllabus",
+          "quiz"
+        ],
+        "title": "TopicSource",
+        "type": "string"
       },
       "TrueFalseAnswer": {
         "properties": {
@@ -6317,6 +6794,82 @@
         "summary": "Retry Document",
         "tags": [
           "Documents"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-roadmap": {
+      "post": {
+        "description": "Plan every day from today to the exam date, and store the plan.\n\nNo text-generation provider is called and no credit is charged: the schedule\nis derived from the course's own topics, exam date, and quiz history.\nRegenerating writes a new version and leaves earlier ones untouched.",
+        "operationId": "generate_exam_roadmap_api_courses__course_id__exam_roadmap_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ExamRoadmapRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamRoadmapResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "409": {
+            "description": "The course has no exam date, its exam date has passed, or it has no topics to plan"
+          },
+          "422": {
+            "description": "Invalid roadmap request"
+          },
+          "429": {
+            "description": "Per-user generation rate limited"
+          },
+          "503": {
+            "description": "Course search unreachable"
+          },
+          "504": {
+            "description": "Course search timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Generate Exam Roadmap",
+        "tags": [
+          "Exam Roadmap"
         ]
       }
     },

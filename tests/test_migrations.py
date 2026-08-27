@@ -12,6 +12,8 @@ from alembic.script import ScriptDirectory
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
+ALEMBIC_DIRECTORY = PROJECT_ROOT / "alembic"
+ALEMBIC_VERSIONS_DIRECTORY = ALEMBIC_DIRECTORY / "versions"
 BASE_REVISION = "97d9fd86a3ba"
 PROCESSING_REVISION = "b6d8f2a4c901"
 STAGES_REVISION = "d2a7f0c91e35"
@@ -45,6 +47,26 @@ GENERATED_CITATIONS_REVISION = "d1f6b3a8c724"
 EXAM_DATE_REVISION = "e2b7c94f1a03"
 COURSE_TOPICS_REVISION = "f3c8d05a2b16"
 HEAD_REVISION = COURSE_TOPICS_REVISION
+
+
+def test_alembic_uses_only_canonical_script_directory() -> None:
+    config = Config(str(ALEMBIC_CONFIG))
+    scripts = ScriptDirectory.from_config(config)
+    script_directories = {
+        path.parent.resolve()
+        for path in PROJECT_ROOT.rglob("env.py")
+        if (path.parent / "script.py.mako").is_file()
+        and (path.parent / "versions").is_dir()
+    }
+
+    assert Path(scripts.dir).resolve() == ALEMBIC_DIRECTORY.resolve()
+    assert script_directories == {ALEMBIC_DIRECTORY.resolve()}
+    assert all(
+        Path(revision.path)
+        .resolve()
+        .is_relative_to(ALEMBIC_VERSIONS_DIRECTORY.resolve())
+        for revision in scripts.walk_revisions()
+    )
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:

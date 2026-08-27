@@ -165,6 +165,19 @@ locals {
       treat_missing_data  = "notBreaching"
       dimensions          = { Service = "course_purge", Environment = var.environment }
     }
+    ai_provider_errors = {
+      namespace           = "Lumina/AI"
+      metric_name         = "ProviderErrors"
+      statistic           = "Sum"
+      extended_statistic  = null
+      period              = 300
+      evaluation_periods  = 1
+      datapoints_to_alarm = 1
+      threshold           = 5
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      treat_missing_data  = "notBreaching"
+      dimensions          = { Service = "api", Environment = var.environment }
+    }
   }
 }
 
@@ -254,9 +267,9 @@ resource "aws_cloudwatch_dashboard" "this" {
           title  = "AI provider health"
           region = data.aws_region.current.name
           metrics = [
-            ["Lumina/AI", "ProviderCalls", "Service", "api", "Environment", var.environment, { stat = "Sum" }],
-            [".", "ProviderLatencyMs", ".", ".", ".", ".", { stat = "p95", yAxis = "right" }],
-            [".", "ProviderErrors", ".", ".", ".", ".", { stat = "Sum" }],
+            ["Lumina/AI", "ProviderCalls", "Service", "api", "Environment", var.environment, "Provider", "*", { stat = "Sum" }],
+            [".", "ProviderLatencyMs", ".", ".", ".", ".", ".", ".", { stat = "p95", yAxis = "right" }],
+            [".", "ProviderErrors", ".", ".", ".", ".", ".", ".", { stat = "Sum" }],
           ]
         }
       },

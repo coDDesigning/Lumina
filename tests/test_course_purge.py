@@ -446,3 +446,55 @@ def test_purge_worker_cli_with_interval(monkeypatch) -> None:
 
     assert called_with["interval_seconds"] == 300.0
     assert called_with["once"] is True
+
+
+def test_aged_tombstone_triggers_alert_and_metrics(
+    session_factory, storage, store
+) -> None:
+    import logging
+    from datetime import datetime, timedelta, timezone
+
+    records: list[logging.LogRecord] = []
+
+    class CapturingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("workers.course_purge")
+    handler = CapturingHandler()
+    logger.addHandler(handler)
+    try:
+        with session_factory() as session:
+            course_id = _seed_course(
+                session,
+                storage,
+                store,
+                email="aged-tombstone@example.com",
+                tombstoned=True,
+            )
+            course = session.get(Course, course_id)
+            course.updated_at = datetime.now(timezone.utc) - timedelta(hours=3)
+            session.commit()
+
+        report = run_purge(
+            session_factory=session_factory,
+            storage=storage,
+            vector_store=store,
+            dry_run=True,
+            aged_threshold_seconds=3600.0,
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    assert report.courses_examined == 1
+    assert report.aged_tombstones == 1
+    assert report.oldest_tombstone_age_seconds >= 10000.0
+
+    alert_logs = [
+        r for r in records if getattr(r, "event", None) == "aged_tombstone_detected"
+    ]
+    assert len(alert_logs) == 1
+    alert = alert_logs[0]
+    assert alert.course_id == course_id
+    assert alert.runbook == "docs/runbooks/stranded_tombstone.md"
+    assert "aged-tombstone@example.com" not in alert.getMessage()

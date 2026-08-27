@@ -299,3 +299,64 @@ def test_the_observability_field_allowlist_did_not_grow() -> None:
         "job_id",
         "worker_id",
     )
+
+
+def test_ai_usage_logger_emits_emf_metrics_without_leaking_content(
+    session_factory: sessionmaker[Session],
+) -> None:
+    import logging
+    from services.ai_usage_logger import AiUsageLogger
+
+    records: list[logging.LogRecord] = []
+
+    class CapturingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("lumina.metrics")
+    handler = CapturingHandler()
+    logger.addHandler(handler)
+    try:
+        with session_factory() as session:
+            role = session.scalar(select(Role).where(Role.name == "user"))
+            if not role:
+                role = Role(name="user")
+                session.add(role)
+                session.flush()
+
+            user = User(
+                name="Privacy Test User",
+                email="privacy-emf@example.com",
+                password_hash="hash",
+                role=role,
+            )
+            session.add(user)
+            session.flush()
+
+            AiUsageLogger.log_usage(
+                session,
+                user_id=user.id,
+                generation_type="quiz",
+                provider="gemini",
+                model="gemini-2.5-flash",
+                latency_ms=180,
+                success=False,
+                error_category="rate_limit",
+            )
+    finally:
+        logger.removeHandler(handler)
+
+    emf_records = [r for r in records if getattr(r, "event", None) == "cloudwatch_emf"]
+    assert len(emf_records) >= 1
+    call_record = emf_records[0]
+    emf = call_record.emf
+    assert emf["_aws"]["CloudWatchMetrics"][0]["Namespace"] == "Lumina/AI"
+    assert emf["Provider"] == "gemini"
+    assert emf["ProviderCalls"] == 1
+    assert emf["ProviderLatencyMs"] == 180
+    assert emf["ProviderErrors"] == 1
+
+    dims = emf["_aws"]["CloudWatchMetrics"][0]["Dimensions"][0]
+    assert "Model" not in dims
+    assert "user_id" not in dims
+    assert "course_id" not in dims

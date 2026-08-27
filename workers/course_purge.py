@@ -23,6 +23,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Protocol
 
 from sqlalchemy import select
@@ -76,11 +77,13 @@ class PurgeReport:
     courses_examined: int = 0
     courses_purged: int = 0
     courses_failed: int = 0
+    aged_tombstones: int = 0
+    oldest_tombstone_age_seconds: float = 0.0
 
     def summary(self) -> str:
         return (
             f"examined={self.courses_examined} purged={self.courses_purged} "
-            f"failed={self.courses_failed}"
+            f"failed={self.courses_failed} aged_tombstones={self.aged_tombstones}"
         )
 
 
@@ -110,16 +113,20 @@ def run_purge(
     course_id: int | None = None,
     dry_run: bool = False,
     stop_event: StopEvent | None = None,
+    aged_threshold_seconds: float | None = None,
 ) -> PurgeReport:
     if storage is None:
         storage = get_storage()
     if vector_store is None:
         vector_store = get_vector_store()
+    if aged_threshold_seconds is None:
+        aged_threshold_seconds = settings.course_purge_interval_seconds
 
     report = PurgeReport()
     with session_factory() as session:
         course_ids = _tombstoned_course_ids(session, course_id=course_id)
 
+    utc_now = datetime.now(timezone.utc)
     for identifier in course_ids:
         if stop_event is not None and stop_event.is_set():
             break
@@ -128,6 +135,34 @@ def run_purge(
             if course is None or not course.is_deleted:
                 continue
             report.courses_examined += 1
+
+            tombstone_time = course.updated_at or course.created_at
+            if tombstone_time is not None:
+                if tombstone_time.tzinfo is None:
+                    tombstone_time = tombstone_time.replace(tzinfo=timezone.utc)
+                age_seconds = max(0.0, (utc_now - tombstone_time).total_seconds())
+            else:
+                age_seconds = 0.0
+
+            if age_seconds > report.oldest_tombstone_age_seconds:
+                report.oldest_tombstone_age_seconds = age_seconds
+
+            if aged_threshold_seconds > 0 and age_seconds >= aged_threshold_seconds:
+                report.aged_tombstones += 1
+                logger.warning(
+                    "Aged course tombstone detected for course %s (owner %s, age: %.1fs)",
+                    identifier,
+                    course.owner_id,
+                    age_seconds,
+                    extra={
+                        "event": "aged_tombstone_detected",
+                        "course_id": identifier,
+                        "owner_id": course.owner_id,
+                        "duration_ms": round(age_seconds * 1000, 1),
+                        "runbook": "docs/runbooks/stranded_tombstone.md",
+                    },
+                )
+
             if dry_run:
                 continue
             try:
@@ -150,8 +185,11 @@ def run_purge(
             "CoursesExamined": report.courses_examined,
             "CoursesPurged": report.courses_purged,
             "CoursesFailed": report.courses_failed,
+            "AgedTombstones": report.aged_tombstones,
+            "OldestTombstoneAgeSeconds": round(report.oldest_tombstone_age_seconds, 3),
         },
         dimensions={"Service": "course_purge", "Environment": settings.app_env},
+        units={"OldestTombstoneAgeSeconds": "Seconds"},
     )
     logger.info("Course purge finished: %s", report.summary())
     return report

@@ -85,7 +85,10 @@ export default function GuidePage({ workspace }: GuidePageProps) {
     if (!output) {
       return;
     }
-    if (output.output_type === 'study_guide' && isRenderableStudyGuide(output.content)) {
+    if (
+      (output.output_type === 'study_guide' || output.output_type === 'last_minute_review') &&
+      isRenderableStudyGuide(output.content)
+    ) {
       const guide =
         typeof output.content === 'string'
           ? (tryParseJson(output.content) as StudyGuideResponse)

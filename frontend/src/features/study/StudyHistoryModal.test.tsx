@@ -312,4 +312,70 @@ describe('StudyHistoryModal', () => {
 
     expect(await screen.findByText('Singular front')).toBeInTheDocument();
   });
+
+  it('renders a stored exam_roadmap using ExamRoadmapView instead of raw JSON', async () => {
+    const roadmapContent = {
+      version: 1,
+      output_type: 'exam_roadmap',
+      course_id: 7,
+      exam_date: '2026-09-25',
+      generated_on: '2026-08-27',
+      starts_on: '2026-08-27',
+      days_until_exam: 29,
+      scheduled_days: 30,
+      lead_in_days: 0,
+      horizon: 'standard',
+      materials_available: true,
+      attempts_considered: 1,
+      roadmap_version: 1,
+      adapted_from_output_id: null,
+      notes: [],
+      ranked_topics: [],
+      days: [
+        {
+          day_index: 1,
+          date: '2026-08-27',
+          kind: 'study',
+          is_exam_day: false,
+          focus: 'First pass: Memory Systems',
+          topics: [
+            {
+              topic: 'Memory Systems',
+              goal: 'Understand working memory',
+              pass_number: 1,
+              source: 'syllabus',
+              syllabus_position: 0,
+              importance: 1.0,
+              mastery_percentage: null,
+              questions_answered: 0,
+              priority: 0.8,
+              material_status: 'resolved',
+              materials: [],
+              citations: [],
+            },
+          ],
+        },
+      ],
+      deferred_topics: [],
+    };
+
+    mockList.mockResolvedValue([
+      { ...SUMMARY, id: 30, output_type: 'exam_roadmap', generation_settings: null },
+    ]);
+    mockGet.mockResolvedValue({
+      ...SUMMARY,
+      id: 30,
+      output_type: 'exam_roadmap',
+      content: roadmapContent,
+    } as unknown as GeneratedOutputDetail);
+
+    renderModal();
+    await userEvent.click(await screen.findByRole('button', { name: /Exam roadmap/ }));
+
+    expect(await screen.findByText('Daily Schedule')).toBeInTheDocument();
+    expect(screen.getByText('First pass: Memory Systems')).toBeInTheDocument();
+    expect(screen.getByText('Understand working memory')).toBeInTheDocument();
+    expect(screen.queryByText(/This result was saved in a shape/)).not.toBeInTheDocument();
+  });
 });
+

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
   BarChart3,
+  Calendar,
   FileText,
   Layers3,
   MessageSquarePlus,
@@ -35,6 +36,7 @@ import CreditBalance from '@/components/credits/CreditBalance';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { DocumentRow } from '@/components/documents/DocumentRow';
 import { ConversationHistoryModal } from './ConversationHistoryModal';
+import { ExamRoadmapModal } from '@/features/study/ExamRoadmapModal';
 import { FlashcardModal } from '@/features/study/FlashcardModal';
 import { provenanceParts } from '@/features/study/provenanceParts';
 import { QuizModal } from '@/features/study/quiz/QuizModal';
@@ -232,6 +234,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   );
 
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
+  const [isRoadmapOpen, setIsRoadmapOpen] = useState(false);
   const [isQuizOpen, setIsQuizOpen] = useState(false);
   const [isFlashcardOpen, setIsFlashcardOpen] = useState(false);
   const [isMadeForYouOpen, setIsMadeForYouOpen] = useState(false);
@@ -745,6 +748,15 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                   alignStart
                   fullWidth
                   size="sm"
+                  icon={<Calendar aria-hidden="true" />}
+                  onClick={() => setIsRoadmapOpen(true)}
+                >
+                  Exam roadmap
+                </Button>
+                <Button
+                  alignStart
+                  fullWidth
+                  size="sm"
                   icon={<Target aria-hidden="true" />}
                   onClick={() => setIsQuizOpen(true)}
                 >
@@ -781,7 +793,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                 setOpenDeckId(artifact.outputId);
                 return;
               }
-              if (artifact.kind === 'quiz') {
+              if (artifact.kind === 'quiz' || artifact.outputType === 'exam_roadmap') {
                 setMadeForYouInitialId(artifact.outputId);
                 setIsMadeForYouOpen(true);
                 return;
@@ -834,6 +846,22 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           onClose={() => {
             setIsMadeForYouOpen(false);
             setMadeForYouInitialId(null);
+          }}
+        />
+      ) : null}
+
+      {isRoadmapOpen ? (
+        <ExamRoadmapModal
+          courseId={courseId}
+          courseName={workspace.name}
+          examDate={workspace.examDate}
+          hasTopics={workspace.topics.length > 0}
+          onClose={() => {
+            setIsRoadmapOpen(false);
+            reloadArtifacts();
+          }}
+          onGenerated={() => {
+            reloadArtifacts();
           }}
         />
       ) : null}

@@ -36,8 +36,15 @@ STORAGE_BACKENDS = (STORAGE_BACKEND_LOCAL, STORAGE_BACKEND_S3)
 
 AI_PROVIDER_GEMINI = "gemini"
 AI_PROVIDER_OLLAMA = "ollama"
+AI_PROVIDER_OPENAI = "openai"
+AI_PROVIDER_CLAUDE = "claude"
 RECOGNIZED_AI_PROVIDERS = ("ollama", "openai", "gemini", "claude")
-IMPLEMENTED_AI_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
+IMPLEMENTED_AI_PROVIDERS = (
+    AI_PROVIDER_GEMINI,
+    AI_PROVIDER_OLLAMA,
+    AI_PROVIDER_OPENAI,
+    AI_PROVIDER_CLAUDE,
+)
 DEFAULT_AI_PROVIDER = AI_PROVIDER_OLLAMA
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1"
@@ -47,6 +54,8 @@ DEFAULT_OLLAMA_NUM_CTX = 8192
 DEFAULT_OLLAMA_NUM_PREDICT = 4096
 DEFAULT_OLLAMA_REPEAT_PENALTY = 1.1
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-5"
 OLLAMA_MODEL_PATTERN = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
 
 IMPLEMENTED_EMBEDDING_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
@@ -60,6 +69,8 @@ DEFAULT_COURSE_PURGE_INTERVAL_SECONDS = 3600.0
 DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS = 3600.0
 DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE = 64
 DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS = False
+DEFAULT_AI_USAGE_RETENTION_DAYS = 90
+DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE = 1000
 
 IMAGE_PROVIDER_NONE = "none"
 IMAGE_PROVIDER_GEMINI = "gemini"
@@ -114,6 +125,7 @@ DEFAULT_AI_GENERATION_MAX_ATTEMPTS = 3
 DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS = 10.0
 DEFAULT_AI_GENERATION_MAX_CONCURRENCY = 10
+DEFAULT_AI_GENERATION_OVERALL_TIMEOUT_SECONDS = 110
 MAX_AI_MODEL_COST_RATE_USD_PER_MILLION = 1_000_000.0
 MAX_AI_EVENT_ESTIMATED_COST_USD = 1_000_000.0
 DEFAULT_DATABASE_POOL_SIZE = 5
@@ -179,6 +191,8 @@ class Settings:
     ai_pricing_version: str | None
     ai_model_cost_rates: dict[str, dict[str, float]]
     gemini_api_key: str | None
+    openai_api_key: str | None
+    anthropic_api_key: str | None
     ollama_base_url: str
     ollama_model: str
     ollama_temperature: float
@@ -192,6 +206,7 @@ class Settings:
     ai_generation_backoff_base_seconds: float
     ai_generation_backoff_max_seconds: float
     ai_generation_max_concurrency: int
+    ai_generation_overall_timeout_seconds: int
 
     # Embedding provider and durable vector storage configuration
     embedding_provider: str
@@ -270,6 +285,8 @@ class Settings:
     embedding_backfill_interval_seconds: float
     embedding_backfill_batch_size: int
     embedding_backfill_prune_orphans: bool
+    ai_usage_retention_days: int
+    ai_usage_cleanup_batch_size: int
 
     @property
     def is_hosted(self) -> bool:
@@ -435,6 +452,43 @@ def load_settings() -> Settings:
             f"Implemented providers: {', '.join(IMPLEMENTED_AI_PROVIDERS)}."
         )
     gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip() or None
+    openai_api_key = os.getenv("OPENAI_API_KEY", "").strip() or None
+    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip() or None
+
+    ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
+    if ai_fallback_providers_raw:
+        for fallback_token in (
+            item.strip().lower()
+            for item in ai_fallback_providers_raw.split(",")
+            if item.strip()
+        ):
+            if fallback_token not in RECOGNIZED_AI_PROVIDERS:
+                raise ValueError(
+                    "AI_FALLBACK_PROVIDERS tokens must be one of: "
+                    f"{', '.join(RECOGNIZED_AI_PROVIDERS)}."
+                )
+            if fallback_token not in IMPLEMENTED_AI_PROVIDERS:
+                raise ValueError(
+                    f"AI_FALLBACK_PROVIDERS token '{fallback_token}' is recognized but "
+                    f"not implemented yet. Implemented providers: "
+                    f"{', '.join(IMPLEMENTED_AI_PROVIDERS)}."
+                )
+
+    ai_fallback_providers = ai_fallback_providers_raw
+
+    def _require_key(provider: str, key: str | None, env_name: str) -> None:
+        if ai_provider == provider or (
+            ai_fallback_providers_raw and provider in ai_fallback_providers_raw
+        ):
+            if not key:
+                raise ValueError(
+                    f"{env_name} is required when {provider} is used as primary or fallback provider."
+                )
+
+    _require_key(AI_PROVIDER_GEMINI, gemini_api_key, "GEMINI_API_KEY")
+    _require_key(AI_PROVIDER_OPENAI, openai_api_key, "OPENAI_API_KEY")
+    _require_key(AI_PROVIDER_CLAUDE, anthropic_api_key, "ANTHROPIC_API_KEY")
+
     ollama_base_url = _http_url_setting("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
     ollama_model = os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip()
     if not OLLAMA_MODEL_PATTERN.fullmatch(ollama_model):
@@ -479,25 +533,6 @@ def load_settings() -> Settings:
         )
     ai_model_catalog = _ai_model_catalog_setting(ollama_model, ollama_num_ctx)
     ai_pricing_version, ai_model_cost_rates = _ai_model_cost_rates_setting()
-    ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
-    if ai_fallback_providers_raw:
-        for fallback_token in (
-            item.strip().lower()
-            for item in ai_fallback_providers_raw.split(",")
-            if item.strip()
-        ):
-            if fallback_token not in RECOGNIZED_AI_PROVIDERS:
-                raise ValueError(
-                    "AI_FALLBACK_PROVIDERS tokens must be one of: "
-                    f"{', '.join(RECOGNIZED_AI_PROVIDERS)}."
-                )
-            if fallback_token not in IMPLEMENTED_AI_PROVIDERS:
-                raise ValueError(
-                    f"AI_FALLBACK_PROVIDERS token '{fallback_token}' is recognized but "
-                    f"not implemented yet. Implemented providers: "
-                    f"{', '.join(IMPLEMENTED_AI_PROVIDERS)}."
-                )
-    ai_fallback_providers = ai_fallback_providers_raw
 
     max_upload_size_bytes = _positive_integer_setting(
         "MAX_UPLOAD_SIZE_BYTES",
@@ -682,6 +717,12 @@ def load_settings() -> Settings:
         DEFAULT_AI_GENERATION_MAX_CONCURRENCY,
         minimum=1,
         maximum=100,
+    )
+    ai_generation_overall_timeout_seconds = _bounded_positive_integer_setting(
+        "AI_GENERATION_OVERALL_TIMEOUT_SECONDS",
+        DEFAULT_AI_GENERATION_OVERALL_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=300,
     )
 
     embedding_provider = (
@@ -885,6 +926,14 @@ def load_settings() -> Settings:
         "EMBEDDING_BACKFILL_PRUNE_ORPHANS",
         default=DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS,
     )
+    ai_usage_retention_days = _positive_integer_setting(
+        "AI_USAGE_RETENTION_DAYS",
+        DEFAULT_AI_USAGE_RETENTION_DAYS,
+    )
+    ai_usage_cleanup_batch_size = _positive_integer_setting(
+        "AI_USAGE_CLEANUP_BATCH_SIZE",
+        DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE,
+    )
 
     return Settings(
         app_env=app_env,
@@ -913,6 +962,8 @@ def load_settings() -> Settings:
         ai_pricing_version=ai_pricing_version,
         ai_model_cost_rates=ai_model_cost_rates,
         gemini_api_key=gemini_api_key,
+        openai_api_key=openai_api_key,
+        anthropic_api_key=anthropic_api_key,
         ollama_base_url=ollama_base_url,
         ollama_model=ollama_model,
         ollama_temperature=ollama_temperature,
@@ -926,6 +977,7 @@ def load_settings() -> Settings:
         ai_generation_backoff_base_seconds=ai_generation_backoff_base_seconds,
         ai_generation_backoff_max_seconds=ai_generation_backoff_max_seconds,
         ai_generation_max_concurrency=ai_generation_max_concurrency,
+        ai_generation_overall_timeout_seconds=ai_generation_overall_timeout_seconds,
         embedding_provider=embedding_provider,
         ollama_embedding_model=ollama_embedding_model,
         gemini_embedding_model=gemini_embedding_model,
@@ -1008,6 +1060,8 @@ def load_settings() -> Settings:
         embedding_backfill_interval_seconds=embedding_backfill_interval_seconds,
         embedding_backfill_batch_size=embedding_backfill_batch_size,
         embedding_backfill_prune_orphans=embedding_backfill_prune_orphans,
+        ai_usage_retention_days=ai_usage_retention_days,
+        ai_usage_cleanup_batch_size=ai_usage_cleanup_batch_size,
     )
 
 
@@ -1175,6 +1229,22 @@ def _ai_model_catalog_setting(
             AI_PROVIDER_GEMINI: [
                 {
                     "model": DEFAULT_GEMINI_MODEL,
+                    "json_mode": True,
+                    "context_window": 1_048_576,
+                    "vision": True,
+                }
+            ],
+            AI_PROVIDER_OPENAI: [
+                {
+                    "model": DEFAULT_OPENAI_MODEL,
+                    "json_mode": True,
+                    "context_window": 1_048_576,
+                    "vision": True,
+                }
+            ],
+            AI_PROVIDER_CLAUDE: [
+                {
+                    "model": DEFAULT_CLAUDE_MODEL,
                     "json_mode": True,
                     "context_window": 1_048_576,
                     "vision": True,

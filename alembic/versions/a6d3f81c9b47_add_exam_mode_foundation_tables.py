@@ -1,7 +1,7 @@
 """exam mode foundation: topic candidates and past exam questions
 
 Revision ID: a6d3f81c9b47
-Revises: f3c8d05a2b16
+Revises: 4399b6d253bf
 Create Date: 2026-08-27 15:20:00.000000
 
 Exam Mode needs two things a versioned JSON document cannot give it: a
@@ -71,7 +71,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "a6d3f81c9b47"
-down_revision: str | Sequence[str] | None = "f3c8d05a2b16"
+down_revision: str | Sequence[str] | None = "4399b6d253bf"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

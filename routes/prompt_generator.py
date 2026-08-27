@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
@@ -10,12 +10,8 @@ from schemas.prompt_generator import (
 )
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
-from services.prompt_generator import (
-    PromptGenerationError,
-    PromptGeneratorService,
-)
+from services.prompt_generator import PromptGeneratorService
 from services.text_generation import (
-    TextGenerationError,
     get_text_generation_provider,
     resolve_effective_model,
 )
@@ -69,7 +65,9 @@ def generate_prompt(
             telemetry_model=telemetry_model,
         )
 
-    except (TextGenerationError, PromptGenerationError, Exception) as exc:
+    except HTTPException:
+        raise
+    except Exception as exc:
         raise ai_generation_http_exception(exc, feature="prompt_generator") from exc
 
     return BaseResponse(

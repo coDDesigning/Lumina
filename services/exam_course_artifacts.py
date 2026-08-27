@@ -336,6 +336,7 @@ class ExamMockExamService:
                 generation_context=context,
                 citations=generation.material.citation_map,
                 commit=False,
+                record_output=False,
                 purpose=QUIZ_PURPOSE_EXAM_MOCK_EXAM,
                 exam_plan_output_id=plan.plan_output_id,
             )

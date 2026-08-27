@@ -3,6 +3,7 @@
 import os
 import stat
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import BinaryIO
 from uuid import UUID
@@ -139,6 +140,19 @@ class LocalStorage(Storage):
             raise
         except OSError as exc:
             raise StorageError("Unable to open stored document.") from exc
+
+    def iter_chunks(self, key: str, chunk_size: int) -> Iterator[bytes]:
+        """Stream a stored document without loading it all into memory."""
+        if type(chunk_size) is not int or chunk_size <= 0:
+            raise ValueError("chunk_size must be a positive integer")
+        try:
+            with self.open(key) as stored_file:
+                while chunk := stored_file.read(chunk_size):
+                    yield chunk
+        except StorageError:
+            raise
+        except OSError as exc:
+            raise StorageError("Unable to stream stored document.") from exc
 
     def read(self, key: str) -> bytes:
         """Read and return all bytes for a stored document."""

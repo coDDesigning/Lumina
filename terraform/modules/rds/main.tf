@@ -53,6 +53,14 @@ resource "aws_db_parameter_group" "this" {
     value = "131072"
   }
   parameter {
+    name  = "autovacuum"
+    value = "1"
+  }
+  parameter {
+    name  = "track_counts"
+    value = "1"
+  }
+  parameter {
     name  = "autovacuum_naptime"
     value = "30"
   }

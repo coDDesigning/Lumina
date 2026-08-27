@@ -364,6 +364,9 @@ class ExamQuizService:
                 generation_context=context_json,
                 citations=generation.material.citation_map,
                 commit=False,
+                # Exam Mode writes its own history row under its own output
+                # type, so the generic "quiz" one would be a duplicate.
+                record_output=False,
                 # The single load-bearing line of this module. Without it the
                 # attempt's mastery is filed under the model's own wording and
                 # the next exam plan counts it as unmapped.

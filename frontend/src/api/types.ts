@@ -264,7 +264,7 @@ export type SummaryLength = 'short' | 'medium' | 'long';
 
 export type DetailLevel = 'basic' | 'standard' | 'detailed';
 
-export type SummaryMode = 'general' | 'exam_focused';
+export type SummaryMode = 'general' | 'exam_focused' | 'last_minute';
 
 export interface AiModelInfo {
   id: string;
@@ -743,4 +743,119 @@ export interface CourseSettingsUpdate {
   question_count?: number;
   summary_length?: string;
   detail_level?: string;
+}
+
+export type RoadmapDayKind = 'study' | 'review' | 'final_review' | 'last_minute';
+export type RoadmapHorizon = 'zero_day' | 'one_day' | 'standard' | 'long';
+export type TopicSource = 'syllabus' | 'quiz';
+export type TopicMaterialStatus =
+  | 'resolved'
+  | 'no_match'
+  | 'not_indexed'
+  | 'no_material'
+  | 'not_requested';
+export type DeferralReason = 'horizon_too_short';
+
+export interface RoadmapMaterial {
+  document_id: string;
+  document_label: string;
+  page_start?: number | null;
+  page_end?: number | null;
+}
+
+export interface RankedTopicView {
+  topic: string;
+  source: TopicSource;
+  syllabus_position?: number | null;
+  importance: number;
+  mastery_percentage?: number | null;
+  questions_answered: number;
+  priority: number;
+}
+
+export interface RoadmapTopic {
+  topic: string;
+  goal: string;
+  pass_number: number;
+  source: TopicSource;
+  syllabus_position?: number | null;
+  importance: number;
+  mastery_percentage?: number | null;
+  questions_answered: number;
+  priority: number;
+  material_status: TopicMaterialStatus;
+  materials: RoadmapMaterial[];
+  citations: Citation[];
+}
+
+export interface RoadmapDay {
+  day_index: number;
+  date: string;
+  kind: RoadmapDayKind;
+  is_exam_day: boolean;
+  focus: string;
+  topics: RoadmapTopic[];
+}
+
+export interface DeferredTopic {
+  topic: string;
+  priority: number;
+  reason: DeferralReason;
+}
+
+export interface ExamRoadmap {
+  version: 1;
+  output_type: 'exam_roadmap';
+  course_id: number;
+  exam_date: string;
+  generated_on: string;
+  starts_on: string;
+  days_until_exam: number;
+  scheduled_days: number;
+  lead_in_days: number;
+  horizon: RoadmapHorizon;
+  materials_available: boolean;
+  attempts_considered: number;
+  roadmap_version: number;
+  adapted_from_output_id?: number | null;
+  ranked_topics: RankedTopicView[];
+  days: RoadmapDay[];
+  deferred_topics: DeferredTopic[];
+  notes: string[];
+}
+
+export interface ExamRoadmapRequest {
+  max_topics_per_day?: number;
+  include_materials?: boolean;
+}
+
+export interface ExamRoadmapResult {
+  roadmap: ExamRoadmap;
+  generated_output_id: number;
+}
+
+export type ConceptStatus =
+  | 'unsupported'
+  | 'absent'
+  | 'partially_correct'
+  | 'contradicted';
+
+export interface Misconception {
+  concept: string;
+  status: LooseUnion<ConceptStatus>;
+  detail: string;
+}
+
+export interface ReverseQuizRequest {
+  topic: string;
+  explanation: string;
+}
+
+export interface ReverseQuizResponse {
+  id: number;
+  course_id: number;
+  topic: string;
+  explanation: string;
+  feedback: string;
+  misconceptions: Misconception[];
 }

@@ -1,0 +1,310 @@
+name: Hosted restore drill
+
+on:
+  schedule:
+    - cron: "0 6 1 1,4,7,10 *"
+  workflow_dispatch:
+    inputs:
+      snapshot_id:
+        description: "Existing manual RDS snapshot to drill instead of creating one."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  restore-drill:
+    name: Verify hosted backup restore
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    environment: production
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_RECOVERY_ROLE_ARN: ${{ vars.AWS_RECOVERY_ROLE_ARN }}
+      RDS_INSTANCE_IDENTIFIER: ${{ vars.RDS_INSTANCE_IDENTIFIER }}
+      RDS_SUBNET_GROUP: ${{ vars.RDS_SUBNET_GROUP }}
+      RDS_SECURITY_GROUP: ${{ vars.RDS_SECURITY_GROUP }}
+      RDS_PARAMETER_GROUP: ${{ vars.RDS_PARAMETER_GROUP }}
+      RDS_OPTION_GROUP: ${{ vars.RDS_OPTION_GROUP }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      API_SERVICE: ${{ vars.API_SERVICE }}
+      HOSTED_RESTORE_TASK_DEFINITION: ${{ vars.HOSTED_RESTORE_TASK_DEFINITION }}
+      PRIVATE_SUBNETS: ${{ vars.PRIVATE_SUBNETS }}
+      RESTORE_VERIFIER_SECURITY_GROUP: ${{ vars.RESTORE_VERIFIER_SECURITY_GROUP }}
+    steps:
+      - name: Validate drill configuration
+        env:
+          SNAPSHOT_INPUT: ${{ inputs.snapshot_id }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Hosted restore drills must run from the main branch."
+            exit 1
+          fi
+          if [[ ! "$GITHUB_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error::The drill release must be a full 40-character commit SHA."
+            exit 1
+          fi
+          required=(
+            AWS_REGION AWS_RECOVERY_ROLE_ARN RDS_INSTANCE_IDENTIFIER RDS_SUBNET_GROUP
+            RDS_SECURITY_GROUP RDS_PARAMETER_GROUP RDS_OPTION_GROUP
+            ECS_CLUSTER API_SERVICE HOSTED_RESTORE_TASK_DEFINITION
+            PRIVATE_SUBNETS RESTORE_VERIFIER_SECURITY_GROUP
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Required production variable $name is not configured."
+              exit 1
+            fi
+          done
+
+      - name: Resolve isolated restore targets
+        id: targets
+        env:
+          SNAPSHOT_INPUT: ${{ inputs.snapshot_id }}
+        run: |
+          set -euo pipefail
+          if [ -n "$SNAPSHOT_INPUT" ]; then
+            snapshot_id="$SNAPSHOT_INPUT"
+            create_snapshot=false
+          else
+            snapshot_id="${RDS_INSTANCE_IDENTIFIER}-drill-${GITHUB_SHA:0:8}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            create_snapshot=true
+          fi
+          restore_target_id="${RDS_INSTANCE_IDENTIFIER}-restore-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [ "${#snapshot_id}" -gt 255 ] || [[ ! "$snapshot_id" =~ ^[a-z][a-z0-9-]*$ ]] || [[ "$snapshot_id" == *- ]] || [[ "$snapshot_id" == *--* ]]; then
+            echo "::error::snapshot_id is not a valid RDS snapshot identifier."
+            exit 1
+          fi
+          if [[ "$snapshot_id" != "${RDS_INSTANCE_IDENTIFIER}-predeploy-"* && "$snapshot_id" != "${RDS_INSTANCE_IDENTIFIER}-drill-"* ]]; then
+            echo "::error::snapshot_id must identify a managed snapshot for the production instance."
+            exit 1
+          fi
+          if [ "${#restore_target_id}" -gt 63 ] || [[ ! "$restore_target_id" =~ ^[a-z][a-z0-9-]*$ ]] || [[ "$restore_target_id" == *- ]] || [[ "$restore_target_id" == *--* ]]; then
+            echo "::error::The generated restore target is not a valid RDS identifier."
+            exit 1
+          fi
+          test "$restore_target_id" != "$RDS_INSTANCE_IDENTIFIER"
+          echo "snapshot_id=$snapshot_id" >> "$GITHUB_OUTPUT"
+          echo "create_snapshot=$create_snapshot" >> "$GITHUB_OUTPUT"
+          echo "restore_target_id=$restore_target_id" >> "$GITHUB_OUTPUT"
+
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@bcd4089080cf41e4db9dad11fce2a9397e670bbd # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_RECOVERY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+
+      - name: Create and verify drill snapshot
+        if: steps.targets.outputs.create_snapshot == 'true'
+        env:
+          SNAPSHOT_ID: ${{ steps.targets.outputs.snapshot_id }}
+        run: |
+          set -euo pipefail
+          python ops/aws_rds_recovery.py create-snapshot \
+            --source "$RDS_INSTANCE_IDENTIFIER" \
+            --snapshot "$SNAPSHOT_ID" \
+            --release "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --purpose restore-drill \
+            --retention-days 30 | tee "$RUNNER_TEMP/drill-snapshot.json"
+          jq -e 'type == "object"' "$RUNNER_TEMP/drill-snapshot.json" >/dev/null
+
+      - name: Refresh AWS credentials for restore
+        uses: aws-actions/configure-aws-credentials@bcd4089080cf41e4db9dad11fce2a9397e670bbd # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_RECOVERY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+
+      - name: Restore isolated database target
+        id: restore
+        env:
+          SNAPSHOT_ID: ${{ steps.targets.outputs.snapshot_id }}
+          RESTORE_TARGET_ID: ${{ steps.targets.outputs.restore_target_id }}
+        run: |
+          set -euo pipefail
+          python ops/aws_rds_recovery.py restore \
+            --source "$RDS_INSTANCE_IDENTIFIER" \
+            --snapshot "$SNAPSHOT_ID" \
+            --target "$RESTORE_TARGET_ID" \
+            --db-subnet-group "$RDS_SUBNET_GROUP" \
+            --security-group "$RDS_SECURITY_GROUP" \
+            --parameter-group "$RDS_PARAMETER_GROUP" \
+            --option-group "$RDS_OPTION_GROUP" \
+            | tee "$RUNNER_TEMP/restore.json"
+          jq -e 'type == "object"' "$RUNNER_TEMP/restore.json" >/dev/null
+          endpoint="$(jq -er '.endpoint' "$RUNNER_TEMP/restore.json")"
+          test -n "$endpoint"
+          echo "endpoint=$endpoint" >> "$GITHUB_OUTPUT"
+
+      - name: Refresh AWS credentials for verification
+        uses: aws-actions/configure-aws-credentials@bcd4089080cf41e4db9dad11fce2a9397e670bbd # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_RECOVERY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+
+      - name: Start restore verifier
+        id: verifier
+        env:
+          RESTORE_ENDPOINT: ${{ steps.restore.outputs.endpoint }}
+        run: |
+          set -euo pipefail
+          api_task_arn="$(aws ecs describe-services --cluster "$ECS_CLUSTER" \
+            --services "$API_SERVICE" --query 'services[0].taskDefinition' --output text)"
+          production_image="$(aws ecs describe-task-definition --task-definition "$api_task_arn" \
+            --query 'taskDefinition.containerDefinitions[?name==`api`].image | [0]' --output text)"
+          test -n "$production_image"
+          test "$production_image" != "None"
+          restore_task_arn=""
+          while IFS= read -r candidate_arn; do
+            case "$candidate_arn" in
+              */"$HOSTED_RESTORE_TASK_DEFINITION":*) ;;
+              *) continue ;;
+            esac
+            candidate_image="$(aws ecs describe-task-definition --task-definition "$candidate_arn" \
+              --query 'taskDefinition.containerDefinitions[?name==`hosted-restore`].image | [0]' --output text)"
+            if [ "$candidate_image" = "$production_image" ]; then
+              restore_task_arn="$candidate_arn"
+              break
+            fi
+          done < <(aws ecs list-task-definitions --family-prefix "$HOSTED_RESTORE_TASK_DEFINITION" \
+            --status ACTIVE --sort DESC --max-items 100 --query 'taskDefinitionArns[]' --output text | tr '\t' '\n')
+          if [ -z "$restore_task_arn" ]; then
+            echo "::error::No restore verifier task revision matches the deployed API image."
+            exit 1
+          fi
+          overrides="$(jq -cn --arg endpoint "$RESTORE_ENDPOINT" \
+            '{containerOverrides: [{name: "hosted-restore", command: ["python", "-m", "workers.hosted_restore", "--target-host", $endpoint, "--upgrade-schema", "--verify", "--output", "json"]}]}')"
+          run_result="$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$restore_task_arn" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${PRIVATE_SUBNETS}],securityGroups=[${RESTORE_VERIFIER_SECURITY_GROUP}],assignPublicIp=DISABLED}" \
+            --overrides "$overrides" \
+            --tags key=ManagedBy,value=LuminaHostedRecovery key=Purpose,value=restore-drill \
+            --output json)"
+          jq -e '(.failures | length) == 0 and (.tasks | length) == 1' <<<"$run_result" >/dev/null
+          task_arn="$(jq -er '.tasks[0].taskArn' <<<"$run_result")"
+          echo "Restore verifier task: $task_arn"
+          echo "task_arn=$task_arn" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for restore verifier
+        env:
+          TASK_ARN: ${{ steps.verifier.outputs.task_arn }}
+        run: |
+          set -euo pipefail
+          task_stopped=false
+          deadline=$((SECONDS + 3000))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            last_status="$(timeout 60 aws ecs describe-tasks \
+              --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+              --query 'tasks[0].lastStatus' --output text)"
+            if [ "$last_status" = "STOPPED" ]; then
+              task_stopped=true
+              break
+            fi
+            case "$last_status" in
+              PROVISIONING|PENDING|ACTIVATING|RUNNING|DEACTIVATING|STOPPING) ;;
+              None|'') ;;
+              *)
+                echo "::error::Restore verifier entered unexpected state ${last_status:-unknown}."
+                exit 1
+                ;;
+            esac
+            sleep 15
+          done
+          if [ "$task_stopped" != "true" ]; then
+            aws ecs stop-task --cluster "$ECS_CLUSTER" --task "$TASK_ARN" \
+              --reason "Lumina restore verifier exceeded its deadline" >/dev/null
+            echo "::error::Restore verifier did not stop within 50 minutes."
+            exit 1
+          fi
+          exit_code="$(aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[?name==`hosted-restore`].exitCode | [0]' \
+            --output text)"
+          if [ "$exit_code" != "0" ]; then
+            aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+              --query 'tasks[0]' --output json
+            echo "::error::Restore verifier exited with code ${exit_code:-unknown}."
+            exit 1
+          fi
+          echo "Restore verifier completed successfully."
+
+      - name: Refresh AWS credentials for cleanup
+        id: cleanup_aws
+        if: ${{ always() && steps.targets.outputs.restore_target_id != '' }}
+        uses: aws-actions/configure-aws-credentials@bcd4089080cf41e4db9dad11fce2a9397e670bbd # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_RECOVERY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+
+      - name: Stop isolated verifier task
+        id: verifier_cleanup
+        if: ${{ always() && steps.cleanup_aws.outcome == 'success' && steps.verifier.outputs.task_arn != '' }}
+        env:
+          TASK_ARN: ${{ steps.verifier.outputs.task_arn }}
+        run: |
+          set -euo pipefail
+          last_status="$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].lastStatus' --output text)"
+          if [ "$last_status" != "STOPPED" ] && [ "$last_status" != "None" ]; then
+            aws ecs stop-task --cluster "$ECS_CLUSTER" --task "$TASK_ARN" \
+              --reason "Lumina restore drill cleanup" >/dev/null
+            deadline=$((SECONDS + 600))
+            while [ "$SECONDS" -lt "$deadline" ]; do
+              last_status="$(timeout 60 aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+                --query 'tasks[0].lastStatus' --output text)"
+              if [ "$last_status" = "STOPPED" ]; then
+                break
+              fi
+              sleep 15
+            done
+            if [ "$last_status" != "STOPPED" ]; then
+              echo "::error::Restore verifier task did not stop during cleanup."
+              exit 1
+            fi
+          fi
+
+      - name: Delete isolated restore target
+        if: ${{ always() && steps.cleanup_aws.outcome == 'success' && steps.targets.outputs.restore_target_id != '' && (steps.verifier.outputs.task_arn == '' || steps.verifier_cleanup.outcome == 'success') }}
+        env:
+          RESTORE_TARGET_ID: ${{ steps.targets.outputs.restore_target_id }}
+        run: |
+          set -euo pipefail
+          expected_target="${RDS_INSTANCE_IDENTIFIER}-restore-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [ "$RESTORE_TARGET_ID" != "$expected_target" ] || [ "$RESTORE_TARGET_ID" = "$RDS_INSTANCE_IDENTIFIER" ]; then
+            echo "::error::Refusing to delete an unexpected restore target."
+            exit 1
+          fi
+          if aws rds describe-db-instances \
+            --db-instance-identifier "$RESTORE_TARGET_ID" \
+            >/dev/null 2>"$RUNNER_TEMP/describe-restore-error"; then
+            python ops/aws_rds_recovery.py delete-restore \
+              --source "$RDS_INSTANCE_IDENTIFIER" \
+              --target "$RESTORE_TARGET_ID" \
+              | tee "$RUNNER_TEMP/delete-restore.json"
+            jq -e 'type == "object"' "$RUNNER_TEMP/delete-restore.json" >/dev/null
+          elif grep -q 'DBInstanceNotFound' "$RUNNER_TEMP/describe-restore-error"; then
+            echo "Restore target does not exist; cleanup is complete."
+          else
+            cat "$RUNNER_TEMP/describe-restore-error" >&2
+            echo "::error::Unable to determine whether the restore target exists."
+            exit 1
+          fi

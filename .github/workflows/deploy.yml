@@ -22,7 +22,7 @@ jobs:
   deploy:
     name: Deploy to production
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 240
     environment: production
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
@@ -33,6 +33,8 @@ jobs:
       API_TASK_DEFINITION: ${{ vars.API_TASK_DEFINITION }}
       WORKER_TASK_DEFINITION: ${{ vars.WORKER_TASK_DEFINITION }}
       MIGRATE_TASK_DEFINITION: ${{ vars.MIGRATE_TASK_DEFINITION }}
+      HOSTED_RESTORE_TASK_DEFINITION: ${{ vars.HOSTED_RESTORE_TASK_DEFINITION }}
+      RDS_INSTANCE_IDENTIFIER: ${{ vars.RDS_INSTANCE_IDENTIFIER }}
       PRIVATE_SUBNETS: ${{ vars.PRIVATE_SUBNETS }}
       ECS_SECURITY_GROUP: ${{ vars.ECS_SECURITY_GROUP }}
       FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
@@ -71,8 +73,10 @@ jobs:
           required=(
             AWS_REGION ECR_REPOSITORY ECS_CLUSTER API_SERVICE WORKER_SERVICE
             API_TASK_DEFINITION WORKER_TASK_DEFINITION MIGRATE_TASK_DEFINITION
-            PRIVATE_SUBNETS ECS_SECURITY_GROUP FRONTEND_BUCKET FRONTEND_URL
-            CLOUDFRONT_DISTRIBUTION_ID VITE_API_BASE_URL
+            HOSTED_RESTORE_TASK_DEFINITION
+            RDS_INSTANCE_IDENTIFIER PRIVATE_SUBNETS ECS_SECURITY_GROUP
+            FRONTEND_BUCKET FRONTEND_URL CLOUDFRONT_DISTRIBUTION_ID
+            VITE_API_BASE_URL
           )
           for name in "${required[@]}"; do
             if [ -z "${!name:-}" ]; then
@@ -129,7 +133,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          role-duration-seconds: 3600
+          role-duration-seconds: 7200
 
       - name: Upload frontend release artifacts
         if: steps.release.outputs.is_rollback == 'false'
@@ -290,12 +294,14 @@ jobs:
             families+=("$MIGRATE_TASK_DEFINITION")
             output_names+=(migrate)
           fi
+          families+=("$HOSTED_RESTORE_TASK_DEFINITION")
+          output_names+=(hosted_restore)
 
           definition_files=()
           for index in "${!families[@]}"; do
             family="${families[$index]}"
             definition_file="$(mktemp)"
-            if [ "$IS_ROLLBACK" = "true" ]; then
+            if [ "$IS_ROLLBACK" = "true" ] && [ "${output_names[$index]}" != "hosted_restore" ]; then
               jq --arg name "${output_names[$index]}" -e '.[$name]' \
                 "$RUNNER_TEMP/task-definitions.json" > "$definition_file"
             else
@@ -315,7 +321,8 @@ jobs:
               --slurpfile api "${definition_files[0]}" \
               --slurpfile worker "${definition_files[1]}" \
               --slurpfile migrate "${definition_files[2]}" \
-              '{api: $api[0], worker: $worker[0], migrate: $migrate[0]}' > "$task_archive"
+              --slurpfile hosted_restore "${definition_files[3]}" \
+              '{api: $api[0], worker: $worker[0], migrate: $migrate[0], hosted_restore: $hosted_restore[0]}' > "$task_archive"
             task_archive_sha256="$(sha256sum "$task_archive" | awk '{print $1}')"
             archive_key="releases/$RELEASE_ID/task-definitions.json"
             if ! aws s3api put-object \
@@ -345,6 +352,30 @@ jobs:
               --query 'taskDefinition.taskDefinitionArn' --output text)"
             echo "${output_names[$index]}=$task_arn" >> "$GITHUB_OUTPUT"
           done
+
+      - name: Refresh AWS credentials for predeployment snapshot
+        if: steps.release.outputs.is_rollback == 'false'
+        uses: aws-actions/configure-aws-credentials@bcd4089080cf41e4db9dad11fce2a9397e670bbd # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+
+      - name: Create and verify predeployment snapshot
+        if: steps.release.outputs.is_rollback == 'false'
+        run: |
+          set -euo pipefail
+          snapshot_id="${RDS_INSTANCE_IDENTIFIER}-predeploy-${RELEASE_ID:0:8}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          python ops/aws_rds_recovery.py create-snapshot \
+            --source "$RDS_INSTANCE_IDENTIFIER" \
+            --snapshot "$snapshot_id" \
+            --release "$RELEASE_ID" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --purpose predeployment \
+            --retention-days 30 | tee "$RUNNER_TEMP/predeployment-snapshot.json"
+          jq -e 'type == "object"' "$RUNNER_TEMP/predeployment-snapshot.json" >/dev/null
+          echo "Verified predeployment snapshot: $snapshot_id"
 
       - name: Apply database migrations
         if: steps.release.outputs.is_rollback == 'false'

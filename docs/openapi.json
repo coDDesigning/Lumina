@@ -899,34 +899,6 @@
         "title": "BaseResponse[ExamReviewSheetResult]",
         "type": "object"
       },
-      "BaseResponse_ExamRoadmapDocument_": {
-        "properties": {
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ExamRoadmapDocument"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "message": {
-            "title": "Message",
-            "type": "string"
-          },
-          "success": {
-            "title": "Success",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "message"
-        ],
-        "title": "BaseResponse[ExamRoadmapDocument]",
-        "type": "object"
-      },
       "BaseResponse_ExamRoadmapResult_": {
         "properties": {
           "data": {
@@ -1373,6 +1345,34 @@
           "message"
         ],
         "title": "BaseResponse[QuizView]",
+        "type": "object"
+      },
+      "BaseResponse_ReverseQuizResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReverseQuizResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ReverseQuizResponse]",
         "type": "object"
       },
       "BaseResponse_StudyGuideGenerationResult_": {
@@ -1841,6 +1841,38 @@
         "title": "BaseResponse[list[QuizSummary]]",
         "type": "object"
       },
+      "BaseResponse_list_ReverseQuizResponse__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ReverseQuizResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[list[ReverseQuizResponse]]",
+        "type": "object"
+      },
       "BaseResponse_list_UserResponse__": {
         "properties": {
           "data": {
@@ -2047,6 +2079,16 @@
         ],
         "title": "CommonMistake",
         "type": "object"
+      },
+      "ConceptStatus": {
+        "enum": [
+          "unsupported",
+          "absent",
+          "partially_correct",
+          "contradicted"
+        ],
+        "title": "ConceptStatus",
+        "type": "string"
       },
       "ConversationDetail": {
         "properties": {
@@ -3214,6 +3256,35 @@
           "created_at"
         ],
         "title": "CreditTransactionResponse",
+        "type": "object"
+      },
+      "DeferralReason": {
+        "enum": [
+          "horizon_too_short"
+        ],
+        "title": "DeferralReason",
+        "type": "string"
+      },
+      "DeferredTopic": {
+        "properties": {
+          "priority": {
+            "title": "Priority",
+            "type": "number"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/DeferralReason"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "priority",
+          "reason"
+        ],
+        "title": "DeferredTopic",
         "type": "object"
       },
       "DetailLevel": {
@@ -4521,63 +4592,10 @@
         "title": "ExamReviewTopic",
         "type": "object"
       },
-      "ExamRoadmapDay": {
+      "ExamRoadmap": {
+        "description": "One persisted roadmap version, self-describing on the way back out.",
         "properties": {
-          "day": {
-            "title": "Day",
-            "type": "integer"
-          },
-          "focus": {
-            "title": "Focus",
-            "type": "string"
-          },
-          "is_review": {
-            "default": false,
-            "title": "Is Review",
-            "type": "boolean"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          },
-          "topics": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/ExamRoadmapTopic"
-            },
-            "title": "Topics",
-            "type": "array"
-          }
-        },
-        "required": [
-          "day",
-          "label",
-          "title",
-          "focus"
-        ],
-        "title": "ExamRoadmapDay",
-        "type": "object"
-      },
-      "ExamRoadmapDocument": {
-        "description": "The ``generated_outputs.content`` payload of one study roadmap.\n\n``model_used`` on the row is null and stays null: Python produced this, and\nthe model that produced the evidence is credited on the analysis the plan\nnames. Day labels are generic on purpose, so the roadmap survives a student\nstarting late and stays readable after the exam date passes.",
-        "properties": {
-          "day_count": {
-            "title": "Day Count",
-            "type": "integer"
-          },
-          "days": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/ExamRoadmapDay"
-            },
-            "title": "Days",
-            "type": "array"
-          },
-          "days_until_exam": {
+          "adapted_from_output_id": {
             "anyOf": [
               {
                 "type": "integer"
@@ -4586,19 +4604,63 @@
                 "type": "null"
               }
             ],
-            "title": "Days Until Exam"
+            "title": "Adapted From Output Id"
+          },
+          "attempts_considered": {
+            "default": 0,
+            "title": "Attempts Considered",
+            "type": "integer"
+          },
+          "course_id": {
+            "title": "Course Id",
+            "type": "integer"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/RoadmapDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "days_until_exam": {
+            "title": "Days Until Exam",
+            "type": "integer"
+          },
+          "deferred_topics": {
+            "items": {
+              "$ref": "#/components/schemas/DeferredTopic"
+            },
+            "title": "Deferred Topics",
+            "type": "array"
           },
           "exam_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Exam Date"
+            "format": "date",
+            "title": "Exam Date",
+            "type": "string"
+          },
+          "generated_on": {
+            "format": "date",
+            "title": "Generated On",
+            "type": "string"
+          },
+          "horizon": {
+            "$ref": "#/components/schemas/RoadmapHorizon"
+          },
+          "lead_in_days": {
+            "default": 0,
+            "title": "Lead In Days",
+            "type": "integer"
+          },
+          "materials_available": {
+            "title": "Materials Available",
+            "type": "boolean"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
           },
           "output_type": {
             "const": "exam_roadmap",
@@ -4606,25 +4668,26 @@
             "title": "Output Type",
             "type": "string"
           },
-          "plan_output_id": {
-            "title": "Plan Output Id",
-            "type": "integer"
+          "ranked_topics": {
+            "items": {
+              "$ref": "#/components/schemas/RankedTopicView"
+            },
+            "title": "Ranked Topics",
+            "type": "array"
           },
           "roadmap_version": {
+            "minimum": 1.0,
             "title": "Roadmap Version",
             "type": "integer"
           },
-          "topic_count": {
-            "title": "Topic Count",
+          "scheduled_days": {
+            "title": "Scheduled Days",
             "type": "integer"
           },
-          "unscheduled_topic_keys": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Unscheduled Topic Keys",
-            "type": "array"
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
           },
           "version": {
             "const": 1,
@@ -4634,54 +4697,34 @@
           }
         },
         "required": [
-          "plan_output_id",
-          "roadmap_version",
-          "day_count",
-          "topic_count"
+          "course_id",
+          "exam_date",
+          "generated_on",
+          "starts_on",
+          "days_until_exam",
+          "scheduled_days",
+          "horizon",
+          "materials_available",
+          "roadmap_version"
         ],
-        "title": "ExamRoadmapDocument",
+        "title": "ExamRoadmap",
         "type": "object"
       },
       "ExamRoadmapRequest": {
+        "description": "Options for one roadmap generation.\n\nThe exam date is deliberately not a request field: the course owns it, and a\nplan a student can act on is the one their course date produces.",
         "properties": {
-          "day_count": {
-            "anyOf": [
-              {
-                "maximum": 30.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "How many days to spread over, or omit to use the days remaining",
-            "title": "Day Count"
+          "include_materials": {
+            "default": true,
+            "description": "Resolve course material and citations for each scheduled topic. Disabling it skips retrieval entirely.",
+            "title": "Include Materials",
+            "type": "boolean"
           },
-          "model": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Explicit model override, or omit to use the preferred model",
-            "title": "Model"
-          },
-          "plan_output_id": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The plan to work from, or omit to use the current one",
-            "title": "Plan Output Id"
+          "max_topics_per_day": {
+            "default": 3,
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Max Topics Per Day",
+            "type": "integer"
           }
         },
         "title": "ExamRoadmapRequest",
@@ -4689,58 +4732,19 @@
       },
       "ExamRoadmapResult": {
         "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
           "generated_output_id": {
             "title": "Generated Output Id",
             "type": "integer"
           },
           "roadmap": {
-            "$ref": "#/components/schemas/ExamRoadmapDocument"
+            "$ref": "#/components/schemas/ExamRoadmap"
           }
         },
         "required": [
           "roadmap",
-          "generated_output_id",
-          "created_at"
+          "generated_output_id"
         ],
         "title": "ExamRoadmapResult",
-        "type": "object"
-      },
-      "ExamRoadmapTopic": {
-        "properties": {
-          "display_label": {
-            "title": "Display Label",
-            "type": "string"
-          },
-          "is_high_priority": {
-            "default": false,
-            "title": "Is High Priority",
-            "type": "boolean"
-          },
-          "priority_band": {
-            "default": "",
-            "title": "Priority Band",
-            "type": "string"
-          },
-          "rank": {
-            "title": "Rank",
-            "type": "integer"
-          },
-          "topic_key": {
-            "title": "Topic Key",
-            "type": "string"
-          }
-        },
-        "required": [
-          "topic_key",
-          "display_label",
-          "rank"
-        ],
-        "title": "ExamRoadmapTopic",
         "type": "object"
       },
       "ExamSelectionCarryOver": {
@@ -6204,6 +6208,28 @@
         "title": "MasteryStatus",
         "type": "string"
       },
+      "Misconception": {
+        "properties": {
+          "concept": {
+            "title": "Concept",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConceptStatus"
+          }
+        },
+        "required": [
+          "concept",
+          "status",
+          "detail"
+        ],
+        "title": "Misconception",
+        "type": "object"
+      },
       "MultipleChoiceAnswer": {
         "properties": {
           "option_index": {
@@ -7284,6 +7310,312 @@
         "title": "QuizView",
         "type": "object"
       },
+      "RankedTopicView": {
+        "description": "One entry of the ranked plan the schedule consumed.",
+        "properties": {
+          "importance": {
+            "title": "Importance",
+            "type": "number"
+          },
+          "mastery_percentage": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mastery Percentage"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "number"
+          },
+          "questions_answered": {
+            "default": 0,
+            "title": "Questions Answered",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TopicSource"
+          },
+          "syllabus_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Syllabus Position"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "source",
+          "importance",
+          "priority"
+        ],
+        "title": "RankedTopicView",
+        "type": "object"
+      },
+      "ReverseQuizRequest": {
+        "properties": {
+          "explanation": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Explanation",
+            "type": "string"
+          },
+          "topic": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "explanation"
+        ],
+        "title": "ReverseQuizRequest",
+        "type": "object"
+      },
+      "ReverseQuizResponse": {
+        "properties": {
+          "course_id": {
+            "title": "Course Id",
+            "type": "integer"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "feedback": {
+            "title": "Feedback",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "misconceptions": {
+            "items": {
+              "$ref": "#/components/schemas/Misconception"
+            },
+            "title": "Misconceptions",
+            "type": "array"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "course_id",
+          "topic",
+          "explanation",
+          "feedback"
+        ],
+        "title": "ReverseQuizResponse",
+        "type": "object"
+      },
+      "RoadmapDay": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "day_index": {
+            "minimum": 1.0,
+            "title": "Day Index",
+            "type": "integer"
+          },
+          "focus": {
+            "title": "Focus",
+            "type": "string"
+          },
+          "is_exam_day": {
+            "default": false,
+            "title": "Is Exam Day",
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RoadmapDayKind"
+          },
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/RoadmapTopic"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "day_index",
+          "date",
+          "kind",
+          "focus"
+        ],
+        "title": "RoadmapDay",
+        "type": "object"
+      },
+      "RoadmapDayKind": {
+        "description": "What one scheduled day is for.",
+        "enum": [
+          "study",
+          "review",
+          "final_review",
+          "last_minute"
+        ],
+        "title": "RoadmapDayKind",
+        "type": "string"
+      },
+      "RoadmapHorizon": {
+        "description": "How much time the plan had to work with.\n\n``ZERO_DAY`` and ``ONE_DAY`` are the triage horizons: they produce a valid\nlast-minute plan rather than an error. ``LONG`` means the plan was capped and\nstarts after today.",
+        "enum": [
+          "zero_day",
+          "one_day",
+          "standard",
+          "long"
+        ],
+        "title": "RoadmapHorizon",
+        "type": "string"
+      },
+      "RoadmapMaterial": {
+        "description": "One document a scheduled topic should be studied from.\n\nDenormalized like a citation, and for the same reason: the reference must\nstill resolve after the document it names is deleted, so it is never a link.",
+        "properties": {
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "document_label": {
+            "title": "Document Label",
+            "type": "string"
+          },
+          "page_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "page_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Start"
+          }
+        },
+        "required": [
+          "document_id",
+          "document_label"
+        ],
+        "title": "RoadmapMaterial",
+        "type": "object"
+      },
+      "RoadmapTopic": {
+        "description": "One topic on one day, with the goal and the sources it is studied from.",
+        "properties": {
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          },
+          "importance": {
+            "title": "Importance",
+            "type": "number"
+          },
+          "mastery_percentage": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mastery Percentage"
+          },
+          "material_status": {
+            "$ref": "#/components/schemas/TopicMaterialStatus"
+          },
+          "materials": {
+            "items": {
+              "$ref": "#/components/schemas/RoadmapMaterial"
+            },
+            "title": "Materials",
+            "type": "array"
+          },
+          "pass_number": {
+            "minimum": 1.0,
+            "title": "Pass Number",
+            "type": "integer"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "number"
+          },
+          "questions_answered": {
+            "default": 0,
+            "title": "Questions Answered",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TopicSource"
+          },
+          "syllabus_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Syllabus Position"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "goal",
+          "pass_number",
+          "source",
+          "importance",
+          "priority",
+          "material_status"
+        ],
+        "title": "RoadmapTopic",
+        "type": "object"
+      },
       "Role": {
         "description": "Defines available user roles in the system.",
         "enum": [
@@ -7541,7 +7873,8 @@
       "SummaryMode": {
         "enum": [
           "general",
-          "exam_focused"
+          "exam_focused",
+          "last_minute"
         ],
         "title": "SummaryMode",
         "type": "string"
@@ -7595,6 +7928,26 @@
         ],
         "title": "TopicMastery",
         "type": "object"
+      },
+      "TopicMaterialStatus": {
+        "description": "Why a scheduled topic does or does not name course material.\n\nA topic without material is scheduled anyway and says why, because a plan\nthat hides a gap is worse than one that names it.",
+        "enum": [
+          "resolved",
+          "no_match",
+          "not_indexed",
+          "no_material",
+          "not_requested"
+        ],
+        "title": "TopicMaterialStatus",
+        "type": "string"
+      },
+      "TopicSource": {
+        "enum": [
+          "syllabus",
+          "quiz"
+        ],
+        "title": "TopicSource",
+        "type": "string"
       },
       "TrueFalseAnswer": {
         "properties": {
@@ -9950,120 +10303,6 @@
         ]
       }
     },
-    "/api/courses/{course_id}/exam-mode/roadmap": {
-      "get": {
-        "operationId": "get_roadmap_api_courses__course_id__exam_mode_roadmap_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "course_id",
-            "required": true,
-            "schema": {
-              "title": "Course Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BaseResponse_ExamRoadmapDocument_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "404": {
-            "description": "Course or study roadmap not found"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Get Roadmap",
-        "tags": [
-          "Exam Mode"
-        ]
-      },
-      "post": {
-        "description": "Spread the plan's topics across the days that are left.\n\nFree and deterministic: arithmetic over an order the plan already settled,\nwith no provider and no credit. It writes a row, which is why it is a write\nand rate limited, and why `exam_roadmap` is deliberately absent from the\nprice table.",
-        "operationId": "create_roadmap_api_courses__course_id__exam_mode_roadmap_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "course_id",
-            "required": true,
-            "schema": {
-              "title": "Course Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExamRoadmapRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BaseResponse_ExamRoadmapResult_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "404": {
-            "description": "Course not found"
-          },
-          "409": {
-            "description": "This course has no exam plan yet"
-          },
-          "422": {
-            "description": "Invalid roadmap request"
-          },
-          "429": {
-            "description": "Per-user generation rate limited"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Create Roadmap",
-        "tags": [
-          "Exam Mode"
-        ]
-      }
-    },
     "/api/courses/{course_id}/exam-mode/sources": {
       "get": {
         "operationId": "list_exam_sources_api_courses__course_id__exam_mode_sources_get",
@@ -10718,6 +10957,82 @@
         "summary": "Generate Topic Summary",
         "tags": [
           "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-roadmap": {
+      "post": {
+        "description": "Plan every day from today to the exam date, and store the plan.\n\nNo text-generation provider is called and no credit is charged: the schedule\nis derived from the course's own topics, exam date, and quiz history.\nRegenerating writes a new version and leaves earlier ones untouched.",
+        "operationId": "generate_exam_roadmap_api_courses__course_id__exam_roadmap_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ExamRoadmapRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamRoadmapResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "409": {
+            "description": "The course has no exam date, its exam date has passed, or it has no topics to plan"
+          },
+          "422": {
+            "description": "Invalid roadmap request"
+          },
+          "429": {
+            "description": "Per-user generation rate limited"
+          },
+          "503": {
+            "description": "Course search unreachable"
+          },
+          "504": {
+            "description": "Course search timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Generate Exam Roadmap",
+        "tags": [
+          "Exam Roadmap"
         ]
       }
     },
@@ -11458,6 +11773,130 @@
         ]
       }
     },
+    "/api/courses/{course_id}/reverse-quiz": {
+      "post": {
+        "operationId": "generate_reverse_quiz_api_courses__course_id__reverse_quiz_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReverseQuizRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ReverseQuizResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No processed course material is available"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Generate Reverse Quiz",
+        "tags": [
+          "Reverse Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/reverse-quizzes": {
+      "get": {
+        "operationId": "list_reverse_quizzes_api_courses__course_id__reverse_quizzes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_list_ReverseQuizResponse__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Reverse Quizzes",
+        "tags": [
+          "Reverse Quiz"
+        ]
+      }
+    },
     "/api/courses/{course_id}/settings": {
       "get": {
         "description": "Retrieves the settings for the specified course.",
@@ -11676,6 +12115,34 @@
       }
     },
     "/api/profile-knowledge/": {
+      "delete": {
+        "description": "Deletes all profile knowledge entries owned by the authenticated user.",
+        "operationId": "delete_all_profile_knowledge_api_profile_knowledge__delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete All Profile Knowledge",
+        "tags": [
+          "Profile Knowledge"
+        ]
+      },
       "get": {
         "description": "Lists all profile knowledge entries owned by the authenticated user.",
         "operationId": "list_profile_knowledge_api_profile_knowledge__get",

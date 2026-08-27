@@ -19,6 +19,7 @@ from schemas.study_guide import (
     SummaryFormat,
     SummaryLength,
     SummaryMode,
+    output_type_for,
 )
 from schemas.citation import CitedText
 from services.ai_usage_logger import AiUsageLogger
@@ -110,11 +111,31 @@ SUMMARY_MODE_DIRECTIVES: dict[SummaryMode, str] = {
         "problem-solving approaches. Do not claim any topic is guaranteed to appear on "
         "an exam."
     ),
+    SummaryMode.LAST_MINUTE: (
+        "Requested summary mode: last_minute. The learner is revising in the final "
+        "hours before the exam, so write a review sheet rather than a lesson: lead "
+        "with the definitions, formulas, distinctions, and procedure steps they must "
+        "be able to reproduce, keep every entry to something that can be read in "
+        "seconds, and put the mistakes most likely to cost marks in common_mistakes. "
+        "Teach nothing from scratch and add no background they would have no time to "
+        "read. Do not claim any topic is guaranteed to appear on an exam."
+    ),
 }
 
 EXAM_FOCUS_QUERY_TERMS = (
     "exam preparation key definitions formulas worked examples common problems"
 )
+
+LAST_MINUTE_QUERY_TERMS = (
+    "revision summary key definitions formulas rules steps common errors "
+    "quick reference"
+)
+
+RETRIEVAL_QUERY_SUFFIXES: dict[SummaryMode, str] = {
+    SummaryMode.GENERAL: "",
+    SummaryMode.EXAM_FOCUSED: EXAM_FOCUS_QUERY_TERMS,
+    SummaryMode.LAST_MINUTE: LAST_MINUTE_QUERY_TERMS,
+}
 
 
 class StudyGuideGenerationError(RuntimeError):
@@ -173,11 +194,7 @@ class StudyGuideService:
         return build_retrieval_query(
             course,
             options.topic_focus,
-            suffix=(
-                EXAM_FOCUS_QUERY_TERMS
-                if options.summary_mode is SummaryMode.EXAM_FOCUSED
-                else ""
-            ),
+            suffix=RETRIEVAL_QUERY_SUFFIXES.get(options.summary_mode, ""),
         )
 
     @classmethod
@@ -254,7 +271,9 @@ class StudyGuideService:
             summary_mode = request.summary_mode
         elif settings_row is not None and settings_row.study_mode:
             mode_raw = settings_row.study_mode.strip().casefold()
-            if mode_raw in ("exam", "exam_focused", "exam focused"):
+            if mode_raw in ("last_minute", "last minute", "last-minute"):
+                summary_mode = SummaryMode.LAST_MINUTE
+            elif mode_raw in ("exam", "exam_focused", "exam focused"):
                 summary_mode = SummaryMode.EXAM_FOCUSED
             else:
                 summary_mode = SummaryMode.GENERAL
@@ -475,14 +494,21 @@ class StudyGuideService:
         *,
         user_id: int,
         model_used: str,
+        summary_mode: SummaryMode = SummaryMode.GENERAL,
         generation_settings: str | None = None,
         generation_context: str | None = None,
     ) -> GeneratedOutput:
+        """Store one generation under the output type its summary mode names.
+
+        A last-minute review sheet reuses this pipeline whole -- the same prompt,
+        the same citations, the same canonical persistence -- and differs only in
+        the artifact it is stored and reopened as.
+        """
         return GeneratedOutputService.record(
             db,
             course_id=course_id,
             user_id=user_id,
-            output_type="study_guide",
+            output_type=output_type_for(summary_mode),
             content=study_guide.model_dump_json(),
             model_used=model_used,
             generation_settings=generation_settings,

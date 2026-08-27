@@ -9,6 +9,8 @@ locals {
     jwt_secret_key        = "${local.ssm_base}/jwt-secret-key"
     bootstrap_admin_token = "${local.ssm_base}/bootstrap-admin-token"
     gemini_api_key        = "${local.ssm_base}/gemini-api-key"
+    openai_api_key        = "${local.ssm_base}/openai-api-key"
+    anthropic_api_key     = "${local.ssm_base}/anthropic-api-key"
   }
 
   common_env = [
@@ -53,6 +55,7 @@ locals {
     { name = "AI_GENERATION_BACKOFF_BASE_SECONDS", value = "1.0" },
     { name = "AI_GENERATION_BACKOFF_MAX_SECONDS", value = "10.0" },
     { name = "AI_GENERATION_MAX_CONCURRENCY", value = "10" },
+    { name = "AI_GENERATION_OVERALL_TIMEOUT_SECONDS", value = "110" },
     { name = "STUDY_GUIDE_MATERIAL_MAX_CHARS", value = "120000" },
     { name = "QUIZ_MATERIAL_MAX_CHARS", value = "120000" },
     { name = "FLASHCARD_MATERIAL_MAX_CHARS", value = "120000" },
@@ -67,6 +70,8 @@ locals {
     { name = "JWT_SECRET_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.jwt_secret_key}" },
     { name = "BOOTSTRAP_ADMIN_TOKEN", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.bootstrap_admin_token}" },
     { name = "GEMINI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.gemini_api_key}" },
+    { name = "OPENAI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.openai_api_key}" },
+    { name = "ANTHROPIC_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.anthropic_api_key}" },
   ]
 
   migrate_secrets = [
@@ -74,7 +79,19 @@ locals {
     { name = "JWT_SECRET_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.jwt_secret_key}" },
     { name = "BOOTSTRAP_ADMIN_TOKEN", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.bootstrap_admin_token}" },
     { name = "GEMINI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.gemini_api_key}" },
+    { name = "OPENAI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.openai_api_key}" },
+    { name = "ANTHROPIC_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.anthropic_api_key}" },
   ]
+
+  restore_secrets = [
+    { name = "DATABASE_URL", valueFrom = var.migration_database_url_secret_arn },
+  ]
+
+  restore_env = concat(local.common_env, [
+    { name = "BOOTSTRAP_ADMIN_EMAIL", value = "restore-verifier@example.invalid" },
+    { name = "BOOTSTRAP_ADMIN_TOKEN", value = "restore-verifier-bootstrap-not-used" },
+    { name = "JWT_SECRET_KEY", value = "restore-verifier-jwt-secret-not-used" },
+  ])
 
   api_env = concat(local.common_env, [
     { name = "BOOTSTRAP_ADMIN_EMAIL", value = var.bootstrap_admin_email },
@@ -133,6 +150,14 @@ locals {
     environment = local.common_env
     secrets     = local.migrate_secrets
     command     = ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check"]
+  })
+
+  hosted_restore_container = merge(local.container_base, {
+    name        = "hosted-restore"
+    environment = local.restore_env
+    secrets     = local.restore_secrets
+    command     = ["python", "-m", "workers.hosted_restore", "--verify", "--output", "json"]
+    stopTimeout = 120
   })
 
   course_purge_container = merge(local.container_base, {

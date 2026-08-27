@@ -3,7 +3,7 @@ from pathlib import Path
 
 from backend.app.models import Base
 
-EXPECTED_TABLE_COUNT = 26
+EXPECTED_TABLE_COUNT = 31
 
 EXPECTED_TABLE_NAMES = {
     "ai_usage_logs",
@@ -17,12 +17,16 @@ EXPECTED_TABLE_NAMES = {
     "document_chunks",
     "document_pages",
     "document_visuals",
+    "exam_plans",
     "exam_topic_candidates",
     "exam_topic_unlocks",
+    "flashcard_sets",
+    "flashcards",
     "generated_outputs",
     "past_exam_questions",
     "processing_jobs",
     "profile_knowledge",
+    "profile_knowledge_embeddings",
     "progress",
     "quiz_attempt_answers",
     "quiz_attempts",
@@ -30,6 +34,7 @@ EXPECTED_TABLE_NAMES = {
     "quizzes",
     "rate_limit_buckets",
     "roles",
+    "spaced_repetition_states",
     "uploaded_documents",
     "users",
 }

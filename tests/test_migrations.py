@@ -46,6 +46,9 @@ RATE_LIMIT_BUCKETS_REVISION = "784a1eb8fba0"
 GENERATED_CITATIONS_REVISION = "d1f6b3a8c724"
 EXAM_DATE_REVISION = "e2b7c94f1a03"
 COURSE_TOPICS_REVISION = "f3c8d05a2b16"
+PROGRESS_READ_INDEXES_REVISION = "15bb8ad6d0f1"
+DATA_RETENTION_REVISION = "a6e2c8f41b90"
+ROADMAP_SCHEMA_PREP_REVISION = "4399b6d253bf"
 EXAM_MODE_REVISION = "a6d3f81c9b47"
 EXAM_UNLOCKS_REVISION = "b5e9a2c7d341"
 HEAD_REVISION = EXAM_UNLOCKS_REVISION
@@ -97,7 +100,10 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
         EXAM_UNLOCKS_REVISION: EXAM_MODE_REVISION,
-        EXAM_MODE_REVISION: COURSE_TOPICS_REVISION,
+        EXAM_MODE_REVISION: ROADMAP_SCHEMA_PREP_REVISION,
+        ROADMAP_SCHEMA_PREP_REVISION: DATA_RETENTION_REVISION,
+        DATA_RETENTION_REVISION: PROGRESS_READ_INDEXES_REVISION,
+        PROGRESS_READ_INDEXES_REVISION: COURSE_TOPICS_REVISION,
         COURSE_TOPICS_REVISION: EXAM_DATE_REVISION,
         EXAM_DATE_REVISION: GENERATED_CITATIONS_REVISION,
         GENERATED_CITATIONS_REVISION: RATE_LIMIT_BUCKETS_REVISION,
@@ -277,6 +283,17 @@ def database_tables(connection: sqlite3.Connection) -> set[str]:
     }
 
 
+def index_columns(
+    connection: sqlite3.Connection, table_name: str
+) -> dict[str, list[str]]:
+    return {
+        row[1]: [
+            column[2] for column in connection.execute(f"PRAGMA index_info('{row[1]}')")
+        ]
+        for row in connection.execute(f"PRAGMA index_list('{table_name}')")
+    }
+
+
 def assert_upgraded_schema(database_path: Path) -> None:
     with sqlite3.connect(database_path) as connection:
         tables = database_tables(connection)
@@ -337,6 +354,9 @@ def assert_upgraded_schema(database_path: Path) -> None:
             for row in connection.execute("PRAGMA index_list(uploaded_documents)")
         }
         assert "uq_uploaded_documents_storage_provider_storage_key" in document_indexes
+        assert index_columns(connection, "uploaded_documents")[
+            "ix_uploaded_documents_course_status_created"
+        ] == ["course_id", "status", "created_at", "id"]
 
         users_sql = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'"
@@ -356,6 +376,9 @@ def assert_upgraded_schema(database_path: Path) -> None:
         }
         assert {"page_number", "end_page_number"} <= chunk_columns
         assert "ck_document_chunks_chunk_index_nonnegative" in normalized_chunk_sql
+        assert index_columns(connection, "document_chunks")[
+            "ix_document_chunks_course_document_index"
+        ] == ["course_id", "document_id", "chunk_index", "id"]
         job_sql = connection.execute(
             "SELECT sql FROM sqlite_master "
             "WHERE type = 'table' AND name = 'processing_jobs'"
@@ -445,6 +468,35 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert "conversation_type in ('course_qa', 'ai_tutor')" in (
             normalized_conversation_sql
         )
+        assert index_columns(connection, "conversations")[
+            "ix_conversations_user_course_updated"
+        ] == ["user_id", "course_id", "updated_at", "id"]
+
+        assert index_columns(connection, "generated_outputs")[
+            "ix_generated_outputs_user_course_created"
+        ] == ["user_id", "course_id", "created_at", "id"]
+        assert index_columns(connection, "generated_outputs")[
+            "ix_generated_outputs_user_created"
+        ] == ["user_id", "created_at", "id"]
+        attempt_indexes = index_columns(connection, "quiz_attempts")
+        assert attempt_indexes["ix_quiz_attempts_quiz_user_created"] == [
+            "quiz_id",
+            "user_id",
+            "created_at",
+            "id",
+        ]
+        assert attempt_indexes["ix_quiz_attempts_user_created"] == [
+            "user_id",
+            "created_at",
+            "id",
+        ]
+        assert attempt_indexes["ix_quiz_attempts_quiz_created"] == [
+            "quiz_id",
+            "created_at",
+            "id",
+        ]
+        assert "ix_quiz_attempts_user_id" not in attempt_indexes
+        assert "ix_quiz_attempts_quiz_id" not in attempt_indexes
 
         course_sql = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'courses'"
@@ -2808,3 +2860,92 @@ def test_an_exam_candidate_cannot_disagree_with_its_analysis_about_the_course(
                 " VALUES (?, ?, 0, 'sorting', 'Sorting', 1, 0, 0, 0, 0.5)",
                 (analysis_id, second),
             )
+
+
+def test_progress_read_indexes_upgrade_downgrade_and_reupgrade(tmp_path: Path) -> None:
+    database_path = tmp_path / "progress-read-indexes.sqlite3"
+    expected = {
+        "uploaded_documents": {
+            "ix_uploaded_documents_course_status_created": [
+                "course_id",
+                "status",
+                "created_at",
+                "id",
+            ]
+        },
+        "document_chunks": {
+            "ix_document_chunks_course_document_index": [
+                "course_id",
+                "document_id",
+                "chunk_index",
+                "id",
+            ]
+        },
+        "generated_outputs": {
+            "ix_generated_outputs_user_course_created": [
+                "user_id",
+                "course_id",
+                "created_at",
+                "id",
+            ],
+            "ix_generated_outputs_user_created": [
+                "user_id",
+                "created_at",
+                "id",
+            ],
+        },
+        "conversations": {
+            "ix_conversations_user_course_updated": [
+                "user_id",
+                "course_id",
+                "updated_at",
+                "id",
+            ]
+        },
+        "quiz_attempts": {
+            "ix_quiz_attempts_quiz_user_created": [
+                "quiz_id",
+                "user_id",
+                "created_at",
+                "id",
+            ],
+            "ix_quiz_attempts_user_created": ["user_id", "created_at", "id"],
+            "ix_quiz_attempts_quiz_created": ["quiz_id", "created_at", "id"],
+        },
+    }
+
+    run_alembic(database_path, tmp_path, "upgrade", COURSE_TOPICS_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        for table_name, indexes in expected.items():
+            assert set(indexes).isdisjoint(index_columns(connection, table_name))
+        connection.execute(
+            "CREATE INDEX ix_quiz_attempts_user_created "
+            "ON quiz_attempts (user_id, created_at, id)"
+        )
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        for table_name, indexes in expected.items():
+            actual = index_columns(connection, table_name)
+            assert {name: actual[name] for name in indexes} == indexes
+        attempt_indexes = index_columns(connection, "quiz_attempts")
+        assert "ix_quiz_attempts_user_id" not in attempt_indexes
+        assert "ix_quiz_attempts_quiz_id" not in attempt_indexes
+        connection.execute("DROP INDEX ix_quiz_attempts_user_created")
+
+    run_alembic(database_path, tmp_path, "downgrade", COURSE_TOPICS_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        for table_name, indexes in expected.items():
+            assert set(indexes).isdisjoint(index_columns(connection, table_name))
+        attempt_indexes = index_columns(connection, "quiz_attempts")
+        assert attempt_indexes["ix_quiz_attempts_user_id"] == ["user_id"]
+        assert attempt_indexes["ix_quiz_attempts_quiz_id"] == ["quiz_id"]
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+    with sqlite3.connect(database_path) as connection:
+        for table_name, indexes in expected.items():
+            actual = index_columns(connection, table_name)
+            assert {name: actual[name] for name in indexes} == indexes
+        attempt_indexes = index_columns(connection, "quiz_attempts")
+        assert "ix_quiz_attempts_user_id" not in attempt_indexes
+        assert "ix_quiz_attempts_quiz_id" not in attempt_indexes

@@ -6,7 +6,6 @@ const SRC = join(process.cwd(), 'src');
 
 const DEFERRED = [
   { label: 'Exam Mode', pattern: /\bexam[\s_-]?mode\b/i },
-  { label: 'reverse quiz', pattern: /\breverse[\s_-]?quiz\b/i },
   { label: 'mock exam', pattern: /\bmock[\s_-]?exam\b/i },
 ];
 

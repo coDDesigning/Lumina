@@ -60,6 +60,26 @@ _DOCUMENT_MATERIAL_KINDS_SQL = ", ".join(
     f"'{kind}'" for kind in DOCUMENT_MATERIAL_KINDS
 )
 
+OUTPUT_TYPE_EXAM_TOPIC_ANALYSIS = "exam_topic_analysis"
+OUTPUT_TYPE_EXAM_PLAN = "exam_plan"
+
+EXAM_QUESTION_TYPES = (
+    "multiple_choice",
+    "true_false",
+    "short_answer",
+    "structured",
+    "essay",
+    "problem",
+    "proof",
+    "unspecified",
+)
+_EXAM_QUESTION_TYPES_SQL = ", ".join(f"'{kind}'" for kind in EXAM_QUESTION_TYPES)
+
+EXAM_QUESTION_DIFFICULTIES = ("easy", "medium", "hard")
+_EXAM_QUESTION_DIFFICULTIES_SQL = ", ".join(
+    f"'{level}'" for level in EXAM_QUESTION_DIFFICULTIES
+)
+
 JOB_TYPE_EXTRACT_DOCUMENT = "extract_document"
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_RUNNING = "running"
@@ -896,6 +916,14 @@ class GeneratedOutput(Base):
     """
 
     __tablename__ = "generated_outputs"
+    __table_args__ = (
+        Index(
+            "uq_generated_outputs_id_course_id",
+            "id",
+            "course_id",
+            unique=True,
+        ),
+    )
 
     # The auto-numbered identity of this row. Every table gets one.
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -929,6 +957,252 @@ class GeneratedOutput(Base):
     # output.course to reach the Course object. The partner attribute
     # on Course must be named exactly "generated_outputs".
     course: Mapped["Course"] = relationship(back_populates="generated_outputs")
+
+    topic_candidates: Mapped[list["ExamTopicCandidate"]] = relationship(
+        back_populates="analysis_output",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ExamTopicCandidate.position",
+    )
+
+    past_exam_questions: Mapped[list["PastExamQuestion"]] = relationship(
+        back_populates="analysis_output",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="PastExamQuestion.position",
+    )
+
+
+class ExamTopicCandidate(Base):
+    """One candidate exam topic discovered by one Exam Mode analysis run.
+
+    Append-only: the application never updates a row here. A later analysis
+    writes a new ``generated_outputs`` row and a fresh set of candidates, so an
+    older exam plan can still be reopened against the evidence it was actually
+    built from.
+
+    ``course_id`` is denormalized for course-scoped reads and held true by the
+    composite foreign key, the arrangement ``document_chunks`` and
+    ``chunk_embeddings`` already use. Without it a row whose ``course_id``
+    disagreed with its analysis would surface in another course's read, after
+    the authorization boundary had already passed.
+
+    ``topic_key`` is produced by ``services/exam_topics.canonical_topic_key``
+    and is deliberately independent of display casing, so a mastery label the
+    model never saw can still be matched against it at read time.
+    """
+
+    __tablename__ = "exam_topic_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_output_id",
+            "topic_key",
+            name="uq_exam_topic_candidates_analysis_output_id_topic_key",
+        ),
+        CheckConstraint("position >= 0", name="position_nonnegative"),
+        CheckConstraint(
+            f"length(trim(topic_key, '{_ASCII_WHITESPACE}')) > 0",
+            name="topic_key_nonblank",
+        ),
+        CheckConstraint(
+            f"length(trim(display_label, '{_ASCII_WHITESPACE}')) > 0",
+            name="display_label_nonblank",
+        ),
+        CheckConstraint(
+            "discovery_confidence >= 0 AND discovery_confidence <= 1",
+            name="discovery_confidence_fraction",
+        ),
+        CheckConstraint(
+            "syllabus_weight_percent IS NULL OR "
+            "(syllabus_weight_percent >= 0 AND syllabus_weight_percent <= 100)",
+            name="syllabus_weight_percent_range",
+        ),
+        CheckConstraint(
+            "syllabus_mention_count >= 0 AND material_chunk_count >= 0 AND "
+            "material_character_count >= 0 AND past_exam_question_count >= 0",
+            name="evidence_counts_nonnegative",
+        ),
+        CheckConstraint(
+            "past_exam_marks_total IS NULL OR past_exam_marks_total >= 0",
+            name="past_exam_marks_total_nonnegative",
+        ),
+        CheckConstraint(
+            "in_syllabus OR in_course_topics OR in_past_exams OR in_material",
+            name="at_least_one_source",
+        ),
+        ForeignKeyConstraint(
+            ["analysis_output_id", "course_id"],
+            ["generated_outputs.id", "generated_outputs.course_id"],
+            name="fk_exam_topic_candidates_analysis_course_generated_outputs",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_output_id: Mapped[int] = mapped_column(Integer, index=True)
+    course_id: Mapped[int] = mapped_column(Integer, index=True)
+    position: Mapped[int] = mapped_column(Integer)
+
+    topic_key: Mapped[str] = mapped_column(String(120))
+    display_label: Mapped[str] = mapped_column(String(200))
+    aliases: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    in_syllabus: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    in_course_topics: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    in_past_exams: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    in_material: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+
+    discovery_confidence: Mapped[float] = mapped_column(
+        Float, default=0.5, server_default="0.5"
+    )
+
+    syllabus_weight_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    syllabus_mention_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    material_chunk_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    material_character_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    past_exam_question_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    past_exam_marks_total: Mapped[float | None] = mapped_column(Float, nullable=True)
+    past_exam_years: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    analysis_output: Mapped["GeneratedOutput"] = relationship(
+        back_populates="topic_candidates"
+    )
+
+
+class PastExamQuestion(Base):
+    """One question extracted from one past exam paper by one analysis run.
+
+    Two composite foreign keys both carry ``course_id``, which together force
+    the analysis and the source document into the same course, so a question
+    can never be attributed to a paper belonging to another course.
+
+    ``document_id`` is nullable because the model sometimes extracts a real
+    question whose page it cannot cite. A null in either half of the pair
+    leaves that foreign key unchecked, so the constraint still binds every row
+    that names a document, and ``page_requires_document`` stops a row claiming
+    a page it cannot attribute.
+
+    Visual references are stored as the stable ``page_number`` /
+    ``visual_index`` descriptor rather than a ``document_visuals`` identifier,
+    because reprocessing a document deletes and reinserts its pages and those
+    identifiers do not survive it.
+    """
+
+    __tablename__ = "past_exam_questions"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_output_id",
+            "position",
+            name="uq_past_exam_questions_analysis_output_id_position",
+        ),
+        CheckConstraint("position >= 0", name="position_nonnegative"),
+        CheckConstraint(
+            f"length(trim(question_text, '{_ASCII_WHITESPACE}')) > 0",
+            name="question_text_nonblank",
+        ),
+        CheckConstraint(
+            "page_start IS NULL OR page_start >= 1", name="page_start_positive"
+        ),
+        CheckConstraint(
+            "(page_start IS NULL AND page_end IS NULL) OR "
+            "(page_start IS NOT NULL AND page_end IS NOT NULL AND "
+            "page_end >= page_start)",
+            name="page_range_valid",
+        ),
+        CheckConstraint(
+            "document_id IS NOT NULL OR (page_start IS NULL AND page_end IS NULL)",
+            name="page_requires_document",
+        ),
+        CheckConstraint(
+            "question_number IS NULL OR question_number >= 0",
+            name="question_number_nonnegative",
+        ),
+        CheckConstraint("marks IS NULL OR marks >= 0", name="marks_nonnegative"),
+        CheckConstraint(
+            f"question_type IN ({_EXAM_QUESTION_TYPES_SQL})",
+            name="question_type_valid",
+        ),
+        CheckConstraint(
+            f"difficulty IS NULL OR difficulty IN ({_EXAM_QUESTION_DIFFICULTIES_SQL})",
+            name="difficulty_valid",
+        ),
+        ForeignKeyConstraint(
+            ["analysis_output_id", "course_id"],
+            ["generated_outputs.id", "generated_outputs.course_id"],
+            name="fk_past_exam_questions_analysis_course_generated_outputs",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["document_id", "course_id"],
+            ["uploaded_documents.id", "uploaded_documents.course_id"],
+            name="fk_past_exam_questions_document_course_uploaded_documents",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_output_id: Mapped[int] = mapped_column(Integer, index=True)
+    course_id: Mapped[int] = mapped_column(Integer, index=True)
+    position: Mapped[int] = mapped_column(Integer)
+
+    document_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True, index=True
+    )
+    page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    question_label: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    question_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    question_text: Mapped[str] = mapped_column(Text)
+    subparts: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    question_type: Mapped[str] = mapped_column(
+        String(30), default="unspecified", server_default="unspecified"
+    )
+    difficulty: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    marks: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    answer_guidance: Mapped[str | None] = mapped_column(Text, nullable=True)
+    marking_points: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    visual_refs: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    topic_key: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, index=True
+    )
+    topic_mappings: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    analysis_output: Mapped["GeneratedOutput"] = relationship(
+        back_populates="past_exam_questions"
+    )
 
 
 class Conversation(Base):

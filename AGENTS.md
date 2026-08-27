@@ -84,7 +84,7 @@ npm run test:e2e
 
 - Run one test with `python -m pytest -q tests/test_document_upload.py::test_name`.
 - Frontend lint is deliberately scoped to `src` and `vite.config.ts`; do not replace it with `eslint .`, which scans generated/dependency trees.
-- CI also imports `backend.app.models`, builds `main.app` OpenAPI, qualifies the relational contract on PostgreSQL 17.8 with pgvector, and requires tests/builds to leave tracked files unchanged.
+- CI also imports `backend.app.models`, validates OpenAPI schema against `docs/openapi.json` (regenerate with `python scripts/export_openapi.py`), validates internal Markdown links, qualifies the relational contract on PostgreSQL 17.8 with pgvector, and requires tests/builds to leave tracked files unchanged.
 
 ## Git And PRs
 
@@ -101,7 +101,7 @@ npm run test:e2e
 
 ## CI Contract
 
-- Current `dev` job names are `Branch and PR policy`, `Repository quality`, `Backend quality and tests`, `Migration governance`, `PostgreSQL quality`, `Container quality`, `Frontend quality and build`, and `Frontend end-to-end`. The last is `continue-on-error: true` while the browser suite proves itself; making it blocking is a ruleset change as well as a workflow change.
+- Current `dev` job names are `Branch and PR policy`, `Repository quality`, `Backend quality and tests`, `Migration governance`, `PostgreSQL quality`, `Container quality`, `Infrastructure quality`, `Frontend quality and build`, and `Frontend end-to-end`. The last is `continue-on-error: true` while the browser suite proves itself; making it blocking is a ruleset change as well as a workflow change.
 - Job names are referenced by dormant rulesets. Flag the corresponding ruleset update before renaming one.
 - CI must verify, never modify: no `--fix`, generated changes, or auto-commits. Keep `permissions: contents: read`.
 - Third-party Actions must remain pinned to immutable 40-character commit SHAs.
@@ -109,7 +109,7 @@ npm run test:e2e
 
 ## Security And Safety
 
-- Never write or log secrets. Commit placeholders only in `.env.example`; add every new configuration variable there in the same PR.
+- Never write or log secrets. Commit placeholders only in `.env.example`; add every new configuration variable there in the same PR (CI verifies all variables read by config are declared in `.env.example`).
 - Passwords persist only as `password_hash`. Logs may identify filenames but must not print uploaded contents or credentials.
 - Future AWS authentication must use GitHub OIDC/IAM roles, not stored long-lived keys.
 - Ask before destructive operations. The sole pre-approved reset is `rm -rf data`, which removes only ignored runtime state.

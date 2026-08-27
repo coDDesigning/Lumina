@@ -4,7 +4,7 @@ import os
 import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -422,7 +422,7 @@ def model_graph(db_session: Session) -> ModelGraph:
         title="Primary Course",
         description="Repository test course",
         semester="Fall",
-        exam_date="2026",
+        exam_date=date(2026, 6, 15),
         owner=user,
         is_deleted=False,
     )
@@ -430,7 +430,7 @@ def model_graph(db_session: Session) -> ModelGraph:
         title="Other Course",
         description=None,
         semester="Fall",
-        exam_date="2026",
+        exam_date=date(2026, 6, 15),
         owner=user,
         is_deleted=False,
     )
@@ -504,7 +504,7 @@ def upload_api(api_context: ApiContext) -> UploadApiContext:
             title="Active Course",
             description="Document upload tests",
             semester="Fall",
-            exam_date="2026",
+            exam_date=date(2026, 6, 15),
             owner=user,
             is_deleted=False,
         )
@@ -512,7 +512,7 @@ def upload_api(api_context: ApiContext) -> UploadApiContext:
             title="Second Active Course",
             description=None,
             semester="Fall",
-            exam_date="2026",
+            exam_date=date(2026, 6, 15),
             owner=user,
             is_deleted=False,
         )
@@ -520,7 +520,7 @@ def upload_api(api_context: ApiContext) -> UploadApiContext:
             title="Deleted Course",
             description=None,
             semester="Fall",
-            exam_date="2026",
+            exam_date=date(2026, 6, 15),
             owner=user,
             is_deleted=True,
         )
@@ -598,7 +598,7 @@ def authz_api(api_context: ApiContext) -> AuthorizationApiContext:
             title="Owner A Active Course",
             description="Private study material",
             semester="Fall",
-            exam_date="2026",
+            exam_date=date(2026, 6, 15),
             owner=user_a,
             is_deleted=False,
         )
@@ -606,7 +606,7 @@ def authz_api(api_context: ApiContext) -> AuthorizationApiContext:
             title="Owner A Deleted Course",
             description=None,
             semester="Fall",
-            exam_date="2026",
+            exam_date=date(2026, 6, 15),
             owner=user_a,
             is_deleted=True,
         )
@@ -614,7 +614,7 @@ def authz_api(api_context: ApiContext) -> AuthorizationApiContext:
             title="Owner B Active Course",
             description=None,
             semester="Fall",
-            exam_date="2026",
+            exam_date=date(2026, 6, 15),
             owner=user_b,
             is_deleted=False,
         )

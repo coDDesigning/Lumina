@@ -42,7 +42,9 @@ PROCESSING_JOB_CORRELATION_ID_REVISION = "3e8b1a4c7f20"
 AI_USAGE_COST_REVISION = "c2a6e9f4d817"
 RATE_LIMIT_BUCKETS_REVISION = "784a1eb8fba0"
 GENERATED_CITATIONS_REVISION = "d1f6b3a8c724"
-HEAD_REVISION = GENERATED_CITATIONS_REVISION
+EXAM_DATE_REVISION = "e2b7c94f1a03"
+COURSE_TOPICS_REVISION = "f3c8d05a2b16"
+HEAD_REVISION = COURSE_TOPICS_REVISION
 
 
 def test_postgresql_contract_pins_the_same_head_revision() -> None:
@@ -70,6 +72,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        COURSE_TOPICS_REVISION: EXAM_DATE_REVISION,
+        EXAM_DATE_REVISION: GENERATED_CITATIONS_REVISION,
         GENERATED_CITATIONS_REVISION: RATE_LIMIT_BUCKETS_REVISION,
         RATE_LIMIT_BUCKETS_REVISION: AI_USAGE_COST_REVISION,
         AI_USAGE_COST_REVISION: PROCESSING_JOB_CORRELATION_ID_REVISION,
@@ -2168,3 +2172,202 @@ def test_ai_usage_cost_downgrade_rejects_long_model_identifiers(tmp_path: Path) 
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone() == (AI_USAGE_COST_REVISION,)
+
+
+def test_course_exam_date_migration_converts_valid_dates_and_nulls_the_rest(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "course-exam-date.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", GENERATED_CITATIONS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        user_id = insert_legacy_user(
+            connection,
+            email="exam-date-owner@example.com",
+            credits=10.0,
+        )
+        rows = {
+            "iso": "2026-12-17",
+            "padded": "  2026-03-05  ",
+            "bare year": "2026",
+            "year and month": "2026-09",
+            "blank": "",
+            "junk": "next friday",
+            "absent": None,
+            "impossible": "2026-02-30",
+        }
+        course_ids = {
+            label: connection.execute(
+                "INSERT INTO courses (title, exam_date, is_deleted, owner_id)"
+                " VALUES (?, ?, 0, ?)",
+                (label, value, user_id),
+            ).lastrowid
+            for label, value in rows.items()
+        }
+
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_DATE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        stored = {
+            label: connection.execute(
+                "SELECT exam_date FROM courses WHERE id = ?", (course_id,)
+            ).fetchone()[0]
+            for label, course_id in course_ids.items()
+        }
+
+    assert stored["iso"] == "2026-12-17"
+    assert stored["padded"] == "2026-03-05"
+    assert stored["bare year"] is None
+    assert stored["year and month"] is None
+    assert stored["blank"] is None
+    assert stored["junk"] is None
+    assert stored["absent"] is None
+    assert stored["impossible"] is None
+
+    run_alembic(database_path, tmp_path, "downgrade", GENERATED_CITATIONS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT exam_date FROM courses WHERE id = ?", (course_ids["iso"],)
+        ).fetchone() == ("2026-12-17",)
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)
+
+
+def test_course_exam_date_orders_chronologically_after_migration(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "course-exam-date-order.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", GENERATED_CITATIONS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        user_id = insert_legacy_user(
+            connection,
+            email="exam-order-owner@example.com",
+            credits=10.0,
+        )
+        for title, value in (
+            ("December", "2026-12-17"),
+            ("February", "2026-02-03"),
+            ("September", "2026-09-04"),
+        ):
+            connection.execute(
+                "INSERT INTO courses (title, exam_date, is_deleted, owner_id)"
+                " VALUES (?, ?, 0, ?)",
+                (title, value, user_id),
+            )
+
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_DATE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        ordered = [
+            row[0]
+            for row in connection.execute(
+                "SELECT title FROM courses ORDER BY exam_date"
+            )
+        ]
+
+    assert ordered == ["February", "September", "December"]
+
+
+def test_course_topics_migration_splits_backfills_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "course-topics.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_DATE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert "topics" in {
+            row[1] for row in connection.execute("PRAGMA table_info(courses)")
+        }
+        user_id = insert_legacy_user(
+            connection,
+            email="topics-owner@example.com",
+            credits=10.0,
+        )
+        populated = connection.execute(
+            "INSERT INTO courses (title, topics, is_deleted, owner_id)"
+            " VALUES (?, ?, 0, ?)",
+            ("Populated", "Graphs, Trees ,, graphs,  Shortest Paths ", user_id),
+        ).lastrowid
+        blank = connection.execute(
+            "INSERT INTO courses (title, topics, is_deleted, owner_id)"
+            " VALUES (?, ?, 0, ?)",
+            ("Blank", "", user_id),
+        ).lastrowid
+        absent = connection.execute(
+            "INSERT INTO courses (title, topics, is_deleted, owner_id)"
+            " VALUES (?, NULL, 0, ?)",
+            ("Absent", user_id),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", COURSE_TOPICS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert "topics" not in {
+            row[1] for row in connection.execute("PRAGMA table_info(courses)")
+        }
+        assert [
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM course_topics WHERE course_id = ? ORDER BY position",
+                (populated,),
+            )
+        ] == ["Graphs", "Trees", "Shortest Paths"]
+        for course_id in (blank, absent):
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM course_topics WHERE course_id = ?",
+                    (course_id,),
+                ).fetchone()[0]
+                == 0
+            )
+
+    run_alembic(database_path, tmp_path, "downgrade", EXAM_DATE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT topics FROM courses WHERE id = ?", (populated,)
+        ).fetchone() == ("Graphs, Trees, Shortest Paths",)
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)
+
+
+def test_course_topics_cascade_on_course_delete(tmp_path: Path) -> None:
+    database_path = tmp_path / "course-topics-cascade.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        user_id = insert_legacy_user(
+            connection,
+            email="topics-cascade@example.com",
+            credits=10.0,
+        )
+        course_id = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Cascade", user_id),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO course_topics (course_id, position, name) VALUES (?, 0, ?)",
+            (course_id, "Graphs"),
+        )
+        connection.execute("DELETE FROM courses WHERE id = ?", (course_id,))
+
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM course_topics WHERE course_id = ?",
+                (course_id,),
+            ).fetchone()[0]
+            == 0
+        )

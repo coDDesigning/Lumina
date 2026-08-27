@@ -85,7 +85,7 @@ def test_updating_only_the_syllabus_leaves_other_fields_alone(authz_api):
         authz_api,
         semester="Fall 2026",
         exam_date="2026-12-17",
-        topics="trees, graphs",
+        topics=["trees", "graphs"],
         syllabus="Week 1: Fundamentals",
     )
 
@@ -99,7 +99,7 @@ def test_updating_only_the_syllabus_leaves_other_fields_alone(authz_api):
     assert payload["syllabus"] == "Week 1: Revised"
     assert payload["semester"] == "Fall 2026"
     assert payload["exam_date"] == "2026-12-17"
-    assert payload["topics"] == "trees, graphs"
+    assert payload["topics"] == ["trees", "graphs"]
     assert payload["title"] == "Owner A workspace"
 
 

@@ -31,6 +31,7 @@ import { Input, Select, Textarea } from '@/ui/Input';
 import { LinkButton } from '@/ui/LinkButton';
 import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
+import { TagInput } from '@/ui/TagInput';
 import styles from './CoursesPage.module.css';
 
 export interface CoursesPageProps {
@@ -49,7 +50,7 @@ const emptyDraft: WorkspaceDraft = {
   educationLevel: 'unspecified',
   semester: '',
   examDate: '',
-  topics: '',
+  topics: [],
   syllabus: '',
 };
 
@@ -218,7 +219,10 @@ export default function CoursesPage({
     }
   }, [isCreating]);
 
-  function updateDraft(field: keyof WorkspaceDraft, value: string) {
+  function updateDraft<Field extends keyof WorkspaceDraft>(
+    field: Field,
+    value: WorkspaceDraft[Field],
+  ) {
     setDraft((current) => ({ ...current, [field]: value }));
   }
 
@@ -366,11 +370,17 @@ export default function CoursesPage({
 
                           <h2 className={styles.cardTitle}>{workspace.name}</h2>
 
-                          <p className={styles.topics}>
-                            {workspace.topics.length > 0
-                              ? workspace.topics.join(', ')
-                              : 'No topics added yet'}
-                          </p>
+                          {workspace.topics.length > 0 ? (
+                            <ul className={styles.topics}>
+                              {workspace.topics.map((topic) => (
+                                <li key={topic} className={styles.topic}>
+                                  {topic}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className={styles.topicsEmpty}>No topics added yet</p>
+                          )}
 
                           <div className={styles.meta}>
                             <Badge tone={examUrgency(days)}>{examLabel(days, workspace.examDate)}</Badge>
@@ -524,7 +534,9 @@ export default function CoursesPage({
             label="Education level"
             optional
             value={draft.educationLevel}
-            onChange={(event) => updateDraft('educationLevel', event.target.value)}
+            onChange={(event) =>
+              updateDraft('educationLevel', event.target.value as EducationLevel)
+            }
           >
             {(Object.keys(EDUCATION_LEVEL_LABELS) as EducationLevel[]).map((level) => (
               <option key={level} value={level}>
@@ -558,13 +570,13 @@ export default function CoursesPage({
             onChange={(event) => updateDraft('examDate', event.target.value)}
           />
 
-          <Input
+          <TagInput
             label="Topics"
             optional
             fieldClassName={styles.formSpan}
             value={draft.topics}
-            onChange={(event) => updateDraft('topics', event.target.value)}
-            placeholder="Separate topics with commas"
+            onChange={(topics) => updateDraft('topics', topics)}
+            placeholder="Add a topic, then press Enter"
             hint="Used to focus what Lumina generates and to tag quiz questions."
           />
 

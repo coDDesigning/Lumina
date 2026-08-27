@@ -2441,6 +2441,8 @@ def test_course_topics_cascade_on_course_delete(tmp_path: Path) -> None:
             ).fetchone()[0]
             == 0
         )
+
+
 def test_progress_read_indexes_upgrade_downgrade_and_reupgrade(tmp_path: Path) -> None:
     database_path = tmp_path / "progress-read-indexes.sqlite3"
     expected = {

@@ -271,6 +271,23 @@ TEMPLATE_EXTRA_VARIABLES: dict[str, dict[str, str]] = {
         "PAST_QUESTION_STYLE": "Past question style body",
         "TEXT": "Course material body",
     },
+    "exam_similar_questions": {
+        "TOPIC_LABEL": "Graph Traversal",
+        "ORIGINAL_QUESTIONS": "1. Original question body",
+        "TEXT": "Course material body",
+    },
+    "exam_mock_exam": {
+        "PLAN_TOPICS": "- Graph Traversal (weight 2)",
+        "PAST_QUESTION_STYLE": "Past question style body",
+        "QUESTION_COUNT": "20",
+        "QUESTION_TYPE_DIRECTIVES": "Type directives body",
+        "QUESTION_TYPE_SCHEMAS": "Type schemas body",
+        "TEXT": "Course material body",
+    },
+    "exam_review_sheet": {
+        "PLAN_TOPICS": "- Graph Traversal (weight 2)",
+        "TEXT": "Course material body",
+    },
     "flashcard": {
         "PROFILE_CONTEXT": PROFILE_CONTEXT_FIXTURE,
         "TEXT": "Course material body",

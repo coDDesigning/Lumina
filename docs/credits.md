@@ -162,6 +162,8 @@ server owns.
 | Exam Mode source analysis | 1 |
 | Exam Mode rescan | 0.5 |
 | Exam Mode topic unlock | 2 |
+| Exam Mode mock exam | 2 |
+| Exam Mode review sheet | 1 |
 
 Open-ended answers are graded by the provider, which costs real money every time
 an attempt is submitted. That grading is **prepaid at generation**, which is why
@@ -194,11 +196,24 @@ studies four pays for four. The unlock is keyed by (course, student, topic) and
 holds no plan identifier, so regenerating a plan over the same topics costs
 nothing and a second artifact for an unlocked topic costs nothing.
 
-An unlock commits on its own rather than inside the generation it precedes. If a
-generation fails after its topic was unlocked, the student keeps the unlock and
-the retry is free; the alternative would roll the row back and bill them a
-second time for the same topic. What the price buys is access to the topic, and
-access is what survives.
+An unlock commits on its own rather than inside the generation it precedes,
+because the row has to exist before the work it pays for starts. A generation
+that then fails releases it: the row is deleted and the charge refunded, so a
+failed first artifact leaves the student neither charged nor unlocked and the
+retry is priced as a first purchase. A topic already unlocked by an earlier,
+successful request is never released, because that purchase is not this
+request's to undo.
+
+A mock exam and a review sheet are priced on their own, at 2 and 1, because they
+draw on every topic of the plan: a student who unlocked one topic has not paid
+for a paper covering twelve. Both refund on every failure, like every other
+generation.
+
+Reading the questions out of a past paper, ranking a plan, reopening anything,
+and building the study roadmap all charge **nothing**. The roadmap is arithmetic
+over an order the plan already settled — no model is involved and none is
+credited — so `exam_roadmap` is rate limited but deliberately absent from the
+price table, exactly as `exam_plan` is.
 
 Creating an exam plan from an analysis that already exists charges **nothing**:
 ranking is arithmetic over values the analysis already persisted, no model is

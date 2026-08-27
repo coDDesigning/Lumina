@@ -144,6 +144,53 @@ runtime pooling. RDS parameters log queries slower than one second, bound idle
 transactions, and set conservative work-memory/autovacuum defaults; tune them
 only from observed production plans and memory pressure.
 
+### Growing-table query and maintenance policy
+
+The schema keeps composite indexes aligned with the predicates and stable
+ordering used by the growing read paths:
+
+| Read | Index |
+| --- | --- |
+| Ready documents in one course | `uploaded_documents(course_id, status, created_at, id)` |
+| Chunks in one course and corpus order | `document_chunks(course_id, document_id, chunk_index, id)` |
+| Generated-output progress | `generated_outputs(user_id, course_id, created_at, id)` |
+| Cross-course generated activity | `generated_outputs(user_id, created_at, id)` |
+| Conversation progress | `conversations(user_id, course_id, updated_at, id)` |
+| One user's attempts for one quiz | `quiz_attempts(quiz_id, user_id, created_at, id)` |
+| Cross-course user attempt activity | `quiz_attempts(user_id, created_at, id)` |
+| Latest attempt for a quiz | `quiz_attempts(quiz_id, created_at, id)` |
+
+The materialized `progress` lookup is already covered by its unique
+`(user_id, course_id)` constraint. The AI cost report is already covered by
+`ai_usage_logs(success, created_at)`. Duplicate indexes for either path add
+write cost without a new access path.
+
+Hosted PostgreSQL uses autovacuum and auto-analyze as its continuous schedule.
+Both `autovacuum` and `track_counts` are explicitly enabled and the launcher
+wakes every 30 seconds. Do not add a blind cron `VACUUM`: inspect
+`pg_stat_user_tables`, slow-query logs, and `EXPLAIN (ANALYZE, BUFFERS,
+SETTINGS)` first. After representative data changes, operators may run
+targeted `ANALYZE` immediately; manual `VACUUM (ANALYZE)` is reserved for a
+measured dead-tuple backlog and must run outside a transaction with bounded
+lock and statement timeouts.
+
+Capture plans for the course-material, progress, activity, quiz-history, and
+AI-cost queries before and after an index change. CI verifies exact index
+definitions and executes the hot query shapes with `EXPLAIN ANALYZE` to prove
+planner eligibility. Small CI tables may legitimately prefer sequential scans,
+so production decisions use plans with normal planner settings and realistic
+cardinality.
+
+`quiz_attempts` and `ai_usage_logs` remain unpartitioned. Attempts have a
+single-column primary key referenced by answer rows, so time partitioning would
+require a composite-key and foreign-key redesign without a measured benefit.
+Usage logs are not yet large enough to justify partition provisioning and
+partition-local index overhead. Revisit monthly usage-log partitions when the
+table reaches multi-gigabyte or tens-of-millions-of-rows scale, retention
+deletes cause sustained dead tuples, or representative cost-report plans exceed
+the service objective. Record row counts, table/index sizes, dead tuples, and
+monthly growth before making that decision.
+
 ## Durable state machine
 
 Each document has one `extract_document` job.

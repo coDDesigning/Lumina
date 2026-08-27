@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
@@ -21,19 +21,14 @@ from schemas.quiz_attempt import (
 )
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
-from services.generated_output import GeneratedOutputService
 from services.credits import CreditService
-from services.quiz import QuizGenerationError, QuizService
+from services.quiz import QuizService
 from services.quiz_attempt import QuizAttemptService
-from services.retrieval_material import RetrievalMaterialError
 from services.text_generation import (
-    IncompatibleModelError,
-    TextGenerationError,
-    UnavailableModelError,
     get_text_generation_provider,
     resolve_effective_model,
 )
-from utils.ai_errors import InsufficientCreditsError, ai_generation_http_exception
+from utils.ai_errors import ai_generation_http_exception
 from utils.authorization import AuthorizedCourse, OwnedCourse
 from utils.deps import get_current_user
 from utils.rate_limit import rate_limit_generation
@@ -103,7 +98,7 @@ def generate_quiz(
             profile_knowledge=generation.profile_knowledge,
         ).model_dump_json()
 
-        quiz = QuizService.save_generated_quiz(
+        persisted_quiz = QuizService.save_generated_quiz(
             db,
             course.id,
             generation.quiz,
@@ -112,47 +107,22 @@ def generate_quiz(
             generation_settings=applied_settings,
             generation_context=applied_context,
             citations=generation.material.citation_map,
-            commit=False,
         )
 
-        view = QuizService.build_quiz_view(quiz)
-
-        persisted = GeneratedOutputService.record(
-            db,
-            course_id=course.id,
-            user_id=current_user.id,
-            output_type="quiz",
-            content=view.model_dump_json(),
-            model_used=generation.model_used,
-            generation_settings=applied_settings,
-            generation_context=applied_context,
-        )
-
-    except (
-        TextGenerationError,
-        QuizGenerationError,
-        RetrievalMaterialError,
-        UnavailableModelError,
-        IncompatibleModelError,
-        InsufficientCreditsError,
-    ) as exc:
+    except HTTPException:
+        raise
+    except Exception as exc:
         if generation is not None:
             db.rollback()
             CreditService.refund(db, generation.charge_receipt)
-        raise ai_generation_http_exception(exc, feature="quiz") from exc
-    except Exception as exc:
-        if generation is None:
-            raise
-        db.rollback()
-        CreditService.refund(db, generation.charge_receipt)
         raise ai_generation_http_exception(exc, feature="quiz") from exc
 
     return BaseResponse(
         success=True,
         message="Quiz generated successfully",
         data=QuizGenerationResult(
-            quiz=view,
-            generated_output_id=persisted.id,
+            quiz=persisted_quiz.view,
+            generated_output_id=persisted_quiz.generated_output.id,
             context_truncated=generation.material.truncated,
             chunks_used=generation.material.chunks_used,
             chunks_available=generation.material.chunks_available,

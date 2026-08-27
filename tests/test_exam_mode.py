@@ -1,6 +1,6 @@
 """Exam Mode end to end: sources, analysis, plans, ownership, and reopening."""
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -32,8 +32,12 @@ from utils.ai_errors import AiErrorCode
 
 STUB_METADATA = GenerationMetadata(provider="ollama", model="qwen3:8b", latency_ms=5)
 
-FUTURE_EXAM_DATE = date.today() + timedelta(days=30)
-PAST_EXAM_DATE = date.today() - timedelta(days=5)
+# UTC, because that is the clock every dated decision in the service uses.
+# Deriving these from the local date makes the suite fail for the hours when the
+# two calendars disagree.
+TODAY = datetime.now(UTC).date()
+FUTURE_EXAM_DATE = TODAY + timedelta(days=30)
+PAST_EXAM_DATE = TODAY - timedelta(days=5)
 
 
 def analysis_payload(**overrides) -> dict:

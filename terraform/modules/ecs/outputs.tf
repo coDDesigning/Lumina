@@ -10,6 +10,14 @@ output "task_role_arn" {
   value = aws_iam_role.task.arn
 }
 
+output "restore_execution_role_arn" {
+  value = aws_iam_role.restore_execution.arn
+}
+
+output "restore_task_role_arn" {
+  value = aws_iam_role.restore_task.arn
+}
+
 output "cluster_name" {
   value = aws_ecs_cluster.this.name
 }
@@ -32,6 +40,10 @@ output "worker_task_definition_family" {
 
 output "migrate_task_definition_family" {
   value = aws_ecs_task_definition.migrate.family
+}
+
+output "hosted_restore_task_definition_family" {
+  value = aws_ecs_task_definition.hosted_restore.family
 }
 
 output "course_purge_task_definition_family" {

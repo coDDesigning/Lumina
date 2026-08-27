@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
@@ -14,10 +14,8 @@ from schemas.flashcard import (
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.credits import CreditService
-from services.flashcard import FlashcardGenerationError, FlashcardService
-from services.retrieval_material import RetrievalMaterialError
+from services.flashcard import FlashcardService
 from services.text_generation import (
-    TextGenerationError,
     get_text_generation_provider,
     resolve_effective_model,
 )
@@ -98,12 +96,9 @@ def generate_flashcards(
             generation_context=applied_context,
         )
 
-    except (
-        TextGenerationError,
-        FlashcardGenerationError,
-        RetrievalMaterialError,
-        Exception,
-    ) as exc:
+    except HTTPException:
+        raise
+    except Exception as exc:
         if generation is not None:
             db.rollback()
             CreditService.refund(db, generation.charge_receipt)

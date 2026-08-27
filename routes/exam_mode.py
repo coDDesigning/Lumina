@@ -41,9 +41,6 @@ from schemas.exam_mode import (
     ExamPlanArtifactRequest,
     ExamReviewSheetDocument,
     ExamReviewSheetResult,
-    ExamRoadmapDocument,
-    ExamRoadmapRequest,
-    ExamRoadmapResult,
     ExamSimilarQuestionsDocument,
     ExamSimilarQuestionsResult,
     ExamSourceInventory,
@@ -68,7 +65,6 @@ from services.exam_course_artifacts import (
 from services.exam_plan import ExamPlanService
 from services.exam_quiz import ExamQuizService
 from services.exam_similar_questions import ExamSimilarQuestionsService
-from services.exam_study_roadmap import ExamStudyRoadmapService
 from services.exam_source_analysis import ExamModeError, ExamSourceAnalysisService
 from services.exam_topic_study import ExamTopicStudyService
 from services.retrieval_material import RetrievalMaterialError
@@ -96,7 +92,6 @@ FEATURE_TOPIC_EXAM = "exam_topic_exam"
 FEATURE_SIMILAR_QUESTIONS = "exam_similar_questions"
 FEATURE_MOCK_EXAM = "exam_mock_exam"
 FEATURE_REVIEW_SHEET = "exam_review_sheet"
-FEATURE_ROADMAP = "exam_roadmap"
 
 MAX_TOPIC_KEY_LENGTH = 120
 
@@ -1286,72 +1281,4 @@ def get_review_sheet(
         success=True,
         message="Review sheet retrieved successfully",
         data=_stored_document(output, ExamReviewSheetDocument),
-    )
-
-
-# --------------------------------------------------------------- roadmap
-
-
-@router.post(
-    "/{course_id}/exam-mode/roadmap",
-    response_model=BaseResponse[ExamRoadmapResult],
-    dependencies=[Depends(rate_limit_generation(FEATURE_ROADMAP))],
-    responses={
-        **READ_RESPONSES,
-        409: {"description": "This course has no exam plan yet"},
-        422: {"description": "Invalid roadmap request"},
-        429: {"description": "Per-user generation rate limited"},
-    },
-)
-def create_roadmap(
-    course: OwnedCourse,
-    request: ExamRoadmapRequest,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
-    db: Annotated[Session, Depends(get_db)],
-) -> BaseResponse[ExamRoadmapResult]:
-    """Spread the plan's topics across the days that are left.
-
-    Free and deterministic: arithmetic over an order the plan already settled,
-    with no provider and no credit. It writes a row, which is why it is a write
-    and rate limited, and why `exam_roadmap` is deliberately absent from the
-    price table.
-    """
-    plan = _resolve_plan(course, request, db, FEATURE_ROADMAP)
-    persisted = ExamStudyRoadmapService.create(
-        db,
-        course.id,
-        plan,
-        user_id=current_user.id,
-        requested_days=request.day_count,
-    )
-    return BaseResponse(
-        success=True,
-        message="Study roadmap created successfully",
-        data=ExamRoadmapResult(
-            roadmap=persisted.document,
-            generated_output_id=persisted.output.id,
-            created_at=persisted.output.created_at,
-        ),
-    )
-
-
-@router.get(
-    "/{course_id}/exam-mode/roadmap",
-    response_model=BaseResponse[ExamRoadmapDocument],
-    responses={
-        **READ_RESPONSES,
-        404: {"description": "Course or study roadmap not found"},
-    },
-)
-def get_roadmap(
-    course: AuthorizedCourse,
-    db: Annotated[Session, Depends(get_db)],
-) -> BaseResponse[ExamRoadmapDocument]:
-    output = ExamStudyRoadmapService.latest(db, course.id)
-    if output is None:
-        raise NotFoundException(detail="Study roadmap not found")
-    return BaseResponse(
-        success=True,
-        message="Study roadmap retrieved successfully",
-        data=_stored_document(output, ExamRoadmapDocument),
     )

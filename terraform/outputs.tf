@@ -38,6 +38,11 @@ output "migrate_task_definition_family" {
   value       = module.ecs.migrate_task_definition_family
 }
 
+output "hosted_restore_task_definition_family" {
+  description = "Read-only task definition family used for hosted restore verification."
+  value       = module.ecs.hosted_restore_task_definition_family
+}
+
 output "alb_dns_name" {
   description = "DNS name of the application load balancer."
   value       = module.alb.dns_name
@@ -113,6 +118,36 @@ output "database_endpoint" {
   value       = module.rds.endpoint
 }
 
+output "rds_instance_identifier" {
+  description = "Identifier of the production RDS instance."
+  value       = module.rds.instance_identifier
+}
+
+output "rds_subnet_group_name" {
+  description = "DB subnet group used by the production RDS instance and temporary recovery restores."
+  value       = module.rds.subnet_group_name
+}
+
+output "rds_security_group_id" {
+  description = "Isolated security group used only by temporary recovery restore databases."
+  value       = module.security.restore_database_security_group_id
+}
+
+output "restore_verifier_security_group_id" {
+  description = "Isolated security group used only by hosted restore verifier tasks."
+  value       = module.security.restore_verifier_security_group_id
+}
+
+output "rds_parameter_group_name" {
+  description = "Production RDS parameter group applied to temporary recovery restores."
+  value       = module.rds.parameter_group_name
+}
+
+output "rds_option_group_name" {
+  description = "Production RDS option group applied to temporary recovery restores."
+  value       = module.rds.option_group_name
+}
+
 output "rds_proxy_endpoint" {
   description = "TLS-only RDS Proxy endpoint used by API and worker tasks."
   value       = module.rds_proxy.endpoint
@@ -121,6 +156,16 @@ output "rds_proxy_endpoint" {
 output "github_actions_role_arn" {
   description = "IAM role the deploy workflow assumes via GitHub OIDC. Set as AWS_DEPLOY_ROLE_ARN on the production environment."
   value       = module.github_oidc.role_arn
+}
+
+output "github_recovery_role_arn" {
+  description = "Least-privilege IAM role assumed by hosted recovery workflows."
+  value       = module.github_oidc.recovery_role_arn
+}
+
+output "github_reconciler_role_arn" {
+  description = "Deletion-only IAM role assumed by unattended hosted recovery reconciliation."
+  value       = module.github_oidc.reconciler_role_arn
 }
 
 output "runtime_ssm_parameters" {

@@ -162,3 +162,24 @@ def delete_profile_knowledge(
         message="Profile knowledge deleted successfully",
         data={"id": item_id},
     )
+
+
+@router.delete(
+    "/",
+    response_model=BaseResponse[dict],
+    responses={
+        401: {"description": "Authentication required"},
+    },
+)
+def delete_all_profile_knowledge(
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Deletes all profile knowledge entries owned by the authenticated user."""
+    count = ProfileKnowledgeService.delete_all(db, current_user.id)
+    return BaseResponse(
+        success=True,
+        message=f"Successfully deleted {count} profile knowledge entries",
+        data={"deleted_count": count},
+    )
+

@@ -230,7 +230,7 @@ def test_syllabus_position_is_empty_when_there_is_no_syllabus() -> None:
 FORBIDDEN_PURE_IMPORTS = ("sqlalchemy", "random", "time", "datetime")
 
 
-@pytest.mark.parametrize("module", ["exam_topics", "exam_ranking", "exam_roadmap"])
+@pytest.mark.parametrize("module", ["exam_topics", "exam_ranking"])
 def test_the_deterministic_modules_import_no_database_provider_or_clock(
     module: str,
 ) -> None:

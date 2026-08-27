@@ -1,4 +1,4 @@
-import { BookOpen, Layers3, Target } from 'lucide-react';
+import { BookOpen, Calendar, Layers3, Target } from 'lucide-react';
 import { relativeDay } from '@/lib/relativeDay';
 import { Button } from '@/ui/Button';
 import { ErrorState } from '@/ui/ErrorState';
@@ -19,6 +19,14 @@ export interface ArtifactRailProps {
 const VISIBLE = 5;
 
 function titleOf(artifact: CourseArtifact): string {
+  if ('outputType' in artifact) {
+    if (artifact.outputType === 'exam_roadmap') {
+      return 'Exam roadmap';
+    }
+    if (artifact.outputType === 'last_minute_review') {
+      return 'Last-minute review';
+    }
+  }
   if (artifact.kind === 'quiz' && 'totalQuestions' in artifact) {
     return `Quiz · ${artifact.totalQuestions} question${artifact.totalQuestions === 1 ? '' : 's'}`;
   }
@@ -34,12 +42,20 @@ function titleOf(artifact: CourseArtifact): string {
   if (artifact.kind === 'quiz') {
     return 'Practice quiz';
   }
-  return artifact.outputType.replace(/_/g, ' ');
+  return 'outputType' in artifact ? artifact.outputType.replace(/_/g, ' ') : 'Quiz attempt';
 }
 
 function metaOf(artifact: CourseArtifact): string {
   const when = relativeDay(artifact.createdAt);
 
+  if ('outputType' in artifact) {
+    if (artifact.outputType === 'exam_roadmap') {
+      return `Exam roadmap · ${when}`;
+    }
+    if (artifact.outputType === 'last_minute_review') {
+      return `Last-minute review · ${when}`;
+    }
+  }
   if (artifact.kind === 'quiz' && 'score' in artifact) {
     return `Scored ${Math.round(artifact.score * 100)}% · ${when}`;
   }
@@ -59,6 +75,9 @@ function metaOf(artifact: CourseArtifact): string {
 }
 
 function iconOf(artifact: CourseArtifact) {
+  if ('outputType' in artifact && artifact.outputType === 'exam_roadmap') {
+    return <Calendar aria-hidden="true" />;
+  }
   if (artifact.kind === 'quiz') {
     return <Target aria-hidden="true" />;
   }

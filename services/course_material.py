@@ -30,6 +30,7 @@ def _ready_chunks(statement: Select, course_id: int) -> Select:
         DocumentChunk.document_id == UploadedDocument.id,
     ).where(
         DocumentChunk.course_id == course_id,
+        UploadedDocument.course_id == course_id,
         UploadedDocument.status == "ready",
     )
 

@@ -1,167 +1,427 @@
-"""Spreading a ranked plan across the days that are left. No model, no charge.
+"""Exam roadmaps: the planning consumer of a course's exam date.
 
-The plan already decided what matters and said why. Turning that order into a
-schedule is arithmetic, so it is arithmetic: this module imports no database, no
-provider, and no clock, and a test asserts it. The same plan yields the same
-roadmap every time, which is the only way a student can be told why Day 1 looks
-the way it does.
+The roadmap is the one generated artifact no text model writes. Ranking lives in
+``services/exam_topic_ranking.py``, allocation in ``services/exam_schedule.py``,
+and this module is the seam between them and the database: it reads the course's
+declared topics and the mastery the quiz history already produced, resolves the
+course material each scheduled topic should be studied from, and stores the
+result through ``GeneratedOutputService`` like every other generated output.
 
-Days are labelled ``Day 1``, ``Day 2`` — never calendar dates. A student who
-starts two days late still has a Day 1, a student who studies twice on Saturday
-does not lose Sunday, and a roadmap stays readable after the exam it was built
-for has been sat. A date would make all three of those wrong.
+Two consequences follow from there being no provider call. A roadmap costs no
+credit, because there is nothing metered to charge for; and ``model_used`` is
+stored as null, which is the truthful value for a row no model produced rather
+than a gap waiting to be backfilled.
 
-The last day is review, always. A schedule that fills every day with new topics
-is a schedule with no time to have forgotten anything in.
+Retrieval is enrichment here, not substance. A topic the course material does
+not answer is still scheduled and says so, because a plan that refuses to exist
+over one unmatched topic is worse than a plan that names the gap. An embedding
+or vector-store *failure* is different: it is transient and would silently
+produce a material-less plan that looks permanent, so it fails the request.
 """
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import date
+from uuid import UUID
 
-ROADMAP_VERSION = 1
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
-MIN_DAYS = 1
-MAX_DAYS = 30
-DEFAULT_DAYS = 7
-
-REVIEW_DAY_TITLE = "Review everything"
-REVIEW_DAY_FOCUS = (
-    "Reread each topic's summary and redo the questions you got wrong. Nothing new."
+from backend.app.config import settings
+from backend.app.models import Course, GeneratedOutput
+from schemas.citation import Citation
+from schemas.exam_roadmap import (
+    DeferralReason,
+    DeferredTopic,
+    ExamRoadmap,
+    ExamRoadmapGenerationContext,
+    ExamRoadmapGenerationSettings,
+    ExamRoadmapRequest,
+    RankedTopicView,
+    RoadmapDay,
+    RoadmapMaterial,
+    RoadmapTopic,
+    TopicMaterialStatus,
+)
+from services.citations import resolve_citations
+from services.course_material import count_available_chunks
+from services.exam_schedule import (
+    REVIEW_TOPICS_PER_DAY,
+    Schedule,
+    build_schedule,
+)
+from services.exam_topic_ranking import RankedTopic, rank_topics
+from services.generated_output import GeneratedOutputService
+from services.quiz_attempt import UNTAGGED_TOPIC, QuizAttemptService
+from services.retrieval_material import (
+    MaterialNotIndexedError,
+    NoRelevantMaterialError,
+    load_retrieved_material,
+)
+from services.retrieval_query import build_retrieval_query
+from utils.ai_errors import (
+    ExamDatePassedError,
+    ExamDateRequiredError,
+    ExamTopicsRequiredError,
+    EXAM_DATE_PASSED_MESSAGE,
+    EXAM_DATE_REQUIRED_MESSAGE,
+    EXAM_TOPICS_REQUIRED_MESSAGE,
 )
 
-STUDY_DAY_FOCUS = "Work through each topic's guide, then its practice questions."
-CATCH_UP_FOCUS = "Finish anything you did not get to, then move on."
+OUTPUT_TYPE = "exam_roadmap"
 
-DAY_LABEL_PREFIX = "Day"
+# Generous passage limit to ensure citations span across multiple lectures and
+# source documents covering this topic, rather than truncating at the first file.
+TOPIC_MATERIAL_CHUNK_LIMIT = 10
 
-
-@dataclass(frozen=True)
-class RoadmapTopic:
-    """One topic on one day, carrying enough to render it without a lookup."""
-
-    topic_key: str
-    display_label: str
-    rank: int
-    priority_band: str
-    is_high_priority: bool
+NO_MATERIAL_NOTE = (
+    "This course has no processed material yet, so the plan names goals but no sources."
+)
 
 
 @dataclass(frozen=True)
-class RoadmapDay:
-    day: int
-    label: str
-    title: str
-    focus: str
-    is_review: bool
-    topics: tuple[RoadmapTopic, ...]
+class TopicMaterial:
+    status: TopicMaterialStatus
+    citations: tuple[Citation, ...] = ()
+    materials: tuple[RoadmapMaterial, ...] = ()
 
 
 @dataclass(frozen=True)
-class Roadmap:
-    version: int
-    day_count: int
-    topic_count: int
-    days: tuple[RoadmapDay, ...]
-    unscheduled_topics: tuple[RoadmapTopic, ...]
+class ExamRoadmapGeneration:
+    roadmap: ExamRoadmap
+    applied_settings: ExamRoadmapGenerationSettings
+    applied_context: ExamRoadmapGenerationContext
 
 
-def resolve_day_count(days_until_exam: int | None, requested: int | None) -> int:
-    """How many days the roadmap should span.
+def _documents_from(citations: Sequence[Citation]) -> tuple[RoadmapMaterial, ...]:
+    """Collapse a topic's citations into the documents it should be read from."""
+    grouped: dict[UUID, RoadmapMaterial] = {}
+    for citation in citations:
+        existing = grouped.get(citation.document_id)
+        start = citation.page_start
+        end = (
+            citation.page_end if citation.page_end is not None else citation.page_start
+        )
+        if existing is None:
+            grouped[citation.document_id] = RoadmapMaterial(
+                document_id=citation.document_id,
+                document_label=citation.document_label,
+                page_start=start,
+                page_end=end,
+            )
+            continue
+        pages = [
+            page
+            for page in (existing.page_start, existing.page_end, start, end)
+            if page is not None
+        ]
+        grouped[citation.document_id] = RoadmapMaterial(
+            document_id=existing.document_id,
+            document_label=existing.document_label,
+            page_start=min(pages) if pages else None,
+            page_end=max(pages) if pages else None,
+        )
+    return tuple(grouped.values())
 
-    An explicit request wins, because a student who knows they have four
-    evenings knows better than the calendar. Otherwise the days remaining are
-    used, bounded: a roadmap over ninety days is a calendar, not a plan, and one
-    over zero days is still one day of work.
-    """
-    if requested is not None:
-        return max(MIN_DAYS, min(MAX_DAYS, requested))
-    if days_until_exam is None:
-        return DEFAULT_DAYS
-    return max(MIN_DAYS, min(MAX_DAYS, days_until_exam))
 
+class ExamRoadmapService:
+    @staticmethod
+    def _mastery(db: Session, course_id: int, *, user_id: int):
+        """The topic mastery and attempt count this student's history supports."""
+        progress = QuizAttemptService.get_course_progress(
+            db, course_id, user_id=user_id
+        )
+        measured = [
+            entry for entry in progress.topic_mastery if entry.topic != UNTAGGED_TOPIC
+        ]
+        return measured, progress.attempts_count
 
-def build_roadmap(topics: list[RoadmapTopic], *, day_count: int) -> Roadmap:
-    """Distribute ranked topics across days, front-loaded, review last.
+    @classmethod
+    def rank(
+        cls, db: Session, course: Course, *, user_id: int
+    ) -> tuple[list[RankedTopic], int, int]:
+        """Rank the course's topics, newest quiz results included."""
+        measured, attempts = cls._mastery(db, course.id, user_id=user_id)
+        ranked = rank_topics(syllabus_topics=course.topics, mastery=measured)
+        if not ranked:
+            raise ExamTopicsRequiredError(EXAM_TOPICS_REQUIRED_MESSAGE)
+        return ranked, len(measured), attempts
 
-    Topics arrive in the plan's own rank order and stay in it, so the first day
-    holds the topics the plan ranked highest. Earlier days carry more, because a
-    student's attention is worth more a week out than the night before, and
-    because anything that slips has somewhere to slip to.
+    @staticmethod
+    def resolve_topic_material(
+        db: Session, course: Course, topic: str, *, has_material: bool
+    ) -> TopicMaterial:
+        """Name the course material one topic should be studied from.
 
-    The final day is review rather than new work whenever there is more than one
-    day. With a single day there is nothing to review yet, so that day is study.
-    """
-    day_count = max(MIN_DAYS, min(MAX_DAYS, day_count))
-    ordered = sorted(topics, key=lambda topic: (topic.rank, topic.topic_key))
+        A relevance miss and an indexing gap are reported rather than raised: the
+        plan is still valid without them, and the two are kept apart because the
+        remedies differ.
+        """
+        if not has_material:
+            return TopicMaterial(status=TopicMaterialStatus.NO_MATERIAL)
 
-    if not ordered:
-        return Roadmap(
-            version=ROADMAP_VERSION,
-            day_count=day_count,
-            topic_count=0,
-            days=tuple(
-                _day(index + 1, (), is_review=index == day_count - 1 and day_count > 1)
-                for index in range(day_count)
-            ),
-            unscheduled_topics=(),
+        query = build_retrieval_query(course, topic)
+        try:
+            material = load_retrieved_material(
+                db,
+                course.id,
+                query=query,
+                limit=TOPIC_MATERIAL_CHUNK_LIMIT,
+                min_similarity=settings.retrieval_min_similarity,
+                max_characters=settings.study_guide_material_max_chars,
+                include_citations=True,
+            )
+        except MaterialNotIndexedError:
+            return TopicMaterial(status=TopicMaterialStatus.NOT_INDEXED)
+        except NoRelevantMaterialError:
+            return TopicMaterial(status=TopicMaterialStatus.NO_MATCH)
+
+        citations = tuple(
+            resolve_citations(
+                [citation.key for citation in material.citations],
+                material.citation_map,
+            )
+        )
+        if not citations:
+            return TopicMaterial(status=TopicMaterialStatus.NO_MATCH)
+        return TopicMaterial(
+            status=TopicMaterialStatus.RESOLVED,
+            citations=citations,
+            materials=_documents_from(citations),
         )
 
-    study_days = day_count - 1 if day_count > 1 else 1
-    buckets = _front_loaded_split(len(ordered), study_days)
+    @classmethod
+    def _materials_for(
+        cls,
+        db: Session,
+        course: Course,
+        topics: Iterable[str],
+        *,
+        include_materials: bool,
+        has_material: bool,
+    ) -> dict[str, TopicMaterial]:
+        """Resolve each distinct scheduled topic once, however often it recurs."""
+        if not include_materials:
+            return {}
+        resolved: dict[str, TopicMaterial] = {}
+        for topic in topics:
+            if topic in resolved:
+                continue
+            resolved[topic] = cls.resolve_topic_material(
+                db, course, topic, has_material=has_material
+            )
+        return resolved
 
-    days: list[RoadmapDay] = []
-    position = 0
-    for index, size in enumerate(buckets):
-        assigned = tuple(ordered[position : position + size])
-        position += size
-        days.append(_day(index + 1, assigned, is_review=False))
+    @staticmethod
+    def _previous_roadmap_ids(
+        db: Session, course_id: int, *, user_id: int
+    ) -> tuple[int, int | None]:
+        """How many roadmaps this student already has, and the latest one's id.
 
-    if day_count > 1:
-        days.append(_day(day_count, (), is_review=True))
+        A regeneration never edits an earlier plan: it counts them, points at the
+        one it supersedes, and is written as a new row.
+        """
+        count = (
+            db.scalar(
+                select(func.count(GeneratedOutput.id)).where(
+                    GeneratedOutput.course_id == course_id,
+                    GeneratedOutput.user_id == user_id,
+                    GeneratedOutput.output_type == OUTPUT_TYPE,
+                )
+            )
+            or 0
+        )
+        latest = db.scalar(
+            select(GeneratedOutput.id)
+            .where(
+                GeneratedOutput.course_id == course_id,
+                GeneratedOutput.user_id == user_id,
+                GeneratedOutput.output_type == OUTPUT_TYPE,
+            )
+            .order_by(GeneratedOutput.created_at.desc(), GeneratedOutput.id.desc())
+            .limit(1)
+        )
+        return count, latest
 
-    return Roadmap(
-        version=ROADMAP_VERSION,
-        day_count=day_count,
-        topic_count=len(ordered),
-        days=tuple(days),
-        unscheduled_topics=tuple(ordered[position:]),
-    )
+    @staticmethod
+    def _topic_view(
+        scheduled, material: TopicMaterial, *, include_materials: bool
+    ) -> RoadmapTopic:
+        topic = scheduled.topic
+        return RoadmapTopic(
+            topic=topic.topic,
+            goal=scheduled.goal,
+            pass_number=scheduled.pass_number,
+            source=topic.source,
+            syllabus_position=topic.syllabus_position,
+            importance=topic.importance,
+            mastery_percentage=topic.mastery_percentage,
+            questions_answered=topic.questions_answered,
+            priority=topic.priority,
+            material_status=(
+                material.status
+                if include_materials
+                else TopicMaterialStatus.NOT_REQUESTED
+            ),
+            materials=list(material.materials),
+            citations=list(material.citations),
+        )
 
+    @classmethod
+    def generate(
+        cls,
+        db: Session,
+        course_id: int,
+        request: ExamRoadmapRequest,
+        *,
+        user_id: int,
+        today: date | None = None,
+    ) -> ExamRoadmapGeneration:
+        """Build one roadmap version from the course's exam date and topics."""
+        course = db.get(Course, course_id)
+        if course is None or course.exam_date is None:
+            raise ExamDateRequiredError(EXAM_DATE_REQUIRED_MESSAGE)
 
-def _day(
-    number: int, topics: tuple[RoadmapTopic, ...], *, is_review: bool
-) -> RoadmapDay:
-    if is_review:
-        title = REVIEW_DAY_TITLE
-        focus = REVIEW_DAY_FOCUS
-    elif topics:
-        title = ", ".join(topic.display_label for topic in topics)
-        focus = STUDY_DAY_FOCUS
-    else:
-        title = "Catch up"
-        focus = CATCH_UP_FOCUS
-    return RoadmapDay(
-        day=number,
-        label=f"{DAY_LABEL_PREFIX} {number}",
-        title=title,
-        focus=focus,
-        is_review=is_review,
-        topics=topics,
-    )
+        current_day = today if today is not None else date.today()
+        if course.exam_date < current_day:
+            raise ExamDatePassedError(EXAM_DATE_PASSED_MESSAGE)
 
+        ranked, mastery_topics, attempts = cls.rank(db, course, user_id=user_id)
+        schedule: Schedule = build_schedule(
+            ranked,
+            today=current_day,
+            exam_date=course.exam_date,
+            max_topics_per_day=request.max_topics_per_day,
+        )
 
-def _front_loaded_split(total: int, buckets: int) -> list[int]:
-    """Split ``total`` topics across ``buckets`` days, heavier at the front.
+        has_material = count_available_chunks(db, course_id) > 0
+        materials = cls._materials_for(
+            db,
+            course,
+            (
+                scheduled.topic.topic
+                for day in schedule.days
+                for scheduled in day.topics
+            ),
+            include_materials=request.include_materials,
+            has_material=has_material,
+        )
+        missing = TopicMaterial(status=TopicMaterialStatus.NO_MATERIAL)
 
-    An even split with the remainder distributed from the first day onwards.
-    Deterministic and total: every topic lands on exactly one day, and no day is
-    given a fraction of one.
+        days = [
+            RoadmapDay(
+                day_index=index,
+                date=day.date,
+                kind=day.kind,
+                is_exam_day=day.is_exam_day,
+                focus=day.focus,
+                topics=[
+                    cls._topic_view(
+                        scheduled,
+                        materials.get(scheduled.topic.topic, missing),
+                        include_materials=request.include_materials,
+                    )
+                    for scheduled in day.topics
+                ],
+            )
+            for index, day in enumerate(schedule.days, start=1)
+        ]
 
-    When there are more days than topics the tail days come out empty, which is
-    correct rather than a gap to fill: a student with twelve days and three
-    topics has spare days, and inventing work for them would say the plan needs
-    more time than it does.
-    """
-    if buckets <= 0:
-        return []
-    base, remainder = divmod(total, buckets)
-    return [base + (1 if index < remainder else 0) for index in range(buckets)]
+        notes = list(schedule.notes)
+        if request.include_materials and not has_material:
+            notes.insert(0, NO_MATERIAL_NOTE)
+
+        previous_count, previous_id = cls._previous_roadmap_ids(
+            db, course_id, user_id=user_id
+        )
+
+        roadmap = ExamRoadmap(
+            course_id=course_id,
+            exam_date=course.exam_date,
+            generated_on=current_day,
+            starts_on=schedule.starts_on,
+            days_until_exam=schedule.days_until_exam,
+            scheduled_days=len(days),
+            lead_in_days=schedule.lead_in_days,
+            horizon=schedule.horizon,
+            materials_available=has_material,
+            attempts_considered=attempts,
+            roadmap_version=previous_count + 1,
+            adapted_from_output_id=previous_id,
+            ranked_topics=[
+                RankedTopicView(
+                    topic=topic.topic,
+                    source=topic.source,
+                    syllabus_position=topic.syllabus_position,
+                    importance=topic.importance,
+                    mastery_percentage=topic.mastery_percentage,
+                    questions_answered=topic.questions_answered,
+                    priority=topic.priority,
+                )
+                for topic in ranked
+            ],
+            days=days,
+            deferred_topics=[
+                DeferredTopic(
+                    topic=topic.topic,
+                    priority=topic.priority,
+                    reason=DeferralReason.HORIZON_TOO_SHORT,
+                )
+                for topic in schedule.deferred
+            ],
+            notes=notes,
+        )
+
+        scheduled_topics = {
+            scheduled.topic.topic for day in schedule.days for scheduled in day.topics
+        }
+        return ExamRoadmapGeneration(
+            roadmap=roadmap,
+            applied_settings=ExamRoadmapGenerationSettings(
+                exam_date=course.exam_date,
+                generated_on=current_day,
+                max_topics_per_day=request.max_topics_per_day,
+                review_topics_per_day=REVIEW_TOPICS_PER_DAY,
+                include_materials=request.include_materials,
+                retrieval_limit=TOPIC_MATERIAL_CHUNK_LIMIT,
+                retrieval_min_similarity=settings.retrieval_min_similarity,
+                roadmap_version=roadmap.roadmap_version,
+                adapted_from_output_id=previous_id,
+            ),
+            applied_context=ExamRoadmapGenerationContext(
+                topics_ranked=len(ranked),
+                topics_scheduled=len(scheduled_topics),
+                topics_deferred=len(schedule.deferred),
+                topics_with_materials=sum(
+                    1
+                    for material in materials.values()
+                    if material.status is TopicMaterialStatus.RESOLVED
+                ),
+                mastery_topics=mastery_topics,
+                attempts_considered=attempts,
+                scheduled_days=len(days),
+                citations_supplied=sum(
+                    len(material.citations) for material in materials.values()
+                ),
+            ),
+        )
+
+    @staticmethod
+    def save_generated_output(
+        db: Session,
+        course_id: int,
+        generation: ExamRoadmapGeneration,
+        *,
+        user_id: int,
+    ) -> GeneratedOutput:
+        """Persist one roadmap version; earlier versions are never rewritten."""
+        return GeneratedOutputService.record(
+            db,
+            course_id=course_id,
+            user_id=user_id,
+            output_type=OUTPUT_TYPE,
+            content=generation.roadmap.model_dump_json(),
+            model_used=None,
+            generation_settings=generation.applied_settings.model_dump_json(),
+            generation_context=generation.applied_context.model_dump_json(),
+        )

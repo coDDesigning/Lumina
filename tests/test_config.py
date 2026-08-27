@@ -953,24 +953,24 @@ def test_ai_provider_rejects_unsupported_value(
 
 
 @pytest.mark.parametrize("provider", ["openai", "claude"])
-def test_recognized_but_unimplemented_provider_fails_at_startup(
+def test_recognized_provider_requires_api_key(
     monkeypatch: pytest.MonkeyPatch,
     provider: str,
 ) -> None:
     monkeypatch.setenv("AI_PROVIDER", provider)
 
-    with pytest.raises(ValueError, match="not implemented"):
+    with pytest.raises(ValueError, match="API_KEY is required"):
         load_settings()
 
 
 @pytest.mark.parametrize("fallback", ["openai", "gemini,claude", " claude "])
-def test_unimplemented_fallback_provider_fails_at_startup(
+def test_fallback_provider_requires_api_key(
     monkeypatch: pytest.MonkeyPatch,
     fallback: str,
 ) -> None:
     monkeypatch.setenv("AI_FALLBACK_PROVIDERS", fallback)
 
-    with pytest.raises(ValueError, match="not implemented"):
+    with pytest.raises(ValueError, match="API_KEY is required"):
         load_settings()
 
 
@@ -987,12 +987,13 @@ def test_implemented_fallback_providers_load(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AI_FALLBACK_PROVIDERS", "gemini,ollama")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
     assert load_settings().ai_fallback_providers == "gemini,ollama"
 
 
 def test_implemented_providers_are_the_authoritative_list() -> None:
-    assert IMPLEMENTED_AI_PROVIDERS == ("gemini", "ollama")
+    assert IMPLEMENTED_AI_PROVIDERS == ("gemini", "ollama", "openai", "claude")
     assert set(IMPLEMENTED_AI_PROVIDERS) <= set(RECOGNIZED_AI_PROVIDERS)
 
 
@@ -1195,10 +1196,11 @@ def test_env_example_marks_settings_config_does_not_read() -> None:
         encoding="utf-8"
     )
 
+    # OPENAI_API_KEY and ANTHROPIC_API_KEY are now implemented and read by config.py
     for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
-        assert f'"{name}"' not in config_source
+        assert f'"{name}"' in config_source
         assert name in section
-        assert "Not read by backend/app/config.py yet" in section
+        assert "Not read by backend/app/config.py yet" not in section
 
 
 def test_env_example_advertises_every_active_ollama_setting() -> None:
@@ -1263,6 +1265,7 @@ def test_gemini_provider_does_not_require_ollama_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
     loaded = load_settings()
 

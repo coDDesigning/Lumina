@@ -300,7 +300,6 @@ class QuizAttemptService:
             .order_by(GeneratedOutput.created_at.desc())
         ).all()
         
-        import json
         for output in reverse_quizzes:
             try:
                 rq = ReverseQuizResponse.model_validate_json(output.content)

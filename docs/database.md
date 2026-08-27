@@ -4,6 +4,11 @@ Lumina uses SQLAlchemy models as the schema contract and Alembic as the only
 runtime schema-management mechanism. The API never calls
 `Base.metadata.create_all`; that helper is reserved for isolated tests.
 
+The repository's sole Alembic script directory is `alembic/`, and all new
+revisions belong in `alembic/versions/`. Do not create or restore a parallel
+script tree such as `migrations/`; `alembic.ini` must continue to point to the
+canonical directory.
+
 ## Apply migrations
 
 Set `DEPLOYMENT_MODE` and `DATABASE_URL`, then run migrations before starting
@@ -659,4 +664,3 @@ When assembling context for course-scoped AI features:
 - **UI and API Boundaries**: Course-scoped documents (`POST /api/courses/{course_id}/documents`)
   remain the sole file ingestion pipeline in MVP. The user profile UI and API endpoints
   do not provide or imply document upload capabilities for user profiles.
-

@@ -198,11 +198,12 @@ jobs:
       - name: Validate installed dependencies
         run: python -m pip check
 
-      - name: Validate canonical migration graph
+      - name: Validate canonical migration layout and graph
         run: >-
           python -m pytest
           -q
           -p no:cacheprovider
+          tests/test_migrations.py::test_alembic_uses_only_canonical_script_directory
           tests/test_migrations.py::test_migration_graph_has_one_canonical_base_and_head
 
       - name: Apply and verify database migrations
@@ -308,11 +309,12 @@ jobs:
           --only-binary=:all:
           --requirement requirements-dev.txt
 
-      - name: Validate canonical migration graph
+      - name: Validate canonical migration layout and graph
         run: >-
           python -m pytest
           -q
           -p no:cacheprovider
+          tests/test_migrations.py::test_alembic_uses_only_canonical_script_directory
           tests/test_migrations.py::test_migration_graph_has_one_canonical_base_and_head
 
       - name: Exercise SQLite migration lifecycle

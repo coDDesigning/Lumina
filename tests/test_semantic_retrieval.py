@@ -396,3 +396,144 @@ def test_retrieval_carries_the_page_range_of_each_chunk(
 
         assert [chunk.page_number for chunk in retrieved] == [12, None]
         assert [chunk.end_page_number for chunk in retrieved] == [12, None]
+
+
+def test_retrieval_can_be_narrowed_to_a_subset_of_one_course(
+    retrieval_store, session_factory: sessionmaker[Session]
+) -> None:
+    provider = StubEmbeddingProvider()
+    with session_factory() as session:
+        course, first, first_chunks = _seed_course(
+            session, email="narrow-a@example.com", chunk_count=2
+        )
+        _, second, second_chunks = _seed_course(
+            session, email="narrow-b@example.com", chunk_count=2, course=course
+        )
+        _replace(retrieval_store, session, first, first_chunks, seed=0.2)
+        _replace(retrieval_store, session, second, second_chunks, seed=0.0)
+        session.commit()
+
+        results = retrieve_course_chunks(
+            session,
+            course_id=course.id,
+            query="anything",
+            limit=10,
+            document_ids=[first.id],
+            provider=provider,
+            store=retrieval_store,
+        )
+
+    assert results
+    assert {result.document_id for result in results} == {first.id}
+
+
+def test_narrowing_never_widens_past_the_course_scope(
+    retrieval_store, session_factory: sessionmaker[Session]
+) -> None:
+    """A document id from another course narrows to nothing rather than reaching it."""
+    provider = StubEmbeddingProvider()
+    with session_factory() as session:
+        course, document, chunks = _seed_course(
+            session, email="narrow-scope-a@example.com", chunk_count=2
+        )
+        other_course, other, other_chunks = _seed_course(
+            session, email="narrow-scope-b@example.com", chunk_count=2
+        )
+        _replace(retrieval_store, session, document, chunks)
+        _replace(retrieval_store, session, other, other_chunks, seed=0.0)
+        session.commit()
+
+        results = retrieve_course_chunks(
+            session,
+            course_id=course.id,
+            query="anything",
+            limit=10,
+            document_ids=[other.id],
+            provider=provider,
+            store=retrieval_store,
+        )
+
+    assert results == []
+
+
+def test_an_empty_selection_is_refused_rather_than_read_as_everything(
+    retrieval_store, session_factory: sessionmaker[Session]
+) -> None:
+    provider = StubEmbeddingProvider()
+    with session_factory() as session:
+        course, document, chunks = _seed_course(
+            session, email="narrow-empty@example.com", chunk_count=1
+        )
+        _replace(retrieval_store, session, document, chunks)
+        session.commit()
+
+        with pytest.raises(ValueError):
+            retrieve_course_chunks(
+                session,
+                course_id=course.id,
+                query="anything",
+                limit=5,
+                document_ids=[],
+                provider=provider,
+                store=retrieval_store,
+            )
+
+
+def test_a_repeated_document_id_narrows_the_same_way_as_a_single_one(
+    retrieval_store, session_factory: sessionmaker[Session]
+) -> None:
+    provider = StubEmbeddingProvider()
+    with session_factory() as session:
+        course, document, chunks = _seed_course(
+            session, email="narrow-dupe@example.com", chunk_count=2
+        )
+        _replace(retrieval_store, session, document, chunks)
+        session.commit()
+
+        once = retrieve_course_chunks(
+            session,
+            course_id=course.id,
+            query="anything",
+            limit=5,
+            document_ids=[document.id],
+            provider=provider,
+            store=retrieval_store,
+        )
+        twice = retrieve_course_chunks(
+            session,
+            course_id=course.id,
+            query="anything",
+            limit=5,
+            document_ids=[document.id, document.id],
+            provider=provider,
+            store=retrieval_store,
+        )
+
+    assert [result.chunk_id for result in once] == [result.chunk_id for result in twice]
+
+
+def test_omitting_the_selection_still_reads_the_whole_course(
+    retrieval_store, session_factory: sessionmaker[Session]
+) -> None:
+    provider = StubEmbeddingProvider()
+    with session_factory() as session:
+        course, first, first_chunks = _seed_course(
+            session, email="narrow-none-a@example.com", chunk_count=1
+        )
+        _, second, second_chunks = _seed_course(
+            session, email="narrow-none-b@example.com", chunk_count=1, course=course
+        )
+        _replace(retrieval_store, session, first, first_chunks, seed=0.2)
+        _replace(retrieval_store, session, second, second_chunks, seed=0.0)
+        session.commit()
+
+        results = retrieve_course_chunks(
+            session,
+            course_id=course.id,
+            query="anything",
+            limit=10,
+            provider=provider,
+            store=retrieval_store,
+        )
+
+    assert {result.document_id for result in results} == {first.id, second.id}

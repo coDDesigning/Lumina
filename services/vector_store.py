@@ -117,7 +117,23 @@ class VectorStore(Protocol):
         course_id: int,
         query_embedding: list[float],
         limit: int,
+        document_ids: Sequence[UUID] | None = None,
     ) -> list[SearchResult]: ...
+
+
+def _narrowing_documents(document_ids: Sequence[UUID] | None) -> list[UUID] | None:
+    """The deduplicated document filter for one search, or ``None`` for all.
+
+    An empty selection is an error rather than a synonym for the whole course.
+    Widening it silently would be the whole-corpus fallback this retrieval path
+    exists to refuse, and it would answer a question the caller did not ask.
+    """
+    if document_ids is None:
+        return None
+    identifiers = list(dict.fromkeys(document_ids))
+    if not identifiers:
+        raise ValueError("Search document_ids must not be empty when supplied")
+    return identifiers
 
 
 def _validated(
@@ -276,6 +292,7 @@ class PgVectorStore:
         course_id: int,
         query_embedding: list[float],
         limit: int,
+        document_ids: Sequence[UUID] | None = None,
     ) -> list[SearchResult]:
         if len(query_embedding) != EMBEDDING_DIMENSIONS:
             raise ValueError(
@@ -284,26 +301,38 @@ class PgVectorStore:
             )
         if limit < 1:
             raise ValueError("Search limit must be a positive integer")
+        identifiers = _narrowing_documents(document_ids)
         if session.get_bind().dialect.name != "postgresql":
             raise VectorStoreConfigurationError(
                 "pgvector similarity search requires a PostgreSQL connection."
             )
         query = "[" + ",".join(repr(value) for value in query_embedding) + "]"
+        # The document filter narrows within the course scope and can never
+        # widen it, so the course predicate stays first and unconditional.
+        document_filter = (
+            " AND document_id = ANY(CAST(:document_ids AS uuid[]))"
+            if identifiers
+            else ""
+        )
         statement = text(
             "SELECT chunk_id, document_id, course_id, chunk_index, "
             "1.0 - (embedding <=> CAST(:query AS vector)) AS similarity "
             "FROM chunk_embeddings "
-            "WHERE course_id = :course_id "
+            "WHERE course_id = :course_id" + document_filter + " "
             "ORDER BY embedding <=> CAST(:query AS vector) "
             "LIMIT :limit"
         )
+        parameters: dict[str, object] = {
+            "query": query,
+            "course_id": course_id,
+            "limit": limit,
+        }
+        if identifiers:
+            parameters["document_ids"] = [str(value) for value in identifiers]
         try:
             session.execute(text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
             session.execute(text("SET LOCAL hnsw.max_scan_tuples = 20000"))
-            rows = session.execute(
-                statement,
-                {"query": query, "course_id": course_id, "limit": limit},
-            )
+            rows = session.execute(statement, parameters)
         except Exception as exc:
             raise VectorStoreError("The vector store could not be searched.") from exc
         return [
@@ -510,6 +539,7 @@ class ChromaVectorStore:
         course_id: int,
         query_embedding: list[float],
         limit: int,
+        document_ids: Sequence[UUID] | None = None,
     ) -> list[SearchResult]:
         if len(query_embedding) != EMBEDDING_DIMENSIONS:
             raise ValueError(
@@ -518,10 +548,25 @@ class ChromaVectorStore:
             )
         if limit < 1:
             raise ValueError("Search limit must be a positive integer")
+        identifiers = _narrowing_documents(document_ids)
+        if identifiers is None:
+            # Chroma rejects an "and" filter holding fewer than two clauses, so
+            # the unnarrowed case has to keep its bare single-clause form.
+            where: dict = {"course_id": course_id}
+        else:
+            where = {
+                "$and": [
+                    {"course_id": {"$eq": course_id}},
+                    # _metadata stores document_id as a string, so a UUID
+                    # operand would match nothing and be indistinguishable
+                    # from an honest empty result.
+                    {"document_id": {"$in": [str(value) for value in identifiers]}},
+                ]
+            }
         found = self._run(
             lambda collection: collection.query(
                 query_embeddings=[query_embedding],
-                where={"course_id": course_id},
+                where=where,
                 n_results=limit,
                 include=["metadatas", "distances"],
             ),

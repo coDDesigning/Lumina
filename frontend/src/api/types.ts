@@ -126,6 +126,8 @@ export interface Course {
   education_level: EducationLevel;
   description: string | null;
   owner_id: number;
+  owner_name?: string | null;
+  owner_email?: string | null;
   created_at: string;
   updated_at: string;
   semester: string | null;

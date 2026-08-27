@@ -184,4 +184,18 @@ describe('DocumentRow', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('That could not be removed.');
   });
+
+  it('omits retry and remove buttons when readOnly is true', () => {
+    render(
+      <DocumentRow
+        entry={entry('failed', { job: failedJob() })}
+        onRetry={vi.fn()}
+        onDelete={vi.fn()}
+        readOnly
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /try again/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /remove/i })).toBeNull();
+  });
 });

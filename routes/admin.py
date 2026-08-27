@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from backend.app.database import get_db
 from backend.app.models import User
 from schemas.ai_usage import AiCostReport
+from schemas.course import CourseResponse
 from schemas.credits import (
     CreditChangeRequest,
     CreditMutationResponse,
@@ -14,6 +15,7 @@ from schemas.credits import (
 from schemas.response import BaseResponse
 from schemas.user import Role, UserResponse, UserUpdate
 from services.ai_cost_reporting import build_ai_cost_report
+from services.course import CourseService
 from services.credits import (
     DEFAULT_HISTORY_LIMIT,
     MAX_HISTORY_LIMIT,
@@ -238,4 +240,28 @@ def list_user_credit_transactions(
         success=True,
         message="Credit transactions retrieved",
         data=[CreditTransactionResponse.model_validate(t) for t in transactions],
+    )
+
+
+@router.get(
+    "/users/{email:path}/courses",
+    response_model=BaseResponse[list[CourseResponse]],
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Administrator privileges required"},
+        404: {"description": "User not found"},
+    },
+)
+def list_user_courses(
+    email: str,
+    current_admin: Annotated[UserResponse, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Lists the active courses owned by a specific user for administrative support (Admin only)."""
+    target_user = _target_user(db, email)
+    courses = CourseService.get_courses_by_user_id(db, target_user.id)
+    return BaseResponse(
+        success=True,
+        message="User courses retrieved successfully",
+        data=courses,
     )

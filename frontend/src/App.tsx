@@ -57,19 +57,66 @@ type WorkspaceRouteProps = {
   onUpdateProgress?: (courseId: string, progress: Partial<WorkspaceProgress>) => void
 }
 
-function WorkspaceRoute({ workspaces, isLoading, onSelect, onUpdateProgress }: WorkspaceRouteProps) {
-  const { courseId } = useParams()
-  const workspace = workspaces.find(({ id }) => id === courseId)
+function useResolvedWorkspace(
+  courseId: string | undefined,
+  workspaces: Workspace[],
+  onSelect?: (id: string) => void,
+) {
+  const numericId = Number(courseId)
+  const isNumeric = Number.isInteger(numericId) && numericId > 0
+  const found = workspaces.find(({ id }) => id === courseId)
+
+  const singleCourseQuery = useQuery<Course>({
+    key: !found && isNumeric ? queryKeys.course(numericId) : null,
+    fetcher: ({ signal }) => coursesAPI.get(numericId, { signal }),
+    fallbackMessage: 'Course could not be loaded.',
+  })
+
+  const workspace = useMemo(() => {
+    if (found) return found
+    if (singleCourseQuery.data) {
+      return mapCourseToWorkspace(singleCourseQuery.data, 0, null)
+    }
+    return null
+  }, [found, singleCourseQuery.data])
 
   useEffect(() => {
-    if (workspace) onSelect(workspace.id)
+    if (workspace && onSelect) {
+      onSelect(workspace.id)
+    }
   }, [onSelect, workspace])
 
-  if (isLoading) {
+  const isLoading =
+    !found &&
+    isNumeric &&
+    (singleCourseQuery.status === 'pending' || singleCourseQuery.status === 'idle')
+  const isNotFound = !found && (!isNumeric || singleCourseQuery.status === 'error')
+
+  return { workspace, isLoading, isNotFound }
+}
+
+function WorkspaceRoute({
+  workspaces,
+  isLoading: isListLoading,
+  onSelect,
+  onUpdateProgress,
+}: WorkspaceRouteProps) {
+  const { courseId } = useParams()
+  const { workspace, isLoading: isSingleLoading, isNotFound } = useResolvedWorkspace(
+    courseId,
+    workspaces,
+    onSelect,
+  )
+
+  if (isListLoading && !workspace) {
     return <WorkspaceLoading />
   }
 
-  if (!workspace) return <Navigate to="/" replace />
+  if (isSingleLoading) {
+    return <WorkspaceLoading />
+  }
+
+  if (isNotFound || !workspace) return <Navigate to="/" replace />
   return (
     <WorkspacePage
       key={workspace.id}
@@ -81,32 +128,38 @@ function WorkspaceRoute({ workspaces, isLoading, onSelect, onUpdateProgress }: W
 
 function CourseScopedRoute({
   workspaces,
-  isLoading,
+  isLoading: isListLoading,
   onSelect,
   render,
 }: WorkspaceRouteProps & { render: (workspace: Workspace) => ReactElement }) {
   const { courseId } = useParams()
-  const workspace = workspaces.find(({ id }) => id === courseId)
+  const { workspace, isLoading: isSingleLoading, isNotFound } = useResolvedWorkspace(
+    courseId,
+    workspaces,
+    onSelect,
+  )
 
-  useEffect(() => {
-    if (workspace) onSelect(workspace.id)
-  }, [onSelect, workspace])
-
-  if (isLoading) return <WorkspaceLoading />
-  if (!workspace) return <Navigate to="/" replace />
+  if (isListLoading && !workspace) return <WorkspaceLoading />
+  if (isSingleLoading) return <WorkspaceLoading />
+  if (isNotFound || !workspace) return <Navigate to="/" replace />
   return render(workspace)
 }
 
-function ProgressRoute({ workspaces, isLoading, onSelect }: WorkspaceRouteProps) {
+function ProgressRoute({
+  workspaces,
+  isLoading: isListLoading,
+  onSelect,
+}: WorkspaceRouteProps) {
   const { courseId } = useParams()
-  const workspace = workspaces.find(({ id }) => id === courseId)
+  const { workspace, isLoading: isSingleLoading, isNotFound } = useResolvedWorkspace(
+    courseId,
+    workspaces,
+    onSelect,
+  )
 
-  useEffect(() => {
-    if (workspace) onSelect(workspace.id)
-  }, [onSelect, workspace])
-
-  if (isLoading) return <WorkspaceLoading />
-  if (!workspace) return <Navigate to="/" replace />
+  if (isListLoading && !workspace) return <WorkspaceLoading />
+  if (isSingleLoading) return <WorkspaceLoading />
+  if (isNotFound || !workspace) return <Navigate to="/" replace />
   return <ProgressPage key={workspace.id} workspace={workspace} />
 }
 
@@ -128,23 +181,27 @@ function LegacyWorkspaceRedirect() {
 
 function CourseSettingsRoute({
   workspaces,
-  isLoading,
+  isLoading: isListLoading,
   onSelect,
   onSave,
   onDelete,
 }: CourseSettingsRouteProps) {
   const { courseId } = useParams()
-  const workspace = workspaces.find(({ id }) => id === courseId)
+  const { workspace, isLoading: isSingleLoading, isNotFound } = useResolvedWorkspace(
+    courseId,
+    workspaces,
+    onSelect,
+  )
 
-  useEffect(() => {
-    if (workspace) onSelect(workspace.id)
-  }, [onSelect, workspace])
-
-  if (isLoading) {
+  if (isListLoading && !workspace) {
     return <WorkspaceLoading />
   }
 
-  if (!workspace) return <Navigate to="/" replace />
+  if (isSingleLoading) {
+    return <WorkspaceLoading />
+  }
+
+  if (isNotFound || !workspace) return <Navigate to="/" replace />
   return (
     <CourseSettingsPage
       key={workspace.id}
@@ -163,6 +220,8 @@ function mapCourseToWorkspace(
   return {
     id: course.id.toString(),
     ownerId: course.owner_id,
+    ownerName: course.owner_name ?? null,
+    ownerEmail: course.owner_email ?? null,
     name: course.title,
     subjectArea: course.subject_area || '',
     educationLevel: course.education_level || 'unspecified',

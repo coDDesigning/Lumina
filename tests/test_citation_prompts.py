@@ -2,7 +2,13 @@ import pytest
 
 from services.prompt_loader import PromptLoader
 
-CITING_TEMPLATES = ("study_guide", "quiz", "course_qa", "ai_tutor")
+CITING_TEMPLATES = (
+    "study_guide",
+    "quiz",
+    "course_qa",
+    "ai_tutor",
+    "exam_topic_analysis",
+)
 
 
 @pytest.mark.parametrize("name", CITING_TEMPLATES)

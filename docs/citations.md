@@ -43,10 +43,21 @@ wrong passage.
 | Course Q&A | inline `[S1]` markers in the answer text | `conversation_messages.citations` |
 | AI Tutor | inline `[S1]` markers in the answer text | `conversation_messages.citations` |
 | Flashcards | none | — |
+| Exam Mode topics | `citations` array per discovered topic | `exam_topic_candidates.citations` |
+| Exam Mode past questions | `citations` array per question | `past_exam_questions.citations` |
 
 Flashcards opt out at the retrieval seam: `load_retrieved_material` takes a
 required `include_citations` flag, so a card back can never pick up a stray
 `[S3]` and the flashcard template needed no change.
+
+Exam Mode leans on citations harder than the other features, because they are
+not only attribution there. A transcribed past exam question takes its source
+document and page range from the first citation that resolves to a selected
+`past_exam` document, since a model cannot reliably know a PDF's own page
+numbering. A question whose citations resolve to no past exam is stored with a
+null document and null pages rather than being attributed to a paper it may not
+have come from, and it is left out of the past-exam frequency signal entirely:
+evidence a reader cannot go and check must not move a ranking.
 
 The study-guide citable set is `summary`, `key_points`, `prerequisites`,
 `learning_objectives`, `important_terms`, `common_mistakes`, and

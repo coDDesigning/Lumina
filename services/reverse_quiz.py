@@ -1,4 +1,3 @@
-import json
 import logging
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -8,11 +7,10 @@ from backend.app.models import Course, User
 from services.generated_output import GeneratedOutputService
 from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.quiz import OpenEndedAnswer
-from schemas.prompt_context import PromptContext
 from schemas.quiz_attempt import OpenEndedGradingResponse
 from schemas.reverse_quiz import ReverseQuizRequest, ReverseQuizResponse, Misconception
 from services.ai_usage_logger import AiUsageLogger
-from services.citations import sanitize_citation_markers, SuppliedCitation
+from services.citations import sanitize_citation_markers
 from services.prompt_context import resolve_prompt_context
 from services.quiz_grading import QuizGradingService
 from services.retrieval_material import (

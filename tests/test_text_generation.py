@@ -11,9 +11,11 @@ from backend.app.config import IMPLEMENTED_AI_PROVIDERS
 from schemas.ai_usage import ErrorCategory
 import services.text_generation as text_generation
 from services.text_generation import (
+    ClaudeTextGenerationProvider,
     GeminiTextGenerationProvider,
     GenerationConcurrencyError,
     GenerationMetadata,
+    OpenAITextGenerationProvider,
     ReliableTextGenerationProvider,
     TextGenerationAuthError,
     TextGenerationConnectionError,
@@ -30,13 +32,16 @@ OLLAMA_SETTINGS = SimpleNamespace(
     ai_provider="ollama",
     ai_fallback_providers="",
     gemini_api_key=None,
+    openai_api_key=None,
+    anthropic_api_key=None,
     ollama_base_url="http://ollama.test:11434",
-    ollama_model="qwen3:8b",
+    ollama_model="llama3.1",
     ai_generation_timeout_seconds=42,
     ai_generation_max_attempts=3,
     ai_generation_backoff_base_seconds=0.01,
     ai_generation_backoff_max_seconds=0.1,
     ai_generation_max_concurrency=10,
+    ai_generation_overall_timeout_seconds=110,
     ollama_temperature=0.2,
     ollama_top_p=0.9,
     ollama_num_ctx=8192,
@@ -180,21 +185,41 @@ def test_get_text_generation_provider_returns_reliable_gemini(
             ai_provider="gemini",
             ai_fallback_providers="",
             gemini_api_key="test-key",
+            openai_api_key=None,
+            anthropic_api_key=None,
             ai_generation_timeout_seconds=60,
             ai_generation_max_attempts=3,
             ai_generation_backoff_base_seconds=0.01,
             ai_generation_backoff_max_seconds=0.1,
             ai_generation_max_concurrency=10,
+            ai_generation_overall_timeout_seconds=110,
         ),
     )
 
+    # Mock the registry to return our fake provider
     class FakeGeminiProvider:
-        pass
+        PROVIDER_NAME = "gemini"
+        MODEL = "gemini-3.6-flash"
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def generate_text_with_metadata(self, prompt: str):
+            return "fake", GenerationMetadata("gemini", "gemini-3.6-flash")
+
+        def generate_text(self, prompt: str):
+            return "fake"
+
+        def generate_json_with_metadata(self, prompt: str):
+            return {}, GenerationMetadata("gemini", "gemini-3.6-flash")
+
+        def generate_json(self, prompt: str):
+            return {}
 
     monkeypatch.setattr(
-        text_generation,
-        "GeminiTextGenerationProvider",
-        FakeGeminiProvider,
+        text_generation.ProviderRegistry,
+        "get_constructor",
+        lambda name: FakeGeminiProvider if name == "gemini" else None,
     )
 
     provider = text_generation.get_text_generation_provider()
@@ -214,17 +239,20 @@ def test_get_text_generation_provider_rejects_unimplemented_provider(
             ai_provider="openai",
             ai_fallback_providers="",
             gemini_api_key=None,
+            openai_api_key=None,
+            anthropic_api_key=None,
             ai_generation_timeout_seconds=60,
             ai_generation_max_attempts=3,
             ai_generation_backoff_base_seconds=0.01,
             ai_generation_backoff_max_seconds=0.1,
             ai_generation_max_concurrency=10,
+            ai_generation_overall_timeout_seconds=110,
         ),
     )
 
-    with pytest.raises(TextGenerationError) as exc_info:
+    with pytest.raises(TextGenerationAuthError) as exc_info:
         text_generation.get_text_generation_provider()
-    assert "not implemented" in str(exc_info.value)
+    assert "OPENAI_API_KEY is not configured" in str(exc_info.value)
 
 
 def test_get_text_generation_provider_returns_ollama(monkeypatch) -> None:
@@ -307,7 +335,7 @@ def test_ollama_provider_sends_configured_request(monkeypatch) -> None:
     assert request.method == "POST"
     assert str(request.url) == "http://ollama.test:11434/api/generate"
     payload = json.loads(request.content)
-    assert payload["model"] == "qwen3:8b"
+    assert payload["model"] == "llama3.1"
     assert payload["prompt"] == "Explain binary trees"
     assert payload["stream"] is False
     assert "format" not in payload
@@ -391,7 +419,7 @@ def test_ollama_provider_reports_generation_metadata(monkeypatch) -> None:
     _, metadata = provider.generate_text_with_metadata("Prompt")
 
     assert metadata.provider == "ollama"
-    assert metadata.model == "qwen3:8b"
+    assert metadata.model == "llama3.1"
     assert metadata.prompt_tokens == 26
     assert metadata.completion_tokens == 298
     assert metadata.total_tokens == 324
@@ -493,12 +521,17 @@ def test_ollama_provider_applies_configured_timeout(monkeypatch) -> None:
 def test_configured_provider_identity_follows_settings(monkeypatch) -> None:
     monkeypatch.setattr(text_generation, "settings", OLLAMA_SETTINGS)
 
-    assert text_generation.configured_provider_identity() == ("ollama", "qwen3:8b")
+    assert text_generation.configured_provider_identity() == ("ollama", "llama3.1")
 
     monkeypatch.setattr(
         text_generation,
         "settings",
-        SimpleNamespace(ai_provider="gemini", gemini_api_key="key"),
+        SimpleNamespace(
+            ai_provider="gemini",
+            gemini_api_key="key",
+            openai_api_key=None,
+            anthropic_api_key=None,
+        ),
     )
 
     assert text_generation.configured_provider_identity() == (
@@ -564,6 +597,50 @@ def test_transient_error_classification() -> None:
     assert is_transient_generation_error(genai_errors.APIError(503, "service"))
     assert is_transient_generation_error(TextGenerationRateLimitError("rate limit"))
 
+    # OpenAI and Anthropic errors
+    import anthropic
+    import openai
+
+    req = httpx.Request("POST", "http://test")
+    assert is_transient_generation_error(openai.APIConnectionError(request=req))
+    assert is_transient_generation_error(anthropic.APIConnectionError(request=req))
+
+    # Wrapped connection errors stay transient
+    try:
+        raise openai.APIConnectionError(request=req)
+    except Exception as exc:
+        conn_err = TextGenerationConnectionError("unreachable")
+        conn_err.__cause__ = exc
+        assert is_transient_generation_error(conn_err)
+
+    try:
+        raise anthropic.APIConnectionError(request=req)
+    except Exception as exc:
+        conn_err = TextGenerationConnectionError("unreachable")
+        conn_err.__cause__ = exc
+        assert is_transient_generation_error(conn_err)
+
+    # 5xx status errors are transient
+    res500 = httpx.Response(500, request=req)
+    res503 = httpx.Response(503, request=req)
+    assert is_transient_generation_error(openai.APIStatusError("err", response=res500, body=None))
+    assert is_transient_generation_error(anthropic.APIStatusError("err", response=res503, body=None))
+
+    # Wrapped 5xx provider errors stay transient
+    try:
+        raise openai.APIStatusError("err", response=res500, body=None)
+    except Exception as exc:
+        prov_err = TextGenerationProviderError("service unavailable")
+        prov_err.__cause__ = exc
+        assert is_transient_generation_error(prov_err)
+
+    try:
+        raise anthropic.APIStatusError("err", response=res503, body=None)
+    except Exception as exc:
+        prov_err = TextGenerationProviderError("service unavailable")
+        prov_err.__cause__ = exc
+        assert is_transient_generation_error(prov_err)
+
     # Non-transient errors:
     assert not is_transient_generation_error(TextGenerationAuthError())
     assert not is_transient_generation_error(TextGenerationEmptyResponseError())
@@ -571,6 +648,11 @@ def test_transient_error_classification() -> None:
     assert not is_transient_generation_error(genai_errors.APIError(400, "bad"))
     assert not is_transient_generation_error(genai_errors.APIError(401, "unauth"))
     assert not is_transient_generation_error(genai_errors.APIError(404, "notfound"))
+
+    res400 = httpx.Response(400, request=req)
+    res401 = httpx.Response(401, request=req)
+    assert not is_transient_generation_error(openai.APIStatusError("bad", response=res400, body=None))
+    assert not is_transient_generation_error(anthropic.APIStatusError("unauth", response=res401, body=None))
 
 
 def test_reliable_provider_recovers_from_transient_failures() -> None:
@@ -774,11 +856,14 @@ def test_fallback_providers_configuration_parsing(monkeypatch) -> None:
             ai_provider="gemini",
             ai_fallback_providers="gemini",
             gemini_api_key="test-key",
+            openai_api_key=None,
+            anthropic_api_key=None,
             ai_generation_timeout_seconds=60,
             ai_generation_max_attempts=3,
             ai_generation_backoff_base_seconds=0.01,
             ai_generation_backoff_max_seconds=0.1,
             ai_generation_max_concurrency=10,
+            ai_generation_overall_timeout_seconds=110,
         ),
     )
     monkeypatch.setattr(text_generation, "GeminiTextGenerationProvider", DummyGemini)
@@ -856,13 +941,16 @@ def test_every_implemented_provider_is_constructible(monkeypatch) -> None:
                 ai_provider=provider_name,
                 ai_fallback_providers="",
                 gemini_api_key="test-key",
+                openai_api_key="test-key",
+                anthropic_api_key="test-key",
                 ollama_base_url="http://ollama.test:11434",
-                ollama_model="qwen3:8b",
+                ollama_model="llama3.1",
                 ai_generation_timeout_seconds=60,
                 ai_generation_max_attempts=3,
                 ai_generation_backoff_base_seconds=0.01,
                 ai_generation_backoff_max_seconds=0.1,
                 ai_generation_max_concurrency=10,
+                ai_generation_overall_timeout_seconds=110,
                 ollama_temperature=0.2,
                 ollama_top_p=0.9,
                 ollama_num_ctx=8192,
@@ -899,9 +987,295 @@ def test_unreachable_ollama_is_retried_then_falls_back(monkeypatch) -> None:
         backoff_base_seconds=0.001,
         backoff_max_seconds=0.01,
         max_concurrency=4,
+        overall_timeout_seconds=110,
     )
 
     text, metadata = reliable.generate_text_with_metadata("Prompt")
 
     assert metadata.provider == "gemini"
     assert text == "Response for Prompt"
+
+
+def test_openai_text_generation_provider_success() -> None:
+    captured = {}
+
+    class MockResponses:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                output_text="OpenAI generated text",
+                usage=SimpleNamespace(
+                    input_tokens=15,
+                    output_tokens=25,
+                    total_tokens=40,
+                ),
+            )
+
+    mock_client = SimpleNamespace(responses=MockResponses())
+    provider = OpenAITextGenerationProvider(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        client=mock_client,
+    )
+
+    assert provider.MODEL == "gpt-5.6-terra"
+    assert provider.PROVIDER_NAME == "openai"
+
+    text, metadata = provider.generate_text_with_metadata("Hello OpenAI")
+    assert text == "OpenAI generated text"
+    assert metadata.provider == "openai"
+    assert metadata.model == "gpt-5.6-terra"
+    assert metadata.prompt_tokens == 15
+    assert metadata.completion_tokens == 25
+    assert metadata.total_tokens == 40
+    assert captured["model"] == "gpt-5.6-terra"
+    assert captured["input"] == "Hello OpenAI"
+
+
+def test_openai_text_generation_provider_json() -> None:
+    captured = {}
+
+    class MockResponses:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                output_text='{"quiz": "sample", "questions": [1, 2, 3]}',
+                usage=SimpleNamespace(
+                    input_tokens=10,
+                    output_tokens=20,
+                    total_tokens=30,
+                ),
+            )
+
+    mock_client = SimpleNamespace(responses=MockResponses())
+    provider = OpenAITextGenerationProvider(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        client=mock_client,
+    )
+
+    result, metadata = provider.generate_json_with_metadata("Generate quiz JSON")
+    assert result == {"quiz": "sample", "questions": [1, 2, 3]}
+    assert metadata.provider == "openai"
+    assert "text" in captured
+    assert captured["text"]["format"]["type"] == "json_schema"
+
+
+def test_openai_text_generation_provider_errors() -> None:
+    import openai
+
+    req = httpx.Request("POST", "http://test")
+
+    def make_provider_failing_with(exc):
+        class FailingResponses:
+            def create(self, **kwargs):
+                raise exc
+
+        return OpenAITextGenerationProvider(
+            api_key="test-key",
+            client=SimpleNamespace(responses=FailingResponses()),
+        )
+
+    # APITimeoutError -> TextGenerationTimeoutError
+    p = make_provider_failing_with(openai.APITimeoutError(request=req))
+    with pytest.raises(TextGenerationTimeoutError):
+        p.generate_text("test")
+
+    # RateLimitError -> TextGenerationRateLimitError
+    res429 = httpx.Response(429, request=req)
+    p = make_provider_failing_with(openai.RateLimitError("quota", response=res429, body=None))
+    with pytest.raises(TextGenerationRateLimitError):
+        p.generate_text("test")
+
+    # APIConnectionError -> TextGenerationConnectionError
+    p = make_provider_failing_with(openai.APIConnectionError(request=req))
+    with pytest.raises(TextGenerationConnectionError) as exc_info:
+        p.generate_text("test")
+    assert is_transient_generation_error(exc_info.value)
+
+    # APIStatusError 401 -> TextGenerationAuthError
+    res401 = httpx.Response(401, request=req)
+    p = make_provider_failing_with(openai.APIStatusError("unauth", response=res401, body=None))
+    with pytest.raises(TextGenerationAuthError):
+        p.generate_text("test")
+
+    # APIStatusError 500 -> TextGenerationProviderError (transient)
+    res500 = httpx.Response(500, request=req)
+    p = make_provider_failing_with(openai.APIStatusError("server error", response=res500, body=None))
+    with pytest.raises(TextGenerationProviderError) as exc_info:
+        p.generate_text("test")
+    assert is_transient_generation_error(exc_info.value)
+
+    # Empty response
+    class EmptyResponses:
+        def create(self, **kwargs):
+            return SimpleNamespace(output_text="", usage=None)
+
+    p = OpenAITextGenerationProvider(
+        api_key="test-key",
+        client=SimpleNamespace(responses=EmptyResponses()),
+    )
+    with pytest.raises(TextGenerationEmptyResponseError):
+        p.generate_text("test")
+
+
+def test_claude_text_generation_provider_success() -> None:
+    captured = {}
+
+    class MockMessages:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text="Claude response text")],
+                usage=SimpleNamespace(
+                    input_tokens=18,
+                    output_tokens=32,
+                ),
+            )
+
+    mock_client = SimpleNamespace(messages=MockMessages())
+    provider = ClaudeTextGenerationProvider(
+        api_key="test-key",
+        model="claude-sonnet-5",
+        client=mock_client,
+    )
+
+    assert provider.MODEL == "claude-sonnet-5"
+    assert provider.PROVIDER_NAME == "claude"
+
+    text, metadata = provider.generate_text_with_metadata("Hello Claude")
+    assert text == "Claude response text"
+    assert metadata.provider == "claude"
+    assert metadata.model == "claude-sonnet-5"
+    assert metadata.prompt_tokens == 18
+    assert metadata.completion_tokens == 32
+    assert metadata.total_tokens == 50
+    assert captured["model"] == "claude-sonnet-5"
+    assert captured["messages"] == [{"role": "user", "content": "Hello Claude"}]
+
+
+def test_claude_text_generation_provider_json() -> None:
+    captured = {}
+
+    class MockMessages:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        type="text",
+                        text='{"summary": "Study guide output", "points": [1, 2]}',
+                    )
+                ],
+                usage=SimpleNamespace(
+                    input_tokens=12,
+                    output_tokens=22,
+                ),
+            )
+
+    mock_client = SimpleNamespace(messages=MockMessages())
+    provider = ClaudeTextGenerationProvider(
+        api_key="test-key",
+        model="claude-sonnet-5",
+        client=mock_client,
+    )
+
+    result, metadata = provider.generate_json_with_metadata("Generate JSON guide")
+    assert result == {"summary": "Study guide output", "points": [1, 2]}
+    assert metadata.provider == "claude"
+    assert "output_config" in captured
+    assert captured["output_config"]["format"]["type"] == "json_schema"
+    assert "name" not in captured["output_config"]["format"]
+
+
+def test_claude_text_generation_provider_errors() -> None:
+    import anthropic
+
+    req = httpx.Request("POST", "http://test")
+
+    def make_provider_failing_with(exc):
+        class FailingMessages:
+            def create(self, **kwargs):
+                raise exc
+
+        return ClaudeTextGenerationProvider(
+            api_key="test-key",
+            client=SimpleNamespace(messages=FailingMessages()),
+        )
+
+    # APITimeoutError -> TextGenerationTimeoutError
+    p = make_provider_failing_with(anthropic.APITimeoutError(request=req))
+    with pytest.raises(TextGenerationTimeoutError):
+        p.generate_text("test")
+
+    # RateLimitError -> TextGenerationRateLimitError
+    res429 = httpx.Response(429, request=req)
+    p = make_provider_failing_with(anthropic.RateLimitError("quota", response=res429, body=None))
+    with pytest.raises(TextGenerationRateLimitError):
+        p.generate_text("test")
+
+    # APIConnectionError -> TextGenerationConnectionError
+    p = make_provider_failing_with(anthropic.APIConnectionError(request=req))
+    with pytest.raises(TextGenerationConnectionError) as exc_info:
+        p.generate_text("test")
+    assert is_transient_generation_error(exc_info.value)
+
+    # APIStatusError 401 -> TextGenerationAuthError
+    res401 = httpx.Response(401, request=req)
+    p = make_provider_failing_with(anthropic.APIStatusError("unauth", response=res401, body=None))
+    with pytest.raises(TextGenerationAuthError):
+        p.generate_text("test")
+
+    # APIStatusError 503 -> TextGenerationProviderError (transient)
+    res503 = httpx.Response(503, request=req)
+    p = make_provider_failing_with(anthropic.APIStatusError("service unavailable", response=res503, body=None))
+    with pytest.raises(TextGenerationProviderError) as exc_info:
+        p.generate_text("test")
+    assert is_transient_generation_error(exc_info.value)
+
+    # Empty response
+    class EmptyMessages:
+        def create(self, **kwargs):
+            return SimpleNamespace(content=[], usage=None)
+
+    p = ClaudeTextGenerationProvider(
+        api_key="test-key",
+        client=SimpleNamespace(messages=EmptyMessages()),
+    )
+    with pytest.raises(TextGenerationEmptyResponseError):
+        p.generate_text("test")
+
+
+def test_multi_provider_fallback_chain() -> None:
+    # 1st provider (Gemini): connection error (transient, retries and fails)
+    p1 = StubProvider(
+        provider_name="gemini",
+        model_name="gemini-3.6-flash",
+        behaviors=[TextGenerationConnectionError("Gemini down"), TextGenerationConnectionError("Gemini down")],
+    )
+    # 2nd provider (OpenAI): 500 error (transient, retries and fails)
+    p2 = StubProvider(
+        provider_name="openai",
+        model_name="gpt-5.6-terra",
+        behaviors=[TextGenerationProviderError("OpenAI 500"), TextGenerationProviderError("OpenAI 500")],
+    )
+    # 3rd provider (Claude): succeeds
+    p3 = StubProvider(
+        provider_name="claude",
+        model_name="claude-sonnet-5",
+    )
+
+    reliable = ReliableTextGenerationProvider(
+        [p1, p2, p3],
+        max_attempts=2,
+        backoff_base_seconds=0.001,
+        backoff_max_seconds=0.01,
+    )
+
+    text, metadata = reliable.generate_text_with_metadata("Explain machine learning")
+    assert text == "Response for Explain machine learning"
+    assert metadata.provider == "claude"
+    assert metadata.model == "claude-sonnet-5"
+    assert p1.call_count == 2
+    assert p2.call_count == 2
+    assert p3.call_count == 1

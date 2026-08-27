@@ -1,6 +1,4 @@
-import pytest
 import json
-from sqlalchemy import select
 
 from backend.app.models import GeneratedOutput
 from schemas.reverse_quiz import ConceptStatus

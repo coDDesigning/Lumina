@@ -57,24 +57,35 @@ Search for `exception_type` matching `TextGenerationConnectionError`, `TextGener
    curl -f http://127.0.0.1:8000/health/ready
    ```
 
-### Hosted Environment (Google Gemini Provider)
+### Hosted Environment Multi-Provider Failover (Gemini / OpenAI / Claude)
 
-1. **Check Upstream Google Cloud Status:**
-   Verify Google Gemini API service status on the Google Cloud Status Dashboard.
+1. **Check Upstream Provider Status:**
+   * Google Cloud: <https://status.cloud.google.com>
+   * OpenAI: <https://status.openai.com>
+   * Anthropic: <https://status.anthropic.com>
 
-2. **Check API Key & Quota Limits:**
-   Verify that `GEMINI_API_KEY` stored in AWS SSM Parameter Store (`/<project>-<environment>/gemini-api-key`) is valid and has not exceeded project rate limits (`429 RESOURCE_EXHAUSTED`).
+2. **Automatic Multi-Provider Failover:**
+   When `AI_FALLBACK_PROVIDERS` is configured (e.g. `AI_PROVIDER=gemini`, `AI_FALLBACK_PROVIDERS=openai,claude`), `ReliableTextGenerationProvider` automatically attempts fallback providers upon transient failure or exhaustion of retries.
+   Check CloudWatch EMF metric `Lumina/AI ProviderErrors` broken down by `Provider` dimension to identify which provider is degraded.
 
-3. **Verify Provider Environment Configuration:**
-   Inspect task environment settings in the ECS API and Worker task definitions:
-   * `AI_PROVIDER`: `gemini`
-   * `AI_FALLBACK_PROVIDERS`: `""` or configured comma-separated fallback (e.g. `ollama`)
-   * `EMBEDDING_PROVIDER`: `gemini`
+3. **Manual Primary Provider Failover (during sustained primary outage):**
+   If the primary provider suffers a prolonged outage or quota exhaustion:
+   * Switch the primary `AI_PROVIDER` to an available alternate provider (e.g. `openai` or `claude`).
+   * Update the fallback list (e.g. `AI_FALLBACK_PROVIDERS=claude` or `gemini`).
+   * Verify corresponding API keys are populated in SSM Parameter Store:
+     * `/<project>-<environment>/openai-api-key`
+     * `/<project>-<environment>/anthropic-api-key`
+     * `/<project>-<environment>/gemini-api-key`
+   * Update task definition environment variables or redeploy ECS services:
+     ```bash
+     aws ecs update-service --cluster <CLUSTER_NAME> --service <API_SERVICE> --force-new-deployment
+     aws ecs update-service --cluster <CLUSTER_NAME> --service <WORKER_SERVICE> --force-new-deployment
+     ```
 
 4. **Update Key or Rotate in SSM (if quota/auth failure):**
    ```bash
    aws ssm put-parameter \
-     --name "/<project>-<environment>/gemini-api-key" \
+     --name "/<project>-<environment>/<provider>-api-key" \
      --value "<NEW_KEY>" \
      --type SecureString \
      --overwrite

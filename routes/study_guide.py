@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
@@ -13,11 +13,9 @@ from schemas.study_guide import (
     StudyGuideRequest,
 )
 from schemas.user import UserResponse
-from services.retrieval_material import RetrievalMaterialError
 from services.credits import CreditService
-from services.study_guide import StudyGuideGenerationError, StudyGuideService
+from services.study_guide import StudyGuideService
 from services.text_generation import (
-    TextGenerationError,
     get_text_generation_provider,
     resolve_effective_model,
 )
@@ -91,12 +89,9 @@ def generate_study_guide(
                 profile_knowledge=generation.profile_knowledge,
             ).model_dump_json(),
         )
-    except (
-        TextGenerationError,
-        StudyGuideGenerationError,
-        RetrievalMaterialError,
-        Exception,
-    ) as exc:
+    except HTTPException:
+        raise
+    except Exception as exc:
         if generation is not None:
             db.rollback()
             CreditService.refund(db, generation.charge_receipt)

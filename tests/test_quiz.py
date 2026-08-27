@@ -1268,8 +1268,8 @@ def test_generate_endpoint_propagates_unexpected_exceptions_as_500(
     )
 
     assert response.status_code == 500
-    assert ERROR_CODE_HEADER not in response.headers
-    assert PUBLIC_MESSAGES[AiErrorCode.GENERATION_FAILED] not in response.text
+    assert response.headers[ERROR_CODE_HEADER] == AiErrorCode.GENERATION_FAILED.value
+    assert PUBLIC_MESSAGES[AiErrorCode.GENERATION_FAILED] in response.text
     assert _persisted_quizzes(upload_api.session_factory, upload_api.course_id) == []
 
 

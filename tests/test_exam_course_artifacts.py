@@ -357,6 +357,28 @@ def test_a_provider_failure_refunds_the_charge_exactly_once(
         assert_balance_is_derivable(session, authz_api.user_a_id)
 
 
+def test_a_failure_while_persisting_refunds_the_charge_too(
+    authz_api, planned_course, monkeypatch
+) -> None:
+    """The window between a successful generation and a written row."""
+    before = balance_of(authz_api.session_factory, authz_api.user_a_id)
+
+    def exploding_record(*args, **kwargs):
+        raise RuntimeError("the database went away")
+
+    monkeypatch.setattr(
+        "services.exam_course_artifacts.GeneratedOutputService.record",
+        exploding_record,
+    )
+    response, _ = ask(authz_api, "mock-exam", monkeypatch)
+
+    assert response.status_code >= 500
+    assert balance_of(authz_api.session_factory, authz_api.user_a_id) == before
+    assert quizzes_of(authz_api.session_factory, authz_api.a_course_id) == []
+    with authz_api.session_factory() as session:
+        assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
 def test_the_prices_are_served_rather_than_left_for_a_client_to_guess(
     authz_api,
 ) -> None:

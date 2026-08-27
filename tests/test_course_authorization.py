@@ -182,16 +182,59 @@ def test_course_listing_is_scoped_to_the_caller(authz_api):
     )
 
 
-def test_administrator_lists_every_course_with_its_owner(authz_api):
+def test_administrator_personal_course_listing_is_strictly_owner_scoped(authz_api):
+    """Standard course listing is owner-scoped for everyone including administrators."""
     listed = authz_api.client.get(
         "/api/courses/", headers=authz_api.authorization_admin
     )
 
     assert listed.status_code == 200
-    assert _course_ids(listed) == {authz_api.a_course_id, authz_api.b_course_id}
-    owners = {course["id"]: course["owner_id"] for course in listed.json()["data"]}
-    assert owners[authz_api.a_course_id] == authz_api.user_a_id
-    assert owners[authz_api.b_course_id] == authz_api.user_b_id
+    # Administrator owns no courses in this fixture, so the listing is empty.
+    assert _course_ids(listed) == set()
+
+
+def test_administrator_may_list_courses_for_a_specific_user_support_workflow(authz_api):
+    """Administrators access other users' courses via the explicit support endpoint."""
+    user_a = authz_api.client.get(
+        "/api/admin/users/owner-a@example.com/courses",
+        headers=authz_api.authorization_admin,
+    )
+    user_b = authz_api.client.get(
+        "/api/admin/users/owner-b@example.com/courses",
+        headers=authz_api.authorization_admin,
+    )
+
+    assert user_a.status_code == 200
+    assert _course_ids(user_a) == {authz_api.a_course_id}
+    assert all(
+        course["owner_id"] == authz_api.user_a_id for course in user_a.json()["data"]
+    )
+
+    assert user_b.status_code == 200
+    assert _course_ids(user_b) == {authz_api.b_course_id}
+    assert all(
+        course["owner_id"] == authz_api.user_b_id for course in user_b.json()["data"]
+    )
+
+    # Regular users cannot reach this endpoint
+    forbidden = authz_api.client.get(
+        "/api/admin/users/owner-a@example.com/courses",
+        headers=authz_api.authorization_a,
+    )
+    assert forbidden.status_code == 403
+
+    # Unknown user returns 404
+    missing = authz_api.client.get(
+        "/api/admin/users/nonexistent@example.com/courses",
+        headers=authz_api.authorization_admin,
+    )
+    assert missing.status_code == 404
+
+    # Unauthenticated returns 401
+    unauth = authz_api.client.get(
+        "/api/admin/users/owner-a@example.com/courses"
+    )
+    assert unauth.status_code == 401
 
 
 def test_administrator_may_read_another_owners_course_and_documents(authz_api):

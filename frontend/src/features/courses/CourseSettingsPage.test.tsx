@@ -8,6 +8,13 @@ import type { Workspace } from '@/data/workspaces';
 import { ToastProvider } from '@/ui/ToastProvider';
 import CourseSettingsPage from './CourseSettingsPage';
 
+vi.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({
+    isAuthenticated: true,
+    user: { id: 1, email: 'student@example.com', role: 'user' },
+  }),
+}));
+
 vi.mock('@/api/settings', () => ({
   settingsAPI: {
     get: vi.fn(),
@@ -20,6 +27,7 @@ const mockUpdate = vi.mocked(settingsAPI.update);
 
 const workspace: Workspace = {
   id: '1',
+  ownerId: 1,
   name: 'Operating Systems',
   subjectArea: 'Computer Engineering',
   educationLevel: 'undergraduate',
@@ -303,5 +311,47 @@ describe('CourseSettingsPage — archiving the course', () => {
         isArchived: false,
       }),
     );
+  });
+
+  describe('read-only support view', () => {
+    it('disables inputs and omits mutation actions when viewing another user course', async () => {
+      mockGet.mockResolvedValueOnce(settingsPayload);
+
+      render(
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/courses/1/settings']}>
+            <Routes>
+              <Route
+                path="/courses/:courseId/settings"
+                element={
+                  <CourseSettingsPage
+                    workspace={{
+                      ...workspace,
+                      ownerId: 999,
+                      ownerName: 'Other Student',
+                      ownerEmail: 'other@example.com',
+                    }}
+                    onSave={vi.fn()}
+                    onDelete={vi.fn()}
+                  />
+                }
+              />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>,
+      );
+
+      // Support banner is present
+      expect(screen.getByText(/Read-Only Support View/i)).toBeInTheDocument();
+      expect(screen.getByText(/Other Student/i)).toBeInTheDocument();
+
+      // Form inputs are disabled
+      expect(screen.getByLabelText(/Course name/i)).toBeDisabled();
+
+      // Mutation buttons are omitted
+      expect(screen.queryByRole('button', { name: 'Save details' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Archive course' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Delete Operating Systems/i })).not.toBeInTheDocument();
+    });
   });
 });

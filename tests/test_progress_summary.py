@@ -185,10 +185,7 @@ def test_administrator_sees_only_their_own_courses(authz_api) -> None:
         "/api/courses/", headers=authz_api.authorization_admin
     )
     assert readable.status_code == 200, readable.text
-    assert {course["id"] for course in readable.json()["data"]} >= {
-        authz_api.a_course_id,
-        authz_api.b_course_id,
-    }
+    assert {course["id"] for course in readable.json()["data"]} == set()
 
     assert _summaries(authz_api.client, authz_api.authorization_admin) == {}
 

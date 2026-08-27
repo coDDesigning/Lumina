@@ -447,6 +447,11 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   }
 
   const canGenerate = readyCount > 0;
+  const isSupportView = Boolean(user && workspace.ownerId != null && workspace.ownerId !== user.id);
+  const ownerDisplayName =
+    workspace.ownerName ||
+    workspace.ownerEmail ||
+    (workspace.ownerId ? `User #${workspace.ownerId}` : 'another user');
 
   return (
     <div className={styles.page}>
@@ -455,6 +460,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
         crumbs={[{ label: 'Courses', to: '/dashboard' }, { label: workspace.name }]}
         badges={
           <>
+            {isSupportView ? <Badge tone="accent">Read-Only Support</Badge> : null}
             {workspace.semester ? <Badge>{workspace.semester}</Badge> : null}
             {processingCount > 0 ? (
               <Badge tone="processing">
@@ -473,18 +479,29 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             >
               Progress
             </LinkButton>
-            <LinkButton
-              variant="ghost"
-              size="sm"
-              icon={<Settings2 aria-hidden="true" />}
-              to={`/courses/${workspace.id}/settings`}
-            >
-              Course settings
-            </LinkButton>
-            <CreditBalance source={creditSource} />
+            {!isSupportView ? (
+              <LinkButton
+                variant="ghost"
+                size="sm"
+                icon={<Settings2 aria-hidden="true" />}
+                to={`/courses/${workspace.id}/settings`}
+              >
+                Course settings
+              </LinkButton>
+            ) : null}
+            {!isSupportView ? <CreditBalance source={creditSource} /> : null}
           </>
         }
       />
+
+      {isSupportView ? (
+        <div className={styles.supportBanner}>
+          <Alert tone="info">
+            <strong>Read-Only Support View</strong> — Viewing course owned by{' '}
+            <strong>{ownerDisplayName}</strong>. Adding sources, editing, and AI generation are disabled.
+          </Alert>
+        </div>
+      ) : null}
 
       <h1 className="visually-hidden">{workspace.name} workspace</h1>
 
@@ -492,43 +509,47 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
         <section className={`${styles.panel} ${styles.sources}`} aria-label="Sources">
           <div className={styles.panelHead}>
             <span className={styles.panelLabel}>Sources · {entries.length}</span>
-            <Button
-              size="sm"
-              icon={<Upload aria-hidden="true" />}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploadProgress !== null}
-              isLoading={uploadProgress !== null}
-              loadingLabel="Uploading"
-            >
-              Add Sources
-            </Button>
-            <label className={styles.kindPicker}>
-              <span className={styles.kindLabel}>Adding as</span>
-              <select
-                className={styles.kindSelect}
-                value={materialKind}
-                onChange={(event) =>
-                  setMaterialKind(event.target.value as DocumentMaterialKind)
-                }
-              >
-                {MATERIAL_KIND_CHOICES.map((choice) => (
-                  <option key={choice.value} value={choice.value}>
-                    {choice.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <input
-              ref={fileInputRef}
-              className={styles.uploadInput}
-              type="file"
-              multiple
-              accept=".pdf,.txt,.md,.markdown"
-              onChange={(event) => {
-                void addSources(event.target.files);
-                event.target.value = '';
-              }}
-            />
+            {!isSupportView ? (
+              <>
+                <Button
+                  size="sm"
+                  icon={<Upload aria-hidden="true" />}
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadProgress !== null}
+                  isLoading={uploadProgress !== null}
+                  loadingLabel="Uploading"
+                >
+                  Add Sources
+                </Button>
+                <label className={styles.kindPicker}>
+                  <span className={styles.kindLabel}>Adding as</span>
+                  <select
+                    className={styles.kindSelect}
+                    value={materialKind}
+                    onChange={(event) =>
+                      setMaterialKind(event.target.value as DocumentMaterialKind)
+                    }
+                  >
+                    {MATERIAL_KIND_CHOICES.map((choice) => (
+                      <option key={choice.value} value={choice.value}>
+                        {choice.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <input
+                  ref={fileInputRef}
+                  className={styles.uploadInput}
+                  type="file"
+                  multiple
+                  accept=".pdf,.txt,.md,.markdown"
+                  onChange={(event) => {
+                    void addSources(event.target.files);
+                    event.target.value = '';
+                  }}
+                />
+              </>
+            ) : null}
           </div>
 
           {uploadProgress ? (
@@ -570,6 +591,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                   entry={entry}
                   onRetry={retryDocument}
                   onDelete={deleteDocument}
+                  readOnly={isSupportView}
                 />
               ))
             )}
@@ -587,14 +609,16 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
               onChange={setThreadType}
             />
             <span className={styles.threadActions}>
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<MessageSquarePlus aria-hidden="true" />}
-                onClick={startNewConversation}
-              >
-                New conversation
-              </Button>
+              {!isSupportView ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<MessageSquarePlus aria-hidden="true" />}
+                  onClick={startNewConversation}
+                >
+                  New conversation
+                </Button>
+              ) : null}
               <Button variant="ghost" size="sm" onClick={() => setIsPastThreadsOpen(true)}>
                 Past threads
               </Button>
@@ -651,83 +675,95 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             ) : null}
           </div>
 
-          <form className={styles.composer} onSubmit={submitPrompt}>
-            <div className={styles.composerRow}>
-              <Input
-                label="Enter prompt"
-                hideLabel
-                fieldClassName={styles.composerInput}
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                placeholder={`Ask anything about ${workspace.name}…`}
-                readOnly={thread.isLoading}
-              />
-              <IconButton
-                label="Help me word this"
-                icon={<Wand2 aria-hidden="true" />}
-                onClick={() => setIsPromptHelperOpen(true)}
-              />
-              <Button
-                type="submit"
-                variant="primary"
-                isLoading={thread.isLoading}
-                loadingLabel="Sending"
-                disabled={threadExhausted}
-              >
-                Send
-              </Button>
-            </div>
+          {!isSupportView ? (
+            <form className={styles.composer} onSubmit={submitPrompt}>
+              <div className={styles.composerRow}>
+                <Input
+                  label="Enter prompt"
+                  hideLabel
+                  fieldClassName={styles.composerInput}
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder={`Ask anything about ${workspace.name}…`}
+                  readOnly={thread.isLoading}
+                />
+                <IconButton
+                  label="Help me word this"
+                  icon={<Wand2 aria-hidden="true" />}
+                  onClick={() => setIsPromptHelperOpen(true)}
+                />
+                <Button
+                  type="submit"
+                  variant="primary"
+                  isLoading={thread.isLoading}
+                  loadingLabel="Sending"
+                  disabled={threadExhausted}
+                >
+                  Send
+                </Button>
+              </div>
 
-            <div className={styles.composerMeta}>
-              <Checkbox
-                label="Use my study profile"
-                description="Adds your background as supporting context. Your course material stays primary."
-                checked={includeProfileContext}
-                onChange={(event) => setIncludeProfileContext(event.target.checked)}
-              />
-            </div>
+              <div className={styles.composerMeta}>
+                <Checkbox
+                  label="Use my study profile"
+                  description="Adds your background as supporting context. Your course material stays primary."
+                  checked={includeProfileContext}
+                  onChange={(event) => setIncludeProfileContext(event.target.checked)}
+                />
+              </div>
 
-            {threadExhausted ? (
-              <CreditExhaustedNotice source={creditSource} action="ask another question" />
-            ) : null}
-          </form>
+              {threadExhausted ? (
+                <CreditExhaustedNotice source={creditSource} action="ask another question" />
+              ) : null}
+            </form>
+          ) : (
+            <div className={styles.supportReadOnlyNotice}>
+              <p className={styles.sourceHint}>
+                Chat and AI generation are disabled in read-only support view.
+              </p>
+            </div>
+          )}
         </section>
 
         <section className={`${styles.panel} ${styles.outputs}`} aria-label="Study tools">
-          <div className={styles.panelHead}>
-            <span className={styles.panelLabel}>Make something</span>
-          </div>
-          <div className={styles.actionList}>
-            <Button
-              alignStart
-              fullWidth
-              size="sm"
-              icon={<Sparkles aria-hidden="true" />}
-              onClick={() => setIsSummaryOpen(true)}
-            >
-              Study guide
-            </Button>
-            <Button
-              alignStart
-              fullWidth
-              size="sm"
-              icon={<Target aria-hidden="true" />}
-              onClick={() => setIsQuizOpen(true)}
-            >
-              Practice quiz
-            </Button>
-            <Button
-              alignStart
-              fullWidth
-              size="sm"
-              icon={<Layers3 aria-hidden="true" />}
-              onClick={() => setIsFlashcardOpen(true)}
-            >
-              Flashcards
-            </Button>
-          </div>
+          {!isSupportView ? (
+            <>
+              <div className={styles.panelHead}>
+                <span className={styles.panelLabel}>Make something</span>
+              </div>
+              <div className={styles.actionList}>
+                <Button
+                  alignStart
+                  fullWidth
+                  size="sm"
+                  icon={<Sparkles aria-hidden="true" />}
+                  onClick={() => setIsSummaryOpen(true)}
+                >
+                  Study guide
+                </Button>
+                <Button
+                  alignStart
+                  fullWidth
+                  size="sm"
+                  icon={<Target aria-hidden="true" />}
+                  onClick={() => setIsQuizOpen(true)}
+                >
+                  Practice quiz
+                </Button>
+                <Button
+                  alignStart
+                  fullWidth
+                  size="sm"
+                  icon={<Layers3 aria-hidden="true" />}
+                  onClick={() => setIsFlashcardOpen(true)}
+                >
+                  Flashcards
+                </Button>
+              </div>
 
-          <div className={styles.divider} />
+              <div className={styles.divider} />
+            </>
+          ) : null}
 
           <div className={styles.panelHead}>
             <span className={styles.panelLabel}>

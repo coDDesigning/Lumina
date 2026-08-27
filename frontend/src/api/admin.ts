@@ -3,6 +3,7 @@ import type {
   AdminCreditReason,
   AiCostReport,
   BaseResponse,
+  Course,
   CreditMutation,
   CreditTransaction,
   User,
@@ -78,5 +79,16 @@ export const adminAPI = {
       options,
     );
     return unwrapData(res, 'Admin user credit transactions');
+  },
+
+  listUserCourses: async (
+    email: string,
+    options?: RequestInit,
+  ): Promise<Course[]> => {
+    const res = await apiClient.get<BaseResponse<Course[]>>(
+      `/admin/users/${encodeURIComponent(email)}/courses`,
+      options,
+    );
+    return unwrapData(res, 'Admin user courses');
   },
 };

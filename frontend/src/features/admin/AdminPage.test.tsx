@@ -28,6 +28,7 @@ vi.mock('@/api/admin', () => ({
     changeUserRole: vi.fn(),
     changeCredits: vi.fn(),
     listUserCreditTransactions: vi.fn(),
+    listUserCourses: vi.fn(),
   },
 }));
 
@@ -387,5 +388,79 @@ describe('AdminPage credit administration', () => {
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(mocked.changeCredits).not.toHaveBeenCalled();
+  });
+});
+
+describe('AdminPage — user courses support workflow', () => {
+  it('toggles courses list for a user and displays links to courses', async () => {
+    mocked.listUsers.mockResolvedValue([ADMIN, LEARNER]);
+    mocked.listUserCourses.mockResolvedValue([
+      {
+        id: 42,
+        title: 'Distributed Systems',
+        subject_area: 'Computer Science',
+        education_level: 'undergraduate',
+        description: null,
+        owner_id: LEARNER.id,
+        created_at: '2026-08-01T00:00:00Z',
+        updated_at: '2026-08-02T00:00:00Z',
+        semester: 'Fall 2026',
+        exam_date: null,
+        syllabus: null,
+        topics: null,
+      },
+    ]);
+
+    render(
+      <ToastProvider>
+        <MemoryRouter>
+          <AdminPage />
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText('Alice')).toBeInTheDocument());
+
+    const aliceRow = screen.getByText('alice@example.com').closest('tr')!;
+    const coursesBtn = within(aliceRow).getByRole('button', { name: 'Courses' });
+
+    await userEvent.click(coursesBtn);
+
+    expect(mocked.listUserCourses).toHaveBeenCalledWith('alice@example.com');
+    await waitFor(() =>
+      expect(screen.getByText('Distributed Systems')).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('link', { name: 'View Course' })).toHaveAttribute(
+      'href',
+      '/courses/42',
+    );
+
+    // Clicking again closes the drawer
+    await userEvent.click(coursesBtn);
+    expect(screen.queryByText('Distributed Systems')).not.toBeInTheDocument();
+  });
+
+  it('shows empty state when a user has no active courses', async () => {
+    mocked.listUsers.mockResolvedValue([ADMIN, LEARNER]);
+    mocked.listUserCourses.mockResolvedValue([]);
+
+    render(
+      <ToastProvider>
+        <MemoryRouter>
+          <AdminPage />
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText('Alice')).toBeInTheDocument());
+
+    const aliceRow = screen.getByText('alice@example.com').closest('tr')!;
+    await userEvent.click(within(aliceRow).getByRole('button', { name: 'Courses' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('No active courses found for this user.'),
+      ).toBeInTheDocument(),
+    );
   });
 });

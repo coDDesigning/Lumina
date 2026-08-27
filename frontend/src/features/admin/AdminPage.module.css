@@ -232,3 +232,32 @@
 .spaced {
   margin-top: var(--space-4);
 }
+
+.userCoursesList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.userCourseItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  border: var(--border-width) solid var(--border);
+}
+
+.userCourseInfo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.userCourseTitle {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}

@@ -24,6 +24,8 @@ export function toWorkspaceProgress(
 export type Workspace = {
   id: string
   ownerId?: number
+  ownerName?: string | null
+  ownerEmail?: string | null
   name: string
   subjectArea: string
   educationLevel: EducationLevel

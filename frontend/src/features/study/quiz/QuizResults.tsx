@@ -1,6 +1,7 @@
 import { CircleCheck, CircleHelp, CircleX } from 'lucide-react';
 import type { QuizAttemptResponse, QuizQuestionView } from '@/api/types';
 import { Badge } from '@/ui/Badge';
+import { CitationList } from '@/ui/CitationChip';
 import type { BadgeTone } from '@/ui/Badge';
 import { cx } from '@/lib/cx';
 import { describeCorrectAnswer, describeSubmittedAnswer, tallyAttempt } from './quizScoring';
@@ -154,6 +155,8 @@ export function QuizResults({ attempt, questions }: QuizResultsProps) {
                     {question.explanation}
                   </p>
                 ) : null}
+
+                <CitationList citations={question.citations} />
               </li>
             );
           })}

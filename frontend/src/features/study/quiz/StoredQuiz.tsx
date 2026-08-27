@@ -1,5 +1,6 @@
 import type { QuizView } from '@/api/types';
 import { Badge } from '@/ui/Badge';
+import { CitationList } from '@/ui/CitationChip';
 import { LinkButton } from '@/ui/LinkButton';
 import styles from './StoredQuiz.module.css';
 
@@ -89,6 +90,7 @@ export function StoredQuiz({ quiz, courseId }: StoredQuizProps) {
               </div>
             ) : null}
 
+            <CitationList citations={q.citations} />
             {q.explanation ? (
               <p className={styles.explanation}>{q.explanation}</p>
             ) : null}

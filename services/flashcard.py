@@ -95,6 +95,7 @@ class FlashcardService:
             limit=settings.retrieval_chunk_limit,
             min_similarity=settings.retrieval_min_similarity,
             max_characters=settings.flashcard_material_max_chars,
+            include_citations=False,
         )
 
     @classmethod

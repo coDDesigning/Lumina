@@ -23,6 +23,7 @@ from backend.app.config import (
     DEFAULT_MAX_PDF_PAGE_PIXELS,
     DEFAULT_MAX_PDF_PAGES,
     DEFAULT_MAX_PDF_TOTAL_PIXELS,
+    DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
     DEFAULT_MATERIAL_MAX_CHARACTERS,
     DEFAULT_MAX_REQUEST_SIZE_BYTES,
     DEFAULT_MAX_UPLOAD_SIZE_BYTES,
@@ -251,10 +252,12 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
         loaded.document_chunk_overlap_characters
         == DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS
     )
-    assert loaded.study_guide_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
-    assert loaded.quiz_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
+    assert (
+        loaded.study_guide_material_max_chars == DEFAULT_CITED_MATERIAL_MAX_CHARACTERS
+    )
+    assert loaded.quiz_material_max_chars == DEFAULT_CITED_MATERIAL_MAX_CHARACTERS
     assert loaded.flashcard_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
-    assert loaded.ai_tutor_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
+    assert loaded.ai_tutor_material_max_chars == DEFAULT_CITED_MATERIAL_MAX_CHARACTERS
 
 
 def test_cors_allowed_origins_are_loaded_as_an_immutable_tuple(
@@ -1292,7 +1295,16 @@ def test_material_budgets_are_configurable(
     }
 
     assert budgets.pop(name) == 5000
-    assert set(budgets.values()) == {DEFAULT_MATERIAL_MAX_CHARACTERS}
+    # Flashcards emit no citation headers, so they alone keep the plain budget.
+    expected = {
+        key: (
+            DEFAULT_MATERIAL_MAX_CHARACTERS
+            if key == "FLASHCARD_MATERIAL_MAX_CHARS"
+            else DEFAULT_CITED_MATERIAL_MAX_CHARACTERS
+        )
+        for key in budgets
+    }
+    assert budgets == expected
 
 
 @pytest.mark.parametrize("name", MATERIAL_BUDGET_SETTINGS)

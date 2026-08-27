@@ -12,12 +12,14 @@ from schemas.prompt_context import (
 )
 from services.ai_tutor import AiTutorService
 from services.course_qa import CourseQAService
+from services.exam_source_analysis import ExamSourceAnalysisService
 from services.flashcard import FlashcardService
 from services.prompt_generator import PromptGeneratorService
 from services.quiz import QuizService
 from services.quiz_grading import QuizGradingService
 from services.study_guide import StudyGuideService
 from schemas.quiz import QuizDifficulty, QuizQuestionType, QuizRequest
+from schemas.exam_mode import ExamAnalysisRequest
 from schemas.study_guide import StudyGuideRequest
 
 HIGH_SCHOOL_CONTEXT = PromptContext(
@@ -73,6 +75,17 @@ def _prompt_generator_prompt(context: PromptContext) -> str:
     return PromptGeneratorService.build_prompt("Write me a prompt", context=context)
 
 
+def _exam_topic_analysis_prompt(context: PromptContext) -> str:
+    return ExamSourceAnalysisService.build_prompt(
+        "material",
+        ExamAnalysisRequest(topic_focus="All Topics"),
+        declared_topics=["Graph Traversal"],
+        syllabus="Week 1 Graph Traversal",
+        past_exam_present=True,
+        context=context,
+    )
+
+
 BUILDERS = {
     "study_guide": _study_guide_prompt,
     "quiz": _quiz_prompt,
@@ -80,6 +93,7 @@ BUILDERS = {
     "ai_tutor": _ai_tutor_prompt,
     "course_qa": _course_qa_prompt,
     "prompt_generator": _prompt_generator_prompt,
+    "exam_topic_analysis": _exam_topic_analysis_prompt,
 }
 
 

@@ -102,6 +102,7 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "course_qa": "2.3.0",
     "prompt_generator": "2.0.0",
     "exam_style_question": "1.2.0",
+    "exam_topic_analysis": "1.1.0",
     "image_description": "1.0.0",
     "visual_content": "2.1.0",
     "ocr_cleanup": "1.1.0",
@@ -506,6 +507,14 @@ SAMPLE_TEMPLATE_INPUTS = {
         "SUBMISSION_COUNT": "1",
         "SUBMISSIONS": "Submissions text",
     },
+    "exam_topic_analysis": {
+        **SHARED_PROMPT_VARIABLES,
+        "TOPIC_FOCUS": "All Topics",
+        "PAST_EXAM_DIRECTIVE": "Past exam directive",
+        "DECLARED_TOPICS": "Declared topics",
+        "SYLLABUS_TEXT": "Syllabus text",
+        "TEXT": "Course material text",
+    },
     "flashcard": {
         **SHARED_PROMPT_VARIABLES,
         "TEXT": "Course material text",
@@ -845,6 +854,10 @@ ACTIVE_TEMPLATE_OWNERS = {
     "image_description": (
         "services.image_understanding",
         "_IMAGE_DESCRIPTION_TEMPLATE",
+    ),
+    "exam_topic_analysis": (
+        "services.exam_source_analysis",
+        "ExamSourceAnalysisService.PROMPT_TEMPLATE_NAME",
     ),
 }
 

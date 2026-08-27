@@ -48,6 +48,7 @@ All templates reside in `app/prompts/<task_name>.json`:
 | `study_guide` | `2.3.0` | active | `services/study_guide.py` | Comprehensive study guide generation | `StudyGuideResponse` |
 | `quiz` | `3.3.0` | active | `services/quiz.py` | Multi-format quiz generation | `QuizGenerationResponse` |
 | `exam_style_question` | `1.2.0` | deferred | Exam Mode / Similar Question Generation (not built) | Exam-style practice questions | `QuizGenerationResponse` |
+| `exam_topic_analysis` | `1.1.0` | active | `services/exam_source_analysis.py` | Exam Mode source analysis: topic discovery and past exam question extraction | `GeneratedExamAnalysisResponse` |
 | `quiz_grading` | `2.0.0` | active | `services/quiz_grading.py` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
 | `flashcard` | `2.2.0` | active | `services/flashcard.py` | Active recall flashcard decks | `FlashcardGenerationResponse` |
 | `ai_tutor` | `2.3.0` | active | `services/ai_tutor.py` | Hint-first tutoring with stepwise guidance | `AiTutorResponse` |

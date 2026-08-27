@@ -47,6 +47,8 @@ GENERATION_CREDIT_COSTS: dict[str, float] = {
     "ai_tutor": 1.0,
     "course_qa": 1.0,
     "prompt_generator": 1.0,
+    "exam_topic_analysis": 1.0,
+    "exam_topic_analysis_rescan": 0.5,
 }
 
 

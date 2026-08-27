@@ -238,6 +238,7 @@ class Settings:
     flashcard_material_max_chars: int
     ai_tutor_material_max_chars: int
     course_qa_material_max_chars: int
+    exam_analysis_material_max_chars: int
 
     # Credit lifecycle. See docs/credits.md.
     credit_metering_enabled: bool
@@ -612,6 +613,10 @@ def load_settings() -> Settings:
         ("FLASHCARD_MATERIAL_MAX_CHARS", DEFAULT_MATERIAL_MAX_CHARACTERS),
         ("AI_TUTOR_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
         ("COURSE_QA_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_ANALYSIS_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
     ):
         budget = _positive_integer_setting(name, default)
         if budget < document_chunk_size_characters:
@@ -931,6 +936,9 @@ def load_settings() -> Settings:
         flashcard_material_max_chars=material_budgets["FLASHCARD_MATERIAL_MAX_CHARS"],
         ai_tutor_material_max_chars=material_budgets["AI_TUTOR_MATERIAL_MAX_CHARS"],
         course_qa_material_max_chars=material_budgets["COURSE_QA_MATERIAL_MAX_CHARS"],
+        exam_analysis_material_max_chars=material_budgets[
+            "EXAM_ANALYSIS_MATERIAL_MAX_CHARS"
+        ],
         credit_metering_enabled=credit_metering_enabled,
         credit_initial_grant=credit_initial_grant,
         credit_periodic_grant=credit_periodic_grant,

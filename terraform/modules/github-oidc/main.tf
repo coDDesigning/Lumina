@@ -30,10 +30,51 @@ data "aws_iam_policy_document" "github_trust" {
   }
 }
 
+data "aws_iam_policy_document" "github_recovery_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:${var.repository}:environment:${var.environment_name}"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "github_reconciler_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:${var.repository}:environment:${var.recovery_environment_name}"]
+    }
+  }
+}
+
 resource "aws_iam_role" "github_actions" {
-  name               = "${var.name_prefix}-github-actions"
-  description        = "Role assumed by the Lumina deploy workflow via GitHub OIDC"
-  assume_role_policy = data.aws_iam_policy_document.github_trust.json
+  name                 = "${var.name_prefix}-github-actions"
+  description          = "Role assumed by the Lumina deploy workflow via GitHub OIDC"
+  assume_role_policy   = data.aws_iam_policy_document.github_trust.json
+  max_session_duration = 7200
   inline_policy {
     name = "deploy"
     policy = jsonencode({
@@ -163,11 +204,241 @@ resource "aws_iam_role" "github_actions" {
           Resource = [
             var.ecs_task_role_arn,
             var.ecs_execution_role_arn,
+            var.restore_task_role_arn,
+            var.restore_execution_role_arn,
           ]
           Condition = {
             StringEquals = {
               "iam:PassedToService" = "ecs-tasks.amazonaws.com"
             }
+          }
+        },
+        {
+          Sid      = "RDSRecoveryDescribe"
+          Effect   = "Allow"
+          Action   = ["rds:DescribeDBSnapshots"]
+          Resource = "*"
+        },
+        {
+          Sid      = "RDSRecoveryListTags"
+          Effect   = "Allow"
+          Action   = ["rds:ListTagsForResource"]
+          Resource = local.rds_managed_snapshots
+        },
+        {
+          Sid      = "RDSRecoveryCreateSnapshots"
+          Effect   = "Allow"
+          Action   = ["rds:CreateDBSnapshot"]
+          Resource = concat([local.rds_db_arn], local.rds_managed_snapshots)
+          Condition = {
+            StringEquals = {
+              "aws:RequestTag/ManagedBy" = "LuminaHostedRecovery"
+            }
+          }
+        },
+        {
+          Sid      = "RDSRecoveryTagManagedResources"
+          Effect   = "Allow"
+          Action   = ["rds:AddTagsToResource"]
+          Resource = local.rds_managed_snapshots
+          Condition = {
+            StringEquals = {
+              "aws:RequestTag/ManagedBy" = "LuminaHostedRecovery"
+            }
+          }
+        },
+        {
+          Sid      = "RDSRecoveryDeleteManagedSnapshots"
+          Effect   = "Allow"
+          Action   = ["rds:DeleteDBSnapshot"]
+          Resource = local.rds_managed_snapshots
+          Condition = {
+            StringEquals = {
+              "aws:ResourceTag/ManagedBy" = "LuminaHostedRecovery"
+            }
+          }
+        },
+      ]
+    })
+  }
+  tags = var.tags
+}
+
+
+resource "aws_iam_role" "github_recovery" {
+  name                 = "${var.name_prefix}-github-recovery"
+  description          = "Least-privilege role for Lumina hosted recovery workflows"
+  assume_role_policy   = data.aws_iam_policy_document.github_recovery_trust.json
+  max_session_duration = 7200
+  inline_policy {
+    name = "hosted-recovery"
+    policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Sid      = "ECSRecoveryDescribe"
+          Effect   = "Allow"
+          Action   = ["ecs:DescribeServices", "ecs:DescribeTaskDefinition", "ecs:DescribeTasks", "ecs:ListTaskDefinitions", "ecs:ListTasks"]
+          Resource = "*"
+        },
+        {
+          Sid      = "ECSRecoveryRun"
+          Effect   = "Allow"
+          Action   = ["ecs:RunTask"]
+          Resource = [local.restore_taskdef_arn, "${local.restore_taskdef_arn}:*"]
+          Condition = {
+            ArnEquals = { "ecs:cluster" = local.cluster_arn }
+          }
+        },
+        {
+          Sid      = "ECSRecoveryStopAndTag"
+          Effect   = "Allow"
+          Action   = ["ecs:StopTask", "ecs:TagResource"]
+          Resource = local.cluster_task_arn
+        },
+        {
+          Sid      = "PassRecoveryTaskRoles"
+          Effect   = "Allow"
+          Action   = ["iam:PassRole"]
+          Resource = [var.restore_task_role_arn, var.restore_execution_role_arn]
+          Condition = {
+            StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" }
+          }
+        },
+        {
+          Sid      = "RDSRecoveryDescribe"
+          Effect   = "Allow"
+          Action   = ["rds:DescribeDBInstances", "rds:DescribeDBSnapshots"]
+          Resource = "*"
+        },
+        {
+          Sid      = "RDSRecoveryListTags"
+          Effect   = "Allow"
+          Action   = ["rds:ListTagsForResource"]
+          Resource = concat([local.rds_db_arn, local.rds_restore_db_arn], local.rds_managed_snapshots)
+        },
+        {
+          Sid      = "RDSRecoveryCreateSnapshots"
+          Effect   = "Allow"
+          Action   = ["rds:CreateDBSnapshot"]
+          Resource = concat([local.rds_db_arn], local.rds_managed_snapshots)
+          Condition = {
+            StringEquals = { "aws:RequestTag/ManagedBy" = "LuminaHostedRecovery" }
+          }
+        },
+        {
+          Sid      = "RDSRecoveryTagManagedResources"
+          Effect   = "Allow"
+          Action   = ["rds:AddTagsToResource"]
+          Resource = concat([local.rds_restore_db_arn], local.rds_managed_snapshots)
+          Condition = {
+            StringEquals = { "aws:RequestTag/ManagedBy" = "LuminaHostedRecovery" }
+          }
+        },
+        {
+          Sid    = "RDSRecoveryRestoreTemporaryInstances"
+          Effect = "Allow"
+          Action = ["rds:RestoreDBInstanceFromDBSnapshot"]
+          Resource = concat([
+            local.rds_restore_db_arn,
+            local.rds_subnet_group_arn,
+            local.rds_parameter_group_arn,
+            local.rds_option_group_arn,
+          ], local.rds_managed_snapshots)
+          Condition = {
+            BoolIfExists = { "rds:PubliclyAccessible" = "false" }
+            StringEquals = {
+              "aws:RequestTag/ManagedBy" = "LuminaHostedRecovery"
+              "aws:RequestTag/Purpose"   = "restore-drill"
+            }
+          }
+        },
+        {
+          Sid      = "RDSRecoveryDeleteTemporaryInstances"
+          Effect   = "Allow"
+          Action   = ["rds:DeleteDBInstance"]
+          Resource = local.rds_restore_db_arn
+          Condition = {
+            StringEquals = {
+              "aws:ResourceTag/ManagedBy" = "LuminaHostedRecovery"
+              "aws:ResourceTag/Purpose"   = "restore-drill"
+            }
+          }
+        },
+        {
+          Sid      = "RDSRecoveryDeleteManagedSnapshots"
+          Effect   = "Allow"
+          Action   = ["rds:DeleteDBSnapshot"]
+          Resource = local.rds_managed_snapshots
+          Condition = {
+            StringEquals = { "aws:ResourceTag/ManagedBy" = "LuminaHostedRecovery" }
+          }
+        },
+      ]
+    })
+  }
+  tags = var.tags
+}
+
+resource "aws_iam_role" "github_reconciler" {
+  name                 = "${var.name_prefix}-github-reconciler"
+  description          = "Deletion-only role for unattended Lumina recovery reconciliation"
+  assume_role_policy   = data.aws_iam_policy_document.github_reconciler_trust.json
+  max_session_duration = 7200
+  inline_policy {
+    name = "hosted-reconciliation"
+    policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Sid      = "ECSReconciliationDescribe"
+          Effect   = "Allow"
+          Action   = ["ecs:DescribeTasks", "ecs:ListTasks"]
+          Resource = "*"
+        },
+        {
+          Sid      = "ECSReconciliationStop"
+          Effect   = "Allow"
+          Action   = ["ecs:StopTask"]
+          Resource = local.cluster_task_arn
+          Condition = {
+            StringEquals = {
+              "aws:ResourceTag/ManagedBy" = "LuminaHostedRecovery"
+              "aws:ResourceTag/Purpose"   = "restore-drill"
+            }
+          }
+        },
+        {
+          Sid      = "RDSReconciliationDescribe"
+          Effect   = "Allow"
+          Action   = ["rds:DescribeDBInstances", "rds:DescribeDBSnapshots"]
+          Resource = "*"
+        },
+        {
+          Sid      = "RDSReconciliationListTags"
+          Effect   = "Allow"
+          Action   = ["rds:ListTagsForResource"]
+          Resource = concat([local.rds_restore_db_arn], local.rds_managed_snapshots)
+        },
+        {
+          Sid      = "RDSReconciliationDeleteTemporaryInstances"
+          Effect   = "Allow"
+          Action   = ["rds:DeleteDBInstance"]
+          Resource = local.rds_restore_db_arn
+          Condition = {
+            StringEquals = {
+              "aws:ResourceTag/ManagedBy" = "LuminaHostedRecovery"
+              "aws:ResourceTag/Purpose"   = "restore-drill"
+            }
+          }
+        },
+        {
+          Sid      = "RDSReconciliationDeleteManagedSnapshots"
+          Effect   = "Allow"
+          Action   = ["rds:DeleteDBSnapshot"]
+          Resource = local.rds_managed_snapshots
+          Condition = {
+            StringEquals = { "aws:ResourceTag/ManagedBy" = "LuminaHostedRecovery" }
           }
         },
       ]

@@ -76,6 +76,7 @@ def test_chunked_save_read_open_exists_and_delete(tmp_path: Path) -> None:
     assert storage.read(key) == content
     with storage.open(key) as stored_file:
         assert stored_file.read(9) == content[:9]
+    assert b"".join(storage.iter_chunks(key, 9)) == content
 
     storage.delete(key)
     assert storage.exists(key) is False

@@ -1719,7 +1719,7 @@
           "exam_date": {
             "anyOf": [
               {
-                "maxLength": 20,
+                "format": "date",
                 "type": "string"
               },
               {
@@ -1775,15 +1775,11 @@
             "type": "string"
           },
           "topics": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Topics"
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
           }
         },
         "required": [
@@ -2108,7 +2104,7 @@
           "exam_date": {
             "anyOf": [
               {
-                "maxLength": 20,
+                "format": "date",
                 "type": "string"
               },
               {
@@ -2199,15 +2195,11 @@
             "type": "string"
           },
           "topics": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Topics"
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
           },
           "updated_at": {
             "format": "date-time",
@@ -2349,7 +2341,7 @@
           "exam_date": {
             "anyOf": [
               {
-                "maxLength": 20,
+                "format": "date",
                 "type": "string"
               },
               {
@@ -2420,7 +2412,10 @@
           "topics": {
             "anyOf": [
               {
-                "type": "string"
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               {
                 "type": "null"

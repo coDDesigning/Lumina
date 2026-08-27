@@ -38,7 +38,13 @@ const FIXTURE_CONSTANT =
  * Documented exemptions. Each needs a reason, and a stale entry fails the run,
  * so an exemption cannot outlive the thing it excused.
  */
-export const DOCUMENTED_EXEMPTIONS: { file: string; reason: string }[] = [];
+export const DOCUMENTED_EXEMPTIONS: { file: string; reason: string }[] = [
+  {
+    file: 'ui/TagInput.tsx',
+    reason:
+      'Announces "<entry> added" and "<entry> removed" into its own role="status" region. It is a controlled primitive, so the outcome it names is the chip the caller can already see: onChange has produced it by the time the region is read. The rule polices a screen that claims persistence it never performed, and onChange is too generic to whitelist because every input has one.',
+  },
+];
 
 function key(path: string): string {
   return relative(SRC, path).split(sep).join('/');

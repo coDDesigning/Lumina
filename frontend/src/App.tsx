@@ -227,9 +227,7 @@ function mapCourseToWorkspace(
     educationLevel: course.education_level || 'unspecified',
     semester: course.semester || '',
     examDate: course.exam_date || '',
-    topics: course.topics
-      ? course.topics.split(',').map((t) => t.trim()).filter(Boolean)
-      : [],
+    topics: course.topics ?? [],
     syllabus: course.syllabus || '',
     progress,
     updatedAt: new Date(course.updated_at).toLocaleDateString(),
@@ -321,7 +319,7 @@ function App() {
         education_level: draft.educationLevel,
         syllabus: draft.syllabus.trim(),
         semester: draft.semester.trim(),
-        exam_date: draft.examDate,
+        exam_date: draft.examDate || null,
         topics: draft.topics,
       })
 
@@ -371,8 +369,8 @@ function App() {
           education_level: updatedWorkspace.educationLevel,
           syllabus: updatedWorkspace.syllabus.trim(),
           semester: updatedWorkspace.semester.trim(),
-          exam_date: updatedWorkspace.examDate,
-          topics: updatedWorkspace.topics.join(', '),
+          exam_date: updatedWorkspace.examDate || null,
+          topics: updatedWorkspace.topics,
           is_archived: updatedWorkspace.isArchived,
         },
       )

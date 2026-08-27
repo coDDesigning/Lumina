@@ -407,7 +407,7 @@ describe('AdminPage — user courses support workflow', () => {
         semester: 'Fall 2026',
         exam_date: null,
         syllabus: null,
-        topics: null,
+        topics: [],
       },
     ]);
 

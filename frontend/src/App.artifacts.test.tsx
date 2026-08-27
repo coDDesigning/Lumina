@@ -101,7 +101,11 @@ function renderWorkspace() {
 beforeEach(() => {
   localStorage.clear();
   mockCourseList.mockResolvedValue([
-    createMockCourse({ id: 1, title: 'Operating Systems', topics: 'Paging, Scheduling' }),
+    createMockCourse({
+      id: 1,
+      title: 'Operating Systems',
+      topics: ['Paging', 'Scheduling'],
+    }),
   ]);
   mockDocumentList.mockResolvedValue([createMockDocument({ status: 'ready' })]);
   mockProgress.mockResolvedValue({

@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import date
 from threading import Barrier
 from urllib.parse import quote
 
@@ -90,7 +91,7 @@ def test_registration_login_and_admin_course_creation_persist(api_context) -> No
         "title": "Persisted Course",
         "description": "Created through the authenticated API",
         "semester": "Fall",
-        "exam_date": "2026",
+        "exam_date": "2026-06-15",
     }
     created = api_context.client.post(
         "/api/courses/",
@@ -110,7 +111,7 @@ def test_registration_login_and_admin_course_creation_persist(api_context) -> No
         assert persisted.title == course_payload["title"]
         assert persisted.description == course_payload["description"]
         assert persisted.semester == course_payload["semester"]
-        assert persisted.exam_date == course_payload["exam_date"]
+        assert persisted.exam_date == date.fromisoformat(course_payload["exam_date"])
         assert persisted.is_deleted is False
         assert session.scalar(select(func.count()).select_from(Course)) == 1
 
@@ -208,7 +209,7 @@ def test_course_creation_recovers_lost_commit_acknowledgement(
             CourseCreate(
                 title="Idempotent Course",
                 semester="Fall",
-                exam_date="2026",
+                exam_date=date(2026, 6, 15),
             ),
             owner.id,
         )
@@ -242,7 +243,7 @@ def test_database_length_and_nullability_rules_are_validated_by_api(
         json={
             "title": "x" * 201,
             "semester": "Fall",
-            "exam_date": "2026",
+            "exam_date": "2026-06-15",
         },
     )
     assert too_long.status_code == 422
@@ -257,7 +258,7 @@ def test_database_length_and_nullability_rules_are_validated_by_api(
     created = api_context.client.post(
         "/api/courses/",
         headers=authorization,
-        json={"title": "Course", "semester": "Fall", "exam_date": "2026"},
+        json={"title": "Course", "semester": "Fall", "exam_date": "2026-06-15"},
     )
     assert created.status_code == 201
 
@@ -328,7 +329,7 @@ def test_course_writes_reject_nul_text(api_context, field: str) -> None:
         "title": "Course",
         "description": "Description",
         "semester": "Fall",
-        "exam_date": "2026",
+        "exam_date": "2026-06-15",
     }
     payload[field] = "Unsafe\x00value"
 
@@ -392,7 +393,7 @@ def test_response_schemas_can_read_legacy_nul_text() -> None:
         title="Legacy\x00 course",
         description=None,
         semester="Fall",
-        exam_date="2026",
+        exam_date=date(2026, 6, 15),
         syllabus="Legacy\x00 syllabus",
         created_at="2026-01-01T00:00:00Z",
         updated_at="2026-01-01T00:00:00Z",

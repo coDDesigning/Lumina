@@ -5,7 +5,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Barrier
 from uuid import UUID, uuid4
@@ -65,7 +65,7 @@ VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
-HEAD_REVISION = "d1f6b3a8c724"
+HEAD_REVISION = "f3c8d05a2b16"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -614,7 +614,7 @@ def _queue_documents(
         title="PostgreSQL course",
         description=None,
         semester="Fall",
-        exam_date="2026",
+        exam_date=date(2026, 6, 15),
     )
     session.add(course)
     session.flush()

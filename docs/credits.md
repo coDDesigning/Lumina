@@ -161,6 +161,7 @@ server owns.
 | Prompt generator | 1 |
 | Exam Mode source analysis | 1 |
 | Exam Mode rescan | 0.5 |
+| Exam Mode topic unlock | 2 |
 
 Open-ended answers are graded by the provider, which costs real money every time
 an attempt is submitted. That grading is **prepaid at generation**, which is why
@@ -178,10 +179,26 @@ Consequently `quiz_grading` no longer charges. The reason still exists because
 the ledger is append-only and historical rows carry it.
 
 Exam Mode charges only where a provider is actually reached. Analysing a
-course's chosen sources is one provider call that both discovers the topics and
-transcribes any past exam questions, so it costs 1. Scanning again after
-changing the sources costs 0.5, because a student who uploads a paper the week
-before an exam should not be discouraged from re-reading it.
+course's chosen sources discovers its topics in one provider call, so it costs
+1. Scanning again after changing the sources costs 0.5, because a student who
+uploads a paper the week before an exam should not be discouraged from
+re-reading it. Reading the questions out of a past paper is **free**: it happens
+once, in the upload worker, and a student should not be charged for uploading
+something.
+
+Everything Exam Mode makes for one topic — its study guide, its summary, its
+practice questions, its topic exam, its similar questions — is bought together
+for 2, and the charge lands the **first time the student asks for any of them**
+rather than when the plan is created. A student who plans twelve topics and
+studies four pays for four. The unlock is keyed by (course, student, topic) and
+holds no plan identifier, so regenerating a plan over the same topics costs
+nothing and a second artifact for an unlocked topic costs nothing.
+
+An unlock commits on its own rather than inside the generation it precedes. If a
+generation fails after its topic was unlocked, the student keeps the unlock and
+the retry is free; the alternative would roll the row back and bill them a
+second time for the same topic. What the price buys is access to the topic, and
+access is what survives.
 
 Creating an exam plan from an analysis that already exists charges **nothing**:
 ranking is arithmetic over values the analysis already persisted, no model is

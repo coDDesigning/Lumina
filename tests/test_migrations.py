@@ -47,7 +47,8 @@ GENERATED_CITATIONS_REVISION = "d1f6b3a8c724"
 EXAM_DATE_REVISION = "e2b7c94f1a03"
 COURSE_TOPICS_REVISION = "f3c8d05a2b16"
 EXAM_MODE_REVISION = "a6d3f81c9b47"
-HEAD_REVISION = EXAM_MODE_REVISION
+EXAM_UNLOCKS_REVISION = "b5e9a2c7d341"
+HEAD_REVISION = EXAM_UNLOCKS_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -95,6 +96,7 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        EXAM_UNLOCKS_REVISION: EXAM_MODE_REVISION,
         EXAM_MODE_REVISION: COURSE_TOPICS_REVISION,
         COURSE_TOPICS_REVISION: EXAM_DATE_REVISION,
         EXAM_DATE_REVISION: GENERATED_CITATIONS_REVISION,
@@ -2599,6 +2601,127 @@ def test_exam_mode_rows_cascade_from_their_owner_and_their_course(
 
         assert (
             connection.execute("SELECT COUNT(*) FROM past_exam_questions").fetchone()[0]
+            == 0
+        )
+
+
+def test_the_unlocks_migration_adds_only_what_it_claims_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    """The revision is add-only, so downgrading must leave no trace of it."""
+    database_path = tmp_path / "exam-unlocks.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_MODE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert "exam_topic_unlocks" not in {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert not _exam_mode_columns(connection, "quizzes") & {
+            "purpose",
+            "exam_plan_output_id",
+            "exam_topic_key",
+        }
+
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_UNLOCKS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert _exam_mode_columns(connection, "exam_topic_unlocks") >= {
+            "course_id",
+            "user_id",
+            "topic_key",
+            "credit_transaction_id",
+            "amount",
+            "created_at",
+        }
+        assert _exam_mode_columns(connection, "quizzes") >= {
+            "purpose",
+            "exam_plan_output_id",
+            "exam_topic_key",
+        }
+
+    run_alembic(database_path, tmp_path, "downgrade", EXAM_MODE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert "exam_topic_unlocks" not in {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert not _exam_mode_columns(connection, "quizzes") & {
+            "purpose",
+            "exam_plan_output_id",
+            "exam_topic_key",
+        }
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+
+def test_an_existing_quiz_is_not_given_an_invented_purpose(tmp_path: Path) -> None:
+    """A null purpose is the truth for a quiz nobody classified."""
+    database_path = tmp_path / "exam-unlocks-legacy.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_MODE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        user_id = insert_legacy_user(
+            connection, email="quiz-purpose@example.com", credits=10.0
+        )
+        course_id = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Legacy", user_id),
+        ).lastrowid
+        quiz_id = connection.execute(
+            "INSERT INTO quizzes (course_id, user_id, title) VALUES (?, ?, ?)",
+            (course_id, user_id, "Old quiz"),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_UNLOCKS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT purpose, exam_plan_output_id, exam_topic_key"
+            " FROM quizzes WHERE id = ?",
+            (quiz_id,),
+        ).fetchone() == (None, None, None)
+
+
+def test_a_topic_can_only_be_unlocked_once_per_student_and_course(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "exam-unlocks-unique.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        user_id = insert_legacy_user(
+            connection, email="unlock-unique@example.com", credits=10.0
+        )
+        course_id = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Unique", user_id),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO exam_topic_unlocks (course_id, user_id, topic_key, amount)"
+            " VALUES (?, ?, 'graph-traversal', 2.0)",
+            (course_id, user_id),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO exam_topic_unlocks (course_id, user_id, topic_key, amount)"
+                " VALUES (?, ?, 'graph-traversal', 2.0)",
+                (course_id, user_id),
+            )
+
+        connection.execute(
+            "DELETE FROM courses WHERE id = ?",
+            (course_id,),
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM exam_topic_unlocks").fetchone()[0]
             == 0
         )
 

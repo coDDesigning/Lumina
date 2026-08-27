@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { describeError } from '@/api/errors';
 import { queryKeys } from '@/api/queryKeys';
 import { settingsAPI } from '@/api/settings';
+import { useAuth } from '@/context/AuthContext';
 import { useCourseSettings } from './useCourseSettings';
 import { queryCache } from '@/lib/query/cache';
 import { EDUCATION_LEVEL_LABELS } from '@/api/types';
@@ -11,6 +12,7 @@ import type { EducationLevel } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import type { Workspace } from '@/data/workspaces';
 import { Alert } from '@/ui/Alert';
+import { Badge } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
 import { Input, Select, Textarea } from '@/ui/Input';
@@ -51,9 +53,16 @@ export default function CourseSettingsPage({
   onSave,
   onDelete,
 }: CourseSettingsPageProps) {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const { showToast } = useToast();
   useDocumentTitle(`${workspace.name} · Settings`);
+
+  const isSupportView = Boolean(user && workspace.ownerId != null && workspace.ownerId !== user.id);
+  const ownerDisplayName =
+    workspace.ownerName ||
+    workspace.ownerEmail ||
+    (workspace.ownerId ? `User #${workspace.ownerId}` : 'another user');
 
   const [course, setCourse] = useState(() => toCourseForm(workspace));
   const [isSavingCourse, setIsSavingCourse] = useState(false);
@@ -206,6 +215,7 @@ export default function CourseSettingsPage({
           { label: workspace.name, to: `/courses/${workspace.id}` },
           { label: 'Settings' },
         ]}
+        badges={isSupportView ? <Badge tone="accent">Read-Only Support</Badge> : null}
       />
 
       <div className={styles.body}>
@@ -213,6 +223,13 @@ export default function CourseSettingsPage({
         <p className={styles.subtitle}>
           What Lumina knows about this course, and how it generates by default.
         </p>
+
+        {isSupportView ? (
+          <Alert tone="info" className={styles.spaced}>
+            <strong>Read-Only Support View</strong> — Viewing settings for course owned by{' '}
+            <strong>{ownerDisplayName}</strong>. Editing, archiving, and deleting are disabled.
+          </Alert>
+        ) : null}
 
         <section className={styles.section}>
           <span className={styles.sectionLabel}>Course details</span>
@@ -237,12 +254,14 @@ export default function CourseSettingsPage({
                 title="Course name cannot be empty"
                 value={course.name}
                 onChange={(event) => updateCourse('name', event.target.value)}
+                disabled={isSupportView}
               />
 
               <Select
                 label="Education level"
                 value={course.educationLevel}
                 onChange={(event) => updateCourse('educationLevel', event.target.value)}
+                disabled={isSupportView}
               >
                 {(Object.keys(EDUCATION_LEVEL_LABELS) as EducationLevel[]).map((level) => (
                   <option key={level} value={level}>
@@ -256,6 +275,7 @@ export default function CourseSettingsPage({
                 optional
                 value={course.subjectArea}
                 onChange={(event) => updateCourse('subjectArea', event.target.value)}
+                disabled={isSupportView}
               />
 
               <Input
@@ -264,6 +284,7 @@ export default function CourseSettingsPage({
                 value={course.semester}
                 onChange={(event) => updateCourse('semester', event.target.value)}
                 hint="Free text — write it however your university does."
+                disabled={isSupportView}
               />
 
               <Input
@@ -272,6 +293,7 @@ export default function CourseSettingsPage({
                 type="date"
                 value={course.examDate}
                 onChange={(event) => updateCourse('examDate', event.target.value)}
+                disabled={isSupportView}
               />
 
               <Input
@@ -281,6 +303,7 @@ export default function CourseSettingsPage({
                 value={course.topics}
                 onChange={(event) => updateCourse('topics', event.target.value)}
                 placeholder="Separate topics with commas"
+                disabled={isSupportView}
               />
 
               <Textarea
@@ -290,22 +313,25 @@ export default function CourseSettingsPage({
                 rows={4}
                 value={course.syllabus}
                 onChange={(event) => updateCourse('syllabus', event.target.value)}
+                disabled={isSupportView}
               />
             </div>
 
-            <div className={styles.actions}>
-              <Button
-                type="submit"
-                variant="primary"
-                isLoading={isSavingCourse}
-                loadingLabel="Saving"
-              >
-                Save details
-              </Button>
-              <Button variant="ghost" onClick={() => setCourse(toCourseForm(workspace))}>
-                Reset details
-              </Button>
-            </div>
+            {!isSupportView ? (
+              <div className={styles.actions}>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  isLoading={isSavingCourse}
+                  loadingLabel="Saving"
+                >
+                  Save details
+                </Button>
+                <Button variant="ghost" onClick={() => setCourse(toCourseForm(workspace))}>
+                  Reset details
+                </Button>
+              </div>
+            ) : null}
           </form>
         </section>
 
@@ -346,6 +372,7 @@ export default function CourseSettingsPage({
                     setPreferences((current) => ({ ...current, studyMode: event.target.value }))
                   }
                   hint="Exam focuses guides on what gets tested."
+                  disabled={isSupportView}
                 >
                   <option value="Exam">Exam focused</option>
                   <option value="General">General understanding</option>
@@ -357,6 +384,7 @@ export default function CourseSettingsPage({
                   onChange={(event) =>
                     setPreferences((current) => ({ ...current, difficulty: event.target.value }))
                   }
+                  disabled={isSupportView}
                 >
                   <option value="Adaptive">Adaptive</option>
                   <option value="Easy">Easy</option>
@@ -377,6 +405,7 @@ export default function CourseSettingsPage({
                     }))
                   }
                   hint="Between 5 and 50 here. A single quiz generates up to 20."
+                  disabled={isSupportView}
                 />
 
                 <Select
@@ -388,6 +417,7 @@ export default function CourseSettingsPage({
                       summaryLength: event.target.value,
                     }))
                   }
+                  disabled={isSupportView}
                 >
                   <option value="Short">Short</option>
                   <option value="Medium">Medium</option>
@@ -401,6 +431,7 @@ export default function CourseSettingsPage({
                   onChange={(event) =>
                     setPreferences((current) => ({ ...current, detailLevel: event.target.value }))
                   }
+                  disabled={isSupportView}
                 >
                   <option value="Concise">Concise</option>
                   <option value="Balanced">Balanced</option>
@@ -408,69 +439,75 @@ export default function CourseSettingsPage({
                 </Select>
               </div>
 
-              <div className={styles.actions}>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  isLoading={isSavingPreferences}
-                  loadingLabel="Saving"
-                >
-                  Save defaults
-                </Button>
-                <Button variant="ghost" onClick={() => setPreferences(loadedPreferences)}>
-                  Reset defaults
-                </Button>
-              </div>
+              {!isSupportView ? (
+                <div className={styles.actions}>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    isLoading={isSavingPreferences}
+                    loadingLabel="Saving"
+                  >
+                    Save defaults
+                  </Button>
+                  <Button variant="ghost" onClick={() => setPreferences(loadedPreferences)}>
+                    Reset defaults
+                  </Button>
+                </div>
+              ) : null}
             </form>
           )}
         </section>
 
-        <section className={styles.section}>
-          <h2 className={styles.sectionLabel}>
-            {workspace.isArchived ? 'Restore course' : 'Archive course'}
-          </h2>
-          <p className={styles.sectionLede}>
-            {workspace.isArchived
-              ? 'Restore this course to return it to your active courses list.'
-              : 'Archiving removes this course from your active courses list without deleting any documents, quizzes, or progress. You can restore it at any time.'}
-          </p>
-          {archiveError ? (
-            <Alert tone="destructive" live="alert" className={styles.spaced}>
-              {archiveError}
-            </Alert>
-          ) : null}
-          <div className={styles.actions}>
-            <Button
-              variant="secondary"
-              isLoading={isArchiving}
-              loadingLabel={workspace.isArchived ? 'Restoring' : 'Archiving'}
-              onClick={toggleArchive}
-            >
-              {workspace.isArchived ? 'Restore course' : 'Archive course'}
-            </Button>
-          </div>
-        </section>
+        {!isSupportView ? (
+          <>
+            <section className={styles.section}>
+              <h2 className={styles.sectionLabel}>
+                {workspace.isArchived ? 'Restore course' : 'Archive course'}
+              </h2>
+              <p className={styles.sectionLede}>
+                {workspace.isArchived
+                  ? 'Restore this course to return it to your active courses list.'
+                  : 'Archiving removes this course from your active courses list without deleting any documents, quizzes, or progress. You can restore it at any time.'}
+              </p>
+              {archiveError ? (
+                <Alert tone="destructive" live="alert" className={styles.spaced}>
+                  {archiveError}
+                </Alert>
+              ) : null}
+              <div className={styles.actions}>
+                <Button
+                  variant="secondary"
+                  isLoading={isArchiving}
+                  loadingLabel={workspace.isArchived ? 'Restoring' : 'Archiving'}
+                  onClick={toggleArchive}
+                >
+                  {workspace.isArchived ? 'Restore course' : 'Archive course'}
+                </Button>
+              </div>
+            </section>
 
-        <section className={styles.danger}>
-          <h2 className={styles.dangerTitle}>Delete this course</h2>
-          <p className={styles.dangerBody}>
-            This removes the course and everything in it — uploaded files, generated guides and
-            quizzes, attempts and progress — permanently and immediately. There is no undo and no
-            recycle bin.
-          </p>
-          <div className={styles.dangerAction}>
-            <Button
-              variant="destructive"
-              wrap
-              onClick={() => {
-                setDeleteError(null);
-                setIsConfirmingDelete(true);
-              }}
-            >
-              Delete {workspace.name}
-            </Button>
-          </div>
-        </section>
+            <section className={styles.danger}>
+              <h2 className={styles.dangerTitle}>Delete this course</h2>
+              <p className={styles.dangerBody}>
+                This removes the course and everything in it — uploaded files, generated guides and
+                quizzes, attempts and progress — permanently and immediately. There is no undo and no
+                recycle bin.
+              </p>
+              <div className={styles.dangerAction}>
+                <Button
+                  variant="destructive"
+                  wrap
+                  onClick={() => {
+                    setDeleteError(null);
+                    setIsConfirmingDelete(true);
+                  }}
+                >
+                  Delete {workspace.name}
+                </Button>
+              </div>
+            </section>
+          </>
+        ) : null}
       </div>
 
       <ConfirmDialog

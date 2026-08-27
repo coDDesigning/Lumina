@@ -278,6 +278,15 @@ class Course(Base):
     )
 
     owner: Mapped["User"] = relationship(back_populates="courses")
+
+    @property
+    def owner_name(self) -> str | None:
+        return self.owner.name if self.owner is not None else None
+
+    @property
+    def owner_email(self) -> str | None:
+        return self.owner.email if self.owner is not None else None
+
     documents: Mapped[list["UploadedDocument"]] = relationship(
         back_populates="course", cascade="all, delete-orphan", passive_deletes=True
     )

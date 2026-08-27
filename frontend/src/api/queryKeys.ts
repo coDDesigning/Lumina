@@ -58,6 +58,7 @@ export const queryKeys = {
   profileKnowledge: (): QueryKey => ['profileKnowledge'],
 
   adminUsers: (): QueryKey => ['admin', 'users'],
+  adminUserCourses: (email: string): QueryKey => ['admin', 'users', email, 'courses'],
   adminCosts: (days: number): QueryKey => ['admin', 'costs', days],
   adminCreditLedger: (email: string, limit: number): QueryKey => [
     'admin',

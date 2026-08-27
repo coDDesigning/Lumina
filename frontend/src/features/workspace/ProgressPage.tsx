@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
+import { useAuth } from '@/context/AuthContext';
 import { QuizModal } from '@/features/study/quiz/QuizModal';
+import { Alert } from '@/ui/Alert';
+import { Badge } from '@/ui/Badge';
 import { PastQuizzes } from './PastQuizzes';
 import { ProgressView } from './ProgressView';
 import type { Workspace } from '@/data/workspaces';
@@ -16,6 +19,7 @@ export interface ProgressPageProps {
 }
 
 export default function ProgressPage({ workspace }: ProgressPageProps) {
+  const { user } = useAuth();
   const courseId = Number(workspace.id);
   useDocumentTitle(`${workspace.name} · Progress`);
 
@@ -24,6 +28,12 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
 
   const { entries, readyCount } = useCourseDocuments(courseId);
   const { progress, isLoading, error, reload } = useCourseProgress(courseId);
+
+  const isSupportView = Boolean(user && workspace.ownerId != null && workspace.ownerId !== user.id);
+  const ownerDisplayName =
+    workspace.ownerName ||
+    workspace.ownerEmail ||
+    (workspace.ownerId ? `User #${workspace.ownerId}` : 'another user');
 
   return (
     <div className={styles.page}>
@@ -34,7 +44,17 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
           { label: workspace.name, to: `/courses/${workspace.id}` },
           { label: 'Progress' },
         ]}
+        badges={isSupportView ? <Badge tone="accent">Read-Only Support</Badge> : null}
       />
+
+      {isSupportView ? (
+        <div className={styles.supportBanner}>
+          <Alert tone="info">
+            <strong>Read-Only Support View</strong> — Viewing progress for course owned by{' '}
+            <strong>{ownerDisplayName}</strong>.
+          </Alert>
+        </div>
+      ) : null}
 
       <h1 className="visually-hidden">{workspace.name} progress</h1>
 
@@ -46,7 +66,7 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
           progress={progress}
           isLoading={isLoading}
           error={error}
-          onPractice={setPracticeTopic}
+          onPractice={!isSupportView ? setPracticeTopic : undefined}
           onRetry={reload}
           actions={
             <LinkButton variant="primary" to={`/courses/${workspace.id}`}>

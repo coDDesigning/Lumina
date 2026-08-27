@@ -80,6 +80,8 @@ class CourseResponse(CourseBase):
 
     id: int
     owner_id: int
+    owner_name: str | None = None
+    owner_email: str | None = None
     created_at: datetime
     updated_at: datetime
     is_deleted: bool = False

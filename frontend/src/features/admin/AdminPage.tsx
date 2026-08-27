@@ -12,7 +12,13 @@ import {
   transactionLabel,
 } from '@/api/creditLabels';
 import { describeError } from '@/api/errors';
-import type { AdminCreditReason, AiCostReport, CreditTransaction, User } from '@/api/types';
+import type {
+  AdminCreditReason,
+  AiCostReport,
+  Course,
+  CreditTransaction,
+  User,
+} from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import { useAuth } from '@/context/AuthContext';
 import { Alert } from '@/ui/Alert';
@@ -23,6 +29,7 @@ import { Dialog } from '@/ui/Dialog';
 import { EmptyState } from '@/ui/EmptyState';
 import { ErrorState } from '@/ui/ErrorState';
 import { Input, Select, Textarea } from '@/ui/Input';
+import { LinkButton } from '@/ui/LinkButton';
 import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
 import { useToast } from '@/ui/toastContext';
@@ -59,6 +66,12 @@ export default function AdminPage() {
   const [isLedgerLoading, setIsLedgerLoading] = useState(false);
   const ledgerEmailRef = useRef<string | null>(null);
   const ledgerRequest = useRef(0);
+
+  const [coursesEmail, setCoursesEmail] = useState<string | null>(null);
+  const [userCourses, setUserCourses] = useState<Course[]>([]);
+  const [isCoursesLoading, setIsCoursesLoading] = useState(false);
+  const coursesEmailRef = useRef<string | null>(null);
+  const coursesRequest = useRef(0);
 
   const [creditTarget, setCreditTarget] = useState<User | null>(null);
   const [creditDelta, setCreditDelta] = useState('');
@@ -172,6 +185,36 @@ export default function AdminPage() {
     } finally {
       if (ledgerRequest.current === request) {
         setIsLedgerLoading(false);
+      }
+    }
+  }
+
+  async function toggleUserCourses(account: User) {
+    if (coursesEmail === account.email) {
+      coursesRequest.current += 1;
+      coursesEmailRef.current = null;
+      setCoursesEmail(null);
+      setIsCoursesLoading(false);
+      return;
+    }
+    const request = coursesRequest.current + 1;
+    coursesRequest.current = request;
+    coursesEmailRef.current = account.email;
+    setCoursesEmail(account.email);
+    setUserCourses([]);
+    setIsCoursesLoading(true);
+    try {
+      const fetchedCourses = await adminAPI.listUserCourses(account.email);
+      if (coursesRequest.current === request) {
+        setUserCourses(fetchedCourses);
+      }
+    } catch (caught) {
+      if (coursesRequest.current === request) {
+        setActionError(describeError(caught, "Those courses couldn't be loaded.").message);
+      }
+    } finally {
+      if (coursesRequest.current === request) {
+        setIsCoursesLoading(false);
       }
     }
   }
@@ -441,6 +484,9 @@ export default function AdminPage() {
                       </td>
                       <td>
                         <div className={styles.rowActions}>
+                          <Button size="sm" variant="ghost" onClick={() => void toggleUserCourses(account)}>
+                            Courses
+                          </Button>
                           <Button size="sm" variant="ghost" onClick={() => void toggleLedger(account)}>
                             Ledger
                           </Button>
@@ -473,6 +519,39 @@ export default function AdminPage() {
                         </div>
                       </td>
                     </tr>,
+                    coursesEmail === account.email ? (
+                      <tr key={`${account.email}-courses`} className={styles.ledgerRow}>
+                        <td colSpan={5}>
+                          <div className={styles.ledger}>
+                            {isCoursesLoading ? (
+                              <Skeleton />
+                            ) : userCourses.length === 0 ? (
+                              <p className={styles.accountEmail}>No active courses found for this user.</p>
+                            ) : (
+                              <div className={styles.userCoursesList}>
+                                {userCourses.map((course) => (
+                                  <div key={course.id} className={styles.userCourseItem}>
+                                    <div className={styles.userCourseInfo}>
+                                      <strong className={styles.userCourseTitle}>{course.title}</strong>
+                                      <span className={styles.accountEmail}>
+                                        {[course.subject_area, course.semester].filter(Boolean).join(' · ')}
+                                      </span>
+                                    </div>
+                                    <LinkButton
+                                      size="sm"
+                                      variant="secondary"
+                                      to={`/courses/${course.id}`}
+                                    >
+                                      View Course
+                                    </LinkButton>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null,
                     ledgerEmail === account.email ? (
                       <tr key={`${account.email}-ledger`} className={styles.ledgerRow}>
                         <td colSpan={5}>

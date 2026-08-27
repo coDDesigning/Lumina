@@ -811,6 +811,31 @@ def test_the_requested_topics_per_day_is_honoured_and_recorded(upload_api) -> No
     assert detail.json()["data"]["generation_settings"]["max_topics_per_day"] == 2
 
 
+def test_a_persisted_roadmap_reopens_without_a_provider_call(upload_api) -> None:
+    _plan_course(
+        upload_api.session_factory,
+        upload_api.course_id,
+        exam_in_days=4,
+        topics=["Graphs", "Sorting"],
+    )
+
+    generated = _generate(upload_api, upload_api.course_id)
+    output_id = generated.json()["data"]["generated_output_id"]
+
+    reopened = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/generated-outputs/{output_id}",
+        headers=upload_api.authorization,
+    )
+
+    assert reopened.status_code == 200, reopened.text
+    data = reopened.json()["data"]
+    assert data["output_type"] == OUTPUT_TYPE
+    assert data["model_used"] is None
+    parsed = ExamRoadmap.model_validate(data["content"])
+    assert parsed.course_id == upload_api.course_id
+    assert parsed.roadmap_version == 1
+
+
 def test_an_out_of_range_topics_per_day_is_rejected(upload_api) -> None:
     _plan_course(
         upload_api.session_factory,

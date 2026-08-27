@@ -35,10 +35,7 @@ variable "rds_instance_identifier" {
   type = string
 }
 
-variable "rds_proxy_name" {
-  type = string
-}
-
 variable "tags" {
-  type = map(string)
+  type    = map(string)
+  default = {}
 }

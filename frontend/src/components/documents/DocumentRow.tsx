@@ -23,6 +23,7 @@ export interface DocumentRowProps {
   entry: DocumentEntry;
   onRetry: (documentId: string) => void;
   onDelete: (documentId: string) => void;
+  readOnly?: boolean;
 }
 
 function readyFacts(entry: DocumentEntry): string[] {
@@ -34,7 +35,7 @@ function readyFacts(entry: DocumentEntry): string[] {
   ].filter(Boolean);
 }
 
-export function DocumentRow({ entry, onRetry, onDelete }: DocumentRowProps) {
+export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: DocumentRowProps) {
   const [isConfirming, setIsConfirming] = useState(false);
   const { document, job } = entry;
 
@@ -129,7 +130,7 @@ export function DocumentRow({ entry, onRetry, onDelete }: DocumentRowProps) {
         </p>
       ) : null}
 
-      {!busy ? (
+      {!busy && !readOnly ? (
         <div className={styles.actions}>
           {failed ? (
             <Button

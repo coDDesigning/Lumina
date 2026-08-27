@@ -11,3 +11,7 @@
   padding: 0 var(--space-5) var(--space-7);
   min-width: 0;
 }
+
+.supportBanner {
+  padding: 0 var(--space-5) var(--space-4);
+}

@@ -9,7 +9,6 @@ from schemas.user import UserResponse
 from services.processing_jobs import fence_course_jobs
 from services.vector_store import VectorStore, VectorStoreError, get_vector_store
 from storage.base import Storage, StorageError
-from utils.authorization import readable_course_criteria
 from utils.exceptions import NotFoundException
 
 
@@ -22,16 +21,28 @@ class CourseService:
     def get_courses_for_user(
         db: Session, current_user: UserResponse
     ) -> list[CourseResponse]:
-        """List the courses ``current_user`` may read.
+        """List the courses ``current_user`` owns.
 
         Ownership is a predicate in the query rather than a filter applied to
-        the results, so another owner's rows never leave the database. Single
-        course reads go through ``utils.authorization`` instead; there is no
-        unscoped course lookup for a caller to reach for by mistake.
+        the results, so another owner's rows never leave the database. Course
+        listing is strictly owner-scoped for all users, including administrators.
+        Single course reads go through ``utils.authorization`` instead; there is
+        no unscoped course lookup for a caller to reach for by mistake.
+        """
+        return CourseService.get_courses_by_user_id(db, current_user.id)
+
+    @staticmethod
+    def get_courses_by_user_id(
+        db: Session, user_id: int
+    ) -> list[CourseResponse]:
+        """List the active courses owned by a specific user.
+
+        Used by standard course listing for the owner, and by administrative
+        support workflows for an explicit target user.
         """
         statement = (
             select(Course)
-            .where(*readable_course_criteria(current_user))
+            .where(Course.owner_id == user_id, Course.is_deleted.is_(False))
             .order_by(Course.id)
         )
         return [

@@ -2131,9 +2131,31 @@
             "title": "Is Deleted",
             "type": "boolean"
           },
+          "owner_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Email"
+          },
           "owner_id": {
             "title": "Owner Id",
             "type": "integer"
+          },
+          "owner_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Name"
           },
           "semester": {
             "anyOf": [
@@ -5036,6 +5058,63 @@
           }
         ],
         "summary": "Ban User",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/api/admin/users/{email}/courses": {
+      "get": {
+        "description": "Lists the active courses owned by a specific user for administrative support (Admin only).",
+        "operationId": "list_user_courses_api_admin_users__email__courses_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "email",
+            "required": true,
+            "schema": {
+              "title": "Email",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_list_CourseResponse__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Administrator privileges required"
+          },
+          "404": {
+            "description": "User not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List User Courses",
         "tags": [
           "Admin"
         ]

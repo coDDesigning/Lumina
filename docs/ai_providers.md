@@ -11,8 +11,8 @@ never on a specific vendor.
 |---|---|---|
 | `ollama` | Implemented (default) | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` — both defaulted |
 | `gemini` | Implemented | `GEMINI_API_KEY` |
-| `openai` | Recognized, not implemented | — |
-| `claude` | Recognized, not implemented | — |
+| `openai` | Implemented | `OPENAI_API_KEY` |
+| `claude` | Implemented | `ANTHROPIC_API_KEY` |
 
 `IMPLEMENTED_AI_PROVIDERS` in `backend/app/config.py` is the authoritative list.
 The provider factory reads it rather than restating provider names, so the two
@@ -22,16 +22,48 @@ The same rule covers `AI_FALLBACK_PROVIDERS`: a fallback naming an
 unimplemented provider is rejected at startup rather than failing the first time
 the primary provider errors and the fallback is actually reached.
 
-Selecting `openai` or `claude` fails at startup, not on the first generation
-request:
-
-```
-ValueError: AI_PROVIDER 'openai' is recognized but not implemented yet.
-Implemented providers: gemini, ollama.
-```
-
 An unrecognized spelling fails with the list of accepted names, which keeps a
-typo (`gemeni`) distinguishable from a genuine roadmap provider (`openai`).
+typo (`gemeni`) distinguishable from a genuine provider name.
+
+## Hosted OpenAI Setup
+
+1. Obtain an API key from <https://platform.openai.com>.
+2. Configure the environment:
+
+   ```bash
+   AI_PROVIDER=openai
+   OPENAI_API_KEY=sk-...
+   ```
+
+   The default model is `gpt-5.6-terra`. The model catalog supports 1M-token context windows,
+   vision input, and structured JSON output via OpenAI's JSON schema generation.
+
+## Hosted Claude (Anthropic) Setup
+
+1. Obtain an API key from <https://console.anthropic.com>.
+2. Configure the environment:
+
+   ```bash
+   AI_PROVIDER=claude
+   ANTHROPIC_API_KEY=sk-ant-...
+   ```
+
+   The default model is `claude-sonnet-5`. The model catalog supports 1M-token context windows,
+   vision input, and structured JSON output via Anthropic's structured output format schema.
+
+## Multi-Provider Fallback & Resilience
+
+Hosted production deployments can configure multiple providers in priority order to eliminate
+single-vendor concentration risk:
+
+```bash
+AI_PROVIDER=gemini
+AI_FALLBACK_PROVIDERS=openai,claude
+```
+
+During transient network drops, rate limits, or upstream 5xx outages, `ReliableTextGenerationProvider`
+will automatically retry with exponential backoff and transparently fail over to the next configured
+provider. Output attribution truthfully records the provider and model that generated each artifact.
 
 ## Self-Hosted Ollama Setup
 

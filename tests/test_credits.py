@@ -627,7 +627,9 @@ def test_quiz_history_persistence_failure_rolls_back_quiz_and_refunds_credit(
     def fail_history_write(*args, **kwargs):
         raise RuntimeError("Generated output persistence failed")
 
-    monkeypatch.setattr("routes.quiz.GeneratedOutputService.record", fail_history_write)
+    monkeypatch.setattr(
+        "services.quiz.GeneratedOutputService.record", fail_history_write
+    )
 
     response = authz_api.client.post(
         f"/api/courses/{authz_api.a_course_id}/quiz",

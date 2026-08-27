@@ -44,6 +44,7 @@ from schemas.quiz import (
 from services.ai_usage_logger import AiUsageLogger
 from services.citations import SuppliedCitation, resolve_citations
 from services.course_material import count_available_chunks
+from services.generated_output import GeneratedOutputService
 from services.profile_knowledge import (
     ProfileKnowledgeContext,
     assemble_generation_context,
@@ -526,8 +527,9 @@ class QuizService:
                     "Generated quiz does not use the requested difficulty."
                 )
 
-    @staticmethod
+    @classmethod
     def save_generated_quiz(
+        cls,
         db: Session,
         course_id: int,
         quiz_data: QuizGenerationResponse,
@@ -537,13 +539,14 @@ class QuizService:
         generation_settings: str | None = None,
         generation_context: str | None = None,
         citations: dict[str, SuppliedCitation] | None = None,
+        record_output: bool = True,
         commit: bool = True,
     ) -> Quiz:
-        """Write the quiz and all of its questions in one transaction.
+        """Write the quiz, its questions, and its generated output record in one transaction.
 
-        Nothing here can partially succeed: a failure on any question rolls the
-        quiz row back with it, so a quiz never exists with fewer questions than
-        it was generated with.
+        Nothing here can partially succeed: a failure on any question or the output
+        record rolls the whole transaction back, so a quiz never exists partially
+        persisted without its questions or history row.
         """
         quiz = Quiz(
             course_id=course_id,
@@ -581,6 +584,22 @@ class QuizService:
                 )
 
             db.flush()
+            view = cls.build_quiz_view(quiz)
+
+            persisted_output = None
+            if record_output and user_id is not None:
+                persisted_output = GeneratedOutputService.record(
+                    db,
+                    course_id=course_id,
+                    user_id=user_id,
+                    output_type="quiz",
+                    content=view.model_dump_json(),
+                    model_used=model_used,
+                    generation_settings=generation_settings,
+                    generation_context=generation_context,
+                    commit=False,
+                )
+
             if commit:
                 db.commit()
         except Exception:
@@ -588,6 +607,8 @@ class QuizService:
             raise
 
         db.refresh(quiz)
+        quiz.view = view  # type: ignore[attr-defined]
+        quiz.generated_output = persisted_output  # type: ignore[attr-defined]
         return quiz
 
     @staticmethod

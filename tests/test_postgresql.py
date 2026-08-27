@@ -65,7 +65,7 @@ VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
-HEAD_REVISION = "f3c8d05a2b16"
+HEAD_REVISION = "15bb8ad6d0f1"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -128,6 +128,20 @@ def _assert_generated_output_attribution_present() -> None:
         assert user_foreign_key["options"]["ondelete"] == "SET NULL"
     finally:
         engine.dispose()
+
+
+def _index_columns(engine: Engine, table_name: str) -> dict[str, list[str]]:
+    return {
+        index["name"]: index["column_names"]
+        for index in inspect(engine).get_indexes(table_name)
+    }
+
+
+def _plan_index_names(node: dict) -> set[str]:
+    names = {node["Index Name"]} if "Index Name" in node else set()
+    for child in node.get("Plans", []):
+        names.update(_plan_index_names(child))
+    return names
 
 
 def _assert_hardening_preflight_is_atomic() -> None:
@@ -664,6 +678,9 @@ def test_postgresql_schema_readiness_and_role_seeds(
     assert {index["name"] for index in inspector.get_indexes("uploaded_documents")} >= {
         "uq_uploaded_documents_storage_provider_storage_key"
     }
+    assert _index_columns(postgresql_engine, "uploaded_documents")[
+        "ix_uploaded_documents_course_status_created"
+    ] == ["course_id", "status", "created_at", "id"]
     assert {
         constraint["name"] for constraint in inspector.get_check_constraints("courses")
     } >= {"ck_courses_education_level_valid"}
@@ -681,6 +698,9 @@ def test_postgresql_schema_readiness_and_role_seeds(
         "ck_document_chunks_page_range_valid",
         "ck_document_chunks_chunk_index_nonnegative",
     }
+    assert _index_columns(postgresql_engine, "document_chunks")[
+        "ix_document_chunks_course_document_index"
+    ] == ["course_id", "document_id", "chunk_index", "id"]
     assert {
         constraint["name"]
         for constraint in inspector.get_check_constraints("processing_jobs")
@@ -720,6 +740,34 @@ def test_postgresql_schema_readiness_and_role_seeds(
         constraint["name"]
         for constraint in inspector.get_check_constraints("conversations")
     } >= {"ck_conversations_conversation_type_valid"}
+    assert _index_columns(postgresql_engine, "generated_outputs")[
+        "ix_generated_outputs_user_course_created"
+    ] == ["user_id", "course_id", "created_at", "id"]
+    assert _index_columns(postgresql_engine, "generated_outputs")[
+        "ix_generated_outputs_user_created"
+    ] == ["user_id", "created_at", "id"]
+    assert _index_columns(postgresql_engine, "conversations")[
+        "ix_conversations_user_course_updated"
+    ] == ["user_id", "course_id", "updated_at", "id"]
+    attempt_indexes = _index_columns(postgresql_engine, "quiz_attempts")
+    assert attempt_indexes["ix_quiz_attempts_quiz_user_created"] == [
+        "quiz_id",
+        "user_id",
+        "created_at",
+        "id",
+    ]
+    assert attempt_indexes["ix_quiz_attempts_user_created"] == [
+        "user_id",
+        "created_at",
+        "id",
+    ]
+    assert attempt_indexes["ix_quiz_attempts_quiz_created"] == [
+        "quiz_id",
+        "created_at",
+        "id",
+    ]
+    assert "ix_quiz_attempts_user_id" not in attempt_indexes
+    assert "ix_quiz_attempts_quiz_id" not in attempt_indexes
     page_columns = {
         column["name"]: column for column in inspector.get_columns("document_pages")
     }
@@ -803,6 +851,85 @@ def test_postgresql_schema_readiness_and_role_seeds(
             check_readiness(session, storage)
 
 
+@pytest.mark.parametrize(
+    ("query", "expected_index"),
+    [
+        (
+            "SELECT id FROM generated_outputs "
+            "WHERE user_id = -1 AND course_id = -1 ORDER BY created_at, id",
+            "ix_generated_outputs_user_course_created",
+        ),
+        (
+            "SELECT id FROM generated_outputs "
+            "WHERE user_id = -1 AND course_id IN (-1, -2) "
+            "ORDER BY created_at, id LIMIT 50",
+            "ix_generated_outputs_user_created",
+        ),
+        (
+            "SELECT id FROM conversations "
+            "WHERE user_id = -1 AND course_id = -1 ORDER BY updated_at, id",
+            "ix_conversations_user_course_updated",
+        ),
+        (
+            "SELECT id FROM quiz_attempts "
+            "WHERE quiz_id = -1 AND user_id = -1 ORDER BY created_at, id",
+            "ix_quiz_attempts_quiz_user_created",
+        ),
+        (
+            "SELECT id FROM quiz_attempts WHERE user_id = -1 ORDER BY created_at, id",
+            "ix_quiz_attempts_user_created",
+        ),
+        (
+            "SELECT id FROM quiz_attempts WHERE quiz_id = -1 ORDER BY created_at, id",
+            "ix_quiz_attempts_quiz_created",
+        ),
+        (
+            "SELECT id FROM ai_usage_logs "
+            "WHERE success IS TRUE AND created_at >= TIMESTAMPTZ '2026-01-01' "
+            "ORDER BY created_at",
+            "ix_ai_usage_logs_success_created",
+        ),
+    ],
+)
+def test_postgresql_hot_read_indexes_are_planner_eligible(
+    postgresql_engine: Engine,
+    query: str,
+    expected_index: str,
+) -> None:
+    with postgresql_engine.begin() as connection:
+        connection.execute(text("SET LOCAL enable_seqscan = off"))
+        plan = connection.scalar(
+            text(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {query}")
+        )
+
+    assert plan is not None
+    assert expected_index in _plan_index_names(plan[0]["Plan"])
+
+
+def test_postgresql_course_material_query_uses_course_order_indexes(
+    postgresql_engine: Engine,
+) -> None:
+    query = """
+        SELECT dc.text, dc.document_id
+        FROM document_chunks AS dc
+        JOIN uploaded_documents AS ud ON dc.document_id = ud.id
+        WHERE dc.course_id = -1
+          AND ud.course_id = -1
+          AND ud.status = 'ready'
+        ORDER BY ud.created_at, ud.id, dc.chunk_index, dc.id
+    """
+    with postgresql_engine.begin() as connection:
+        connection.execute(text("SET LOCAL enable_seqscan = off"))
+        plan = connection.scalar(
+            text(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {query}")
+        )
+
+    assert plan is not None
+    indexes = _plan_index_names(plan[0]["Plan"])
+    assert "ix_uploaded_documents_course_status_created" in indexes
+    assert "ix_document_chunks_course_document_index" in indexes
+
+
 def test_postgresql_cost_migration_resumes_after_partial_commit(
     postgresql_engine: Engine,
 ) -> None:
@@ -845,6 +972,30 @@ def test_postgresql_cost_migration_resumes_after_partial_commit(
         assert {index["name"] for index in inspector.get_indexes("ai_usage_logs")} >= {
             "ix_ai_usage_logs_success_created"
         }
+    finally:
+        _run_alembic("upgrade", HEAD_REVISION)
+
+
+def test_postgresql_progress_index_migration_resumes_after_partial_commit(
+    postgresql_engine: Engine,
+) -> None:
+    _run_alembic("downgrade", "784a1eb8fba0")
+    try:
+        with postgresql_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE INDEX ix_quiz_attempts_user_created "
+                    "ON quiz_attempts (user_id)"
+                )
+            )
+
+        _run_alembic("upgrade", HEAD_REVISION)
+        assert _index_columns(postgresql_engine, "quiz_attempts")[
+            "ix_quiz_attempts_user_created"
+        ] == ["user_id", "created_at", "id"]
+        attempt_indexes = _index_columns(postgresql_engine, "quiz_attempts")
+        assert "ix_quiz_attempts_user_id" not in attempt_indexes
+        assert "ix_quiz_attempts_quiz_id" not in attempt_indexes
     finally:
         _run_alembic("upgrade", HEAD_REVISION)
 

@@ -430,6 +430,13 @@ class UploadedDocument(Base):
             "storage_key",
             unique=True,
         ),
+        Index(
+            "ix_uploaded_documents_course_status_created",
+            "course_id",
+            "status",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -511,6 +518,13 @@ class DocumentChunk(Base):
             ["uploaded_documents.id", "uploaded_documents.course_id"],
             name="fk_document_chunks_document_course_uploaded_documents",
             ondelete="CASCADE",
+        ),
+        Index(
+            "ix_document_chunks_course_document_index",
+            "course_id",
+            "document_id",
+            "chunk_index",
+            "id",
         ),
     )
 
@@ -896,6 +910,21 @@ class GeneratedOutput(Base):
     """
 
     __tablename__ = "generated_outputs"
+    __table_args__ = (
+        Index(
+            "ix_generated_outputs_user_course_created",
+            "user_id",
+            "course_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_generated_outputs_user_created",
+            "user_id",
+            "created_at",
+            "id",
+        ),
+    )
 
     # The auto-numbered identity of this row. Every table gets one.
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -937,6 +966,13 @@ class Conversation(Base):
         CheckConstraint(
             f"conversation_type IN ({_CONVERSATION_TYPES_SQL})",
             name="conversation_type_valid",
+        ),
+        Index(
+            "ix_conversations_user_course_updated",
+            "user_id",
+            "course_id",
+            "updated_at",
+            "id",
         ),
     )
 
@@ -1148,19 +1184,24 @@ class QuizAttempt(Base):
     __tablename__ = "quiz_attempts"
     __table_args__ = (
         CheckConstraint("score >= 0 AND score <= 1", name="score_fraction"),
+        Index(
+            "ix_quiz_attempts_quiz_user_created",
+            "quiz_id",
+            "user_id",
+            "created_at",
+            "id",
+        ),
+        Index("ix_quiz_attempts_user_created", "user_id", "created_at", "id"),
+        Index("ix_quiz_attempts_quiz_created", "quiz_id", "created_at", "id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
     # Parent one: who attempted. User deleted -> attempts deleted.
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
 
     # Parent two: which quiz. Quiz deleted -> attempts deleted.
-    quiz_id: Mapped[int] = mapped_column(
-        ForeignKey("quizzes.id", ondelete="CASCADE"), index=True
-    )
+    quiz_id: Mapped[int] = mapped_column(ForeignKey("quizzes.id", ondelete="CASCADE"))
 
     # The result as a fraction between 0.0 and 1.0. Float is the
     # column type for decimal numbers.

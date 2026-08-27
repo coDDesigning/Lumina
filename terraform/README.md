@@ -143,6 +143,17 @@ Both URLs require TLS. Runtime connection counts are bounded per process by
 configurable percentage of RDS connections for administrative and migration
 work.
 
+## PostgreSQL maintenance
+
+The RDS parameter group explicitly enables `autovacuum` and `track_counts` and
+sets `autovacuum_naptime` to 30 seconds. PostgreSQL autovacuum includes
+automatic `ANALYZE`; the weekly RDS `maintenance_window` is infrastructure
+maintenance and is not a SQL vacuum schedule. Review `pg_stat_user_tables`,
+slow-query logs, and representative `EXPLAIN (ANALYZE, BUFFERS, SETTINGS)`
+plans before changing table thresholds or scheduling a manual maintenance run.
+The query/index and partitioning decisions are documented in
+`docs/database.md`.
+
 The parameters are created by the secrets module from the `runtime_secrets`
 map. Provide the values in a private `terraform.tfvars` (never committed) and
 apply:

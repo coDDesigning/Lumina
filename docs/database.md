@@ -124,7 +124,7 @@ immutable `pgvector/pgvector` image digest; the pgvector extension is required
 because the schema declares a `vector` column and an HNSW index. The live job
 verifies the complete Alembic upgrade/downgrade/re-upgrade cycle, schema drift,
 role seeds, readiness, UUID and timezone round trips, unloaded database cascades
-across all 25 tables, pgvector provisioning and cosine ranking, and
+across all 26 tables, pgvector provisioning and cosine ranking, and
 `SKIP LOCKED` worker claims. Tests marked `database_contract` run unchanged
 against copies of an Alembic-migrated SQLite database and the disposable
 PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other
@@ -584,6 +584,42 @@ candidate aggregates keep their counts. That is deliberate: keeping verbatim
 exam text alive after the student deleted the source is a retention claim this
 system does not make. The disagreement is reported rather than hidden, because
 the plan's staleness fingerprint records which past exams it used.
+
+### Per-topic unlocks
+
+`exam_topic_unlocks` records what a student has paid for. Exam Mode charges per
+topic rather than per artifact, so unlocking a topic buys its guide, its
+summary, its practice questions, its topic exam, and its similar questions
+together, and the charge lands the first time any of them is asked for.
+
+The unique key is `(course_id, user_id, topic_key)` and nothing else. There is
+deliberately no plan identifier on the row: a topic is the same topic whichever
+plan surfaced it, `canonical_topic_key` is what makes that claim checkable, and
+regenerating a plan over the same topics therefore costs nothing.
+
+`credit_transaction_id` is nullable because an unmetered account pays nothing
+and has no ledger row to point at. A null there means "no credit moved", which
+is the same distinction `ChargeReceipt.is_exempt` draws one layer up.
+
+### Quiz provenance
+
+Exam Mode's practice questions, topic exams, and mock exams are real rows in
+`quizzes`, because anything else would need parallel implementations of
+attempts, grading, mastery, and course progress. `quizzes.purpose` tells them
+apart, `exam_plan_output_id` names the plan a quiz was generated for, and
+`exam_topic_key` names the topic, so "the exams belonging to this plan" is plain
+SQL rather than a scan through generation settings JSON.
+
+None of the three carries a `CHECK` or a foreign key, for the same reason
+`exam_extraction_status` does not: constraining a column on an existing table
+would force a `batch_alter_table` rebuild. A null `purpose` is a quiz that
+predates Exam Mode, and nothing back-fills it — writing `practice` would assert
+something about rows nobody classified.
+
+Exam-mode quizzes are **not** hidden from the course's quiz list, and their
+attempts count toward progress and mastery like any other. That is the point:
+mastery measured on an exam-mode quiz flows straight back into the next plan's
+ranking.
 
 ### Append-only
 

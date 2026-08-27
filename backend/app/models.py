@@ -77,6 +77,22 @@ _EXAM_QUESTION_TYPES_SQL = ", ".join(f"'{kind}'" for kind in EXAM_QUESTION_TYPES
 
 EXAM_QUESTION_DIFFICULTIES = ("easy", "medium", "hard")
 
+QUIZ_PURPOSE_PRACTICE = "practice"
+QUIZ_PURPOSE_EXAM_TOPIC_PRACTICE = "exam_topic_practice"
+QUIZ_PURPOSE_EXAM_TOPIC_EXAM = "exam_topic_exam"
+QUIZ_PURPOSE_EXAM_MOCK_EXAM = "exam_mock_exam"
+QUIZ_PURPOSES = (
+    QUIZ_PURPOSE_PRACTICE,
+    QUIZ_PURPOSE_EXAM_TOPIC_PRACTICE,
+    QUIZ_PURPOSE_EXAM_TOPIC_EXAM,
+    QUIZ_PURPOSE_EXAM_MOCK_EXAM,
+)
+EXAM_QUIZ_PURPOSES = (
+    QUIZ_PURPOSE_EXAM_TOPIC_PRACTICE,
+    QUIZ_PURPOSE_EXAM_TOPIC_EXAM,
+    QUIZ_PURPOSE_EXAM_MOCK_EXAM,
+)
+
 EXAM_EXTRACTION_NOT_APPLICABLE = "not_applicable"
 EXAM_EXTRACTION_PENDING = "pending"
 EXAM_EXTRACTION_SUCCEEDED = "succeeded"
@@ -1221,6 +1237,61 @@ class PastExamQuestion(Base):
     )
 
 
+class ExamTopicUnlock(Base):
+    """One student's paid access to everything Exam Mode makes for one topic.
+
+    Exam Mode charges per topic, not per artifact: unlocking a topic buys its
+    guide, its summary, its practice questions, its topic exam, and its similar
+    questions together, and the charge lands the first time the student asks
+    for any of them rather than up front for a plan they may not finish.
+
+    The unique key is ``(course_id, user_id, topic_key)`` and nothing else,
+    which is what makes a regenerated plan over the same topics free: the row
+    outlives the plan that first named the topic.
+
+    ``credit_transaction_id`` is null when the account was not metered. That is
+    "no credit moved", not an unfinished row, and it is the same distinction
+    ``ChargeReceipt.is_exempt`` draws one layer up.
+    """
+
+    __tablename__ = "exam_topic_unlocks"
+    __table_args__ = (
+        UniqueConstraint(
+            "course_id",
+            "user_id",
+            "topic_key",
+            name="uq_exam_topic_unlocks_course_id_user_id_topic_key",
+        ),
+        CheckConstraint(
+            f"length(trim(topic_key, '{_ASCII_WHITESPACE}')) > 0",
+            name="topic_key_nonblank",
+        ),
+        CheckConstraint("amount >= 0", name="amount_nonnegative"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+
+    topic_key: Mapped[str] = mapped_column(String(120), index=True)
+
+    credit_transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("credit_transactions.id", ondelete="SET NULL"), nullable=True
+    )
+
+    amount: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
     __table_args__ = (
@@ -1336,6 +1407,19 @@ class Quiz(Base):
     generation_settings: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     generation_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # What this quiz is for. Null is a quiz that predates Exam Mode; nothing
+    # back-fills it, because "practice" would be a claim about rows nobody
+    # classified.
+    purpose: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+
+    exam_plan_output_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+
+    exam_topic_key: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()

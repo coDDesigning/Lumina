@@ -3,7 +3,7 @@ from pathlib import Path
 
 from backend.app.models import Base
 
-EXPECTED_TABLE_COUNT = 25
+EXPECTED_TABLE_COUNT = 26
 
 EXPECTED_TABLE_NAMES = {
     "ai_usage_logs",
@@ -18,6 +18,7 @@ EXPECTED_TABLE_NAMES = {
     "document_pages",
     "document_visuals",
     "exam_topic_candidates",
+    "exam_topic_unlocks",
     "generated_outputs",
     "past_exam_questions",
     "processing_jobs",
@@ -35,7 +36,7 @@ EXPECTED_TABLE_NAMES = {
 
 
 def test_schema_table_inventory_matches_expected() -> None:
-    """Verifies that the relational model defines exactly the expected 23 tables."""
+    """Verifies that the relational model defines exactly the expected tables."""
     actual_tables = set(Base.metadata.tables.keys())
     assert actual_tables == EXPECTED_TABLE_NAMES, (
         f"Schema tables drifted. Difference: {actual_tables ^ EXPECTED_TABLE_NAMES}"

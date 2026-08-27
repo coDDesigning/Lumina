@@ -89,7 +89,8 @@ export type CreditSource =
   | 'course_qa'
   | 'prompt_generator'
   | 'exam_topic_analysis'
-  | 'exam_topic_analysis_rescan';
+  | 'exam_topic_analysis_rescan'
+  | 'exam_topic_unlock';
 
 export interface CreditStatus {
   /** null means this account is not metered, so no credit UI applies. */

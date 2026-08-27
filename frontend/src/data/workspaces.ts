@@ -45,6 +45,6 @@ export type WorkspaceDraft = {
   educationLevel: EducationLevel
   semester: string
   examDate: string
-  topics: string
+  topics: string[]
   syllabus: string
 }

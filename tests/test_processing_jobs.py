@@ -3,7 +3,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -162,7 +162,7 @@ def _queue_document(
             title="Worker course",
             description=None,
             semester="Fall",
-            exam_date="2026",
+            exam_date=date(2026, 6, 15),
         )
         session.add(course)
         session.flush()

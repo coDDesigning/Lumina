@@ -31,7 +31,7 @@ export const COURSE = {
   education_level: 'undergraduate',
   semester: 'Fall 2026',
   exam_date: '2026-09-04',
-  topics: 'Graph Traversals, Shortest Paths, Minimum Spanning Trees',
+  topics: ['Graph Traversals', 'Shortest Paths', 'Minimum Spanning Trees'],
   syllabus: '',
   description: 'Graphs, trees, and the algorithms over them.',
   created_at: '2026-08-01T09:00:00Z',
@@ -40,7 +40,7 @@ export const COURSE = {
 
 const COURSES = [
   COURSE,
-  { ...COURSE, id: 2, title: 'Linear Algebra', subject_area: 'Mathematics', topics: 'Eigenvalues' },
+  { ...COURSE, id: 2, title: 'Linear Algebra', subject_area: 'Mathematics', topics: ['Eigenvalues'] },
 ]
 
 const DOCUMENTS = [

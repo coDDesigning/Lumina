@@ -19,6 +19,7 @@ import { Input, Select, Textarea } from '@/ui/Input';
 import { PageHeader } from '@/ui/PageHeader';
 import { ErrorState } from '@/ui/ErrorState';
 import { Skeleton } from '@/ui/Skeleton';
+import { TagInput } from '@/ui/TagInput';
 import { useToast } from '@/ui/toastContext';
 import styles from './CourseSettingsPage.module.css';
 
@@ -43,7 +44,7 @@ function toCourseForm(workspace: Workspace) {
     educationLevel: workspace.educationLevel,
     semester: workspace.semester,
     examDate: workspace.examDate,
-    topics: workspace.topics.join(', '),
+    topics: workspace.topics,
     syllabus: workspace.syllabus,
   };
 }
@@ -100,7 +101,10 @@ export default function CourseSettingsPage({
     setLoadedPreferences(stored);
   }, [storedSettings]);
 
-  function updateCourse(field: keyof typeof course, value: string) {
+  function updateCourse<Field extends keyof typeof course>(
+    field: Field,
+    value: (typeof course)[Field],
+  ) {
     setCourse((current) => ({ ...current, [field]: value }));
   }
 
@@ -120,10 +124,7 @@ export default function CourseSettingsPage({
         educationLevel: course.educationLevel,
         semester: course.semester.trim(),
         examDate: course.examDate,
-        topics: course.topics
-          .split(',')
-          .map((topic) => topic.trim())
-          .filter(Boolean),
+        topics: course.topics,
         syllabus: course.syllabus.trim(),
         updatedAt: 'Updated just now',
       });
@@ -260,7 +261,9 @@ export default function CourseSettingsPage({
               <Select
                 label="Education level"
                 value={course.educationLevel}
-                onChange={(event) => updateCourse('educationLevel', event.target.value)}
+                onChange={(event) =>
+                  updateCourse('educationLevel', event.target.value as EducationLevel)
+                }
                 disabled={isSupportView}
               >
                 {(Object.keys(EDUCATION_LEVEL_LABELS) as EducationLevel[]).map((level) => (
@@ -296,13 +299,13 @@ export default function CourseSettingsPage({
                 disabled={isSupportView}
               />
 
-              <Input
+              <TagInput
                 label="Topics"
                 optional
                 fieldClassName={styles.span}
                 value={course.topics}
-                onChange={(event) => updateCourse('topics', event.target.value)}
-                placeholder="Separate topics with commas"
+                onChange={(topics) => updateCourse('topics', topics)}
+                placeholder="Add a topic, then press Enter"
                 disabled={isSupportView}
               />
 

@@ -92,14 +92,16 @@ describe('CourseSettingsPage — course details', () => {
 
     expect(screen.getByLabelText('Course name')).toHaveValue('Operating Systems');
     expect(screen.getByLabelText(/^Term/)).toHaveValue('Fall 2026');
-    expect(screen.getByLabelText(/^Topics/)).toHaveValue('Processes, Memory');
+    expect(screen.getByLabelText(/^Topics/)).toHaveValue('');
+    expect(screen.getByText('Processes')).toBeInTheDocument();
+    expect(screen.getByText('Memory')).toBeInTheDocument();
     expect(screen.getByLabelText(/^Syllabus/)).toHaveValue(
       'Deep dive into kernels and virtual memory.',
     );
     expect(screen.getByLabelText(/^Subject area/)).toHaveValue('Computer Engineering');
   });
 
-  it('saves trimmed values and splits topics into a list', async () => {
+  it('saves trimmed values and keeps a comma inside a single topic', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
     renderPage({ onSave });
@@ -109,8 +111,10 @@ describe('CourseSettingsPage — course details', () => {
 
     await user.clear(name);
     await user.type(name, 'Distributed Systems');
-    await user.clear(topics);
-    await user.type(topics, 'Raft, Paxos, Sharding');
+    await user.click(screen.getByRole('button', { name: 'Remove Processes' }));
+    await user.click(screen.getByRole('button', { name: 'Remove Memory' }));
+    await user.type(topics, 'Raft, Paxos and Sharding{Enter}');
+    await user.type(topics, 'Consensus{Enter}');
 
     await user.click(screen.getByRole('button', { name: 'Save details' }));
 
@@ -119,7 +123,7 @@ describe('CourseSettingsPage — course details', () => {
         expect.objectContaining({
           id: '1',
           name: 'Distributed Systems',
-          topics: ['Raft', 'Paxos', 'Sharding'],
+          topics: ['Raft, Paxos and Sharding', 'Consensus'],
         }),
       );
     });

@@ -438,3 +438,80 @@ def test_worker_skips_maintenance_when_intervals_are_zero(monkeypatch) -> None:
 
     assert purge_calls == 0
     assert backfill_calls == 0
+
+
+def test_record_failure_emits_permanent_failure_alert_and_stage_metrics(
+    monkeypatch,
+) -> None:
+    from services.processing_jobs import ClaimedJob
+    from workers.document_processor import DocumentProcessingError
+
+    records: list[logging.LogRecord] = []
+
+    class CapturingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("workers.document_processor")
+    handler = CapturingHandler()
+    logger.addHandler(handler)
+
+    emf_records: list[logging.LogRecord] = []
+
+    class MetricsHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            emf_records.append(record)
+
+    metrics_logger = logging.getLogger("lumina.metrics")
+    metrics_handler = MetricsHandler()
+    metrics_logger.addHandler(metrics_handler)
+
+    try:
+        # Mock fail_job to simulate terminal failure
+        monkeypatch.setattr(
+            document_processor,
+            "fail_job",
+            lambda *a, **k: "failed",
+        )
+
+        job = ClaimedJob(
+            id=101,
+            document_id=uuid4(),
+            course_id=42,
+            claim_token="claim-tok-123",
+            attempt_count=3,
+            max_attempts=3,
+            storage_provider="local:test",
+            storage_key="test/key",
+            file_hash="a" * 64,
+            file_type="pdf",
+            file_size=1024,
+            correlation_id="corr-test-123",
+        )
+
+        err = DocumentProcessingError(
+            "CORRUPT_PDF",
+            "PDF content is unreadable.",
+            retryable=False,
+            failed_stage="extracting_text",
+        )
+
+        res = document_processor._record_failure(fake_session_factory, job, err)
+        assert res == "failed"
+
+        alert_logs = [
+            r
+            for r in records
+            if getattr(r, "event", None) == "permanent_document_failure"
+        ]
+        assert len(alert_logs) == 1
+        alert = alert_logs[0]
+        assert alert.job_id == 101
+        assert alert.course_id == 42
+        assert alert.failed_stage == "extracting_text"
+        assert alert.error_code == "CORRUPT_PDF"
+        assert alert.runbook == "docs/runbooks/stuck_document.md"
+        assert "lecture.pdf" not in alert.getMessage()
+    finally:
+        logger.removeHandler(handler)
+        metrics_logger.removeHandler(metrics_handler)

@@ -124,11 +124,12 @@ def _record_failure(
     session_factory: SessionFactory,
     job: ClaimedJob,
     error: DocumentProcessingError,
-) -> None:
+    active_stage: str = "extracting_text",
+) -> str | None:
     exponent = min(6, max(0, job.attempt_count - 1))
     retry_delay = min(60.0, 2.0**exponent)
     with session_factory() as session:
-        fail_job(
+        resulting_status = fail_job(
             session,
             job.id,
             job.claim_token,
@@ -137,6 +138,29 @@ def _record_failure(
             retryable=error.retryable,
             retry_delay_seconds=retry_delay,
         )
+    stage = getattr(error, "failed_stage", None) or active_stage or "extracting_text"
+    if (
+        resulting_status == "failed"
+        or not error.retryable
+        or job.attempt_count >= job.max_attempts
+    ):
+        logger.error(
+            "Permanent document processing failure for job %s (document %s, course %s): %s",
+            job.id,
+            job.document_id,
+            job.course_id,
+            error.code,
+            extra={
+                "event": "permanent_document_failure",
+                "job_id": job.id,
+                "document_id": str(job.document_id),
+                "course_id": job.course_id,
+                "failed_stage": stage,
+                "error_code": error.code,
+                "runbook": "docs/runbooks/stuck_document.md",
+            },
+        )
+    return resulting_status
 
 
 def _extraction_process(
@@ -420,6 +444,7 @@ def process_next_job(
 
         stop = threading.Event()
         claim_lost = threading.Event()
+        current_stage = "reading_file"
         heartbeat = threading.Thread(
             target=_heartbeat_loop,
             args=(session_factory, job, lease_seconds, stop, claim_lost),
@@ -429,6 +454,8 @@ def process_next_job(
         try:
 
             def persist_stage(stage: str) -> None:
+                nonlocal current_stage
+                current_stage = stage
                 with session_factory() as session:
                     updated = update_job_stage(
                         session,
@@ -493,9 +520,10 @@ def process_next_job(
             raise
         except DocumentProcessingError as exc:
             heartbeat_stopped = _stop_heartbeat(stop, heartbeat, claim_lost)
+            stage = getattr(exc, "failed_stage", None) or current_stage
             if heartbeat_stopped and not claim_lost.is_set():
                 try:
-                    _record_failure(session_factory, job, exc)
+                    _record_failure(session_factory, job, exc, active_stage=stage)
                 except Exception:
                     logger.exception(
                         "Failed to record processing error for job %s", job.id
@@ -504,10 +532,19 @@ def process_next_job(
                 {"JobsRetried" if exc.retryable else "JobsFailed": 1},
                 dimensions={"Service": "worker", "Environment": settings.app_env},
             )
+            emit_emf_metrics(
+                {"StageRetried" if exc.retryable else "StageFailed": 1},
+                dimensions={
+                    "Service": "worker",
+                    "Environment": settings.app_env,
+                    "Stage": stage,
+                },
+            )
             return True
         except Exception:
             logger.exception("Unexpected processing failure for job %s", job.id)
             heartbeat_stopped = _stop_heartbeat(stop, heartbeat, claim_lost)
+            stage = current_stage
             if heartbeat_stopped and not claim_lost.is_set():
                 try:
                     _record_failure(
@@ -518,6 +555,7 @@ def process_next_job(
                             "Document processing failed unexpectedly.",
                             retryable=True,
                         ),
+                        active_stage=stage,
                     )
                 except Exception:
                     logger.exception(
@@ -526,6 +564,14 @@ def process_next_job(
             emit_emf_metrics(
                 {"JobsRetried": 1},
                 dimensions={"Service": "worker", "Environment": settings.app_env},
+            )
+            emit_emf_metrics(
+                {"StageRetried": 1},
+                dimensions={
+                    "Service": "worker",
+                    "Environment": settings.app_env,
+                    "Stage": stage,
+                },
             )
             return True
 
@@ -547,9 +593,26 @@ def process_next_job(
             # for the lease to expire.
             logger.warning("Vector persistence failed for job %s", job.id)
             try:
-                _record_failure(session_factory, job, classify_embedding_error(exc))
+                _record_failure(
+                    session_factory,
+                    job,
+                    classify_embedding_error(exc),
+                    active_stage=EMBEDDING_STAGE,
+                )
             except Exception:
                 logger.exception("Failed to record vector error for job %s", job.id)
+            emit_emf_metrics(
+                {"JobsRetried": 1},
+                dimensions={"Service": "worker", "Environment": settings.app_env},
+            )
+            emit_emf_metrics(
+                {"StageRetried": 1},
+                dimensions={
+                    "Service": "worker",
+                    "Environment": settings.app_env,
+                    "Stage": EMBEDDING_STAGE,
+                },
+            )
             return True
         except Exception:
             # Leave the fenced running state intact; periodic recovery safely retries it.

@@ -32,9 +32,7 @@ class CourseService:
         return CourseService.get_courses_by_user_id(db, current_user.id)
 
     @staticmethod
-    def get_courses_by_user_id(
-        db: Session, user_id: int
-    ) -> list[CourseResponse]:
+    def get_courses_by_user_id(db: Session, user_id: int) -> list[CourseResponse]:
         """List the active courses owned by a specific user.
 
         Used by standard course listing for the owner, and by administrative

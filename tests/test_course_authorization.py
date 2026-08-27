@@ -231,9 +231,7 @@ def test_administrator_may_list_courses_for_a_specific_user_support_workflow(aut
     assert missing.status_code == 404
 
     # Unauthenticated returns 401
-    unauth = authz_api.client.get(
-        "/api/admin/users/owner-a@example.com/courses"
-    )
+    unauth = authz_api.client.get("/api/admin/users/owner-a@example.com/courses")
     assert unauth.status_code == 401
 
 

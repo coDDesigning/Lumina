@@ -244,6 +244,9 @@ jobs:
       - name: Compile all Python files
         run: git ls-files '*.py' | xargs -r python -m py_compile
 
+      - name: Validate backend test collection
+        run: python -m pytest --collect-only -q -p no:cacheprovider tests
+
       - name: Run backend tests
         run: >-
           python -m pytest

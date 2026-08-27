@@ -70,10 +70,9 @@ from utils.ai_errors import (
 
 OUTPUT_TYPE = "exam_roadmap"
 
-# One topic needs a handful of passages to name where it is studied from, not a
-# prompt's worth of material: the assembled text is discarded and only the
-# citations survive.
-TOPIC_MATERIAL_CHUNK_LIMIT = 4
+# Generous passage limit to ensure citations span across multiple lectures and
+# source documents covering this topic, rather than truncating at the first file.
+TOPIC_MATERIAL_CHUNK_LIMIT = 10
 
 NO_MATERIAL_NOTE = (
     "This course has no processed material yet, so the plan names goals but no sources."

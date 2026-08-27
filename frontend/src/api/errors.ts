@@ -113,6 +113,51 @@ const GENERATION_FAILURES: Record<string, FailureCopy> = {
     retryable: true,
     remedy: null,
   },
+  source_not_ready: {
+    title: 'A chosen source is still being read',
+    message:
+      'One of the documents you selected has not finished processing. Nothing was charged — try again once it is ready.',
+    retryable: true,
+    remedy: 'see_sources',
+  },
+  exam_date_missing: {
+    title: 'This course has no exam date',
+    message: 'Set an exam date for the course, then create the plan.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_date_not_future: {
+    title: 'That exam date has passed',
+    message:
+      'A first plan needs an exam still to come. Update the course exam date, then try again.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_analysis_required: {
+    title: 'Analyse your sources first',
+    message: 'Run the topic analysis for this course before creating an exam plan.',
+    retryable: false,
+    remedy: 'see_sources',
+  },
+  exam_plan_required: {
+    title: 'Create your plan first',
+    message: 'Build an exam plan for this course before studying one of its topics.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_topic_selection_required: {
+    title: 'Choose what to study',
+    message: 'Select at least one topic before creating the plan.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_topic_not_discovered: {
+    title: 'That topic is not in this analysis',
+    message:
+      'One of the selected topics is not part of the analysis it was chosen from. Review the discovered topics and try again.',
+    retryable: false,
+    remedy: null,
+  },
   retrieval_unavailable: {
     title: 'Search is unavailable',
     message: 'Your material could not be searched just now. Nothing was charged.',

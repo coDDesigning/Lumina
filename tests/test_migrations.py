@@ -49,7 +49,9 @@ COURSE_TOPICS_REVISION = "f3c8d05a2b16"
 PROGRESS_READ_INDEXES_REVISION = "15bb8ad6d0f1"
 DATA_RETENTION_REVISION = "a6e2c8f41b90"
 ROADMAP_SCHEMA_PREP_REVISION = "4399b6d253bf"
-HEAD_REVISION = ROADMAP_SCHEMA_PREP_REVISION
+EXAM_MODE_REVISION = "a6d3f81c9b47"
+EXAM_UNLOCKS_REVISION = "b5e9a2c7d341"
+HEAD_REVISION = EXAM_UNLOCKS_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -97,6 +99,8 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        EXAM_UNLOCKS_REVISION: EXAM_MODE_REVISION,
+        EXAM_MODE_REVISION: ROADMAP_SCHEMA_PREP_REVISION,
         ROADMAP_SCHEMA_PREP_REVISION: DATA_RETENTION_REVISION,
         DATA_RETENTION_REVISION: PROGRESS_READ_INDEXES_REVISION,
         PROGRESS_READ_INDEXES_REVISION: COURSE_TOPICS_REVISION,
@@ -2445,6 +2449,417 @@ def test_course_topics_cascade_on_course_delete(tmp_path: Path) -> None:
             ).fetchone()[0]
             == 0
         )
+
+
+def _exam_mode_columns(connection, table: str) -> set[str]:
+    return {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+
+
+def test_exam_mode_migration_adds_only_tables_and_round_trips(tmp_path: Path) -> None:
+    """The revision is add-only, so downgrading must leave no trace of it."""
+    database_path = tmp_path / "exam-mode.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", COURSE_TOPICS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        existing = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert "exam_topic_candidates" not in existing
+        assert "past_exam_questions" not in existing
+
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_MODE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert _exam_mode_columns(connection, "exam_topic_candidates") >= {
+            "analysis_output_id",
+            "course_id",
+            "position",
+            "topic_key",
+            "display_label",
+            "aliases",
+            "in_syllabus",
+            "in_course_topics",
+            "in_past_exams",
+            "in_material",
+            "discovery_confidence",
+            "syllabus_weight_percent",
+            "past_exam_question_count",
+            "citations",
+            "created_at",
+        }
+        assert _exam_mode_columns(connection, "past_exam_questions") >= {
+            "course_id",
+            "document_id",
+            "page_start",
+            "page_end",
+            "question_text",
+            "question_type",
+            "marks",
+            "answer_guidance",
+            "visual_refs",
+            "topic_key",
+            "citations",
+        }
+        assert "analysis_output_id" not in _exam_mode_columns(
+            connection, "past_exam_questions"
+        )
+        assert _exam_mode_columns(connection, "uploaded_documents") >= {
+            "exam_extraction_status",
+            "exam_extraction_error_code",
+        }
+        indexes = {
+            row[1] for row in connection.execute("PRAGMA index_list(generated_outputs)")
+        }
+        assert "uq_generated_outputs_id_course_id" in indexes
+
+    run_alembic(database_path, tmp_path, "downgrade", COURSE_TOPICS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        remaining = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert "exam_topic_candidates" not in remaining
+        assert "past_exam_questions" not in remaining
+        assert not _exam_mode_columns(connection, "uploaded_documents") & {
+            "exam_extraction_status",
+            "exam_extraction_error_code",
+        }
+        indexes = {
+            row[1] for row in connection.execute("PRAGMA index_list(generated_outputs)")
+        }
+        assert "uq_generated_outputs_id_course_id" not in indexes
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (HEAD_REVISION,)
+
+
+def test_exam_mode_migration_leaves_legacy_generated_outputs_alone(
+    tmp_path: Path,
+) -> None:
+    """A pre-existing output must not be backfilled with invented Exam Mode data."""
+    database_path = tmp_path / "exam-mode-legacy.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", COURSE_TOPICS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        user_id = insert_legacy_user(
+            connection, email="exam-legacy@example.com", credits=10.0
+        )
+        course_id = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Legacy", user_id),
+        ).lastrowid
+        output_id = connection.execute(
+            "INSERT INTO generated_outputs (course_id, output_type, content)"
+            " VALUES (?, ?, ?)",
+            (course_id, "study_guide", "{}"),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_MODE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT output_type, content FROM generated_outputs WHERE id = ?",
+            (output_id,),
+        ).fetchone() == ("study_guide", "{}")
+        assert (
+            connection.execute("SELECT COUNT(*) FROM exam_topic_candidates").fetchone()[
+                0
+            ]
+            == 0
+        )
+
+
+def test_exam_mode_rows_cascade_from_their_owner_and_their_course(
+    tmp_path: Path,
+) -> None:
+    """Candidates follow their analysis; questions follow the paper they came from."""
+    database_path = tmp_path / "exam-mode-cascade.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        user_id = insert_legacy_user(
+            connection, email="exam-cascade@example.com", credits=10.0
+        )
+        course_id = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Cascade", user_id),
+        ).lastrowid
+        analysis_id = connection.execute(
+            "INSERT INTO generated_outputs (course_id, output_type, content)"
+            " VALUES (?, ?, ?)",
+            (course_id, "exam_topic_analysis", "{}"),
+        ).lastrowid
+        document_id = str(uuid4())
+        connection.execute(
+            "INSERT INTO uploaded_documents "
+            "(id, original_file_name, file_type, mime_type, file_size, file_hash, "
+            "user_id, course_id, storage_provider, storage_key, status, "
+            "material_kind) "
+            "VALUES (?, ?, 'pdf', 'application/pdf', 7, ?, ?, ?, 'local:test', ?, "
+            "'ready', 'past_exam')",
+            (
+                document_id,
+                "final-2024.pdf",
+                "e" * 64,
+                user_id,
+                course_id,
+                "final-2024.pdf",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO exam_topic_candidates"
+            " (analysis_output_id, course_id, position, topic_key, display_label,"
+            "  in_syllabus, in_course_topics, in_past_exams, in_material,"
+            "  discovery_confidence)"
+            " VALUES (?, ?, 0, 'graph-traversal', 'Graph Traversal', 1, 0, 0, 0, 0.9)",
+            (analysis_id, course_id),
+        )
+        connection.execute(
+            "INSERT INTO past_exam_questions"
+            " (document_id, course_id, position, question_text, question_type)"
+            " VALUES (?, ?, 0, 'Explain BFS.', 'structured')",
+            (document_id, course_id),
+        )
+
+        connection.execute("DELETE FROM generated_outputs WHERE id = ?", (analysis_id,))
+
+        assert (
+            connection.execute("SELECT COUNT(*) FROM exam_topic_candidates").fetchone()[
+                0
+            ]
+            == 0
+        )
+        # A question outlives the analysis that ranked from it, because it
+        # belongs to the paper rather than to any one reading of it.
+        assert (
+            connection.execute("SELECT COUNT(*) FROM past_exam_questions").fetchone()[0]
+            == 1
+        )
+
+        connection.execute(
+            "DELETE FROM uploaded_documents WHERE id = ?", (document_id,)
+        )
+
+        assert (
+            connection.execute("SELECT COUNT(*) FROM past_exam_questions").fetchone()[0]
+            == 0
+        )
+
+
+def test_the_unlocks_migration_adds_only_what_it_claims_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    """The revision is add-only, so downgrading must leave no trace of it."""
+    database_path = tmp_path / "exam-unlocks.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_MODE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert "exam_topic_unlocks" not in {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert not _exam_mode_columns(connection, "quizzes") & {
+            "purpose",
+            "exam_plan_output_id",
+            "exam_topic_key",
+        }
+
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_UNLOCKS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert _exam_mode_columns(connection, "exam_topic_unlocks") >= {
+            "course_id",
+            "user_id",
+            "topic_key",
+            "credit_transaction_id",
+            "amount",
+            "created_at",
+        }
+        assert _exam_mode_columns(connection, "quizzes") >= {
+            "purpose",
+            "exam_plan_output_id",
+            "exam_topic_key",
+        }
+
+    run_alembic(database_path, tmp_path, "downgrade", EXAM_MODE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert "exam_topic_unlocks" not in {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert not _exam_mode_columns(connection, "quizzes") & {
+            "purpose",
+            "exam_plan_output_id",
+            "exam_topic_key",
+        }
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+
+def test_an_existing_quiz_is_not_given_an_invented_purpose(tmp_path: Path) -> None:
+    """A null purpose is the truth for a quiz nobody classified."""
+    database_path = tmp_path / "exam-unlocks-legacy.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_MODE_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        user_id = insert_legacy_user(
+            connection, email="quiz-purpose@example.com", credits=10.0
+        )
+        course_id = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Legacy", user_id),
+        ).lastrowid
+        quiz_id = connection.execute(
+            "INSERT INTO quizzes (course_id, user_id, title) VALUES (?, ?, ?)",
+            (course_id, user_id, "Old quiz"),
+        ).lastrowid
+
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_UNLOCKS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT purpose, exam_plan_output_id, exam_topic_key"
+            " FROM quizzes WHERE id = ?",
+            (quiz_id,),
+        ).fetchone() == (None, None, None)
+
+
+def test_a_topic_can_only_be_unlocked_once_per_student_and_course(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "exam-unlocks-unique.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        user_id = insert_legacy_user(
+            connection, email="unlock-unique@example.com", credits=10.0
+        )
+        course_id = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Unique", user_id),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO exam_topic_unlocks (course_id, user_id, topic_key, amount)"
+            " VALUES (?, ?, 'graph-traversal', 2.0)",
+            (course_id, user_id),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO exam_topic_unlocks (course_id, user_id, topic_key, amount)"
+                " VALUES (?, ?, 'graph-traversal', 2.0)",
+                (course_id, user_id),
+            )
+
+        connection.execute(
+            "DELETE FROM courses WHERE id = ?",
+            (course_id,),
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM exam_topic_unlocks").fetchone()[0]
+            == 0
+        )
+
+
+def test_a_past_exam_question_cannot_disagree_with_its_paper_about_the_course(
+    tmp_path: Path,
+) -> None:
+    """The composite key is what stops a question naming another course's paper."""
+    database_path = tmp_path / "exam-question-composite.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        user_id = insert_legacy_user(
+            connection, email="exam-question-composite@example.com", credits=10.0
+        )
+        first = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("First", user_id),
+        ).lastrowid
+        second = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Second", user_id),
+        ).lastrowid
+        document_id = str(uuid4())
+        connection.execute(
+            "INSERT INTO uploaded_documents "
+            "(id, original_file_name, file_type, mime_type, file_size, file_hash, "
+            "user_id, course_id, storage_provider, storage_key, status, "
+            "material_kind) "
+            "VALUES (?, ?, 'pdf', 'application/pdf', 7, ?, ?, ?, 'local:test', ?, "
+            "'ready', 'past_exam')",
+            (
+                document_id,
+                "midterm.pdf",
+                "d" * 64,
+                user_id,
+                first,
+                "midterm.pdf",
+            ),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO past_exam_questions"
+                " (document_id, course_id, position, question_text, question_type)"
+                " VALUES (?, ?, 0, 'Explain BFS.', 'structured')",
+                (document_id, second),
+            )
+
+
+def test_an_exam_candidate_cannot_disagree_with_its_analysis_about_the_course(
+    tmp_path: Path,
+) -> None:
+    """The composite key is what stops a course-scoped read leaking another course."""
+    database_path = tmp_path / "exam-mode-composite.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        user_id = insert_legacy_user(
+            connection, email="exam-composite@example.com", credits=10.0
+        )
+        first = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("First", user_id),
+        ).lastrowid
+        second = connection.execute(
+            "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+            ("Second", user_id),
+        ).lastrowid
+        analysis_id = connection.execute(
+            "INSERT INTO generated_outputs (course_id, output_type, content)"
+            " VALUES (?, ?, ?)",
+            (first, "exam_topic_analysis", "{}"),
+        ).lastrowid
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO exam_topic_candidates"
+                " (analysis_output_id, course_id, position, topic_key, display_label,"
+                "  in_syllabus, in_course_topics, in_past_exams, in_material,"
+                "  discovery_confidence)"
+                " VALUES (?, ?, 0, 'sorting', 'Sorting', 1, 0, 0, 0, 0.5)",
+                (analysis_id, second),
+            )
 
 
 def test_progress_read_indexes_upgrade_downgrade_and_reupgrade(tmp_path: Path) -> None:

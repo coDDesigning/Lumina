@@ -97,8 +97,10 @@ class StubVectorStore:
         self._error = error
         self.search_calls: list[dict] = []
 
-    def search(self, session, *, course_id, query_embedding, limit):
-        self.search_calls.append({"course_id": course_id, "limit": limit})
+    def search(self, session, *, course_id, query_embedding, limit, document_ids=None):
+        self.search_calls.append(
+            {"course_id": course_id, "limit": limit, "document_ids": document_ids}
+        )
         if self._error is not None:
             raise self._error
         return self._results[:limit]
@@ -483,7 +485,9 @@ def test_passes_the_configured_limit_and_course_scope_to_the_store(
 
     _load(db_session, course.id, store=store, limit=7)
 
-    assert store.search_calls == [{"course_id": course.id, "limit": 7}]
+    assert store.search_calls == [
+        {"course_id": course.id, "limit": 7, "document_ids": None}
+    ]
 
 
 def test_embeds_the_supplied_query_and_never_the_documents(

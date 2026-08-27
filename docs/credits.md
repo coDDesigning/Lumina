@@ -159,6 +159,11 @@ server owns.
 | AI tutor | 1 |
 | Course Q&A | 1 |
 | Prompt generator | 1 |
+| Exam Mode source analysis | 1 |
+| Exam Mode rescan | 0.5 |
+| Exam Mode topic unlock | 2 |
+| Exam Mode mock exam | 2 |
+| Exam Mode review sheet | 1 |
 
 Open-ended answers are graded by the provider, which costs real money every time
 an attempt is submitted. That grading is **prepaid at generation**, which is why
@@ -174,6 +179,49 @@ free.
 
 Consequently `quiz_grading` no longer charges. The reason still exists because
 the ledger is append-only and historical rows carry it.
+
+Exam Mode charges only where a provider is actually reached. Analysing a
+course's chosen sources discovers its topics in one provider call, so it costs
+1. Scanning again after changing the sources costs 0.5, because a student who
+uploads a paper the week before an exam should not be discouraged from
+re-reading it. Reading the questions out of a past paper is **free**: it happens
+once, in the upload worker, and a student should not be charged for uploading
+something.
+
+Everything Exam Mode makes for one topic — its study guide, its summary, its
+practice questions, its topic exam, its similar questions — is bought together
+for 2, and the charge lands the **first time the student asks for any of them**
+rather than when the plan is created. A student who plans twelve topics and
+studies four pays for four. The unlock is keyed by (course, student, topic) and
+holds no plan identifier, so regenerating a plan over the same topics costs
+nothing and a second artifact for an unlocked topic costs nothing.
+
+An unlock commits on its own rather than inside the generation it precedes,
+because the row has to exist before the work it pays for starts. A generation
+that then fails releases it: the row is deleted and the charge refunded, so a
+failed first artifact leaves the student neither charged nor unlocked and the
+retry is priced as a first purchase. A topic already unlocked by an earlier,
+successful request is never released, because that purchase is not this
+request's to undo.
+
+A mock exam and a review sheet are priced on their own, at 2 and 1, because they
+draw on every topic of the plan: a student who unlocked one topic has not paid
+for a paper covering twelve. Both refund on every failure, like every other
+generation.
+
+Reading the questions out of a past paper, ranking a plan, reopening anything,
+and building the study roadmap all charge **nothing**. The roadmap is arithmetic
+over an order the plan already settled — no model is involved and none is
+credited — so `exam_roadmap` is rate limited but deliberately absent from the
+price table, exactly as `exam_plan` is.
+
+Creating an exam plan from an analysis that already exists charges **nothing**:
+ranking is arithmetic over values the analysis already persisted, no model is
+involved, and no model is credited for it. Reopening a plan is a database read
+and charges nothing either, however long ago it was written. `exam_plan` is
+therefore rate limited but deliberately absent from the price table; the two
+mechanisms are independent, and a free operation with no entry is not an
+omission.
 
 ### Charging and refunding
 

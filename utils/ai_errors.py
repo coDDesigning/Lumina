@@ -57,6 +57,27 @@ class InsufficientCreditsError(RuntimeError):
     pass
 
 
+class ExamPlanUnavailableError(RuntimeError):
+    """A course cannot be planned from in the state it is currently in.
+
+    Every subclass names a state the owner can fix, and each keeps its own code
+    because the remedies are different: set a date, move a date that has passed,
+    or declare the topics the plan would schedule.
+    """
+
+
+class ExamDateRequiredError(ExamPlanUnavailableError):
+    pass
+
+
+class ExamDatePassedError(ExamPlanUnavailableError):
+    pass
+
+
+class ExamTopicsRequiredError(ExamPlanUnavailableError):
+    pass
+
+
 class AiErrorCode(str, Enum):
     NO_READY_MATERIAL = "no_ready_material"
     NO_RELEVANT_MATERIAL = "no_relevant_material"
@@ -69,6 +90,9 @@ class AiErrorCode(str, Enum):
     INSUFFICIENT_CREDITS = "insufficient_credits"
     UNAVAILABLE_MODEL = "unavailable_model"
     INCOMPATIBLE_MODEL = "incompatible_model"
+    EXAM_DATE_REQUIRED = "exam_date_required"
+    EXAM_DATE_PASSED = "exam_date_passed"
+    EXAM_TOPICS_REQUIRED = "exam_topics_required"
     GENERATION_FAILED = "generation_failed"
 
 
@@ -79,6 +103,17 @@ NO_RELEVANT_MATERIAL_MESSAGE = (
 MATERIAL_NOT_INDEXED_MESSAGE = (
     "This course's material is not searchable yet. If it does not become "
     "available shortly, its documents need to be processed again."
+)
+EXAM_DATE_REQUIRED_MESSAGE = (
+    "This course has no exam date, so there are no days to plan across. Set one "
+    "in the course settings."
+)
+EXAM_DATE_PASSED_MESSAGE = (
+    "This course's exam date has already passed. Set the next one to plan again."
+)
+EXAM_TOPICS_REQUIRED_MESSAGE = (
+    "This course has no topics to plan. Add the topics it covers, or complete a "
+    "quiz so its results can be planned from."
 )
 
 PUBLIC_MESSAGES: dict[AiErrorCode, str] = {
@@ -107,6 +142,9 @@ PUBLIC_MESSAGES: dict[AiErrorCode, str] = {
     AiErrorCode.INCOMPATIBLE_MODEL: (
         "The requested AI model does not support the required output format."
     ),
+    AiErrorCode.EXAM_DATE_REQUIRED: EXAM_DATE_REQUIRED_MESSAGE,
+    AiErrorCode.EXAM_DATE_PASSED: EXAM_DATE_PASSED_MESSAGE,
+    AiErrorCode.EXAM_TOPICS_REQUIRED: EXAM_TOPICS_REQUIRED_MESSAGE,
     AiErrorCode.GENERATION_FAILED: (
         "The request could not be completed. Please try again later."
     ),
@@ -124,6 +162,9 @@ STATUS_CODES: dict[AiErrorCode, int] = {
     AiErrorCode.INSUFFICIENT_CREDITS: status.HTTP_402_PAYMENT_REQUIRED,
     AiErrorCode.UNAVAILABLE_MODEL: status.HTTP_400_BAD_REQUEST,
     AiErrorCode.INCOMPATIBLE_MODEL: status.HTTP_400_BAD_REQUEST,
+    AiErrorCode.EXAM_DATE_REQUIRED: status.HTTP_409_CONFLICT,
+    AiErrorCode.EXAM_DATE_PASSED: status.HTTP_409_CONFLICT,
+    AiErrorCode.EXAM_TOPICS_REQUIRED: status.HTTP_409_CONFLICT,
     AiErrorCode.GENERATION_FAILED: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }
 
@@ -145,6 +186,12 @@ def classify_generation_error(exc: BaseException) -> AiErrorCode:
             return AiErrorCode.UNAVAILABLE_MODEL
         if isinstance(error, InsufficientCreditsError):
             return AiErrorCode.INSUFFICIENT_CREDITS
+        if isinstance(error, ExamDateRequiredError):
+            return AiErrorCode.EXAM_DATE_REQUIRED
+        if isinstance(error, ExamDatePassedError):
+            return AiErrorCode.EXAM_DATE_PASSED
+        if isinstance(error, ExamTopicsRequiredError):
+            return AiErrorCode.EXAM_TOPICS_REQUIRED
         if isinstance(error, CourseMaterialUnavailableError):
             return AiErrorCode.NO_READY_MATERIAL
         if isinstance(error, CourseMaterialNotIndexedError):

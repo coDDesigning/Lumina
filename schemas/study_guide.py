@@ -34,6 +34,25 @@ class DetailLevel(str, Enum):
 class SummaryMode(str, Enum):
     GENERAL = "general"
     EXAM_FOCUSED = "exam_focused"
+    LAST_MINUTE = "last_minute"
+
+
+# A last-minute review sheet is its own artifact rather than a study guide with a
+# different tone: it is asked for separately, reopened separately, and listed
+# separately, so it is stored under its own output type.
+STUDY_GUIDE_OUTPUT_TYPE = "study_guide"
+LAST_MINUTE_REVIEW_OUTPUT_TYPE = "last_minute_review"
+
+OUTPUT_TYPE_BY_SUMMARY_MODE: dict[SummaryMode, str] = {
+    SummaryMode.GENERAL: STUDY_GUIDE_OUTPUT_TYPE,
+    SummaryMode.EXAM_FOCUSED: STUDY_GUIDE_OUTPUT_TYPE,
+    SummaryMode.LAST_MINUTE: LAST_MINUTE_REVIEW_OUTPUT_TYPE,
+}
+
+
+def output_type_for(summary_mode: SummaryMode) -> str:
+    """The ``generated_outputs.output_type`` one summary mode is stored under."""
+    return OUTPUT_TYPE_BY_SUMMARY_MODE.get(summary_mode, STUDY_GUIDE_OUTPUT_TYPE)
 
 
 class StudyGuideRequest(BaseModel):
@@ -69,7 +88,7 @@ class StudyGuideGenerationSettings(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     version: Literal[1] = 1
-    output_type: Literal["study_guide"] = "study_guide"
+    output_type: Literal["study_guide", "last_minute_review"] = "study_guide"
     summary_format: SummaryFormat
     topic_focus: str
     summary_length: SummaryLength
@@ -96,7 +115,13 @@ class StudyGuideGenerationSettings(BaseModel):
         retrieval_limit: int,
         retrieval_min_similarity: float,
     ) -> "StudyGuideGenerationSettings":
+        summary_mode = (
+            request.summary_mode
+            if request.summary_mode is not None
+            else SummaryMode.GENERAL
+        )
         return cls(
+            output_type=output_type_for(summary_mode),
             summary_format=request.summary_format
             if request.summary_format is not None
             else SummaryFormat.COMPREHENSIVE,
@@ -109,9 +134,7 @@ class StudyGuideGenerationSettings(BaseModel):
             detail_level=request.detail_level
             if request.detail_level is not None
             else DetailLevel.STANDARD,
-            summary_mode=request.summary_mode
-            if request.summary_mode is not None
-            else SummaryMode.GENERAL,
+            summary_mode=summary_mode,
             use_profile_knowledge=request.use_profile_knowledge,
             retrieval_limit=retrieval_limit,
             retrieval_min_similarity=retrieval_min_similarity,

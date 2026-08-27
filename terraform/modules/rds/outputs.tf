@@ -14,6 +14,18 @@ output "security_group_id" {
   value = aws_security_group.this.id
 }
 
+output "subnet_group_name" {
+  value = aws_db_subnet_group.this.name
+}
+
+output "parameter_group_name" {
+  value = aws_db_parameter_group.this.name
+}
+
+output "option_group_name" {
+  value = aws_db_instance.this.option_group_name
+}
+
 output "credentials_secret_arn" {
   value = aws_secretsmanager_secret.credentials.arn
 }

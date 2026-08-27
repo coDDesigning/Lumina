@@ -126,7 +126,7 @@ describe('ExamRoadmapView', () => {
     expect(screen.getByText('Rebuild insertion and deletion from memory')).toBeInTheDocument();
     expect(screen.getByText('Pass 1')).toBeInTheDocument();
     expect(screen.getByText('85% mastery')).toBeInTheDocument();
-    expect(screen.getByText(/Lecture 4 - Trees \(pp\. 12–18\)/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Lecture 4 - Trees \(pp\. 12–18\)/).length).toBeGreaterThanOrEqual(1);
   });
 
   it('renders exam day badge and material gap note', () => {

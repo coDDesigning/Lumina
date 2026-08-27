@@ -85,36 +85,46 @@ def _first_pass_goal(topic: RankedTopic) -> str:
     mastery = topic.mastery_percentage
     if mastery is None:
         return (
-            f"Work through {name} end to end, then write a short summary you "
-            "could teach from."
+            f"Foundational pass on {name}. Work through lecture concepts end to end, "
+            "take structured notes, and formulate practice questions."
         )
     if mastery < WEAK_MASTERY_THRESHOLD:
         return (
-            f"Rebuild {name} from the basics -- {_mastery_clause(topic)}. Redo the "
-            "worked examples, then re-quiz yourself on it."
+            f"Rebuild {name} from the ground up -- {_mastery_clause(topic)}. Review "
+            "core definitions in your material, re-examine worked examples, and take a focused quiz."
         )
     if mastery < STRONG_MASTERY_THRESHOLD:
         return (
-            f"Close the gaps in {name} -- {_mastery_clause(topic)}. Re-read the "
-            "parts you got wrong and practise those question types."
+            f"Targeted reinforcement on {name} -- {_mastery_clause(topic)}. Drill "
+            "into the specific sections and question types you previously missed."
         )
     return (
-        f"Keep {name} warm -- {_mastery_clause(topic)}. Skim your notes and answer "
-        "a couple of questions to confirm it held."
+        f"Maintenance & mastery retention for {name} -- {_mastery_clause(topic)}. "
+        "Skim notes, solve an advanced challenge problem, and verify retention."
     )
 
 
 def _review_goal(topic: RankedTopic, pass_number: int) -> str:
+    if pass_number == 2:
+        return (
+            f"Pass 2 on {topic.topic}: active recall & synthesis. Summarize key concepts "
+            "from memory first, then verify tricky sections against course materials."
+        )
+    if pass_number == 3:
+        return (
+            f"Pass 3 on {topic.topic}: problem-solving focus. Work through exam-style "
+            "problems and practice questions on edge cases."
+        )
     return (
-        f"Pass {pass_number} on {topic.topic}: recall it from memory first, then "
-        "check yourself against the source."
+        f"Pass {pass_number} on {topic.topic}: rapid reinforcement. Speed-run definitions, "
+        "core formulas, and high-yield question patterns."
     )
 
 
 def _triage_goal(topic: RankedTopic) -> str:
     return (
-        f"Last-minute pass on {topic.topic}: definitions, formulas, and the one "
-        "worked example you keep getting wrong."
+        f"High-yield triage on {topic.topic}: focus exclusively on essential definitions, "
+        "core formulas, and the worked problems you find most challenging."
     )
 
 

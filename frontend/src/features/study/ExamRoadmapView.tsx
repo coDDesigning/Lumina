@@ -101,7 +101,59 @@ function renderTopicCard(topic: RoadmapTopic) {
   );
 }
 
+interface MaterialCoverageItem {
+  documentId: string;
+  documentLabel: string;
+  topicNames: string[];
+  days: number[];
+  pageRangeText: string | null;
+}
+
+function aggregateMaterialCoverage(days: readonly RoadmapDay[]): MaterialCoverageItem[] {
+  const map = new Map<string, MaterialCoverageItem>();
+
+  for (const day of days) {
+    for (const topic of day.topics) {
+      for (const mat of topic.materials) {
+        let existing = map.get(mat.document_id);
+        if (!existing) {
+          existing = {
+            documentId: mat.document_id,
+            documentLabel: mat.document_label,
+            topicNames: [],
+            days: [],
+            pageRangeText: null,
+          };
+          map.set(mat.document_id, existing);
+        }
+        if (!existing.topicNames.includes(topic.topic)) {
+          existing.topicNames.push(topic.topic);
+        }
+        if (!existing.days.includes(day.day_index)) {
+          existing.days.push(day.day_index);
+        }
+        if (mat.page_start != null && !existing.pageRangeText) {
+          existing.pageRangeText =
+            mat.page_end != null && mat.page_end !== mat.page_start
+              ? `pp. ${mat.page_start}–${mat.page_end}`
+              : `p. ${mat.page_start}`;
+        }
+      }
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => a.days[0] - b.days[0]);
+}
+
 function renderDayCard(day: RoadmapDay) {
+  const dayMaterials = Array.from(
+    new Map(
+      day.topics
+        .flatMap((t) => t.materials)
+        .map((m) => [m.document_id, m]),
+    ).values(),
+  );
+
   return (
     <article
       key={day.day_index}
@@ -124,6 +176,27 @@ function renderDayCard(day: RoadmapDay) {
 
       <h3 className={styles.dayFocus}>{day.focus}</h3>
 
+      {dayMaterials.length > 0 ? (
+        <div className={styles.dayMaterialsBar}>
+          <span className={styles.dayMaterialsLabel}>Lectures for today:</span>
+          <div className={styles.dayMaterialsList}>
+            {dayMaterials.map((mat) => (
+              <span key={mat.document_id} className={styles.dayMaterialChip}>
+                <BookOpen size={11} aria-hidden="true" />
+                <span>
+                  {mat.document_label}
+                  {mat.page_start != null
+                    ? mat.page_end != null && mat.page_end !== mat.page_start
+                      ? ` (pp. ${mat.page_start}–${mat.page_end})`
+                      : ` (p. ${mat.page_start})`
+                    : ''}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className={styles.topicList}>
         {day.topics.map(renderTopicCard)}
       </div>
@@ -132,6 +205,8 @@ function renderDayCard(day: RoadmapDay) {
 }
 
 export function ExamRoadmapView({ roadmap }: ExamRoadmapViewProps) {
+  const coverageItems = aggregateMaterialCoverage(roadmap.days);
+
   return (
     <div className={styles.container}>
       <div className={styles.headerCard}>
@@ -183,6 +258,60 @@ export function ExamRoadmapView({ roadmap }: ExamRoadmapViewProps) {
           </div>
         ) : null}
       </div>
+
+      {coverageItems.length > 0 ? (
+        <section className={styles.materialsSection} aria-label="Course materials breakdown">
+          <div className={styles.materialsSectionHeader}>
+            <h4 className={styles.materialsSectionTitle}>
+              Course Materials & Lectures Breakdown ({coverageItems.length})
+            </h4>
+            <span className={styles.materialsSectionSubtitle}>
+              Which uploaded lecture documents and page ranges are mapped into this roadmap
+            </span>
+          </div>
+
+          <div className={styles.materialsGrid}>
+            {coverageItems.map((item) => (
+              <div key={item.documentId} className={styles.materialCoverageCard}>
+                <div className={styles.materialCoverageHeader}>
+                  <span className={styles.materialCoverageLabel}>{item.documentLabel}</span>
+                  {item.pageRangeText ? (
+                    <Badge tone="accent">{item.pageRangeText}</Badge>
+                  ) : (
+                    <Badge tone="neutral">Full document</Badge>
+                  )}
+                </div>
+                <div className={styles.materialCoverageMeta}>
+                  <span className={styles.coverageDaysPill}>
+                    Scheduled: Day{item.days.length === 1 ? '' : 's'} {item.days.slice(0, 6).join(', ')}{item.days.length > 6 ? '…' : ''}
+                  </span>
+                  <span className={styles.coverageTopicsCount}>
+                    {item.topicNames.length} topic{item.topicNames.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <div className={styles.materialCoverageTopics}>
+                  {item.topicNames.slice(0, 4).map((t) => (
+                    <span key={t} className={styles.coverageTopicPill}>{t}</span>
+                  ))}
+                  {item.topicNames.length > 4 ? (
+                    <span className={styles.coverageTopicMore}>+{item.topicNames.length - 4} more</span>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : (
+        <div className={styles.materialNoticeCard}>
+          <div className={styles.materialNoticeHeader}>
+            <BookOpen size={16} aria-hidden="true" />
+            <h4 className={styles.materialNoticeTitle}>Attach Your Lecture Documents & Slides</h4>
+          </div>
+          <p className={styles.materialNoticeBody}>
+            No document citations were matched above the relevance floor for these topics. Upload your course slide decks (PDF/TXT) and ensure course topics match your syllabus chapters to attach exact page ranges to each day.
+          </p>
+        </div>
+      )}
 
       <section aria-label="Schedule">
         <div className={styles.sectionHeader}>

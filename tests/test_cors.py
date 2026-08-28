@@ -157,7 +157,7 @@ print("CORS_RESULT=" + json.dumps({
     }
     assert {"authorization", "content-type"} <= allowed_headers
     assert result["credentials_present"] is False
-    assert result["expose_headers"] == "X-Error-Code"
+    assert result["expose_headers"] == "Retry-After, X-Error-Code, X-Request-ID"
     assert result["error_code"] == "probe_error"
     assert result["oversized_status"] == 413
     assert result["oversized_origin"] == "https://app.example.com"

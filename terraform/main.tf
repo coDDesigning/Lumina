@@ -147,6 +147,7 @@ module "ecs" {
   smtp_port                           = var.smtp_port
   smtp_username                       = var.smtp_username
   smtp_use_tls                        = var.smtp_use_tls
+  vpc_cidr_block                      = var.vpc_cidr
   tags                                = local.tags
 }
 

@@ -25,6 +25,9 @@ _ALLOWED_FIELDS = (
     "http_path",
     "http_status",
     "job_id",
+    "rate_limit_control",
+    "rate_limit_feature",
+    "retry_after_seconds",
     "worker_id",
 )
 

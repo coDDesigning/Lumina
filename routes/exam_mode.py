@@ -514,7 +514,6 @@ def list_past_exam_questions(
 @router.post(
     "/{course_id}/exam-mode/plans",
     response_model=BaseResponse[ExamPlanView],
-    dependencies=[Depends(rate_limit_generation(FEATURE_PLAN))],
     responses={
         400: {"description": "The course has no usable exam date"},
         401: {"description": "Authentication required"},
@@ -526,7 +525,6 @@ def list_past_exam_questions(
             )
         },
         422: {"description": "Invalid exam plan request"},
-        429: {"description": "Per-user generation rate limited"},
     },
 )
 def create_exam_plan(
@@ -537,9 +535,8 @@ def create_exam_plan(
 ) -> BaseResponse[ExamPlanView]:
     """Rank the selected topics into a new immutable plan version.
 
-    Deterministic, so no provider is reached and no credit is spent. The
-    feature is still rate limited, which is why it appears in the rate-limit
-    key space and deliberately not in the credit price table.
+    Deterministic, so no provider is reached, no credit is spent, and it does
+    not consume the shared provider-generation budget.
     """
     try:
         creation = ExamPlanService.create(

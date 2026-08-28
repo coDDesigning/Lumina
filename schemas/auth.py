@@ -44,10 +44,12 @@ class EmailVerificationResponse(BaseModel):
 
 class PasswordResetRequest(BaseModel):
     """A request to issue a password reset link."""
+
     email: EmailStr = Field(max_length=255)
 
 
 class PasswordResetConfirm(BaseModel):
     """Redeems a password reset link to set a new password."""
+
     token: str = Field(min_length=1, max_length=512)
     new_password: str = Field(min_length=1, max_length=255)

@@ -34,14 +34,8 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     if expires_delta:
         expire = now + expires_delta
     else:
-        expire = now + timedelta(
-            minutes=settings.access_token_expire_minutes
-        )
-    to_encode.update({
-        "exp": expire,
-        "iat": now,
-        "jti": uuid.uuid4().hex
-    })
+        expire = now + timedelta(minutes=settings.access_token_expire_minutes)
+    to_encode.update({"exp": expire, "iat": now, "jti": uuid.uuid4().hex})
     encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm=ALGORITHM)
     return encoded_jwt
 

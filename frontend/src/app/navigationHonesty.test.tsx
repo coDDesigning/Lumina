@@ -14,6 +14,14 @@ const DEFERRED = [
 
 const ALLOWED = ['features/marketing/LandingPage.tsx'];
 
+/**
+ * The screens a student can actually navigate from.
+ *
+ * A route on its own is a deep link, reachable only by someone handed the URL,
+ * which is how a feature gets built and tested before it is offered. What makes
+ * a capability *shipped* is one of these naming it, and that is the moment the
+ * landing page has to stop calling it unbuilt.
+ */
 const ENTRY_POINTS = [
   'app/AppShell.tsx',
   'features/courses/CoursesPage.tsx',
@@ -46,6 +54,7 @@ function collect(directory: string, matches: string[] = []): string[] {
 const routes = read('App.tsx');
 const landing = read('features/marketing/LandingPage.tsx');
 const examModeIsRouted = routes.includes(`/courses/:courseId/${EXAM_MODE_ROUTE}`);
+const offeredFrom = ENTRY_POINTS.filter((name) => EXAM_MODE.test(read(name)));
 
 describe('deferred capabilities are not presented as product areas', () => {
   const scripts = collect(SRC).filter((path) => !ALLOWED.includes(key(path)));
@@ -70,31 +79,25 @@ describe('deferred capabilities are not presented as product areas', () => {
   );
 });
 
-describe('the landing page and the production routes agree about Exam Mode', () => {
-  it('offers Exam Mode to students only once the route exists', () => {
-    const advertised = ENTRY_POINTS.filter((name) => EXAM_MODE.test(read(name)));
-
-    if (examModeIsRouted) {
-      expect(
-        advertised.length,
-        'Exam Mode is routed, so the workspace must offer a way in.',
-      ).toBeGreaterThan(0);
+describe('the landing page and the product agree about Exam Mode', () => {
+  it('never offers a way in that goes nowhere', () => {
+    if (offeredFrom.length === 0) {
       return;
     }
 
     expect(
-      advertised,
-      `${advertised.join(', ')} offers Exam Mode, but ${EXAM_MODE_ROUTE} is not routed in App.tsx.`,
-    ).toEqual([]);
+      examModeIsRouted,
+      `${offeredFrom.join(', ')} offers Exam Mode, but /courses/:courseId/${EXAM_MODE_ROUTE} is not routed in App.tsx.`,
+    ).toBe(true);
   });
 
-  it('claims Exam Mode is shipped only when it is', () => {
+  it('claims Exam Mode is shipped exactly when a student can reach it', () => {
     const unbuilt = landing.match(/Not built yet[\s\S]{0,400}?<\/article>/)?.[0] ?? '';
 
-    if (examModeIsRouted) {
+    if (offeredFrom.length > 0) {
       expect(
         EXAM_MODE.test(unbuilt),
-        'Exam Mode is routed, so the landing page must stop listing it as unbuilt.',
+        'Exam Mode is offered in the product, so the landing page must stop listing it as unbuilt.',
       ).toBe(false);
       expect(
         EXAM_MODE.test(landing),
@@ -103,8 +106,10 @@ describe('the landing page and the production routes agree about Exam Mode', () 
       return;
     }
 
-    expect(landing).toMatch(/Not built yet/);
-    expect(unbuilt).toMatch(EXAM_MODE);
+    expect(
+      unbuilt,
+      'Nothing offers Exam Mode yet, so the landing page must still name it as missing.',
+    ).toMatch(EXAM_MODE);
   });
 
   it('keeps naming the capabilities that are still missing', () => {

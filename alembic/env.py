@@ -28,7 +28,12 @@ target_metadata = Base.metadata
 is_postgresql = database_url.get_backend_name() == "postgresql"
 
 
-POSTGRESQL_ONLY_INDEXES = frozenset({"ix_chunk_embeddings_embedding_hnsw"})
+POSTGRESQL_ONLY_INDEXES = frozenset(
+    {
+        "ix_chunk_embeddings_embedding_hnsw",
+        "ix_profile_chunk_embeddings_embedding_hnsw",
+    }
+)
 
 
 def include_object(object_, name, type_, reflected, compare_to) -> bool:

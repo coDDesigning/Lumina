@@ -2232,6 +2232,7 @@ class AiUsageLog(Base):
         Index("ix_ai_usage_logs_course_created", "course_id", "created_at"),
         Index("ix_ai_usage_logs_type_created", "generation_type", "created_at"),
         Index("ix_ai_usage_logs_success_created", "success", "created_at"),
+        Index("ix_ai_usage_logs_created_id", "created_at", "id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

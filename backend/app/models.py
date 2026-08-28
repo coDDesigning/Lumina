@@ -22,6 +22,7 @@ from sqlalchemy import (
     Uuid,
     false,
     func,
+    text,
 )
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -58,6 +59,87 @@ DOCUMENT_MATERIAL_KINDS = (
 )
 _DOCUMENT_MATERIAL_KINDS_SQL = ", ".join(
     f"'{kind}'" for kind in DOCUMENT_MATERIAL_KINDS
+)
+
+OUTPUT_TYPE_EXAM_TOPIC_ANALYSIS = "exam_topic_analysis"
+OUTPUT_TYPE_EXAM_PLAN = "exam_plan"
+OUTPUT_TYPE_EXAM_TOPIC_GUIDE = "exam_topic_guide"
+OUTPUT_TYPE_EXAM_TOPIC_SUMMARY = "exam_topic_summary"
+OUTPUT_TYPE_EXAM_TOPIC_PRACTICE = "exam_topic_practice"
+OUTPUT_TYPE_EXAM_TOPIC_EXAM = "exam_topic_exam"
+OUTPUT_TYPE_EXAM_SIMILAR_QUESTIONS = "exam_similar_questions"
+OUTPUT_TYPE_EXAM_MOCK_EXAM = "exam_mock_exam"
+OUTPUT_TYPE_EXAM_REVIEW_SHEET = "exam_review_sheet"
+
+EXAM_QUESTION_TYPES = (
+    "multiple_choice",
+    "true_false",
+    "short_answer",
+    "structured",
+    "essay",
+    "problem",
+    "proof",
+    "unspecified",
+)
+_EXAM_QUESTION_TYPES_SQL = ", ".join(f"'{kind}'" for kind in EXAM_QUESTION_TYPES)
+
+EXAM_QUESTION_DIFFICULTIES = ("easy", "medium", "hard")
+
+QUIZ_PURPOSE_PRACTICE = "practice"
+QUIZ_PURPOSE_EXAM_TOPIC_PRACTICE = "exam_topic_practice"
+QUIZ_PURPOSE_EXAM_TOPIC_EXAM = "exam_topic_exam"
+QUIZ_PURPOSE_EXAM_SIMILAR_QUESTIONS = "exam_similar_questions"
+QUIZ_PURPOSE_EXAM_MOCK_EXAM = "exam_mock_exam"
+QUIZ_PURPOSES = (
+    QUIZ_PURPOSE_PRACTICE,
+    QUIZ_PURPOSE_EXAM_TOPIC_PRACTICE,
+    QUIZ_PURPOSE_EXAM_TOPIC_EXAM,
+    QUIZ_PURPOSE_EXAM_SIMILAR_QUESTIONS,
+    QUIZ_PURPOSE_EXAM_MOCK_EXAM,
+)
+EXAM_QUIZ_PURPOSES = (
+    QUIZ_PURPOSE_EXAM_TOPIC_PRACTICE,
+    QUIZ_PURPOSE_EXAM_TOPIC_EXAM,
+    QUIZ_PURPOSE_EXAM_SIMILAR_QUESTIONS,
+    QUIZ_PURPOSE_EXAM_MOCK_EXAM,
+)
+ANSWER_HIDDEN_QUIZ_PURPOSES = (
+    QUIZ_PURPOSE_EXAM_TOPIC_EXAM,
+    QUIZ_PURPOSE_EXAM_SIMILAR_QUESTIONS,
+    QUIZ_PURPOSE_EXAM_MOCK_EXAM,
+)
+
+QUIZ_SESSION_STATUS_ACTIVE = "active"
+QUIZ_SESSION_STATUS_SUBMITTED = "submitted"
+QUIZ_SESSION_STATUS_EXPIRED = "expired"
+QUIZ_SESSION_STATUSES = (
+    QUIZ_SESSION_STATUS_ACTIVE,
+    QUIZ_SESSION_STATUS_SUBMITTED,
+    QUIZ_SESSION_STATUS_EXPIRED,
+)
+_QUIZ_SESSION_STATUSES_SQL = ", ".join(
+    f"'{status}'" for status in QUIZ_SESSION_STATUSES
+)
+
+MAX_QUIZ_TIME_LIMIT_SECONDS = 86_400
+MAX_GENERATION_REQUEST_ID_CHARS = 64
+
+EXAM_EXTRACTION_NOT_APPLICABLE = "not_applicable"
+EXAM_EXTRACTION_PENDING = "pending"
+EXAM_EXTRACTION_SUCCEEDED = "succeeded"
+EXAM_EXTRACTION_FAILED = "failed"
+EXAM_EXTRACTION_NOT_CONFIGURED = "not_configured"
+EXAM_EXTRACTION_SKIPPED = "skipped"
+EXAM_EXTRACTION_STATUSES = (
+    EXAM_EXTRACTION_NOT_APPLICABLE,
+    EXAM_EXTRACTION_PENDING,
+    EXAM_EXTRACTION_SUCCEEDED,
+    EXAM_EXTRACTION_FAILED,
+    EXAM_EXTRACTION_NOT_CONFIGURED,
+    EXAM_EXTRACTION_SKIPPED,
+)
+_EXAM_QUESTION_DIFFICULTIES_SQL = ", ".join(
+    f"'{level}'" for level in EXAM_QUESTION_DIFFICULTIES
 )
 
 JOB_TYPE_EXTRACT_DOCUMENT = "extract_document"
@@ -211,6 +293,10 @@ class User(Base):
 
     # Every quiz attempt this user has made.
     quizzes: Mapped[list["Quiz"]] = relationship(back_populates="user")
+
+    quiz_sessions: Mapped[list["QuizSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
 
     quiz_attempts: Mapped[list["QuizAttempt"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
@@ -460,6 +546,14 @@ class UploadedDocument(Base):
         String(20), default="uploaded", server_default="uploaded"
     )
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    exam_extraction_status: Mapped[str] = mapped_column(
+        String(20),
+        default=EXAM_EXTRACTION_NOT_APPLICABLE,
+        server_default=EXAM_EXTRACTION_NOT_APPLICABLE,
+    )
+    exam_extraction_error_code: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )
@@ -487,6 +581,13 @@ class UploadedDocument(Base):
         back_populates="document",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    past_exam_questions: Mapped[list["PastExamQuestion"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="PastExamQuestion.position",
+        overlaps="course,past_exam_questions",
     )
 
 
@@ -912,6 +1013,12 @@ class GeneratedOutput(Base):
     __tablename__ = "generated_outputs"
     __table_args__ = (
         Index(
+            "uq_generated_outputs_id_course_id",
+            "id",
+            "course_id",
+            unique=True,
+        ),
+        Index(
             "ix_generated_outputs_user_course_created",
             "user_id",
             "course_id",
@@ -958,6 +1065,293 @@ class GeneratedOutput(Base):
     # output.course to reach the Course object. The partner attribute
     # on Course must be named exactly "generated_outputs".
     course: Mapped["Course"] = relationship(back_populates="generated_outputs")
+
+    topic_candidates: Mapped[list["ExamTopicCandidate"]] = relationship(
+        back_populates="analysis_output",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ExamTopicCandidate.position",
+    )
+
+
+class ExamTopicCandidate(Base):
+    """One candidate exam topic discovered by one Exam Mode analysis run.
+
+    Append-only: the application never updates a row here. A later analysis
+    writes a new ``generated_outputs`` row and a fresh set of candidates, so an
+    older exam plan can still be reopened against the evidence it was actually
+    built from.
+
+    ``course_id`` is denormalized for course-scoped reads and held true by the
+    composite foreign key, the arrangement ``document_chunks`` and
+    ``chunk_embeddings`` already use. Without it a row whose ``course_id``
+    disagreed with its analysis would surface in another course's read, after
+    the authorization boundary had already passed.
+
+    ``topic_key`` is produced by ``services/exam_topics.canonical_topic_key``
+    and is deliberately independent of display casing, so a mastery label the
+    model never saw can still be matched against it at read time.
+    """
+
+    __tablename__ = "exam_topic_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_output_id",
+            "topic_key",
+            name="uq_exam_topic_candidates_analysis_output_id_topic_key",
+        ),
+        CheckConstraint("position >= 0", name="position_nonnegative"),
+        CheckConstraint(
+            f"length(trim(topic_key, '{_ASCII_WHITESPACE}')) > 0",
+            name="topic_key_nonblank",
+        ),
+        CheckConstraint(
+            f"length(trim(display_label, '{_ASCII_WHITESPACE}')) > 0",
+            name="display_label_nonblank",
+        ),
+        CheckConstraint(
+            "discovery_confidence >= 0 AND discovery_confidence <= 1",
+            name="discovery_confidence_fraction",
+        ),
+        CheckConstraint(
+            "syllabus_weight_percent IS NULL OR "
+            "(syllabus_weight_percent >= 0 AND syllabus_weight_percent <= 100)",
+            name="syllabus_weight_percent_range",
+        ),
+        CheckConstraint(
+            "syllabus_mention_count >= 0 AND material_chunk_count >= 0 AND "
+            "material_character_count >= 0 AND past_exam_question_count >= 0",
+            name="evidence_counts_nonnegative",
+        ),
+        CheckConstraint(
+            "past_exam_marks_total IS NULL OR past_exam_marks_total >= 0",
+            name="past_exam_marks_total_nonnegative",
+        ),
+        CheckConstraint(
+            "in_syllabus OR in_course_topics OR in_past_exams OR in_material",
+            name="at_least_one_source",
+        ),
+        ForeignKeyConstraint(
+            ["analysis_output_id", "course_id"],
+            ["generated_outputs.id", "generated_outputs.course_id"],
+            name="fk_exam_topic_candidates_analysis_course_generated_outputs",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    analysis_output_id: Mapped[int] = mapped_column(Integer, index=True)
+    course_id: Mapped[int] = mapped_column(Integer, index=True)
+    position: Mapped[int] = mapped_column(Integer)
+
+    topic_key: Mapped[str] = mapped_column(String(120))
+    display_label: Mapped[str] = mapped_column(String(200))
+    aliases: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    in_syllabus: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    in_course_topics: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    in_past_exams: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    in_material: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+
+    discovery_confidence: Mapped[float] = mapped_column(
+        Float, default=0.5, server_default="0.5"
+    )
+
+    syllabus_weight_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    syllabus_mention_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    material_chunk_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    material_character_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    past_exam_question_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    past_exam_marks_total: Mapped[float | None] = mapped_column(Float, nullable=True)
+    past_exam_years: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    analysis_output: Mapped["GeneratedOutput"] = relationship(
+        back_populates="topic_candidates"
+    )
+
+
+class PastExamQuestion(Base):
+    """One question extracted from one past exam paper.
+
+    A question belongs to the paper it was printed in, not to whichever
+    analysis happened to read that paper. It is extracted once, when the
+    document is uploaded, and every later analysis reads these same rows: a
+    rescan re-extracts nothing, and two analyses of one paper cannot disagree
+    about what it asks.
+
+    ``document_id`` is therefore mandatory. A composite foreign key carries
+    ``course_id`` with it, so a question can never be attributed to a paper
+    belonging to another course, and deleting the paper retracts its questions.
+
+    Visual references are stored as the stable ``page_number`` /
+    ``visual_index`` descriptor rather than a ``document_visuals`` identifier,
+    because reprocessing a document deletes and reinserts its pages and those
+    identifiers do not survive it.
+
+    ``topic_key`` is computed by ``services/exam_topics.canonical_topic_key``
+    from the label the extractor gave the question, so extraction needs to know
+    nothing about any analysis. An analysis resolves those keys against its own
+    candidates later, exactly as it already does for mastery labels.
+    """
+
+    __tablename__ = "past_exam_questions"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "position",
+            name="uq_past_exam_questions_document_id_position",
+        ),
+        CheckConstraint("position >= 0", name="position_nonnegative"),
+        CheckConstraint(
+            f"length(trim(question_text, '{_ASCII_WHITESPACE}')) > 0",
+            name="question_text_nonblank",
+        ),
+        CheckConstraint(
+            "page_start IS NULL OR page_start >= 1", name="page_start_positive"
+        ),
+        CheckConstraint(
+            "(page_start IS NULL AND page_end IS NULL) OR "
+            "(page_start IS NOT NULL AND page_end IS NOT NULL AND "
+            "page_end >= page_start)",
+            name="page_range_valid",
+        ),
+        CheckConstraint(
+            "question_number IS NULL OR question_number >= 0",
+            name="question_number_nonnegative",
+        ),
+        CheckConstraint("marks IS NULL OR marks >= 0", name="marks_nonnegative"),
+        CheckConstraint(
+            f"question_type IN ({_EXAM_QUESTION_TYPES_SQL})",
+            name="question_type_valid",
+        ),
+        CheckConstraint(
+            f"difficulty IS NULL OR difficulty IN ({_EXAM_QUESTION_DIFFICULTIES_SQL})",
+            name="difficulty_valid",
+        ),
+        ForeignKeyConstraint(
+            ["document_id", "course_id"],
+            ["uploaded_documents.id", "uploaded_documents.course_id"],
+            name="fk_past_exam_questions_document_course_uploaded_documents",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), index=True)
+    course_id: Mapped[int] = mapped_column(Integer, index=True)
+    position: Mapped[int] = mapped_column(Integer)
+
+    page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    question_label: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    question_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    question_text: Mapped[str] = mapped_column(Text)
+    subparts: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    question_type: Mapped[str] = mapped_column(
+        String(30), default="unspecified", server_default="unspecified"
+    )
+    difficulty: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    marks: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    answer_guidance: Mapped[str | None] = mapped_column(Text, nullable=True)
+    marking_points: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    visual_refs: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    topic_key: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, index=True
+    )
+    topic_mappings: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    document: Mapped["UploadedDocument"] = relationship(
+        back_populates="past_exam_questions",
+        overlaps="course,past_exam_questions",
+    )
+
+
+class ExamTopicUnlock(Base):
+    """One student's paid access to everything Exam Mode makes for one topic.
+
+    Exam Mode charges per topic, not per artifact: unlocking a topic buys its
+    guide, its summary, its practice questions, its topic exam, and its similar
+    questions together, and the charge lands the first time the student asks
+    for any of them rather than up front for a plan they may not finish.
+
+    The unique key is ``(course_id, user_id, topic_key)`` and nothing else,
+    which is what makes a regenerated plan over the same topics free: the row
+    outlives the plan that first named the topic.
+
+    ``credit_transaction_id`` is null when the account was not metered. That is
+    "no credit moved", not an unfinished row, and it is the same distinction
+    ``ChargeReceipt.is_exempt`` draws one layer up.
+    """
+
+    __tablename__ = "exam_topic_unlocks"
+    __table_args__ = (
+        UniqueConstraint(
+            "course_id",
+            "user_id",
+            "topic_key",
+            name="uq_exam_topic_unlocks_course_id_user_id_topic_key",
+        ),
+        CheckConstraint(
+            f"length(trim(topic_key, '{_ASCII_WHITESPACE}')) > 0",
+            name="topic_key_nonblank",
+        ),
+        CheckConstraint("amount >= 0", name="amount_nonnegative"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+
+    topic_key: Mapped[str] = mapped_column(String(120), index=True)
+
+    credit_transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("credit_transactions.id", ondelete="SET NULL"), nullable=True
+    )
+
+    amount: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
 
 
 class Conversation(Base):
@@ -1063,6 +1457,19 @@ class Quiz(Base):
 
     __tablename__ = "quizzes"
 
+    __table_args__ = (
+        # A unique index rather than a constraint, so SQLite adds it without
+        # rebuilding the table. Null is distinct on both engines, which is what
+        # lets every quiz generated without a request identifier coexist.
+        Index(
+            "uq_quizzes_course_id_user_id_generation_request_id",
+            "course_id",
+            "user_id",
+            "generation_request_id",
+            unique=True,
+        ),
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True)
 
     # Owner course. Same cascade logic.
@@ -1087,6 +1494,33 @@ class Quiz(Base):
 
     generation_context: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # What this quiz is for. Null is a quiz that predates Exam Mode; nothing
+    # back-fills it, because "practice" would be a claim about rows nobody
+    # classified.
+    purpose: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+
+    exam_plan_output_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+
+    exam_topic_key: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, index=True
+    )
+
+    # How long a sitting of this quiz may last. Null is an untimed quiz, which
+    # is every quiz that predates timed mock exams; a positive value is what
+    # makes the ordinary attempt endpoint insist on a server-owned session
+    # instead of trusting a clock the client controls.
+    time_limit_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # The client's own identifier for the request that produced this quiz, so a
+    # retry after a timeout returns the quiz it already paid for. Null for every
+    # quiz generated without one, and null is distinct in a unique index on both
+    # engines, so no back-fill is needed and existing rows are unaffected.
+    generation_request_id: Mapped[str | None] = mapped_column(
+        String(MAX_GENERATION_REQUEST_ID_CHARS), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )
@@ -1101,6 +1535,10 @@ class Quiz(Base):
     )
 
     attempts: Mapped[list["QuizAttempt"]] = relationship(
+        back_populates="quiz", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    sessions: Mapped[list["QuizSession"]] = relationship(
         back_populates="quiz", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -1169,9 +1607,26 @@ class QuizQuestion(Base):
 
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # The past exam question this one was written in the mould of, when it was
+    # written that way. No foreign key, for the reason exam_plan_output_id has
+    # none: constraining a column on an existing table forces a SQLite rebuild.
+    # It is also the safer direction here -- a cascade would delete a quiz a
+    # student had already sat when its source paper was removed, and
+    # re-extraction replaces a paper's questions wholesale. A pointer that no
+    # longer resolves means the original is gone, which readers must handle in
+    # any case; the generated question keeps its own denormalized citations,
+    # exactly as a citation outlives the document it came from.
+    source_past_exam_question_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+
     quiz: Mapped["Quiz"] = relationship(back_populates="questions")
 
     answers: Mapped[list["QuizAttemptAnswer"]] = relationship(
+        back_populates="question", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    session_answers: Mapped[list["QuizSessionAnswer"]] = relationship(
         back_populates="question", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -1222,6 +1677,13 @@ class QuizAttempt(Base):
 
     answers: Mapped[list["QuizAttemptAnswer"]] = relationship(
         back_populates="attempt", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    session: Mapped["QuizSession | None"] = relationship(
+        back_populates="attempt",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -1275,6 +1737,180 @@ class QuizAttemptAnswer(Base):
 
     attempt: Mapped["QuizAttempt"] = relationship(back_populates="answers")
     question: Mapped["QuizQuestion"] = relationship(back_populates="answers")
+
+
+class QuizSession(Base):
+    """One student's timed sitting of one quiz.
+
+    The server owns ``started_at`` and ``expires_at``. The client is told the
+    deadline and never sets it, because a timer a candidate can edit is not a
+    timer. Expiry is a comparison against ``expires_at`` in the statement that
+    reads the row, the way ``processing_jobs.lease_expires_at`` is, so nothing
+    has to be scheduled and a read can report a sitting as over before any
+    write has caught up to saying so.
+
+    ``attempt_id`` is what makes a second submission impossible to represent:
+    it is unique, and ``submitted_state_valid`` forbids a submitted row without
+    one. A guarded update is what wins the race between two submissions; these
+    constraints are what stop a bug from recording the outcome twice.
+
+    An expired sitting is still submittable. The student already spent the time
+    and the answers were already saved, so 'expired' is a statement about the
+    deadline rather than a terminal state, and ``expired_at`` survives the move
+    to 'submitted'.
+    """
+
+    __tablename__ = "quiz_sessions"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", name="uq_quiz_sessions_attempt_id"),
+        CheckConstraint(
+            f"status IN ({_QUIZ_SESSION_STATUSES_SQL})", name="status_valid"
+        ),
+        CheckConstraint(
+            "time_limit_seconds > 0 AND "
+            f"time_limit_seconds <= {MAX_QUIZ_TIME_LIMIT_SECONDS}",
+            name="time_limit_seconds_bounded",
+        ),
+        CheckConstraint("expires_at > started_at", name="expires_after_start"),
+        CheckConstraint(
+            "(status = 'submitted' AND submitted_at IS NOT NULL "
+            "AND attempt_id IS NOT NULL) OR "
+            "(status <> 'submitted' AND submitted_at IS NULL "
+            "AND attempt_id IS NULL)",
+            name="submitted_state_valid",
+        ),
+        CheckConstraint(
+            "(status = 'active' AND expired_at IS NULL) OR "
+            "(status = 'expired' AND expired_at IS NOT NULL) OR "
+            "status = 'submitted'",
+            name="expired_state_valid",
+        ),
+        # One live sitting per student per quiz, so a reloaded page rejoins the
+        # timer it already started instead of quietly starting a second one and
+        # splitting the drafts between them.
+        Index(
+            "uq_quiz_sessions_active_quiz_user",
+            "quiz_id",
+            "user_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
+        Index("ix_quiz_sessions_expirable", "status", "expires_at", "id"),
+        Index("ix_quiz_sessions_user_quiz_started", "user_id", "quiz_id", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    quiz_id: Mapped[int] = mapped_column(
+        ForeignKey("quizzes.id", ondelete="CASCADE"), index=True
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+
+    attempt_id: Mapped[int | None] = mapped_column(
+        ForeignKey("quiz_attempts.id", ondelete="CASCADE"), nullable=True
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default=QUIZ_SESSION_STATUS_ACTIVE,
+        server_default=QUIZ_SESSION_STATUS_ACTIVE,
+    )
+
+    # Frozen when the sitting starts, so editing the quiz afterwards cannot
+    # lengthen or shorten an examination already under way.
+    time_limit_seconds: Mapped[int] = mapped_column(Integer)
+
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+    submitted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+    expired_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
+    )
+
+    quiz: Mapped["Quiz"] = relationship(back_populates="sessions")
+    user: Mapped["User"] = relationship(back_populates="quiz_sessions")
+    attempt: Mapped["QuizAttempt | None"] = relationship(back_populates="session")
+
+    answers: Mapped[list["QuizSessionAnswer"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class QuizSessionAnswer(Base):
+    """One draft answer inside a sitting, overwritten in place as it changes.
+
+    The unique key on (session, question) is what makes saving a draft an
+    upsert rather than an append: there is one current answer per question and
+    the history of edits is deliberately not kept.
+
+    Drafts are never deleted when a sitting expires. They are the reason
+    expiry does not cost a student their work: the deadline stops new writes,
+    it does not discard the ones that already landed.
+    """
+
+    __tablename__ = "quiz_session_answers"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "quiz_question_id",
+            name="uq_quiz_session_answers_session_question",
+        ),
+        CheckConstraint(
+            "selected_option_index IS NULL OR selected_option_index >= 0",
+            name="selected_option_index_nonnegative",
+        ),
+        CheckConstraint(
+            "time_spent_seconds IS NULL OR time_spent_seconds >= 0",
+            name="answer_time_spent_nonnegative",
+        ),
+        # An answer is a selection or a piece of writing, never both. The same
+        # rule the attempt validator enforces, made a fact of the schema so a
+        # malformed draft cannot survive long enough to reach grading.
+        CheckConstraint(
+            "NOT (selected_option_index IS NOT NULL AND text_response IS NOT NULL)",
+            name="answer_form_exclusive",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("quiz_sessions.id", ondelete="CASCADE"), index=True
+    )
+
+    quiz_question_id: Mapped[int] = mapped_column(
+        ForeignKey("quiz_questions.id", ondelete="CASCADE"), index=True
+    )
+
+    selected_option_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    text_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    time_spent_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
+    )
+
+    session: Mapped["QuizSession"] = relationship(back_populates="answers")
+    question: Mapped["QuizQuestion"] = relationship(back_populates="session_answers")
 
 
 class Progress(Base):

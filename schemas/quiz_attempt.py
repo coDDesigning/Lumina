@@ -4,7 +4,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 
 from schemas.progress import CourseStatus
-from schemas.quiz import QuizCorrectAnswer, QuizQuestionType
+from schemas.quiz import QuizCorrectAnswer, QuizQuestionType, QuizView
 from schemas.reverse_quiz import Misconception
 
 MAX_TIME_SPENT_SECONDS = 86400
@@ -15,6 +15,39 @@ NEEDS_REVIEW_THRESHOLD = 60
 # An open-ended answer is scored as a fraction, so it needs a cut-off to become
 # the boolean that topic mastery and the correct count are built from.
 OPEN_ENDED_PASS_THRESHOLD = 0.6
+
+
+class QuizSessionStatus(str, Enum):
+    ACTIVE = "active"
+    SUBMITTED = "submitted"
+    EXPIRED = "expired"
+
+
+class QuizSessionView(BaseModel):
+    """One timed sitting as the client is allowed to see it.
+
+    ``expires_at`` is the server's deadline and the only thing a countdown
+    should be built from. ``seconds_remaining`` is a convenience derived from
+    the same reading, never a second source of truth.
+    """
+
+    session_id: int
+    quiz_id: int
+    status: QuizSessionStatus
+    started_at: datetime
+    expires_at: datetime
+    time_limit_seconds: int
+    seconds_remaining: int
+    elapsed_seconds: int
+    answered_count: int = 0
+    attempt_id: int | None = None
+
+
+class QuizSessionStartResult(BaseModel):
+    """A sitting and the paper to sit, with its answers withheld."""
+
+    session: QuizSessionView
+    quiz: QuizView
 
 
 class MasteryStatus(str, Enum):
@@ -80,6 +113,9 @@ class QuizHistoryItem(BaseModel):
     total_questions: int
     time_spent_seconds: int | None = None
     created_at: datetime
+    quiz_purpose: str | None = None
+    timed: bool = False
+    expired: bool = False
 
 
 class QuizAttemptResponse(BaseModel):
@@ -91,6 +127,9 @@ class QuizAttemptResponse(BaseModel):
     total_questions: int
     time_spent_seconds: int | None = None
     created_at: datetime
+    quiz_purpose: str | None = None
+    timed: bool = False
+    expired: bool = False
     answers: list[QuizAnswerResult]
 
 

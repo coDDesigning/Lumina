@@ -126,6 +126,7 @@ DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS = 10.0
 DEFAULT_AI_GENERATION_MAX_CONCURRENCY = 10
 DEFAULT_AI_GENERATION_OVERALL_TIMEOUT_SECONDS = 110
+DEFAULT_AI_GRADING_OVERALL_TIMEOUT_SECONDS = 45
 MAX_AI_MODEL_COST_RATE_USD_PER_MILLION = 1_000_000.0
 MAX_AI_EVENT_ESTIMATED_COST_USD = 1_000_000.0
 DEFAULT_DATABASE_POOL_SIZE = 5
@@ -207,6 +208,7 @@ class Settings:
     ai_generation_backoff_max_seconds: float
     ai_generation_max_concurrency: int
     ai_generation_overall_timeout_seconds: int
+    ai_grading_overall_timeout_seconds: int
 
     # Embedding provider and durable vector storage configuration
     embedding_provider: str
@@ -253,6 +255,16 @@ class Settings:
     flashcard_material_max_chars: int
     ai_tutor_material_max_chars: int
     course_qa_material_max_chars: int
+    exam_analysis_material_max_chars: int
+    exam_past_paper_max_chars: int
+    exam_topic_guide_material_max_chars: int
+    exam_topic_summary_material_max_chars: int
+    exam_topic_quiz_material_max_chars: int
+    exam_similar_questions_material_max_chars: int
+    exam_mock_exam_material_max_chars: int
+    exam_review_sheet_material_max_chars: int
+    exam_mock_exam_question_count: int
+    exam_quiz_default_question_count: int
 
     # Credit lifecycle. See docs/credits.md.
     credit_metering_enabled: bool
@@ -647,6 +659,26 @@ def load_settings() -> Settings:
         ("FLASHCARD_MATERIAL_MAX_CHARS", DEFAULT_MATERIAL_MAX_CHARACTERS),
         ("AI_TUTOR_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
         ("COURSE_QA_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_ANALYSIS_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
+        ("EXAM_PAST_PAPER_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        ("EXAM_TOPIC_GUIDE_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_TOPIC_SUMMARY_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
+        ("EXAM_TOPIC_QUIZ_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_SIMILAR_QUESTIONS_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
+        ("EXAM_MOCK_EXAM_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_REVIEW_SHEET_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
     ):
         budget = _positive_integer_setting(name, default)
         if budget < document_chunk_size_characters:
@@ -693,6 +725,16 @@ def load_settings() -> Settings:
         DEFAULT_AI_GENERATION_OVERALL_TIMEOUT_SECONDS,
         minimum=1,
         maximum=300,
+    )
+    # Grading runs inside the transaction that writes the attempt, and a
+    # hosted database closes a transaction left idle for sixty seconds.
+    # Bounded below that, so a slow grader costs a student their marks
+    # rather than the answers they wrote.
+    ai_grading_overall_timeout_seconds = _bounded_positive_integer_setting(
+        "AI_GRADING_OVERALL_TIMEOUT_SECONDS",
+        DEFAULT_AI_GRADING_OVERALL_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=55,
     )
 
     embedding_provider = (
@@ -816,6 +858,13 @@ def load_settings() -> Settings:
             raise ValueError(
                 "Production CHROMA_PERSIST_DIRECTORY must use an absolute path."
             )
+
+    exam_quiz_default_question_count = _bounded_positive_integer_setting(
+        "EXAM_QUIZ_DEFAULT_QUESTION_COUNT", 10, minimum=1, maximum=20
+    )
+    exam_mock_exam_question_count = _bounded_positive_integer_setting(
+        "EXAM_MOCK_EXAM_QUESTION_COUNT", 20, minimum=1, maximum=20
+    )
 
     credit_metering_enabled = _boolean_setting(
         "CREDIT_METERING_ENABLED",
@@ -941,6 +990,7 @@ def load_settings() -> Settings:
         ai_generation_backoff_max_seconds=ai_generation_backoff_max_seconds,
         ai_generation_max_concurrency=ai_generation_max_concurrency,
         ai_generation_overall_timeout_seconds=ai_generation_overall_timeout_seconds,
+        ai_grading_overall_timeout_seconds=ai_grading_overall_timeout_seconds,
         embedding_provider=embedding_provider,
         ollama_embedding_model=ollama_embedding_model,
         gemini_embedding_model=gemini_embedding_model,
@@ -983,6 +1033,30 @@ def load_settings() -> Settings:
         flashcard_material_max_chars=material_budgets["FLASHCARD_MATERIAL_MAX_CHARS"],
         ai_tutor_material_max_chars=material_budgets["AI_TUTOR_MATERIAL_MAX_CHARS"],
         course_qa_material_max_chars=material_budgets["COURSE_QA_MATERIAL_MAX_CHARS"],
+        exam_analysis_material_max_chars=material_budgets[
+            "EXAM_ANALYSIS_MATERIAL_MAX_CHARS"
+        ],
+        exam_past_paper_max_chars=material_budgets["EXAM_PAST_PAPER_MAX_CHARS"],
+        exam_topic_guide_material_max_chars=material_budgets[
+            "EXAM_TOPIC_GUIDE_MATERIAL_MAX_CHARS"
+        ],
+        exam_topic_summary_material_max_chars=material_budgets[
+            "EXAM_TOPIC_SUMMARY_MATERIAL_MAX_CHARS"
+        ],
+        exam_topic_quiz_material_max_chars=material_budgets[
+            "EXAM_TOPIC_QUIZ_MATERIAL_MAX_CHARS"
+        ],
+        exam_similar_questions_material_max_chars=material_budgets[
+            "EXAM_SIMILAR_QUESTIONS_MATERIAL_MAX_CHARS"
+        ],
+        exam_mock_exam_material_max_chars=material_budgets[
+            "EXAM_MOCK_EXAM_MATERIAL_MAX_CHARS"
+        ],
+        exam_review_sheet_material_max_chars=material_budgets[
+            "EXAM_REVIEW_SHEET_MATERIAL_MAX_CHARS"
+        ],
+        exam_mock_exam_question_count=exam_mock_exam_question_count,
+        exam_quiz_default_question_count=exam_quiz_default_question_count,
         credit_metering_enabled=credit_metering_enabled,
         credit_initial_grant=credit_initial_grant,
         credit_periodic_grant=credit_periodic_grant,

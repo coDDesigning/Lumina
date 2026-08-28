@@ -407,20 +407,7 @@ class ExamQuizService:
         student can read the answers to is not an examination. Grading reads
         the rows, not this view, so nothing downstream is affected.
         """
-        return view.model_copy(
-            update={
-                "questions": [
-                    question.model_copy(
-                        update={
-                            "correct_answer": None,
-                            "correct_option_index": None,
-                            "explanation": "",
-                        }
-                    )
-                    for question in view.questions
-                ]
-            }
-        )
+        return QuizService.hide_answers(view)
 
     @staticmethod
     def latest(

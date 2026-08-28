@@ -22,6 +22,7 @@ from sqlalchemy import (
     Uuid,
     false,
     func,
+    text,
 )
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -87,18 +88,41 @@ EXAM_QUESTION_DIFFICULTIES = ("easy", "medium", "hard")
 QUIZ_PURPOSE_PRACTICE = "practice"
 QUIZ_PURPOSE_EXAM_TOPIC_PRACTICE = "exam_topic_practice"
 QUIZ_PURPOSE_EXAM_TOPIC_EXAM = "exam_topic_exam"
+QUIZ_PURPOSE_EXAM_SIMILAR_QUESTIONS = "exam_similar_questions"
 QUIZ_PURPOSE_EXAM_MOCK_EXAM = "exam_mock_exam"
 QUIZ_PURPOSES = (
     QUIZ_PURPOSE_PRACTICE,
     QUIZ_PURPOSE_EXAM_TOPIC_PRACTICE,
     QUIZ_PURPOSE_EXAM_TOPIC_EXAM,
+    QUIZ_PURPOSE_EXAM_SIMILAR_QUESTIONS,
     QUIZ_PURPOSE_EXAM_MOCK_EXAM,
 )
 EXAM_QUIZ_PURPOSES = (
     QUIZ_PURPOSE_EXAM_TOPIC_PRACTICE,
     QUIZ_PURPOSE_EXAM_TOPIC_EXAM,
+    QUIZ_PURPOSE_EXAM_SIMILAR_QUESTIONS,
     QUIZ_PURPOSE_EXAM_MOCK_EXAM,
 )
+ANSWER_HIDDEN_QUIZ_PURPOSES = (
+    QUIZ_PURPOSE_EXAM_TOPIC_EXAM,
+    QUIZ_PURPOSE_EXAM_SIMILAR_QUESTIONS,
+    QUIZ_PURPOSE_EXAM_MOCK_EXAM,
+)
+
+QUIZ_SESSION_STATUS_ACTIVE = "active"
+QUIZ_SESSION_STATUS_SUBMITTED = "submitted"
+QUIZ_SESSION_STATUS_EXPIRED = "expired"
+QUIZ_SESSION_STATUSES = (
+    QUIZ_SESSION_STATUS_ACTIVE,
+    QUIZ_SESSION_STATUS_SUBMITTED,
+    QUIZ_SESSION_STATUS_EXPIRED,
+)
+_QUIZ_SESSION_STATUSES_SQL = ", ".join(
+    f"'{status}'" for status in QUIZ_SESSION_STATUSES
+)
+
+MAX_QUIZ_TIME_LIMIT_SECONDS = 86_400
+MAX_GENERATION_REQUEST_ID_CHARS = 64
 
 EXAM_EXTRACTION_NOT_APPLICABLE = "not_applicable"
 EXAM_EXTRACTION_PENDING = "pending"
@@ -269,6 +293,10 @@ class User(Base):
 
     # Every quiz attempt this user has made.
     quizzes: Mapped[list["Quiz"]] = relationship(back_populates="user")
+
+    quiz_sessions: Mapped[list["QuizSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
 
     quiz_attempts: Mapped[list["QuizAttempt"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
@@ -1429,6 +1457,19 @@ class Quiz(Base):
 
     __tablename__ = "quizzes"
 
+    __table_args__ = (
+        # A unique index rather than a constraint, so SQLite adds it without
+        # rebuilding the table. Null is distinct on both engines, which is what
+        # lets every quiz generated without a request identifier coexist.
+        Index(
+            "uq_quizzes_course_id_user_id_generation_request_id",
+            "course_id",
+            "user_id",
+            "generation_request_id",
+            unique=True,
+        ),
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True)
 
     # Owner course. Same cascade logic.
@@ -1466,6 +1507,20 @@ class Quiz(Base):
         String(120), nullable=True, index=True
     )
 
+    # How long a sitting of this quiz may last. Null is an untimed quiz, which
+    # is every quiz that predates timed mock exams; a positive value is what
+    # makes the ordinary attempt endpoint insist on a server-owned session
+    # instead of trusting a clock the client controls.
+    time_limit_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # The client's own identifier for the request that produced this quiz, so a
+    # retry after a timeout returns the quiz it already paid for. Null for every
+    # quiz generated without one, and null is distinct in a unique index on both
+    # engines, so no back-fill is needed and existing rows are unaffected.
+    generation_request_id: Mapped[str | None] = mapped_column(
+        String(MAX_GENERATION_REQUEST_ID_CHARS), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )
@@ -1480,6 +1535,10 @@ class Quiz(Base):
     )
 
     attempts: Mapped[list["QuizAttempt"]] = relationship(
+        back_populates="quiz", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    sessions: Mapped[list["QuizSession"]] = relationship(
         back_populates="quiz", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -1548,9 +1607,26 @@ class QuizQuestion(Base):
 
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # The past exam question this one was written in the mould of, when it was
+    # written that way. No foreign key, for the reason exam_plan_output_id has
+    # none: constraining a column on an existing table forces a SQLite rebuild.
+    # It is also the safer direction here -- a cascade would delete a quiz a
+    # student had already sat when its source paper was removed, and
+    # re-extraction replaces a paper's questions wholesale. A pointer that no
+    # longer resolves means the original is gone, which readers must handle in
+    # any case; the generated question keeps its own denormalized citations,
+    # exactly as a citation outlives the document it came from.
+    source_past_exam_question_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+
     quiz: Mapped["Quiz"] = relationship(back_populates="questions")
 
     answers: Mapped[list["QuizAttemptAnswer"]] = relationship(
+        back_populates="question", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    session_answers: Mapped[list["QuizSessionAnswer"]] = relationship(
         back_populates="question", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -1601,6 +1677,13 @@ class QuizAttempt(Base):
 
     answers: Mapped[list["QuizAttemptAnswer"]] = relationship(
         back_populates="attempt", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    session: Mapped["QuizSession | None"] = relationship(
+        back_populates="attempt",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -1654,6 +1737,180 @@ class QuizAttemptAnswer(Base):
 
     attempt: Mapped["QuizAttempt"] = relationship(back_populates="answers")
     question: Mapped["QuizQuestion"] = relationship(back_populates="answers")
+
+
+class QuizSession(Base):
+    """One student's timed sitting of one quiz.
+
+    The server owns ``started_at`` and ``expires_at``. The client is told the
+    deadline and never sets it, because a timer a candidate can edit is not a
+    timer. Expiry is a comparison against ``expires_at`` in the statement that
+    reads the row, the way ``processing_jobs.lease_expires_at`` is, so nothing
+    has to be scheduled and a read can report a sitting as over before any
+    write has caught up to saying so.
+
+    ``attempt_id`` is what makes a second submission impossible to represent:
+    it is unique, and ``submitted_state_valid`` forbids a submitted row without
+    one. A guarded update is what wins the race between two submissions; these
+    constraints are what stop a bug from recording the outcome twice.
+
+    An expired sitting is still submittable. The student already spent the time
+    and the answers were already saved, so 'expired' is a statement about the
+    deadline rather than a terminal state, and ``expired_at`` survives the move
+    to 'submitted'.
+    """
+
+    __tablename__ = "quiz_sessions"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", name="uq_quiz_sessions_attempt_id"),
+        CheckConstraint(
+            f"status IN ({_QUIZ_SESSION_STATUSES_SQL})", name="status_valid"
+        ),
+        CheckConstraint(
+            "time_limit_seconds > 0 AND "
+            f"time_limit_seconds <= {MAX_QUIZ_TIME_LIMIT_SECONDS}",
+            name="time_limit_seconds_bounded",
+        ),
+        CheckConstraint("expires_at > started_at", name="expires_after_start"),
+        CheckConstraint(
+            "(status = 'submitted' AND submitted_at IS NOT NULL "
+            "AND attempt_id IS NOT NULL) OR "
+            "(status <> 'submitted' AND submitted_at IS NULL "
+            "AND attempt_id IS NULL)",
+            name="submitted_state_valid",
+        ),
+        CheckConstraint(
+            "(status = 'active' AND expired_at IS NULL) OR "
+            "(status = 'expired' AND expired_at IS NOT NULL) OR "
+            "status = 'submitted'",
+            name="expired_state_valid",
+        ),
+        # One live sitting per student per quiz, so a reloaded page rejoins the
+        # timer it already started instead of quietly starting a second one and
+        # splitting the drafts between them.
+        Index(
+            "uq_quiz_sessions_active_quiz_user",
+            "quiz_id",
+            "user_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
+        Index("ix_quiz_sessions_expirable", "status", "expires_at", "id"),
+        Index("ix_quiz_sessions_user_quiz_started", "user_id", "quiz_id", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    quiz_id: Mapped[int] = mapped_column(
+        ForeignKey("quizzes.id", ondelete="CASCADE"), index=True
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+
+    attempt_id: Mapped[int | None] = mapped_column(
+        ForeignKey("quiz_attempts.id", ondelete="CASCADE"), nullable=True
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default=QUIZ_SESSION_STATUS_ACTIVE,
+        server_default=QUIZ_SESSION_STATUS_ACTIVE,
+    )
+
+    # Frozen when the sitting starts, so editing the quiz afterwards cannot
+    # lengthen or shorten an examination already under way.
+    time_limit_seconds: Mapped[int] = mapped_column(Integer)
+
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+    submitted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+    expired_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
+    )
+
+    quiz: Mapped["Quiz"] = relationship(back_populates="sessions")
+    user: Mapped["User"] = relationship(back_populates="quiz_sessions")
+    attempt: Mapped["QuizAttempt | None"] = relationship(back_populates="session")
+
+    answers: Mapped[list["QuizSessionAnswer"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class QuizSessionAnswer(Base):
+    """One draft answer inside a sitting, overwritten in place as it changes.
+
+    The unique key on (session, question) is what makes saving a draft an
+    upsert rather than an append: there is one current answer per question and
+    the history of edits is deliberately not kept.
+
+    Drafts are never deleted when a sitting expires. They are the reason
+    expiry does not cost a student their work: the deadline stops new writes,
+    it does not discard the ones that already landed.
+    """
+
+    __tablename__ = "quiz_session_answers"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "quiz_question_id",
+            name="uq_quiz_session_answers_session_question",
+        ),
+        CheckConstraint(
+            "selected_option_index IS NULL OR selected_option_index >= 0",
+            name="selected_option_index_nonnegative",
+        ),
+        CheckConstraint(
+            "time_spent_seconds IS NULL OR time_spent_seconds >= 0",
+            name="answer_time_spent_nonnegative",
+        ),
+        # An answer is a selection or a piece of writing, never both. The same
+        # rule the attempt validator enforces, made a fact of the schema so a
+        # malformed draft cannot survive long enough to reach grading.
+        CheckConstraint(
+            "NOT (selected_option_index IS NOT NULL AND text_response IS NOT NULL)",
+            name="answer_form_exclusive",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("quiz_sessions.id", ondelete="CASCADE"), index=True
+    )
+
+    quiz_question_id: Mapped[int] = mapped_column(
+        ForeignKey("quiz_questions.id", ondelete="CASCADE"), index=True
+    )
+
+    selected_option_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    text_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    time_spent_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
+    )
+
+    session: Mapped["QuizSession"] = relationship(back_populates="answers")
+    question: Mapped["QuizQuestion"] = relationship(back_populates="session_answers")
 
 
 class Progress(Base):

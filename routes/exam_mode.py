@@ -41,8 +41,8 @@ from schemas.exam_mode import (
     ExamPlanArtifactRequest,
     ExamReviewSheetDocument,
     ExamReviewSheetResult,
-    ExamSimilarQuestionsDocument,
     ExamSimilarQuestionsResult,
+    SimilarQuestionRequest,
     ExamSourceInventory,
     ExamTopicArtifactRequest,
     ExamTopicCandidateView,
@@ -53,18 +53,26 @@ from schemas.exam_mode import (
     ExamTopicSummaryDocument,
     ExamTopicSummaryResult,
 )
+from schemas.quiz import QuizView
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.credits import CreditService
 from services.exam_artifacts import ExamArtifactError, ExamArtifactService
 from services.exam_entitlements import ExamEntitlementService
 from services.exam_course_artifacts import (
+    MockExamTopicError,
+    topic_quotas,
+    type_quotas,
     ExamMockExamService,
     ExamReviewSheetService,
 )
 from services.exam_plan import ExamPlanService
 from services.exam_quiz import ExamQuizService
-from services.exam_similar_questions import ExamSimilarQuestionsService
+from services.quiz import QuizService
+from services.exam_similar_questions import (
+    SIMILAR_QUESTION_TYPES,
+    ExamSimilarQuestionsService,
+)
 from services.exam_source_analysis import ExamModeError, ExamSourceAnalysisService
 from services.exam_topic_study import ExamTopicStudyService
 from services.retrieval_material import RetrievalMaterialError
@@ -73,7 +81,7 @@ from services.text_generation import (
     get_text_generation_provider,
     resolve_effective_model,
 )
-from utils.ai_errors import ai_generation_http_exception
+from utils.ai_errors import ERROR_CODE_HEADER, ai_generation_http_exception
 from utils.authorization import AuthorizedCourse, OwnedCourse
 from utils.deps import get_current_user
 from utils.exceptions import NotFoundException
@@ -94,6 +102,10 @@ FEATURE_MOCK_EXAM = "exam_mock_exam"
 FEATURE_REVIEW_SHEET = "exam_review_sheet"
 
 MAX_TOPIC_KEY_LENGTH = 120
+
+# A configuration a paper cannot be built from is the caller's to fix, so it is
+# reported as its own stable category rather than as a generation failure.
+MOCK_EXAM_CONFIGURATION_ERROR = "mock_exam_configuration_invalid"
 
 MAX_QUESTION_PAGE_SIZE = 100
 
@@ -994,27 +1006,48 @@ def generate_topic_exam(
 def generate_similar_questions(
     course: OwnedCourse,
     topic_key: Annotated[str, Path(max_length=MAX_TOPIC_KEY_LENGTH)],
-    request: ExamTopicArtifactRequest,
+    request: SimilarQuestionRequest,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> BaseResponse[ExamSimilarQuestionsResult]:
-    """Write a fresh question in the mould of each of this topic's past ones.
+    """Write fresh questions in the mould of this topic's past ones.
 
-    The originals are checked before the topic is unlocked, so a topic this
-    course has never examined is a conflict naming what to do about it rather
-    than a charge for an empty page.
+    The originals are resolved and checked before the topic is unlocked, so a
+    topic this course has never examined is a conflict naming what to do about
+    it rather than a charge for an empty page, and an identifier belonging to
+    another course is answered as a missing one.
+
+    The result is served with its answers hidden. This is an assessment a
+    student is meant to sit, and the answers arrive through the attempt they
+    submit rather than through the page that sets it.
     """
     try:
         topic = ExamArtifactService.resolve_topic(
             db, course.id, topic_key, plan_output_id=request.plan_output_id
         )
-        originals = ExamSimilarQuestionsService.source_questions(db, course.id, topic)
+        plan = ExamArtifactService.resolve_plan(
+            db, course.id, plan_output_id=request.plan_output_id
+        )
+        originals = ExamSimilarQuestionsService.source_questions(
+            db, course.id, topic, requested_ids=request.source_question_ids
+        )
     except HTTPException:
         raise
     except Exception as exc:
         raise ai_generation_http_exception(
             exc, feature=FEATURE_SIMILAR_QUESTIONS
         ) from exc
+
+    question_types = (
+        tuple(request.requested_question_types)
+        if request.requested_question_types
+        else SIMILAR_QUESTION_TYPES
+    )
+    other_topic_keys = frozenset(
+        planned.topic_key
+        for planned in plan.topics
+        if planned.topic_key != topic.topic_key
+    )
 
     generation = None
     try:
@@ -1035,6 +1068,9 @@ def generate_similar_questions(
             provider,
             user_id=current_user.id,
             originals=originals,
+            question_count=request.question_count,
+            policy=request.difficulty_policy,
+            question_types=question_types,
         )
         persisted = ExamSimilarQuestionsService.persist(
             db,
@@ -1042,6 +1078,13 @@ def generate_similar_questions(
             generation,
             user_id=current_user.id,
             originals=originals,
+            question_count=request.question_count,
+            policy=request.difficulty_policy,
+            question_types=question_types,
+            other_topic_keys=other_topic_keys,
+            generation_request_id=(
+                str(request.request_id) if request.request_id is not None else None
+            ),
         )
     except HTTPException:
         _release(db, generation)
@@ -1063,11 +1106,13 @@ def generate_similar_questions(
         success=True,
         message="Similar questions generated successfully",
         data=ExamSimilarQuestionsResult(
-            similar_questions=persisted.document,
+            quiz=ExamQuizService.hide_answers(persisted.view),
             generated_output_id=persisted.output.id,
             created_at=persisted.output.created_at,
             model_used=persisted.output.model_used,
             credits_charged=persisted.credits_charged,
+            answers_hidden=True,
+            source_question_ids=persisted.source_question_ids,
             context_truncated=material.truncated,
             chunks_used=material.chunks_used,
             chunks_available=material.chunks_available,
@@ -1080,7 +1125,7 @@ def generate_similar_questions(
 
 @router.get(
     "/{course_id}/exam-mode/topics/{topic_key}/similar-questions",
-    response_model=BaseResponse[ExamSimilarQuestionsDocument],
+    response_model=BaseResponse[QuizView],
     responses={
         **READ_RESPONSES,
         404: {"description": "Course or similar questions not found"},
@@ -1090,14 +1135,21 @@ def get_similar_questions(
     course: AuthorizedCourse,
     topic_key: Annotated[str, Path(max_length=MAX_TOPIC_KEY_LENGTH)],
     db: Annotated[Session, Depends(get_db)],
-) -> BaseResponse[ExamSimilarQuestionsDocument]:
-    output = ExamSimilarQuestionsService.latest(db, course.id, topic_key=topic_key)
-    if output is None:
+) -> BaseResponse[QuizView]:
+    """Reopen this topic's most recent similar-question set, answers hidden.
+
+    Served from the quiz rows rather than the history document, because the
+    quiz is the assessment. A set generated before these were quizzes has no
+    row to serve and is answered as missing rather than half-read from an
+    older shape; it remains readable in the course's generated-output history.
+    """
+    quiz = ExamSimilarQuestionsService.latest_quiz(db, course.id, topic_key=topic_key)
+    if quiz is None:
         raise NotFoundException(detail="Similar questions not found")
     return BaseResponse(
         success=True,
         message="Similar questions retrieved successfully",
-        data=_stored_document(output, ExamSimilarQuestionsDocument),
+        data=ExamQuizService.hide_answers(QuizService.build_quiz_view(quiz)),
     )
 
 
@@ -1134,7 +1186,34 @@ def generate_mock_exam(
     hidden, because a paper you can read the answers to is not a mock exam.
     """
     plan = _resolve_plan(course, request, db, FEATURE_MOCK_EXAM)
-    question_count = ExamMockExamService.resolve_question_count(request.question_count)
+
+    requested_mix = (
+        [(entry.question_type.value, entry.count) for entry in request.question_mix]
+        if request.question_mix is not None
+        else None
+    )
+    if request.question_count is not None:
+        question_count = ExamMockExamService.resolve_question_count(
+            request.question_count
+        )
+    elif requested_mix is not None:
+        # A mix with no explicit total states the length by itself; deriving it
+        # here keeps the two from ever disagreeing.
+        question_count = sum(count for _, count in requested_mix)
+    else:
+        question_count = ExamMockExamService.resolve_question_count(None)
+
+    # The split is decided before a provider is built, so a request that cannot
+    # be turned into a paper is refused without spending anything.
+    try:
+        quotas = topic_quotas(plan, request.topic_keys, question_count)
+        types = type_quotas(requested_mix, question_count)
+    except MockExamTopicError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+            headers={ERROR_CODE_HEADER: MOCK_EXAM_CONFIGURATION_ERROR},
+        ) from exc
 
     generation = None
     try:
@@ -1155,6 +1234,8 @@ def generate_mock_exam(
             provider,
             user_id=current_user.id,
             question_count=question_count,
+            quotas=quotas,
+            types=types,
         )
         persisted = ExamMockExamService.persist(
             db,
@@ -1162,6 +1243,12 @@ def generate_mock_exam(
             generation,
             user_id=current_user.id,
             question_count=question_count,
+            quotas=quotas,
+            types=types,
+            duration_minutes=request.duration_minutes,
+            generation_request_id=(
+                str(request.request_id) if request.request_id is not None else None
+            ),
         )
     except HTTPException:
         _release(db, generation)
@@ -1187,6 +1274,8 @@ def generate_mock_exam(
             model_used=persisted.output.model_used,
             credits_charged=persisted.credits_charged,
             answers_hidden=True,
+            duration_minutes=request.duration_minutes,
+            time_limit_seconds=persisted.quiz.time_limit_seconds or 0,
             context_truncated=material.truncated,
             chunks_used=material.chunks_used,
             chunks_available=material.chunks_available,
@@ -1194,6 +1283,33 @@ def generate_mock_exam(
             lowest_similarity=material.lowest_similarity,
             highest_similarity=material.highest_similarity,
         ),
+    )
+
+
+@router.get(
+    "/{course_id}/exam-mode/mock-exam",
+    response_model=BaseResponse[QuizView],
+    responses={
+        **READ_RESPONSES,
+        404: {"description": "Course or mock exam not found"},
+    },
+)
+def get_mock_exam(
+    course: AuthorizedCourse,
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[QuizView]:
+    """Reopen this course's most recent mock exam, answers hidden.
+
+    Served from the quiz rows, because the quiz is the paper. A paper is still
+    an examination when it is reopened, so the answers stay behind the attempt.
+    """
+    quiz = ExamMockExamService.latest_quiz(db, course.id)
+    if quiz is None:
+        raise NotFoundException(detail="Mock exam not found")
+    return BaseResponse(
+        success=True,
+        message="Mock exam retrieved successfully",
+        data=ExamQuizService.hide_answers(QuizService.build_quiz_view(quiz)),
     )
 
 

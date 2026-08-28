@@ -45,6 +45,34 @@ def generate_portable_key(
     )
 
 
+def generate_profile_portable_key(
+    user_id: int,
+    document_uuid: UUID | str,
+    validated_file_type: str,
+) -> str:
+    """Generate the canonical storage key for a profile document."""
+    if type(user_id) is not int or user_id <= 0:
+        raise ValueError("user_id must be a positive integer")
+    if not isinstance(validated_file_type, str) or not _FILE_TYPE_PATTERN.fullmatch(
+        validated_file_type
+    ):
+        raise ValueError(
+            "validated_file_type must contain only lowercase letters and digits"
+        )
+
+    if not isinstance(document_uuid, (UUID, str)):
+        raise TypeError("document_uuid must be a UUID")
+    try:
+        normalized_document_uuid = UUID(str(document_uuid))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("document_uuid must be a UUID") from exc
+
+    return (
+        f"users/{user_id}/documents/{normalized_document_uuid}/"
+        f"source.{validated_file_type}"
+    )
+
+
 def validate_portable_key(key: str) -> str:
     """Validate a portable relative storage key shared across providers."""
     if not isinstance(key, str) or not key:

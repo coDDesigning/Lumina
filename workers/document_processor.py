@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.database import SessionLocal
-from backend.app.models import Course
+from backend.app.models import Course, User
 from backend.app.observability import (
     bind_request_id,
     configure_logging,
@@ -38,16 +38,23 @@ from services.document_extraction import (
 from services.exam_question_extraction import extract_past_exam_questions
 from services.processing_jobs import (
     ClaimedJob,
+    ClaimedProfileJob,
     ChunkData,
     PageData,
     claim_next_job,
+    claim_next_profile_job,
     complete_job,
+    complete_profile_job,
     fail_job,
+    fail_profile_job,
     heartbeat_job,
+    heartbeat_profile_job,
     processing_queue_metrics,
     recover_expired_jobs,
     replace_document_pages,
+    replace_profile_document_pages,
     update_job_stage,
+    update_profile_job_stage,
 )
 from services.embeddings import EmbeddingProvider
 from services.vector_store import VectorStore, VectorStoreError
@@ -99,7 +106,7 @@ def _default_worker_id() -> str:
 
 def _heartbeat_loop(
     session_factory: SessionFactory,
-    job: ClaimedJob,
+    job: ClaimedJob | ClaimedProfileJob,
     lease_seconds: int,
     stop: threading.Event,
     claim_lost: threading.Event,
@@ -108,7 +115,14 @@ def _heartbeat_loop(
     while not stop.is_set():
         try:
             with session_factory() as session:
-                current = heartbeat_job(session, job.id, job.claim_token, lease_seconds)
+                if isinstance(job, ClaimedProfileJob):
+                    current = heartbeat_profile_job(
+                        session, job.id, job.claim_token, lease_seconds
+                    )
+                else:
+                    current = heartbeat_job(
+                        session, job.id, job.claim_token, lease_seconds
+                    )
         except Exception:
             logger.exception("Failed to heartbeat processing job %s", job.id)
             if stop.wait(interval):
@@ -123,43 +137,59 @@ def _heartbeat_loop(
 
 def _record_failure(
     session_factory: SessionFactory,
-    job: ClaimedJob,
+    job: ClaimedJob | ClaimedProfileJob,
     error: DocumentProcessingError,
     active_stage: str = "extracting_text",
 ) -> str | None:
     exponent = min(6, max(0, job.attempt_count - 1))
     retry_delay = min(60.0, 2.0**exponent)
     with session_factory() as session:
-        resulting_status = fail_job(
-            session,
-            job.id,
-            job.claim_token,
-            error_code=error.code,
-            error_message=str(error),
-            retryable=error.retryable,
-            retry_delay_seconds=retry_delay,
-        )
+        if isinstance(job, ClaimedProfileJob):
+            resulting_status = fail_profile_job(
+                session,
+                job.id,
+                job.claim_token,
+                error_code=error.code,
+                error_message=str(error),
+                retryable=error.retryable,
+                retry_delay_seconds=retry_delay,
+            )
+        else:
+            resulting_status = fail_job(
+                session,
+                job.id,
+                job.claim_token,
+                error_code=error.code,
+                error_message=str(error),
+                retryable=error.retryable,
+                retry_delay_seconds=retry_delay,
+            )
     stage = getattr(error, "failed_stage", None) or active_stage or "extracting_text"
     if (
         resulting_status == "failed"
         or not error.retryable
         or job.attempt_count >= job.max_attempts
     ):
+        scope_info = f"user {job.user_id}" if isinstance(job, ClaimedProfileJob) else f"course {job.course_id}"
+        extra_fields = {
+            "event": "permanent_document_failure",
+            "job_id": job.id,
+            "document_id": str(job.document_id),
+            "failed_stage": stage,
+            "error_code": error.code,
+            "runbook": "docs/runbooks/stuck_document.md",
+        }
+        if isinstance(job, ClaimedJob):
+            extra_fields["course_id"] = job.course_id
+        else:
+            extra_fields["user_id"] = job.user_id
         logger.error(
-            "Permanent document processing failure for job %s (document %s, course %s): %s",
+            "Permanent document processing failure for job %s (document %s, %s): %s",
             job.id,
             job.document_id,
-            job.course_id,
+            scope_info,
             error.code,
-            extra={
-                "event": "permanent_document_failure",
-                "job_id": job.id,
-                "document_id": str(job.document_id),
-                "course_id": job.course_id,
-                "failed_stage": stage,
-                "error_code": error.code,
-                "runbook": "docs/runbooks/stuck_document.md",
-            },
+            extra=extra_fields,
         )
     return resulting_status
 
@@ -167,7 +197,7 @@ def _record_failure(
 def _extraction_process(
     connection,
     storage: Storage,
-    job: ClaimedJob,
+    job: ClaimedJob | ClaimedProfileJob,
     prompt_context: PromptContext | None = None,
 ) -> None:
     if job.correlation_id is not None:
@@ -212,7 +242,7 @@ def _extraction_process(
 
 def _extract_with_timeout(
     storage: Storage,
-    job: ClaimedJob,
+    job: ClaimedJob | ClaimedProfileJob,
     timeout_seconds: int,
     stage_callback: Callable[[str], None] | None = None,
     extraction_callback: Callable[[list[PageData], float], None] | None = None,
@@ -428,15 +458,27 @@ def process_next_job(
             storage.provider,
             lease_seconds,
         )
-        prompt_context = (
-            resolve_prompt_context(
+        if job is None:
+            job = claim_next_profile_job(
                 session,
-                course=session.get(Course, job.course_id),
-                document_ids=[job.document_id],
+                worker_id,
+                storage.provider,
+                lease_seconds,
             )
-            if job is not None
-            else None
-        )
+        if job is not None:
+            if isinstance(job, ClaimedJob):
+                prompt_context = resolve_prompt_context(
+                    session,
+                    course=session.get(Course, job.course_id),
+                    document_ids=[job.document_id],
+                )
+            else:
+                prompt_context = resolve_prompt_context(
+                    session,
+                    user_id=job.user_id,
+                )
+        else:
+            prompt_context = None
     if job is None:
         return False
     token = bind_request_id(job.correlation_id)
@@ -458,12 +500,20 @@ def process_next_job(
                 nonlocal current_stage
                 current_stage = stage
                 with session_factory() as session:
-                    updated = update_job_stage(
-                        session,
-                        job.id,
-                        job.claim_token,
-                        stage,
-                    )
+                    if isinstance(job, ClaimedProfileJob):
+                        updated = update_profile_job_stage(
+                            session,
+                            job.id,
+                            job.claim_token,
+                            stage,
+                        )
+                    else:
+                        updated = update_job_stage(
+                            session,
+                            job.id,
+                            job.claim_token,
+                            stage,
+                        )
                 if not updated:
                     claim_lost.set()
                     raise DocumentProcessingError(
@@ -478,13 +528,21 @@ def process_next_job(
             ) -> None:
                 try:
                     with session_factory() as session:
-                        updated = replace_document_pages(
-                            session,
-                            job.id,
-                            job.claim_token,
-                            pages,
-                            operation_timeout_seconds=remaining_seconds,
-                        )
+                        if isinstance(job, ClaimedProfileJob):
+                            updated = replace_profile_document_pages(
+                                session,
+                                job.id,
+                                job.claim_token,
+                                pages,
+                            )
+                        else:
+                            updated = replace_document_pages(
+                                session,
+                                job.id,
+                                job.claim_token,
+                                pages,
+                                operation_timeout_seconds=remaining_seconds,
+                            )
                 except Exception:
                     logger.exception("Failed to persist raw pages for job %s", job.id)
                     raise DocumentProcessingError(
@@ -580,15 +638,26 @@ def process_next_job(
             return True
         try:
             with session_factory() as session:
-                completed = complete_job(
-                    session,
-                    job.id,
-                    job.claim_token,
-                    chunks,
-                    pages,
-                    embeddings=embeddings,
-                    vector_store=vector_store,
-                )
+                if isinstance(job, ClaimedProfileJob):
+                    completed = complete_profile_job(
+                        session,
+                        job.id,
+                        job.claim_token,
+                        chunks,
+                        embeddings,
+                        pages=pages,
+                        vector_store=vector_store,
+                    )
+                else:
+                    completed = complete_job(
+                        session,
+                        job.id,
+                        job.claim_token,
+                        chunks,
+                        pages,
+                        embeddings=embeddings,
+                        vector_store=vector_store,
+                    )
         except VectorStoreError as exc:
             # The vector store is classified, so the job requeues instead of waiting
             # for the lease to expire.
@@ -626,7 +695,8 @@ def process_next_job(
             # is ready and its chunks exist. It is best-effort by design: a
             # paper whose questions could not be read is still indexed material,
             # and the failure belongs on the document rather than on the job.
-            extract_past_exam_questions(session_factory, job.document_id)
+            if isinstance(job, ClaimedJob):
+                extract_past_exam_questions(session_factory, job.document_id)
             emit_emf_metrics(
                 {
                     "JobsSucceeded": 1,

@@ -190,3 +190,96 @@ def test_a_topic_unlocked_concurrently_is_never_billed_twice(
     )
     with authz_api.session_factory() as session:
         assert_balance_is_derivable(session, authz_api.user_a_id)
+
+
+# ------------------------------------------------- what a client may read back
+
+
+def entitlements(authz_api, course_id: int, headers):
+    return authz_api.client.get(
+        f"/api/courses/{course_id}/exam-mode/entitlements", headers=headers
+    )
+
+
+def test_a_course_with_no_purchases_reports_an_empty_set(authz_api) -> None:
+    """Nothing bought is a real answer, not a missing one."""
+    response = entitlements(authz_api, authz_api.a_course_id, authz_api.authorization_a)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == {"unlocked_topic_keys": []}
+
+
+def test_the_read_names_every_topic_this_student_unlocked(authz_api) -> None:
+    """The set is what stops a client disabling a topic already paid for."""
+    for key in ("graph-traversal", "dynamic-programming"):
+        with authz_api.session_factory() as session:
+            ExamEntitlementService.ensure_unlocked(
+                session, authz_api.a_course_id, authz_api.user_a_id, key
+            )
+
+    response = entitlements(authz_api, authz_api.a_course_id, authz_api.authorization_a)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["unlocked_topic_keys"] == [
+        "dynamic-programming",
+        "graph-traversal",
+    ]
+
+
+def test_the_read_is_scoped_to_the_course_it_names(authz_api) -> None:
+    with authz_api.session_factory() as session:
+        ExamEntitlementService.ensure_unlocked(
+            session, authz_api.a_course_id, authz_api.user_a_id, "graph-traversal"
+        )
+
+    response = entitlements(
+        authz_api, authz_api.a_deleted_course_id, authz_api.authorization_a
+    )
+
+    assert response.status_code == 404
+
+
+def test_another_owner_cannot_read_this_student_s_purchases(authz_api) -> None:
+    with authz_api.session_factory() as session:
+        ExamEntitlementService.ensure_unlocked(
+            session, authz_api.a_course_id, authz_api.user_a_id, "graph-traversal"
+        )
+
+    response = entitlements(authz_api, authz_api.a_course_id, authz_api.authorization_b)
+
+    assert response.status_code == 404
+    assert "graph-traversal" not in response.text
+
+
+def test_an_administrator_may_read_the_course_but_not_what_was_bought_in_it(
+    authz_api,
+) -> None:
+    """The read-any override deliberately stops at somebody else's purchases.
+
+    An administrator may open another owner's plan, because a plan is course
+    content. What a student paid for is not.
+    """
+    with authz_api.session_factory() as session:
+        ExamEntitlementService.ensure_unlocked(
+            session, authz_api.a_course_id, authz_api.user_a_id, "graph-traversal"
+        )
+
+    plan_read = authz_api.client.get(
+        f"/api/courses/{authz_api.a_course_id}/exam-mode/plans",
+        headers=authz_api.authorization_admin,
+    )
+    response = entitlements(
+        authz_api, authz_api.a_course_id, authz_api.authorization_admin
+    )
+
+    assert plan_read.status_code == 200, plan_read.text
+    assert response.status_code == 404
+    assert "graph-traversal" not in response.text
+
+
+def test_an_unauthenticated_caller_reads_nothing(authz_api) -> None:
+    response = authz_api.client.get(
+        f"/api/courses/{authz_api.a_course_id}/exam-mode/entitlements"
+    )
+
+    assert response.status_code == 401

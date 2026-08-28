@@ -1,0 +1,163 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  padding: 0 var(--space-5) var(--space-7);
+  min-width: 0;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.masthead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.summaryTitle {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-display);
+  line-height: var(--leading-tight);
+  margin: 0;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.lede {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: var(--leading-normal);
+  max-width: var(--measure-prose);
+}
+
+.notices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.groupTitle {
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  font-weight: var(--weight-bold);
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.panel {
+  background: var(--surface-raised);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/*
+  Stacked before-and-after groups, never a table. A desktop grid squeezed into
+  360px is what makes a comparison unreadable on a phone, and this is exactly
+  the screen a student opens on the way to an exam.
+*/
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-top: var(--border-width) solid var(--border);
+  min-width: 0;
+}
+
+.row:first-child {
+  border-top: none;
+}
+
+.topic {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-display);
+  overflow-wrap: anywhere;
+}
+
+.values {
+  margin: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.value {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.value dt {
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+}
+
+.value dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text);
+}
+
+.arrow {
+  color: var(--text-subtle);
+}
+
+.delta {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+@media (min-width: 48rem) {
+  .values {
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  }
+}
+
+@media (max-width: 48rem) {
+  .body {
+    padding: 0 var(--space-4) var(--space-6);
+    gap: var(--space-6);
+  }
+}

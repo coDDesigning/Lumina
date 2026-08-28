@@ -232,9 +232,7 @@ def load_profile_knowledge(
                     )
                 )
                 label = (
-                    f"Document: {doc_name_row}"
-                    if doc_name_row
-                    else "Profile Document"
+                    f"Document: {doc_name_row}" if doc_name_row else "Profile Document"
                 )
                 doc_chunks.append(f"[{label}]\n{chunk.text.strip()}")
         except Exception:
@@ -260,11 +258,7 @@ def load_profile_knowledge(
         )
         for chunk_text, file_name in db.execute(statement_chunks).all():
             if chunk_text and chunk_text.strip():
-                label = (
-                    f"Document: {file_name}"
-                    if file_name
-                    else "Profile Document"
-                )
+                label = f"Document: {file_name}" if file_name else "Profile Document"
                 doc_chunks.append(f"[{label}]\n{chunk_text.strip()}")
 
     all_eligible = eligible + doc_chunks

@@ -105,6 +105,7 @@ def _session_view(state: SessionState) -> QuizSessionView:
         seconds_remaining=state.seconds_remaining,
         elapsed_seconds=state.elapsed_seconds,
         answered_count=state.answered_count,
+        answers=list(state.answers),
         attempt_id=state.attempt_id,
     )
 

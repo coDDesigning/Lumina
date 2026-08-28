@@ -26,9 +26,11 @@ from backend.app.models import (
 )
 from schemas.citation import Citation
 from schemas.exam_mode import (
+    RANKING_ENGINE_DETERMINISTIC,
     ExamAnalysisRequest,
     ExamAnalysisResult,
     ExamAnalysisView,
+    ExamEntitlementView,
     ExamPlanList,
     ExamPlanRequest,
     ExamPlanTopicView,
@@ -275,6 +277,9 @@ def _plan_view(readout) -> ExamPlanView:
         days_until_exam=content.get("days_until_exam"),
         selection_mode=str(content.get("selection_mode") or "manual"),
         manual_review_recommended=bool(content.get("manual_review_recommended", True)),
+        ranking_engine=str(
+            content.get("ranking_engine") or RANKING_ENGINE_DETERMINISTIC
+        ),
         ranking_policy_version=int(content.get("ranking_policy_version") or 1),
         configured_weights=content.get("configured_weights") or {},
         effective_weights=content.get("effective_weights") or {},
@@ -551,6 +556,33 @@ def create_exam_plan(
         success=True,
         message="Exam plan created successfully",
         data=_plan_view(readout),
+    )
+
+
+@router.get(
+    "/{course_id}/exam-mode/entitlements",
+    response_model=BaseResponse[ExamEntitlementView],
+    responses=READ_RESPONSES,
+)
+def list_exam_entitlements(
+    course: OwnedCourse,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[ExamEntitlementView]:
+    """Name the topics this student has already unlocked in this course.
+
+    Owner-scoped rather than reader-scoped on purpose: what somebody has bought
+    is theirs, so the administrator read-any override deliberately stops here.
+    An unlock is keyed by (course, student, topic) with no plan identifier, so
+    the set answers for every plan version at once.
+    """
+    unlocked = ExamEntitlementService.unlocked_topic_keys(
+        db, course.id, current_user.id
+    )
+    return BaseResponse(
+        success=True,
+        message="Exam topic entitlements retrieved successfully",
+        data=ExamEntitlementView(unlocked_topic_keys=sorted(unlocked)),
     )
 
 

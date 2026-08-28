@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Award, Clock, Play, RotateCcw, Send } from 'lucide-react';
+import { Award, Play, RotateCcw, Send } from 'lucide-react';
 import {
   describeError,
   describeGenerationError,
@@ -39,7 +39,6 @@ import { EMPTY_DRAFT } from './answerDraft';
 import type { AnswerDraft } from './answerDraft';
 import { QuizAnswerField } from './QuizAnswerField';
 import { QuizResults } from './QuizResults';
-import { formatDuration } from './quizScoring';
 import styles from './QuizModal.module.css';
 
 export interface QuizModalProps {
@@ -57,7 +56,6 @@ interface QuizSetup {
   questionCount: number;
   difficulty: QuizDifficulty;
   topic: string;
-  hasTimer: boolean;
   includeProfileContext: boolean;
 }
 
@@ -65,9 +63,7 @@ type QuizStep = 'config' | 'generating' | 'solving' | 'submitting' | 'results' |
 
 type FailedAction = 'generate' | 'submit';
 
-const SECONDS_PER_QUESTION = 60;
 const QUESTION_COUNTS = [5, 10, 15, 20];
-const LOW_TIME_SECONDS = 60;
 
 const QUESTION_TYPE_OPTIONS: { value: QuizQuestionType; label: string; hint: string }[] = [
   { value: 'multiple_choice', label: 'Multiple choice', hint: 'Pick one of four' },
@@ -113,14 +109,12 @@ export function QuizModal({
     questionCount: 5,
     difficulty: 'medium',
     topic: initialTopic ?? ALL_TOPICS,
-    hasTimer: true,
     includeProfileContext: false,
   });
 
   const [quiz, setQuiz] = useState<QuizView | null>(null);
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, AnswerDraft>>({});
-  const [timeLeft, setTimeLeft] = useState(0);
   const [attempt, setAttempt] = useState<QuizAttemptResponse | null>(null);
   const [elapsed, setElapsed] = useState(0);
 
@@ -216,18 +210,6 @@ export function QuizModal({
     submitAttemptRef.current = submitAttempt;
   }, [submitAttempt]);
 
-  useEffect(() => {
-    if (step !== 'solving' || !setup.hasTimer) {
-      return;
-    }
-    if (timeLeft <= 0) {
-      void submitAttemptRef.current();
-      return;
-    }
-    const timer = setTimeout(() => setTimeLeft((seconds) => seconds - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [step, setup.hasTimer, timeLeft]);
-
   const { refresh, canAfford, costOf, isMetered } = useCredits();
   const quizSource: CreditSource = setup.questionTypes.includes('open_ended')
     ? 'quiz_open_ended'
@@ -271,7 +253,6 @@ export function QuizModal({
       setIndex(0);
       setAnswers({});
       setAttempt(null);
-      setTimeLeft(generated.quiz.questions.length * SECONDS_PER_QUESTION);
       startedAtRef.current = Date.now();
       setStep('solving');
       void refresh();
@@ -466,13 +447,6 @@ export function QuizModal({
               </div>
 
               <Checkbox
-                label="Work against the clock"
-                description="One minute a question. When time runs out the quiz is handed in as it stands."
-                checked={setup.hasTimer}
-                onChange={(event) => setSetup({ ...setup, hasTimer: event.target.checked })}
-              />
-
-              <Checkbox
                 label="Use my study profile"
                 description="Adds your background as supporting context. Your course material stays primary."
                 checked={setup.includeProfileContext}
@@ -536,16 +510,6 @@ export function QuizModal({
               Question <span className="tabular">{index + 1}</span> of{' '}
               <span className="tabular">{questions.length}</span>
             </p>
-            {setup.hasTimer ? (
-              <p
-                className={cx(styles.timer, timeLeft <= LOW_TIME_SECONDS && styles.timerLow)}
-                role="timer"
-                aria-label={`Time remaining: ${formatDuration(timeLeft)}`}
-              >
-                <Clock aria-hidden="true" />
-                <span className="tabular">{formatDuration(timeLeft)}</span>
-              </p>
-            ) : null}
           </div>
 
           <nav className={styles.navigator} aria-label="Questions">

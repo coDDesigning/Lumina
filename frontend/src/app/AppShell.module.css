@@ -86,8 +86,17 @@
   flex: 1;
 }
 
+/*
+  `position: relative` is what makes this the containing block for its own
+  content. Without it an absolutely positioned descendant -- every
+  `.visually-hidden` label is one -- is laid out against the initial containing
+  block instead, escapes this element's clip, and stretches the document behind
+  it. That is a second scrollbar beside this one, and it only appears once a
+  page is long enough to put such a label below the fold.
+*/
 .main {
   grid-column: 2;
+  position: relative;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;

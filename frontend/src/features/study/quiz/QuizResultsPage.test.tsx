@@ -44,6 +44,12 @@ const SAMPLE_QUIZ: QuizView = {
   model_used: 'ollama:qwen3:8b',
   generation_settings: null,
   generation_context: null,
+  quiz_purpose: null,
+  exam_plan_output_id: null,
+  exam_topic_key: null,
+  timed: false,
+  time_limit_seconds: null,
+  answers_hidden: false,
   questions: [
     {
       question_id: 101,
@@ -74,6 +80,9 @@ const SAMPLE_ATTEMPT: QuizAttemptResponse = {
   total_questions: 1,
   time_spent_seconds: 45,
   created_at: '2026-08-23T10:05:00Z',
+  quiz_purpose: null,
+  timed: false,
+  expired: false,
   answers: [
     {
       question_id: 101,
@@ -209,6 +218,9 @@ describe('QuizResultsPage', () => {
       total_questions: 1,
       time_spent_seconds: 60,
       created_at: '2026-08-23T10:10:00Z',
+      quiz_purpose: null,
+      timed: false,
+      expired: false,
       answers: [
         {
           question_id: 102,

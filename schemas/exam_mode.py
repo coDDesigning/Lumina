@@ -396,6 +396,19 @@ class ExamPlanList(BaseModel):
     current_plan_output_id: int | None = None
 
 
+class ExamEntitlementView(BaseModel):
+    """Which of this course's topics the reader has already unlocked.
+
+    A topic is bought once and covers every artifact of that topic, so a client
+    that only knew the price would disable a topic the student has already paid
+    for whenever their balance fell below it. The price itself is deliberately
+    absent: it belongs to ``GET /api/users/me/credits``, which is the single
+    place a client reads what generation costs.
+    """
+
+    unlocked_topic_keys: list[str] = []
+
+
 class ExamAnalysisGenerationSettings(BaseModel):
     """The options one stored source analysis was produced with."""
 

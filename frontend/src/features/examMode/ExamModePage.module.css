@@ -1,0 +1,149 @@
+/*
+  Exam Mode setup is a sequence: sources are chosen, then read, then their
+  topics are reviewed, then a plan is made. Each stage is gated by the one
+  before it, so the stage number encodes something true rather than decorating
+  the page -- which is why the ordinal is the one loud element here and
+  everything around it stays quiet.
+*/
+.page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  padding: 0 var(--space-5) var(--space-7);
+  min-width: 0;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.notices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* A section label, not a heading: the workspace names its panels the same way. */
+.label {
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+  font-weight: var(--weight-bold);
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+  gap: 0 var(--space-4);
+  align-items: start;
+  min-width: 0;
+}
+
+.ordinal {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  letter-spacing: var(--tracking-display);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-subtle);
+  justify-self: end;
+  padding-top: 0.08em;
+  display: flex;
+}
+
+.ordinal svg {
+  width: var(--size-icon-lg);
+  height: var(--size-icon-lg);
+}
+
+/* The stage the student can act on now. Never the only signal: the heading
+   names the step and its state for a reader who cannot see the colour. */
+.ordinalActive {
+  color: var(--accent);
+}
+
+.ordinalDone {
+  color: var(--success);
+}
+
+.stageBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.stageTitle {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-display);
+  line-height: var(--leading-tight);
+  margin: 0;
+}
+
+.lede {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: var(--leading-normal);
+  max-width: var(--measure-prose);
+}
+
+/* Elevation is how this product groups things. A list of choices is one
+   surface with divided rows, never one card per row. */
+.panel {
+  background: var(--surface-raised);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+@media (max-width: 48rem) {
+  .body {
+    padding: 0 var(--space-4) var(--space-6);
+    gap: var(--space-6);
+  }
+
+  /* The gutter collapses rather than the number disappearing: the sequence is
+     the point of this screen, so it survives the narrowest width. */
+  .stage {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .ordinal {
+    justify-self: start;
+    font-size: var(--text-xl);
+  }
+}

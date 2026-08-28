@@ -140,9 +140,7 @@ class VectorStore(Protocol):
         self, session: Session, document_id: UUID
     ) -> None: ...
 
-    def delete_user_profile_vectors(
-        self, session: Session, user_id: int
-    ) -> None: ...
+    def delete_user_profile_vectors(self, session: Session, user_id: int) -> None: ...
 
     def search_profile(
         self,
@@ -417,7 +415,9 @@ class PgVectorStore:
         embedding_provider: str,
         embedding_model: str,
     ) -> None:
-        validated = _validated_profile(records, document_id=document_id, user_id=user_id)
+        validated = _validated_profile(
+            records, document_id=document_id, user_id=user_id
+        )
         session.execute(
             delete(ProfileChunkEmbedding).where(
                 ProfileChunkEmbedding.document_id == document_id
@@ -451,9 +451,7 @@ class PgVectorStore:
         )
         session.flush()
 
-    def delete_user_profile_vectors(
-        self, session: Session, user_id: int
-    ) -> None:
+    def delete_user_profile_vectors(self, session: Session, user_id: int) -> None:
         session.execute(
             delete(ProfileChunkEmbedding).where(
                 ProfileChunkEmbedding.user_id == user_id
@@ -811,9 +809,13 @@ class ChromaVectorStore:
         embedding_provider: str,
         embedding_model: str,
     ) -> None:
-        validated = _validated_profile(records, document_id=document_id, user_id=user_id)
+        validated = _validated_profile(
+            records, document_id=document_id, user_id=user_id
+        )
         self._run_profile(
-            lambda collection: collection.delete(where={"document_id": str(document_id)}),
+            lambda collection: collection.delete(
+                where={"document_id": str(document_id)}
+            ),
             "The vector store could not remove stale profile embeddings.",
         )
         if not validated:
@@ -841,13 +843,13 @@ class ChromaVectorStore:
         self, session: Session, document_id: UUID
     ) -> None:
         self._run_profile(
-            lambda collection: collection.delete(where={"document_id": str(document_id)}),
+            lambda collection: collection.delete(
+                where={"document_id": str(document_id)}
+            ),
             "The vector store could not remove the requested profile embeddings.",
         )
 
-    def delete_user_profile_vectors(
-        self, session: Session, user_id: int
-    ) -> None:
+    def delete_user_profile_vectors(self, session: Session, user_id: int) -> None:
         self._run_profile(
             lambda collection: collection.delete(where={"user_id": user_id}),
             "The vector store could not remove the requested profile embeddings.",

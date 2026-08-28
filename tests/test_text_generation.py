@@ -623,8 +623,12 @@ def test_transient_error_classification() -> None:
     # 5xx status errors are transient
     res500 = httpx.Response(500, request=req)
     res503 = httpx.Response(503, request=req)
-    assert is_transient_generation_error(openai.APIStatusError("err", response=res500, body=None))
-    assert is_transient_generation_error(anthropic.APIStatusError("err", response=res503, body=None))
+    assert is_transient_generation_error(
+        openai.APIStatusError("err", response=res500, body=None)
+    )
+    assert is_transient_generation_error(
+        anthropic.APIStatusError("err", response=res503, body=None)
+    )
 
     # Wrapped 5xx provider errors stay transient
     try:
@@ -651,8 +655,12 @@ def test_transient_error_classification() -> None:
 
     res400 = httpx.Response(400, request=req)
     res401 = httpx.Response(401, request=req)
-    assert not is_transient_generation_error(openai.APIStatusError("bad", response=res400, body=None))
-    assert not is_transient_generation_error(anthropic.APIStatusError("unauth", response=res401, body=None))
+    assert not is_transient_generation_error(
+        openai.APIStatusError("bad", response=res400, body=None)
+    )
+    assert not is_transient_generation_error(
+        anthropic.APIStatusError("unauth", response=res401, body=None)
+    )
 
 
 def test_reliable_provider_recovers_from_transient_failures() -> None:
@@ -1083,7 +1091,9 @@ def test_openai_text_generation_provider_errors() -> None:
 
     # RateLimitError -> TextGenerationRateLimitError
     res429 = httpx.Response(429, request=req)
-    p = make_provider_failing_with(openai.RateLimitError("quota", response=res429, body=None))
+    p = make_provider_failing_with(
+        openai.RateLimitError("quota", response=res429, body=None)
+    )
     with pytest.raises(TextGenerationRateLimitError):
         p.generate_text("test")
 
@@ -1095,13 +1105,17 @@ def test_openai_text_generation_provider_errors() -> None:
 
     # APIStatusError 401 -> TextGenerationAuthError
     res401 = httpx.Response(401, request=req)
-    p = make_provider_failing_with(openai.APIStatusError("unauth", response=res401, body=None))
+    p = make_provider_failing_with(
+        openai.APIStatusError("unauth", response=res401, body=None)
+    )
     with pytest.raises(TextGenerationAuthError):
         p.generate_text("test")
 
     # APIStatusError 500 -> TextGenerationProviderError (transient)
     res500 = httpx.Response(500, request=req)
-    p = make_provider_failing_with(openai.APIStatusError("server error", response=res500, body=None))
+    p = make_provider_failing_with(
+        openai.APIStatusError("server error", response=res500, body=None)
+    )
     with pytest.raises(TextGenerationProviderError) as exc_info:
         p.generate_text("test")
     assert is_transient_generation_error(exc_info.value)
@@ -1210,7 +1224,9 @@ def test_claude_text_generation_provider_errors() -> None:
 
     # RateLimitError -> TextGenerationRateLimitError
     res429 = httpx.Response(429, request=req)
-    p = make_provider_failing_with(anthropic.RateLimitError("quota", response=res429, body=None))
+    p = make_provider_failing_with(
+        anthropic.RateLimitError("quota", response=res429, body=None)
+    )
     with pytest.raises(TextGenerationRateLimitError):
         p.generate_text("test")
 
@@ -1222,13 +1238,17 @@ def test_claude_text_generation_provider_errors() -> None:
 
     # APIStatusError 401 -> TextGenerationAuthError
     res401 = httpx.Response(401, request=req)
-    p = make_provider_failing_with(anthropic.APIStatusError("unauth", response=res401, body=None))
+    p = make_provider_failing_with(
+        anthropic.APIStatusError("unauth", response=res401, body=None)
+    )
     with pytest.raises(TextGenerationAuthError):
         p.generate_text("test")
 
     # APIStatusError 503 -> TextGenerationProviderError (transient)
     res503 = httpx.Response(503, request=req)
-    p = make_provider_failing_with(anthropic.APIStatusError("service unavailable", response=res503, body=None))
+    p = make_provider_failing_with(
+        anthropic.APIStatusError("service unavailable", response=res503, body=None)
+    )
     with pytest.raises(TextGenerationProviderError) as exc_info:
         p.generate_text("test")
     assert is_transient_generation_error(exc_info.value)
@@ -1251,13 +1271,19 @@ def test_multi_provider_fallback_chain() -> None:
     p1 = StubProvider(
         provider_name="gemini",
         model_name="gemini-3.6-flash",
-        behaviors=[TextGenerationConnectionError("Gemini down"), TextGenerationConnectionError("Gemini down")],
+        behaviors=[
+            TextGenerationConnectionError("Gemini down"),
+            TextGenerationConnectionError("Gemini down"),
+        ],
     )
     # 2nd provider (OpenAI): 500 error (transient, retries and fails)
     p2 = StubProvider(
         provider_name="openai",
         model_name="gpt-5.6-terra",
-        behaviors=[TextGenerationProviderError("OpenAI 500"), TextGenerationProviderError("OpenAI 500")],
+        behaviors=[
+            TextGenerationProviderError("OpenAI 500"),
+            TextGenerationProviderError("OpenAI 500"),
+        ],
     )
     # 3rd provider (Claude): succeeds
     p3 = StubProvider(

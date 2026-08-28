@@ -56,7 +56,9 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("storage_provider", sa.String(length=50), nullable=False),
         sa.Column("storage_key", sa.String(length=500), nullable=False),
-        sa.Column("status", sa.String(length=20), server_default="uploaded", nullable=False),
+        sa.Column(
+            "status", sa.String(length=20), server_default="uploaded", nullable=False
+        ),
         sa.Column("processing_error", sa.Text(), nullable=True),
         sa.Column(
             "created_at",
@@ -70,16 +72,31 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.CheckConstraint("file_size >= 0", name=op.f("ck_profile_documents_profile_doc_file_size_nonnegative")),
-        sa.CheckConstraint("length(file_hash) = 64", name=op.f("ck_profile_documents_profile_doc_file_hash_length")),
+        sa.CheckConstraint(
+            "file_size >= 0",
+            name=op.f("ck_profile_documents_profile_doc_file_size_nonnegative"),
+        ),
+        sa.CheckConstraint(
+            "length(file_hash) = 64",
+            name=op.f("ck_profile_documents_profile_doc_file_hash_length"),
+        ),
         sa.CheckConstraint(
             "status IN ('uploaded', 'processing', 'ready', 'failed', 'deleting')",
             name=op.f("ck_profile_documents_profile_doc_status_valid"),
         ),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_profile_documents_user_id_users"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("fk_profile_documents_user_id_users"),
+            ondelete="CASCADE",
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_profile_documents")),
-        sa.UniqueConstraint("id", "user_id", name=op.f("uq_profile_documents_id_user_id")),
-        sa.UniqueConstraint("user_id", "file_hash", name=op.f("uq_profile_documents_user_id_file_hash")),
+        sa.UniqueConstraint(
+            "id", "user_id", name=op.f("uq_profile_documents_id_user_id")
+        ),
+        sa.UniqueConstraint(
+            "user_id", "file_hash", name=op.f("uq_profile_documents_user_id_file_hash")
+        ),
     )
     with op.batch_alter_table("profile_documents", schema=None) as batch_op:
         batch_op.create_index("ix_profile_documents_user_id", ["user_id"], unique=False)
@@ -130,12 +147,25 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_profile_document_chunks")),
-        sa.UniqueConstraint("document_id", "chunk_index", name=op.f("uq_profile_document_chunks_document_id_chunk_index")),
-        sa.UniqueConstraint("id", "document_id", "user_id", name=op.f("uq_profile_document_chunks_id_doc_user")),
+        sa.UniqueConstraint(
+            "document_id",
+            "chunk_index",
+            name=op.f("uq_profile_document_chunks_document_id_chunk_index"),
+        ),
+        sa.UniqueConstraint(
+            "id",
+            "document_id",
+            "user_id",
+            name=op.f("uq_profile_document_chunks_id_doc_user"),
+        ),
     )
     with op.batch_alter_table("profile_document_chunks", schema=None) as batch_op:
-        batch_op.create_index("ix_profile_document_chunks_document_id", ["document_id"], unique=False)
-        batch_op.create_index("ix_profile_document_chunks_user_id", ["user_id"], unique=False)
+        batch_op.create_index(
+            "ix_profile_document_chunks_document_id", ["document_id"], unique=False
+        )
+        batch_op.create_index(
+            "ix_profile_document_chunks_user_id", ["user_id"], unique=False
+        )
         batch_op.create_index(
             "ix_profile_document_chunks_user_doc_index",
             ["user_id", "document_id", "chunk_index", "id"],
@@ -168,7 +198,9 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "chunk_index = CAST(chunk_index AS INTEGER) AND chunk_index >= 0",
-            name=op.f("ck_profile_chunk_embeddings_profile_chunk_emb_index_nonnegative"),
+            name=op.f(
+                "ck_profile_chunk_embeddings_profile_chunk_emb_index_nonnegative"
+            ),
         ),
         sa.CheckConstraint(
             f"dimensions = {EMBEDDING_DIMENSIONS}",
@@ -184,16 +216,26 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["chunk_id", "document_id", "user_id"],
-            ["profile_document_chunks.id", "profile_document_chunks.document_id", "profile_document_chunks.user_id"],
+            [
+                "profile_document_chunks.id",
+                "profile_document_chunks.document_id",
+                "profile_document_chunks.user_id",
+            ],
             name=op.f("fk_profile_chunk_embeddings_chunk_doc_user"),
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_profile_chunk_embeddings")),
-        sa.UniqueConstraint("chunk_id", name=op.f("uq_profile_chunk_embeddings_chunk_id")),
+        sa.UniqueConstraint(
+            "chunk_id", name=op.f("uq_profile_chunk_embeddings_chunk_id")
+        ),
     )
     with op.batch_alter_table("profile_chunk_embeddings", schema=None) as batch_op:
-        batch_op.create_index("ix_profile_chunk_embeddings_document_id", ["document_id"], unique=False)
-        batch_op.create_index("ix_profile_chunk_embeddings_user_id", ["user_id"], unique=False)
+        batch_op.create_index(
+            "ix_profile_chunk_embeddings_document_id", ["document_id"], unique=False
+        )
+        batch_op.create_index(
+            "ix_profile_chunk_embeddings_user_id", ["user_id"], unique=False
+        )
     if postgresql:
         op.create_index(
             "ix_profile_chunk_embeddings_embedding_hnsw",
@@ -215,20 +257,56 @@ def upgrade() -> None:
         sa.Column("text", sa.Text(), nullable=False),
         sa.Column("raw_extraction_method", sa.String(length=20), nullable=True),
         sa.Column("extraction_method", sa.String(length=20), nullable=True),
-        sa.Column("has_images", sa.Boolean(), server_default=sa.text("0" if not postgresql else "false"), nullable=False),
-        sa.Column("needs_ocr", sa.Boolean(), server_default=sa.text("0" if not postgresql else "false"), nullable=False),
-        sa.Column("raw_needs_ocr", sa.Boolean(), server_default=sa.text("0" if not postgresql else "false"), nullable=False),
-        sa.Column("ocr_status", sa.String(length=20), server_default="not_required", nullable=False),
-        sa.Column("has_visual_content", sa.Boolean(), server_default=sa.text("0" if not postgresql else "false"), nullable=False),
-        sa.Column("visual_analysis_status", sa.String(length=20), server_default="not_applicable", nullable=False),
+        sa.Column(
+            "has_images",
+            sa.Boolean(),
+            server_default=sa.text("0" if not postgresql else "false"),
+            nullable=False,
+        ),
+        sa.Column(
+            "needs_ocr",
+            sa.Boolean(),
+            server_default=sa.text("0" if not postgresql else "false"),
+            nullable=False,
+        ),
+        sa.Column(
+            "raw_needs_ocr",
+            sa.Boolean(),
+            server_default=sa.text("0" if not postgresql else "false"),
+            nullable=False,
+        ),
+        sa.Column(
+            "ocr_status",
+            sa.String(length=20),
+            server_default="not_required",
+            nullable=False,
+        ),
+        sa.Column(
+            "has_visual_content",
+            sa.Boolean(),
+            server_default=sa.text("0" if not postgresql else "false"),
+            nullable=False,
+        ),
+        sa.Column(
+            "visual_analysis_status",
+            sa.String(length=20),
+            server_default="not_applicable",
+            nullable=False,
+        ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=postgresql),
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.CheckConstraint("content_index >= 0", name=op.f("ck_profile_document_pages_profile_content_index_nonnegative")),
-        sa.CheckConstraint("page_number IS NULL OR page_number >= 1", name=op.f("ck_profile_document_pages_profile_page_number_positive")),
+        sa.CheckConstraint(
+            "content_index >= 0",
+            name=op.f("ck_profile_document_pages_profile_content_index_nonnegative"),
+        ),
+        sa.CheckConstraint(
+            "page_number IS NULL OR page_number >= 1",
+            name=op.f("ck_profile_document_pages_profile_page_number_positive"),
+        ),
         sa.CheckConstraint(
             "raw_extraction_method IS NULL OR raw_extraction_method IN ('native', 'decoded')",
             name=op.f("ck_profile_document_pages_profile_raw_extraction_method_valid"),
@@ -260,10 +338,16 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_profile_document_pages")),
-        sa.UniqueConstraint("document_id", "content_index", name=op.f("uq_profile_document_pages_document_content_index")),
+        sa.UniqueConstraint(
+            "document_id",
+            "content_index",
+            name=op.f("uq_profile_document_pages_document_content_index"),
+        ),
     )
     with op.batch_alter_table("profile_document_pages", schema=None) as batch_op:
-        batch_op.create_index("ix_profile_document_pages_user_id", ["user_id"], unique=False)
+        batch_op.create_index(
+            "ix_profile_document_pages_user_id", ["user_id"], unique=False
+        )
 
     # 5. profile_document_visuals
     op.create_table(
@@ -278,7 +362,12 @@ def upgrade() -> None:
         sa.Column("bbox_x1", sa.Float(), nullable=False),
         sa.Column("bbox_y1", sa.Float(), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("analysis_status", sa.String(length=20), server_default="pending", nullable=False),
+        sa.Column(
+            "analysis_status",
+            sa.String(length=20),
+            server_default="pending",
+            nullable=False,
+        ),
         sa.Column("error_code", sa.String(length=100), nullable=True),
         sa.Column(
             "created_at",
@@ -302,18 +391,35 @@ def upgrade() -> None:
             "description IS NULL OR analysis_status = 'succeeded'",
             name=op.f("ck_profile_document_visuals_profile_description_status_valid"),
         ),
-        sa.CheckConstraint("source IN ('image', 'table', 'drawing')", name=op.f("ck_profile_document_visuals_profile_visual_source_valid")),
+        sa.CheckConstraint(
+            "source IN ('image', 'table', 'drawing')",
+            name=op.f("ck_profile_document_visuals_profile_visual_source_valid"),
+        ),
         sa.CheckConstraint(
             "visual_type IN ('diagram', 'table', 'chart', 'screenshot', 'figure', 'flowchart', 'other')",
             name=op.f("ck_profile_document_visuals_profile_visual_type_valid"),
         ),
-        sa.CheckConstraint("visual_index >= 0", name=op.f("ck_profile_document_visuals_profile_visual_index_nonnegative")),
-        sa.ForeignKeyConstraint(["page_id"], ["profile_document_pages.id"], name=op.f("fk_profile_document_visuals_page_id_profile_document_pages"), ondelete="CASCADE"),
+        sa.CheckConstraint(
+            "visual_index >= 0",
+            name=op.f("ck_profile_document_visuals_profile_visual_index_nonnegative"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["page_id"],
+            ["profile_document_pages.id"],
+            name=op.f("fk_profile_document_visuals_page_id_profile_document_pages"),
+            ondelete="CASCADE",
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_profile_document_visuals")),
-        sa.UniqueConstraint("page_id", "visual_index", name=op.f("uq_profile_document_visuals_page_id_visual_index")),
+        sa.UniqueConstraint(
+            "page_id",
+            "visual_index",
+            name=op.f("uq_profile_document_visuals_page_id_visual_index"),
+        ),
     )
     with op.batch_alter_table("profile_document_visuals", schema=None) as batch_op:
-        batch_op.create_index("ix_profile_document_visuals_page_id", ["page_id"], unique=False)
+        batch_op.create_index(
+            "ix_profile_document_visuals_page_id", ["page_id"], unique=False
+        )
 
     # 6. profile_processing_jobs
     op.create_table(
@@ -321,8 +427,15 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("document_id", sa.Uuid(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("job_type", sa.String(length=50), server_default="extract_document", nullable=False),
-        sa.Column("status", sa.String(length=20), server_default="queued", nullable=False),
+        sa.Column(
+            "job_type",
+            sa.String(length=50),
+            server_default="extract_document",
+            nullable=False,
+        ),
+        sa.Column(
+            "status", sa.String(length=20), server_default="queued", nullable=False
+        ),
         sa.Column("attempt_count", sa.Integer(), server_default="0", nullable=False),
         sa.Column("max_attempts", sa.Integer(), server_default="3", nullable=False),
         sa.Column("correlation_id", sa.String(length=100), nullable=True),
@@ -355,28 +468,60 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.CheckConstraint("attempt_count >= 0", name=op.f("ck_profile_processing_jobs_profile_attempt_count_nonnegative")),
-        sa.CheckConstraint("attempt_count <= max_attempts", name=op.f("ck_profile_processing_jobs_profile_attempt_count_within_limit")),
-        sa.CheckConstraint("failed_stage IS NULL OR failed_stage IN (" + _STAGES_SQL + ")", name=op.f("ck_profile_processing_jobs_profile_failed_stage_valid")),
-        sa.CheckConstraint("failed_stage IS NULL OR status = 'failed'", name=op.f("ck_profile_processing_jobs_profile_failed_stage_status")),
+        sa.CheckConstraint(
+            "attempt_count >= 0",
+            name=op.f("ck_profile_processing_jobs_profile_attempt_count_nonnegative"),
+        ),
+        sa.CheckConstraint(
+            "attempt_count <= max_attempts",
+            name=op.f("ck_profile_processing_jobs_profile_attempt_count_within_limit"),
+        ),
+        sa.CheckConstraint(
+            "failed_stage IS NULL OR failed_stage IN (" + _STAGES_SQL + ")",
+            name=op.f("ck_profile_processing_jobs_profile_failed_stage_valid"),
+        ),
+        sa.CheckConstraint(
+            "failed_stage IS NULL OR status = 'failed'",
+            name=op.f("ck_profile_processing_jobs_profile_failed_stage_status"),
+        ),
         sa.CheckConstraint(
             "(status IN ('succeeded', 'failed') AND finished_at IS NOT NULL) OR (status IN ('queued', 'running') AND finished_at IS NULL)",
             name=op.f("ck_profile_processing_jobs_profile_finished_state_valid"),
         ),
-        sa.CheckConstraint("job_type = 'extract_document'", name=op.f("ck_profile_processing_jobs_profile_job_type_valid")),
+        sa.CheckConstraint(
+            "job_type = 'extract_document'",
+            name=op.f("ck_profile_processing_jobs_profile_job_type_valid"),
+        ),
         sa.CheckConstraint(
             "(status = 'running' AND attempt_count > 0 AND lease_owner IS NOT NULL AND claim_token IS NOT NULL AND claimed_at IS NOT NULL AND heartbeat_at IS NOT NULL AND lease_expires_at IS NOT NULL AND heartbeat_at >= claimed_at AND lease_expires_at > heartbeat_at AND finished_at IS NULL) OR (status <> 'running' AND lease_owner IS NULL AND claim_token IS NULL AND claimed_at IS NULL AND heartbeat_at IS NULL AND lease_expires_at IS NULL)",
             name=op.f("ck_profile_processing_jobs_profile_lease_state_valid"),
         ),
-        sa.CheckConstraint("max_attempts > 0", name=op.f("ck_profile_processing_jobs_profile_max_attempts_positive")),
-        sa.CheckConstraint("processing_stage IS NULL OR processing_stage IN (" + _STAGES_SQL + ")", name=op.f("ck_profile_processing_jobs_profile_processing_stage_valid")),
-        sa.CheckConstraint("processing_stage IS NULL OR status = 'running'", name=op.f("ck_profile_processing_jobs_profile_processing_stage_status")),
-        sa.CheckConstraint("status <> 'queued' OR attempt_count < max_attempts", name=op.f("ck_profile_processing_jobs_profile_queued_attempts_available")),
+        sa.CheckConstraint(
+            "max_attempts > 0",
+            name=op.f("ck_profile_processing_jobs_profile_max_attempts_positive"),
+        ),
+        sa.CheckConstraint(
+            "processing_stage IS NULL OR processing_stage IN (" + _STAGES_SQL + ")",
+            name=op.f("ck_profile_processing_jobs_profile_processing_stage_valid"),
+        ),
+        sa.CheckConstraint(
+            "processing_stage IS NULL OR status = 'running'",
+            name=op.f("ck_profile_processing_jobs_profile_processing_stage_status"),
+        ),
+        sa.CheckConstraint(
+            "status <> 'queued' OR attempt_count < max_attempts",
+            name=op.f("ck_profile_processing_jobs_profile_queued_attempts_available"),
+        ),
         sa.CheckConstraint(
             f"status <> 'failed' OR (last_error_code IS NOT NULL AND length(trim(last_error_code, '{_ASCII_WHITESPACE}')) > 0)",
-            name=op.f("ck_profile_processing_jobs_profile_failed_last_error_code_present"),
+            name=op.f(
+                "ck_profile_processing_jobs_profile_failed_last_error_code_present"
+            ),
         ),
-        sa.CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed')", name=op.f("ck_profile_processing_jobs_profile_job_status_valid")),
+        sa.CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
+            name=op.f("ck_profile_processing_jobs_profile_job_status_valid"),
+        ),
         sa.ForeignKeyConstraint(
             ["document_id", "user_id"],
             ["profile_documents.id", "profile_documents.user_id"],
@@ -384,11 +529,19 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_profile_processing_jobs")),
-        sa.UniqueConstraint("document_id", "job_type", name=op.f("uq_profile_processing_jobs_document_id_job_type")),
+        sa.UniqueConstraint(
+            "document_id",
+            "job_type",
+            name=op.f("uq_profile_processing_jobs_document_id_job_type"),
+        ),
     )
     with op.batch_alter_table("profile_processing_jobs", schema=None) as batch_op:
-        batch_op.create_index("ix_profile_processing_jobs_document_id", ["document_id"], unique=False)
-        batch_op.create_index("ix_profile_processing_jobs_user_id", ["user_id"], unique=False)
+        batch_op.create_index(
+            "ix_profile_processing_jobs_document_id", ["document_id"], unique=False
+        )
+        batch_op.create_index(
+            "ix_profile_processing_jobs_user_id", ["user_id"], unique=False
+        )
 
 
 def downgrade() -> None:

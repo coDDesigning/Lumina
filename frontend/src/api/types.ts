@@ -530,6 +530,17 @@ export interface QuizQuestionView {
   citations?: Citation[];
 }
 
+/**
+ * What a quiz was written for. Read this rather than parsing a title: the
+ * purpose decides how the quiz is labelled and where handing it in returns to.
+ */
+export type QuizPurpose =
+  | 'practice'
+  | 'exam_topic_practice'
+  | 'exam_topic_exam'
+  | 'exam_similar_questions'
+  | 'exam_mock_exam';
+
 export interface QuizView {
   quiz_id: number;
   course_id: number;
@@ -539,6 +550,12 @@ export interface QuizView {
   model_used: string | null;
   generation_settings: GenerationSettings | null;
   generation_context: GenerationContext | null;
+  quiz_purpose: LooseUnion<QuizPurpose> | null;
+  exam_plan_output_id: number | null;
+  exam_topic_key: string | null;
+  timed: boolean;
+  time_limit_seconds: number | null;
+  answers_hidden: boolean;
   questions: QuizQuestionView[];
 }
 
@@ -555,6 +572,11 @@ export interface QuizSummary {
   model_used: string | null;
   generation_settings: GenerationSettings | null;
   generation_context: GenerationContext | null;
+  quiz_purpose: LooseUnion<QuizPurpose> | null;
+  exam_plan_output_id: number | null;
+  exam_topic_key: string | null;
+  timed: boolean;
+  time_limit_seconds: number | null;
 }
 
 export interface QuizGenerationResult extends RetrievedContext {
@@ -601,6 +623,9 @@ export interface QuizHistoryItem {
   total_questions: number;
   time_spent_seconds?: number | null;
   created_at: string;
+  quiz_purpose: LooseUnion<QuizPurpose> | null;
+  timed: boolean;
+  expired: boolean;
 }
 
 export interface QuizAttemptResponse {
@@ -612,7 +637,40 @@ export interface QuizAttemptResponse {
   total_questions: number;
   time_spent_seconds: number | null;
   created_at: string;
+  quiz_purpose: LooseUnion<QuizPurpose> | null;
+  timed: boolean;
+  expired: boolean;
   answers: QuizAnswerResult[];
+}
+
+export type QuizSessionStatus = 'active' | 'submitted' | 'expired';
+
+/**
+ * One timed sitting as the server reports it.
+ *
+ * `expires_at` is the server's deadline and the only thing a countdown may be
+ * built from; `seconds_remaining` is a convenience derived from the same
+ * reading, never a second source of truth. `answers` carries every draft saved
+ * so far, which is what lets a reload put the candidate's own work back on the
+ * screen instead of showing them a blank paper the server would still grade.
+ */
+export interface QuizSessionView {
+  session_id: number;
+  quiz_id: number;
+  status: LooseUnion<QuizSessionStatus>;
+  started_at: string;
+  expires_at: string;
+  time_limit_seconds: number;
+  seconds_remaining: number;
+  elapsed_seconds: number;
+  answered_count: number;
+  answers: QuizAnswerSubmission[];
+  attempt_id: number | null;
+}
+
+export interface QuizSessionStartResult {
+  session: QuizSessionView;
+  quiz: QuizView;
 }
 
 export type MasteryStatus = 'Mastered' | 'In Progress' | 'Needs Review';
@@ -810,7 +868,7 @@ export interface CourseSettingsUpdate {
 
 export type RoadmapDayKind = 'study' | 'review' | 'final_review' | 'last_minute';
 export type RoadmapHorizon = 'zero_day' | 'one_day' | 'standard' | 'long';
-export type TopicSource = 'syllabus' | 'quiz';
+export type TopicSource = 'syllabus' | 'quiz' | 'exam_plan';
 export type TopicMaterialStatus =
   | 'resolved'
   | 'no_match'
@@ -828,23 +886,27 @@ export interface RoadmapMaterial {
 
 export interface RankedTopicView {
   topic: string;
+  /** The canonical key when the roadmap was built from an exam plan. */
+  topic_key?: string | null;
   source: TopicSource;
   syllabus_position?: number | null;
   importance: number;
   mastery_percentage?: number | null;
-  questions_answered: number;
+  /** Null when the ranking never measured one, which is not the same as zero. */
+  questions_answered: number | null;
   priority: number;
 }
 
 export interface RoadmapTopic {
   topic: string;
+  topic_key?: string | null;
   goal: string;
   pass_number: number;
   source: TopicSource;
   syllabus_position?: number | null;
   importance: number;
   mastery_percentage?: number | null;
-  questions_answered: number;
+  questions_answered: number | null;
   priority: number;
   material_status: TopicMaterialStatus;
   materials: RoadmapMaterial[];
@@ -881,6 +943,8 @@ export interface ExamRoadmap {
   attempts_considered: number;
   roadmap_version: number;
   adapted_from_output_id?: number | null;
+  /** The exam plan this schedule follows, or null for a course-wide roadmap. */
+  plan_output_id?: number | null;
   ranked_topics: RankedTopicView[];
   days: RoadmapDay[];
   deferred_topics: DeferredTopic[];
@@ -888,6 +952,8 @@ export interface ExamRoadmap {
 }
 
 export interface ExamRoadmapRequest {
+  /** Schedule this plan's ranked topics instead of the course's declared ones. */
+  plan_output_id?: number | null;
   max_topics_per_day?: number;
   include_materials?: boolean;
 }
@@ -895,6 +961,341 @@ export interface ExamRoadmapRequest {
 export interface ExamRoadmapResult {
   roadmap: ExamRoadmap;
   generated_output_id: number;
+}
+
+// ---------------------------------------------------------------- Exam Mode
+//
+// Mirrors schemas/exam_mode.py. Three families meet here: an analysis discovers
+// topics, a plan ranks the ones the student selected, and every artifact hangs
+// off a plan. Ranking is the backend's -- nothing here recomputes a score, an
+// order, or an explanation.
+
+export interface ExamSourceDocument {
+  id: string;
+  label: string;
+  material_kind: string;
+  status: string;
+  is_past_exam: boolean;
+  is_syllabus: boolean;
+}
+
+export interface ExamSourceInventory {
+  syllabus_present: boolean;
+  syllabus_characters: number;
+  course_topics: string[];
+  documents: ExamSourceDocument[];
+  ready_document_count: number;
+  past_exam_document_count: number;
+  chunks_available: number;
+}
+
+export interface ExamEntitlementView {
+  unlocked_topic_keys: string[];
+}
+
+export interface ExamAnalysisRequest {
+  document_ids?: string[] | null;
+  topic_focus?: string;
+  model?: string | null;
+}
+
+export interface ExamTopicCandidateView {
+  topic_key: string;
+  display_label: string;
+  aliases: string[];
+  in_syllabus: boolean;
+  in_course_topics: boolean;
+  in_past_exams: boolean;
+  in_material: boolean;
+  discovery_confidence: number;
+  syllabus_weight_percent?: number | null;
+  syllabus_mention_count: number;
+  past_exam_question_count: number;
+  material_chunk_count: number;
+  citations: Citation[];
+}
+
+/**
+ * What a previous plan's choices mean against a fresh analysis. Read-only: the
+ * backend never re-applies a selection, so a student is told what carried over
+ * and what did not rather than having it decided for them.
+ */
+export interface ExamSelectionCarryOver {
+  previous_plan_output_id?: number | null;
+  preselected_topic_keys: string[];
+  high_priority_topic_keys: string[];
+  new_topic_keys: string[];
+  unsupported_topic_keys: string[];
+}
+
+export interface ExamAnalysisView {
+  generated_output_id: number;
+  created_at: string;
+  model_used: string | null;
+  candidate_count: number;
+  past_exam_question_count: number;
+  documents_analysed: string[];
+  manual_review_recommended: boolean;
+  topics: ExamTopicCandidateView[];
+  selection_carry_over: ExamSelectionCarryOver;
+  coverage?: Record<string, unknown> | null;
+  confidence_notes: string;
+}
+
+export interface ExamAnalysisResult extends RetrievedContext {
+  analysis: ExamAnalysisView;
+}
+
+export interface ExamQuestionView {
+  position: number;
+  document_id: string;
+  page_start?: number | null;
+  page_end?: number | null;
+  question_label?: string | null;
+  question_number?: number | null;
+  question_text: string;
+  subparts: Record<string, unknown>[];
+  question_type: string;
+  difficulty?: string | null;
+  marks?: number | null;
+  answer_guidance?: string | null;
+  marking_points: string[];
+  visual_refs: Record<string, unknown>[];
+  topic_key?: string | null;
+  topic_mappings: Record<string, unknown>[];
+  citations: Citation[];
+}
+
+export interface ExamQuestionPage {
+  analysis_output_id: number;
+  document_ids: string[];
+  total: number;
+  limit: number;
+  offset: number;
+  questions: ExamQuestionView[];
+}
+
+export type ExamSelectionMode = 'manual' | 'all_discovered';
+
+export interface ExamPlanRequest {
+  analysis_output_id?: number | null;
+  selected_topic_keys: string[];
+  high_priority_topic_keys: string[];
+  selection_mode?: ExamSelectionMode;
+}
+
+/**
+ * One ranked topic. `explanation` is assembled by the backend from constants
+ * and is the sentence to show; `signals` and `reason_codes` are the audit trail
+ * behind it. A null `mastery_percentage` means unattempted, never zero, and
+ * `has_any_evidence: false` means no signal, never negative evidence.
+ */
+export interface ExamPlanTopicView {
+  topic_key: string;
+  display_label: string;
+  rank: number;
+  is_high_priority: boolean;
+  priority_score: number;
+  priority_band: string;
+  has_any_evidence: boolean;
+  is_unattempted: boolean;
+  mastery_percentage: number | null;
+  signals: Record<string, unknown>;
+  reason_codes: string[];
+  explanation: string;
+}
+
+/**
+ * `is_stale` and `requires_rescan` are different facts with different remedies:
+ * a moved exam date only reorders, while a changed source has to be read again.
+ */
+export interface ExamPlanStaleness {
+  is_stale: boolean;
+  requires_rescan: boolean;
+  stale_reasons: string[];
+}
+
+export interface ExamPlanView {
+  generated_output_id: number;
+  analysis_output_id: number;
+  plan_version: number;
+  supersedes_output_id?: number | null;
+  created_at: string;
+  exam_date?: string | null;
+  days_until_exam?: number | null;
+  selection_mode: string;
+  manual_review_recommended: boolean;
+  ranking_engine: string;
+  ranking_policy_version: number;
+  configured_weights: Record<string, number>;
+  effective_weights: Record<string, number>;
+  signals_available: Record<string, boolean>;
+  signal_bases: Record<string, string>;
+  unmapped_mastery_labels: number;
+  warnings: string[];
+  topics: ExamPlanTopicView[];
+  staleness: ExamPlanStaleness;
+}
+
+export interface ExamPlanSummary {
+  generated_output_id: number;
+  analysis_output_id: number;
+  plan_version: number;
+  supersedes_output_id?: number | null;
+  created_at: string;
+  exam_date?: string | null;
+  topic_count: number;
+  selection_mode: string;
+  is_current: boolean;
+}
+
+export interface ExamPlanList {
+  plans: ExamPlanSummary[];
+  current_plan_output_id?: number | null;
+}
+
+export interface ExamTopicArtifactRequest {
+  plan_output_id?: number | null;
+  model?: string | null;
+}
+
+export interface ExamTopicQuizRequest extends ExamTopicArtifactRequest {
+  question_count?: number | null;
+}
+
+export interface ExamPlanArtifactRequest {
+  plan_output_id?: number | null;
+  model?: string | null;
+}
+
+export interface ExamTopicSection {
+  heading: string;
+  body: MaybeCited;
+  key_points: MaybeCited[];
+}
+
+export interface ExamTopicTerm {
+  term: string;
+  definition: string;
+  citations: Citation[];
+}
+
+export interface ExamTopicPitfall {
+  mistake: string;
+  correction: string;
+  citations: Citation[];
+}
+
+export interface ExamTopicGuideDocument {
+  version: 1;
+  output_type: 'exam_topic_guide';
+  topic_key: string;
+  display_label: string;
+  plan_output_id: number;
+  rank: number;
+  priority_band: string;
+  title: string;
+  overview: MaybeCited;
+  sections: ExamTopicSection[];
+  key_terms: ExamTopicTerm[];
+  common_pitfalls: ExamTopicPitfall[];
+  what_to_be_able_to_do: MaybeCited[];
+  coverage?: Coverage | null;
+  confidence_notes: string;
+}
+
+export interface ExamTopicSummaryDocument {
+  version: 1;
+  output_type: 'exam_topic_summary';
+  topic_key: string;
+  display_label: string;
+  plan_output_id: number;
+  rank: number;
+  priority_band: string;
+  title: string;
+  summary: MaybeCited;
+  key_points: MaybeCited[];
+  coverage?: Coverage | null;
+  confidence_notes: string;
+}
+
+interface ExamArtifactResult extends RetrievedContext {
+  generated_output_id: number;
+  created_at: string;
+  model_used: string | null;
+  credits_charged: number;
+}
+
+export interface ExamTopicGuideResult extends ExamArtifactResult {
+  guide: ExamTopicGuideDocument;
+}
+
+export interface ExamTopicSummaryResult extends ExamArtifactResult {
+  summary: ExamTopicSummaryDocument;
+}
+
+export interface ExamTopicQuizResult extends ExamArtifactResult {
+  quiz: QuizView;
+  answers_hidden: boolean;
+}
+
+export type SimilarQuestionDifficultyPolicy = 'match_source' | 'easy' | 'medium' | 'hard';
+
+export interface SimilarQuestionRequest extends ExamTopicArtifactRequest {
+  source_question_ids?: number[] | null;
+  question_count?: number;
+  difficulty_policy?: SimilarQuestionDifficultyPolicy;
+  requested_question_types?: QuizQuestionType[] | null;
+  request_id?: string | null;
+}
+
+export interface ExamSimilarQuestionsResult extends ExamArtifactResult {
+  quiz: QuizView;
+  answers_hidden: boolean;
+  source_question_ids: number[];
+}
+
+export interface MockExamQuestionMixEntry {
+  question_type: QuizQuestionType;
+  count: number;
+}
+
+export interface ExamMockExamRequest extends ExamPlanArtifactRequest {
+  question_count?: number | null;
+  duration_minutes?: number;
+  question_mix?: MockExamQuestionMixEntry[] | null;
+  topic_keys?: string[] | null;
+  request_id?: string | null;
+}
+
+export interface ExamMockExamResult extends ExamArtifactResult {
+  quiz: QuizView;
+  answers_hidden: boolean;
+  duration_minutes: number;
+  time_limit_seconds: number;
+}
+
+export interface ExamReviewTopic {
+  topic_key: string;
+  topic_label: string;
+  must_remember: MaybeCited[];
+  traps: MaybeCited[];
+}
+
+export interface ExamReviewSheetDocument {
+  version: 1;
+  output_type: 'exam_review_sheet';
+  plan_output_id: number;
+  exam_date?: string | null;
+  days_until_exam?: number | null;
+  title: string;
+  topics: ExamReviewTopic[];
+  final_checks: MaybeCited[];
+  confidence_notes: string;
+}
+
+export interface ExamReviewSheetResult extends ExamArtifactResult {
+  review_sheet: ExamReviewSheetDocument;
 }
 
 export type ConceptStatus =

@@ -30,6 +30,12 @@ function quiz(overrides: Partial<QuizView> = {}): QuizView {
     model_used: 'ollama:qwen3:8b',
     generation_settings: null,
     generation_context: null,
+    quiz_purpose: null,
+    exam_plan_output_id: null,
+    exam_topic_key: null,
+    timed: false,
+    time_limit_seconds: null,
+    answers_hidden: false,
     questions: [question()],
     ...overrides,
   };

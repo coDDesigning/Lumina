@@ -23,39 +23,6 @@ class QuizSessionStatus(str, Enum):
     EXPIRED = "expired"
 
 
-class QuizSessionView(BaseModel):
-    """One timed sitting as the client is allowed to see it.
-
-    ``expires_at`` is the server's deadline and the only thing a countdown
-    should be built from. ``seconds_remaining`` is a convenience derived from
-    the same reading, never a second source of truth.
-    """
-
-    session_id: int
-    quiz_id: int
-    status: QuizSessionStatus
-    started_at: datetime
-    expires_at: datetime
-    time_limit_seconds: int
-    seconds_remaining: int
-    elapsed_seconds: int
-    answered_count: int = 0
-    attempt_id: int | None = None
-
-
-class QuizSessionStartResult(BaseModel):
-    """A sitting and the paper to sit, with its answers withheld."""
-
-    session: QuizSessionView
-    quiz: QuizView
-
-
-class MasteryStatus(str, Enum):
-    MASTERED = "Mastered"
-    IN_PROGRESS = "In Progress"
-    NEEDS_REVIEW = "Needs Review"
-
-
 class QuizAnswerSubmission(BaseModel):
     """One answer, in whichever form the question's type calls for.
 
@@ -72,6 +39,45 @@ class QuizAnswerSubmission(BaseModel):
         ge=0,
         le=MAX_TIME_SPENT_SECONDS,
     )
+
+
+class QuizSessionView(BaseModel):
+    """One timed sitting as the client is allowed to see it.
+
+    ``expires_at`` is the server's deadline and the only thing a countdown
+    should be built from. ``seconds_remaining`` is a convenience derived from
+    the same reading, never a second source of truth.
+
+    ``answers`` carries every draft saved so far, because a reload has to put
+    the student's own work back on the screen. A count alone would leave a
+    sitting that survived a refresh looking blank while the server still held
+    the answers it would grade.
+    """
+
+    session_id: int
+    quiz_id: int
+    status: QuizSessionStatus
+    started_at: datetime
+    expires_at: datetime
+    time_limit_seconds: int
+    seconds_remaining: int
+    elapsed_seconds: int
+    answered_count: int = 0
+    answers: list[QuizAnswerSubmission] = Field(default_factory=list)
+    attempt_id: int | None = None
+
+
+class QuizSessionStartResult(BaseModel):
+    """A sitting and the paper to sit, with its answers withheld."""
+
+    session: QuizSessionView
+    quiz: QuizView
+
+
+class MasteryStatus(str, Enum):
+    MASTERED = "Mastered"
+    IN_PROGRESS = "In Progress"
+    NEEDS_REVIEW = "Needs Review"
 
 
 class QuizAttemptRequest(BaseModel):

@@ -33,7 +33,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
@@ -110,6 +110,7 @@ class SessionState:
     elapsed_seconds: int
     attempt_id: int | None
     answered_count: int
+    answers: tuple[QuizAnswerSubmission, ...] = ()
 
 
 def _utc(now: datetime | None) -> datetime:
@@ -148,15 +149,34 @@ class QuizSessionService:
         raw = int((reference - row.started_at).total_seconds())
         return max(0, min(raw, row.time_limit_seconds))
 
+    @staticmethod
+    def _drafts(db: Session, session_id: int) -> tuple[QuizAnswerSubmission, ...]:
+        """Every answer saved so far, in question order.
+
+        Read rather than counted, because a sitting that survives a reload is
+        the whole point of saving drafts: a client that is told only how many
+        answers exist cannot put them back on the screen.
+        """
+        drafts = db.scalars(
+            select(QuizSessionAnswer)
+            .where(QuizSessionAnswer.session_id == session_id)
+            .order_by(QuizSessionAnswer.quiz_question_id)
+        ).all()
+        return tuple(
+            QuizAnswerSubmission(
+                question_id=draft.quiz_question_id,
+                selected_option_index=draft.selected_option_index,
+                text_response=draft.text_response,
+                time_spent_seconds=draft.time_spent_seconds,
+            )
+            for draft in drafts
+        )
+
     @classmethod
     def _state(
         cls, db: Session, row: QuizSession, current_time: datetime
     ) -> SessionState:
-        count = db.scalar(
-            select(func.count())
-            .select_from(QuizSessionAnswer)
-            .where(QuizSessionAnswer.session_id == row.id)
-        )
+        answers = cls._drafts(db, row.id)
         remaining = int((row.expires_at - current_time).total_seconds())
         return SessionState(
             session_id=row.id,
@@ -169,7 +189,8 @@ class QuizSessionService:
             seconds_remaining=max(0, remaining),
             elapsed_seconds=cls._elapsed_seconds(row, current_time),
             attempt_id=row.attempt_id,
-            answered_count=int(count or 0),
+            answered_count=len(answers),
+            answers=answers,
         )
 
     @staticmethod
@@ -382,24 +403,10 @@ class QuizSessionService:
 
     @classmethod
     def _drafts_as_request(cls, db: Session, row: QuizSession) -> QuizAttemptRequest:
-        drafts = db.scalars(
-            select(QuizSessionAnswer)
-            .where(QuizSessionAnswer.session_id == row.id)
-            .order_by(QuizSessionAnswer.quiz_question_id)
-        ).all()
+        drafts = cls._drafts(db, row.id)
         if not drafts:
             raise TimedSessionEmptyError(SESSION_EMPTY)
-        return QuizAttemptRequest(
-            answers=[
-                QuizAnswerSubmission(
-                    question_id=draft.quiz_question_id,
-                    selected_option_index=draft.selected_option_index,
-                    text_response=draft.text_response,
-                    time_spent_seconds=draft.time_spent_seconds,
-                )
-                for draft in drafts
-            ]
-        )
+        return QuizAttemptRequest(answers=list(drafts))
 
     @classmethod
     def submit_session(

@@ -232,7 +232,13 @@ const GENERATION_FAILURES: Record<string, FailureCopy> = {
   },
   provider_rate_limited: {
     title: 'Too many requests right now',
-    message: 'The model is busy. Try again in about a minute — nothing was charged.',
+    message: 'The model is busy. Try again in about a minute. Nothing was charged.',
+    retryable: true,
+    remedy: null,
+  },
+  generation_rate_limited: {
+    title: 'Generation limit reached',
+    message: 'Too many generation requests were made. Try again shortly. No credit was charged.',
     retryable: true,
     remedy: null,
   },
@@ -251,6 +257,14 @@ const GENERATION_FAILURES: Record<string, FailureCopy> = {
   },
 };
 
+function describeGenerationRateLimit(retryAfterSeconds: number | null): string {
+  const retryDelay =
+    retryAfterSeconds === null
+      ? 'Try again shortly.'
+      : `Try again in ${retryAfterSeconds} ${retryAfterSeconds === 1 ? 'second' : 'seconds'}.`;
+  return `Too many generation requests were made. ${retryDelay} No credit was charged.`;
+}
+
 export function describeGenerationError(error: unknown, fallback: string): GenerationFailure {
   const described = describeError(error, fallback);
   const known = described.code ? GENERATION_FAILURES[described.code] : undefined;
@@ -259,7 +273,10 @@ export function describeGenerationError(error: unknown, fallback: string): Gener
     return {
       ...described,
       title: known.title,
-      message: known.message,
+      message:
+        described.code === 'generation_rate_limited'
+          ? describeGenerationRateLimit(error instanceof APIError ? error.retryAfterSeconds : null)
+          : known.message,
       retryable: known.retryable,
       remedy: known.remedy,
     };

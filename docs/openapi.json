@@ -11559,7 +11559,7 @@
         ]
       },
       "post": {
-        "description": "Rank the selected topics into a new immutable plan version.\n\nDeterministic, so no provider is reached and no credit is spent. The\nfeature is still rate limited, which is why it appears in the rate-limit\nkey space and deliberately not in the credit price table.",
+        "description": "Rank the selected topics into a new immutable plan version.\n\nDeterministic, so no provider is reached, no credit is spent, and it does\nnot consume the shared provider-generation budget.",
         "operationId": "create_exam_plan_api_courses__course_id__exam_mode_plans_post",
         "parameters": [
           {
@@ -11607,9 +11607,6 @@
           },
           "422": {
             "description": "Invalid exam plan request"
-          },
-          "429": {
-            "description": "Per-user generation rate limited"
           }
         },
         "security": [

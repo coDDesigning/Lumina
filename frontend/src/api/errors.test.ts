@@ -231,6 +231,41 @@ describe('error description helpers', () => {
       expect(described.retryable).toBe(true);
     });
 
+    it('describes the public generation throttle separately from provider throttling', () => {
+      const generationThrottle = describeGenerationError(
+        new APIError(
+          429,
+          { detail: 'Too many generation requests.' },
+          'generation_rate_limited',
+          '45',
+        ),
+        'Generation failed',
+      );
+      const providerThrottle = describeGenerationError(
+        new APIError(429, { detail: 'Provider throttled.' }, 'provider_rate_limited'),
+        'Generation failed',
+      );
+
+      expect(generationThrottle.title).not.toBe(providerThrottle.title);
+      expect(generationThrottle.message).toBe(
+        'Too many generation requests were made. Try again in 45 seconds. No credit was charged.',
+      );
+      expect(generationThrottle.message).toMatch(/no credit was charged/i);
+      expect(generationThrottle.retryable).toBe(true);
+      expect(providerThrottle.message).toMatch(/model is busy/i);
+    });
+
+    it('uses truthful fallback copy when the generation retry delay is unavailable', () => {
+      const described = describeGenerationError(
+        new APIError(429, { detail: 'Throttled.' }, 'generation_rate_limited', 'invalid'),
+        'Generation failed',
+      );
+
+      expect(described.message).toBe(
+        'Too many generation requests were made. Try again shortly. No credit was charged.',
+      );
+    });
+
     it('keeps whatever the server said for a code it has never seen', () => {
       const described = describeGenerationError(
         new APIError(400, { detail: 'Course has no ready material.' }, 'brand_new_code'),

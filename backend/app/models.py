@@ -394,7 +394,7 @@ class EmailVerificationToken(Base):
 
 class PasswordResetToken(Base):
     """One issued password reset link, stored as a hash of the credential.
-    
+
     Like EmailVerificationToken, the emailed token is a bearer credential, so
     only its SHA-256 digest is kept.
     """

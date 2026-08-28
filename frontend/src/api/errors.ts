@@ -158,6 +158,59 @@ const GENERATION_FAILURES: Record<string, FailureCopy> = {
     retryable: false,
     remedy: null,
   },
+  exam_date_required: {
+    title: 'This course has no exam date',
+    message:
+      'A roadmap needs days to plan across. Set an exam date for the course, then try again.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_date_passed: {
+    title: 'That exam date has passed',
+    message:
+      'A new roadmap needs an exam still to come. Everything you have already saved stays readable.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_topics_required: {
+    title: 'This course has nothing to plan',
+    message:
+      'The course declares no topics and has no quiz history to infer them from. Add the topics it covers, or take a quiz first.',
+    retryable: false,
+    remedy: null,
+  },
+  mock_exam_configuration_invalid: {
+    title: 'That paper cannot be built',
+    message:
+      'The question count, type mix, and topics cannot make a paper together. Every requested topic needs at least one question.',
+    retryable: false,
+    remedy: null,
+  },
+  timed_session_required: {
+    title: 'This paper is sat against a clock',
+    message: 'Start the timed sitting rather than handing answers in directly.',
+    retryable: false,
+    remedy: null,
+  },
+  timed_session_expired: {
+    title: 'Time is up',
+    message:
+      'The deadline has passed, so no further answers can be saved. Everything you saved before it is still there and will be marked.',
+    retryable: false,
+    remedy: null,
+  },
+  timed_session_already_submitted: {
+    title: 'This sitting is already finished',
+    message: 'It has been handed in and marked. Open the result to see how it went.',
+    retryable: false,
+    remedy: null,
+  },
+  timed_session_empty: {
+    title: 'Nothing to mark',
+    message: 'The sitting ended without a single saved answer, so no attempt was recorded.',
+    retryable: false,
+    remedy: null,
+  },
   retrieval_unavailable: {
     title: 'Search is unavailable',
     message: 'Your material could not be searched just now. Nothing was charged.',

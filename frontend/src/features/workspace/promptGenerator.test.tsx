@@ -36,6 +36,7 @@ vi.mock('@/context/AuthContext', () => ({
       email: 'deniz@uni.edu',
       role: 'user',
       is_banned: false,
+      is_email_verified: true,
       credits: null,
       preferred_model: 'ollama:llama3.1',
       education_level: 'unspecified',

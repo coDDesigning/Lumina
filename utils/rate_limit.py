@@ -184,6 +184,28 @@ def rate_limit_register(
     )
 
 
+def rate_limit_verification(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """Per-IP throttle for issuing and redeeming verification links.
+
+    One key covers both the resend and the redeem route, because they are two
+    halves of the same abuse: resends are outbound mail somebody else pays for,
+    and redemptions are guesses at a token. Keying by IP rather than by account
+    is deliberate -- the address in a resend request is unauthenticated and an
+    attacker chooses it freely, so an account key would let them lock a victim
+    out of their own verification email.
+    """
+    enforce(
+        db,
+        f"verification:ip:{client_ip(request)}",
+        window_seconds=settings.rate_limit_verification_window_seconds,
+        limit=settings.rate_limit_verification_max_attempts,
+        error_code="verification_rate_limited",
+    )
+
+
 def rate_limit_generation(feature: str):
     """Per-user-per-feature generation throttle, behind the credit gate.
 

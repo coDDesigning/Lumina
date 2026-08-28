@@ -262,6 +262,12 @@ class User(Base):
     is_banned: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false()
     )
+    # When the address was proven reachable, not merely whether it was. The
+    # instant is what makes the fact auditable, and null is the honest value
+    # for a deployment that never asks -- it claims nothing either way.
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
     education_level: Mapped[str] = mapped_column(
         String(20), default="unspecified", server_default="unspecified"
     )
@@ -331,6 +337,44 @@ class User(Base):
         passive_deletes=True,
         order_by="CreditTransaction.id",
     )
+
+    email_verification_tokens: Mapped[list["EmailVerificationToken"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class EmailVerificationToken(Base):
+    """One issued email-verification link, stored as a hash of the credential.
+
+    The emailed token is a bearer credential, so only its SHA-256 digest is
+    kept: a database read cannot verify anybody, and a leaked backup does not
+    hand over live links.
+
+    Expiry and single use are both properties of this row rather than of the
+    handler. ``expires_at`` is compared in the statement that reads the row, the
+    way every other deadline in this schema is, so nothing has to be scheduled;
+    ``consumed_at`` is set by a guarded update whose ``WHERE`` requires it to
+    still be null, so two clicks on one link cannot both redeem it. Issuing a
+    replacement consumes the outstanding ones, which is what keeps the number of
+    live links per account at one. See docs/authentication.md.
+    """
+
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="email_verification_tokens")
 
 
 class Course(Base):

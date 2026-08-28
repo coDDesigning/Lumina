@@ -130,6 +130,22 @@ run "frontend_delivery_contract" {
   }
 
   assert {
+    condition = strcontains(
+      aws_cloudfront_response_headers_policy.security.security_headers_config[0].content_security_policy[0].content_security_policy,
+      "connect-src 'self';"
+    )
+    error_message = "The SPA must be permitted to call its own origin."
+  }
+
+  assert {
+    condition = alltrue([
+      for directive in split(";", aws_cloudfront_response_headers_policy.security.security_headers_config[0].content_security_policy[0].content_security_policy) :
+      !can(regex("(^|[ ])(https?:|\\*)([ ]|$)", trimspace(directive)))
+    ])
+    error_message = "No content security policy directive may wildcard a scheme or every host; name the exact origins instead."
+  }
+
+  assert {
     condition = one([
       for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule
       if rule.id == "expire-noncurrent-versions"

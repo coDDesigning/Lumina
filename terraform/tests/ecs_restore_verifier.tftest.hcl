@@ -39,6 +39,9 @@ variables {
   migrate_cpu                       = 512
   migrate_memory                    = 1024
   tmpfs_size_bytes                  = 64
+  frontend_domain_name              = "app.example.com"
+  email_from_address                = "no-reply@example.com"
+  smtp_host                         = "smtp.example.com"
   tags                              = { Environment = "production" }
 }
 
@@ -68,5 +71,53 @@ run "read_only_restore_verifier" {
       for secret in jsondecode(aws_ecs_task_definition.hosted_restore.container_definitions)[0].secrets : secret.name
     ]) == toset(["DATABASE_URL"])
     error_message = "The hosted restore container must receive no application secrets."
+  }
+}
+
+run "hosted_tasks_can_deliver_verification_links" {
+  command = plan
+
+  module {
+    source = "./modules/ecs"
+  }
+
+  assert {
+    condition = alltrue([
+      for definition in [
+        aws_ecs_task_definition.api,
+        aws_ecs_task_definition.worker,
+        aws_ecs_task_definition.migrate,
+        aws_ecs_task_definition.hosted_restore,
+      ] :
+      length([
+        for variable in jsondecode(definition.container_definitions)[0].environment : variable
+        if variable.name == "SMTP_HOST" && variable.value != ""
+      ]) == 1
+    ])
+    error_message = "Every hosted task loads the same configuration module, so all of them need the mail settings to start."
+  }
+
+  assert {
+    condition = one([
+      for variable in jsondecode(aws_ecs_task_definition.api.container_definitions)[0].environment : variable.value
+      if variable.name == "APP_PUBLIC_BASE_URL"
+    ]) == "https://app.example.com"
+    error_message = "Verification links must point at the browser-facing frontend host."
+  }
+
+  assert {
+    condition = one([
+      for variable in jsondecode(aws_ecs_task_definition.api.container_definitions)[0].environment : variable.value
+      if variable.name == "EMAIL_VERIFICATION_REQUIRED"
+    ]) == "true"
+    error_message = "Hosted deployments must verify an address before granting credits."
+  }
+
+  assert {
+    condition = length([
+      for secret in jsondecode(aws_ecs_task_definition.api.container_definitions)[0].secrets : secret
+      if secret.name == "SMTP_PASSWORD"
+    ]) == 0
+    error_message = "A relay with no login must not make task definitions depend on an SMTP password parameter."
   }
 }

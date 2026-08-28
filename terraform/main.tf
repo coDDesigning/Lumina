@@ -63,6 +63,7 @@ module "frontend" {
   frontend_dns_record_name   = var.dns_record_name == "" ? var.frontend_domain_name : var.dns_record_name
   api_origin_domain_name     = module.alb.api_origin_domain_name
   frontend_dns_cutover       = var.frontend_dns_cutover
+  additional_connect_src     = var.frontend_additional_connect_src
   alb_dns_name               = module.alb.dns_name
   alb_zone_id                = module.alb.zone_id
   route53_zone_id            = var.route53_zone_id
@@ -139,6 +140,13 @@ module "ecs" {
   tmpfs_size_bytes                    = var.tmpfs_size_bytes
   course_purge_interval_seconds       = var.course_purge_interval_seconds
   embedding_backfill_interval_seconds = var.embedding_backfill_interval_seconds
+  frontend_domain_name                = var.frontend_domain_name
+  email_verification_required         = var.email_verification_required
+  email_from_address                  = var.email_from_address
+  smtp_host                           = var.smtp_host
+  smtp_port                           = var.smtp_port
+  smtp_username                       = var.smtp_username
+  smtp_use_tls                        = var.smtp_use_tls
   tags                                = local.tags
 }
 

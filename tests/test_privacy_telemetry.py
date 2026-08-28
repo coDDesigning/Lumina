@@ -297,6 +297,9 @@ def test_the_observability_field_allowlist_did_not_grow() -> None:
         "http_path",
         "http_status",
         "job_id",
+        "rate_limit_control",
+        "rate_limit_feature",
+        "retry_after_seconds",
         "worker_id",
     )
 
@@ -314,6 +317,7 @@ def test_ai_usage_logger_emits_emf_metrics_without_leaking_content(
             records.append(record)
 
     logger = logging.getLogger("lumina.metrics")
+    logger.setLevel(logging.INFO)
     handler = CapturingHandler()
     logger.addHandler(handler)
     try:

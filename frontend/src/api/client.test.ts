@@ -47,6 +47,22 @@ describe('APIError', () => {
       'An API error occurred',
     );
   });
+
+  it.each([
+    ['0', 0],
+    ['42', 42],
+    [' 7 ', 7],
+    [null, null],
+    ['', null],
+    ['-1', null],
+    ['1.5', null],
+    ['Wed, 21 Oct 2015 07:28:00 GMT', null],
+    ['9007199254740992', null],
+  ])('parses Retry-After %s as %s seconds', (retryAfter, expected) => {
+    const error = new APIError(429, null, 'generation_rate_limited', retryAfter);
+
+    expect(error.retryAfterSeconds).toBe(expected);
+  });
 });
 
 describe('unwrapData', () => {
@@ -192,6 +208,26 @@ describe('apiClient HTTP requests', () => {
       status: 402,
       code: 'insufficient_credits',
       message: 'You do not have enough credits.',
+    });
+  });
+
+  it('exposes Retry-After delta-seconds from an error response', async () => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Too many generation requests.' }), {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Error-Code': 'generation_rate_limited',
+          'Retry-After': '23',
+        },
+      }),
+    );
+
+    await expect(apiClient.post('/courses/1/quiz', {})).rejects.toMatchObject({
+      status: 429,
+      code: 'generation_rate_limited',
+      retryAfterSeconds: 23,
     });
   });
 

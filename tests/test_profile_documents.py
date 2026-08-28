@@ -2,21 +2,15 @@
 
 import io
 from uuid import UUID, uuid4
-import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from backend.app.models import (
     Course,
-    ProfileChunkEmbedding,
     ProfileDocument,
     ProfileDocumentChunk,
     ProfileProcessingJob,
-    User,
 )
 from services.profile_knowledge import (
-    DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
-    assemble_generation_context,
     load_profile_knowledge_for_generation,
 )
 
@@ -72,11 +66,15 @@ def test_upload_duplicate_profile_document(authz_api):
     res2 = client.post(
         "/api/profile-documents",
         headers=headers,
-        files={"document": ("file_renamed.txt", io.BytesIO(file_content), "text/plain")},
+        files={
+            "document": ("file_renamed.txt", io.BytesIO(file_content), "text/plain")
+        },
     )
     assert res2.status_code == 201
     assert res2.json()["data"]["duplicate"] is True
-    assert res2.json()["data"]["document"]["id"] == res1.json()["data"]["document"]["id"]
+    assert (
+        res2.json()["data"]["document"]["id"] == res1.json()["data"]["document"]["id"]
+    )
 
 
 def test_cross_user_isolation(authz_api):
@@ -101,7 +99,9 @@ def test_cross_user_isolation(authz_api):
     res_other_get = client.get(f"/api/profile-documents/{doc_id}", headers=headers2)
     assert res_other_get.status_code == 404
 
-    res_other_delete = client.delete(f"/api/profile-documents/{doc_id}", headers=headers2)
+    res_other_delete = client.delete(
+        f"/api/profile-documents/{doc_id}", headers=headers2
+    )
     assert res_other_delete.status_code == 404
 
 
@@ -137,7 +137,9 @@ def test_course_deletion_never_deletes_profile_documents(authz_api):
 
     # Profile document is completely untouched
     with authz_api.session_factory() as session:
-        doc = session.scalar(select(ProfileDocument).where(ProfileDocument.id == doc_id))
+        doc = session.scalar(
+            select(ProfileDocument).where(ProfileDocument.id == doc_id)
+        )
         assert doc is not None
         assert doc.user_id == user_id
 
@@ -158,8 +160,14 @@ def test_profile_document_retry_and_delete(authz_api):
 
     # Mark job and document as failed directly in DB
     with authz_api.session_factory() as session:
-        doc = session.scalar(select(ProfileDocument).where(ProfileDocument.id == doc_uuid))
-        job = session.scalar(select(ProfileProcessingJob).where(ProfileProcessingJob.document_id == doc_uuid))
+        doc = session.scalar(
+            select(ProfileDocument).where(ProfileDocument.id == doc_uuid)
+        )
+        job = session.scalar(
+            select(ProfileProcessingJob).where(
+                ProfileProcessingJob.document_id == doc_uuid
+            )
+        )
         doc.status = "failed"
         doc.processing_error = "SIMULATED_FAILURE"
         job.status = "failed"
@@ -278,9 +286,19 @@ def test_worker_processes_profile_document_to_ready(authz_api):
 
     # Assert document is now ready and job is succeeded
     with authz_api.session_factory() as session:
-        doc = session.scalar(select(ProfileDocument).where(ProfileDocument.id == doc_id))
-        job = session.scalar(select(ProfileProcessingJob).where(ProfileProcessingJob.document_id == doc_id))
-        chunks = session.scalars(select(ProfileDocumentChunk).where(ProfileDocumentChunk.document_id == doc_id)).all()
+        doc = session.scalar(
+            select(ProfileDocument).where(ProfileDocument.id == doc_id)
+        )
+        job = session.scalar(
+            select(ProfileProcessingJob).where(
+                ProfileProcessingJob.document_id == doc_id
+            )
+        )
+        chunks = session.scalars(
+            select(ProfileDocumentChunk).where(
+                ProfileDocumentChunk.document_id == doc_id
+            )
+        ).all()
         assert doc.status == "ready"
         assert doc.processing_error is None
         assert job.status == "succeeded"
@@ -307,8 +325,14 @@ def test_worker_recovers_expired_profile_job(authz_api):
     # Simulate expired running job with valid lease fields matching check constraint
     past_time = datetime.now(timezone.utc) - timedelta(hours=2)
     with authz_api.session_factory() as session:
-        doc = session.scalar(select(ProfileDocument).where(ProfileDocument.id == doc_id))
-        job = session.scalar(select(ProfileProcessingJob).where(ProfileProcessingJob.document_id == doc_id))
+        doc = session.scalar(
+            select(ProfileDocument).where(ProfileDocument.id == doc_id)
+        )
+        job = session.scalar(
+            select(ProfileProcessingJob).where(
+                ProfileProcessingJob.document_id == doc_id
+            )
+        )
         doc.status = "processing"
         job.status = "running"
         job.attempt_count = 1
@@ -324,7 +348,13 @@ def test_worker_recovers_expired_profile_job(authz_api):
         assert recovered >= 1
 
     with authz_api.session_factory() as session:
-        doc = session.scalar(select(ProfileDocument).where(ProfileDocument.id == doc_id))
-        job = session.scalar(select(ProfileProcessingJob).where(ProfileProcessingJob.document_id == doc_id))
+        doc = session.scalar(
+            select(ProfileDocument).where(ProfileDocument.id == doc_id)
+        )
+        job = session.scalar(
+            select(ProfileProcessingJob).where(
+                ProfileProcessingJob.document_id == doc_id
+            )
+        )
         assert doc.status == "uploaded"
         assert job.status == "queued"

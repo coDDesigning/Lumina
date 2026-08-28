@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.database import SessionLocal
-from backend.app.models import Course, User
+from backend.app.models import Course
 from backend.app.observability import (
     bind_request_id,
     configure_logging,
@@ -170,7 +170,11 @@ def _record_failure(
         or not error.retryable
         or job.attempt_count >= job.max_attempts
     ):
-        scope_info = f"user {job.user_id}" if isinstance(job, ClaimedProfileJob) else f"course {job.course_id}"
+        scope_info = (
+            f"user {job.user_id}"
+            if isinstance(job, ClaimedProfileJob)
+            else f"course {job.course_id}"
+        )
         extra_fields = {
             "event": "permanent_document_failure",
             "job_id": job.id,

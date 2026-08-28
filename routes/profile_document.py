@@ -9,7 +9,6 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
-    Response,
     UploadFile,
     status,
 )
@@ -40,7 +39,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/profile-documents", tags=["Profile Documents"])
 
 
-@router.post("", response_model=BaseResponse[ProfileDocumentUploadResponse], status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=BaseResponse[ProfileDocumentUploadResponse],
+    status_code=status.HTTP_201_CREATED,
+)
 def upload_profile_document(
     document: Annotated[UploadFile, File(...)],
     current_user: Annotated[UserResponse, Depends(get_current_user)],
@@ -108,7 +111,9 @@ def list_profile_documents(
     )
 
 
-@router.get("/{document_id}", response_model=BaseResponse[ProfileDocumentStatusResponse])
+@router.get(
+    "/{document_id}", response_model=BaseResponse[ProfileDocumentStatusResponse]
+)
 def get_profile_document_status(
     document_id: UUID,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
@@ -127,12 +132,16 @@ def get_profile_document_status(
         message="Profile document status retrieved.",
         data=ProfileDocumentStatusResponse(
             document=ProfileDocumentResponse.model_validate(doc),
-            processing_job=ProfileProcessingJobResponse.model_validate(job) if job else None,
+            processing_job=ProfileProcessingJobResponse.model_validate(job)
+            if job
+            else None,
         ),
     )
 
 
-@router.post("/{document_id}/retry", response_model=BaseResponse[ProfileDocumentStatusResponse])
+@router.post(
+    "/{document_id}/retry", response_model=BaseResponse[ProfileDocumentStatusResponse]
+)
 def retry_profile_document(
     document_id: UUID,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
@@ -140,7 +149,9 @@ def retry_profile_document(
 ) -> BaseResponse[ProfileDocumentStatusResponse]:
     """Retry extraction for a failed profile document."""
     try:
-        doc, job = ProfileDocumentService.retry_document(db, current_user.id, document_id)
+        doc, job = ProfileDocumentService.retry_document(
+            db, current_user.id, document_id
+        )
         return BaseResponse(
             success=True,
             data=ProfileDocumentStatusResponse(
@@ -165,7 +176,9 @@ def delete_profile_document(
 ) -> BaseResponse[dict[str, str]]:
     """Permanently delete a profile document, its chunks, and stored embeddings."""
     try:
-        ProfileDocumentService.delete_document(db, storage, current_user.id, document_id)
+        ProfileDocumentService.delete_document(
+            db, storage, current_user.id, document_id
+        )
         return BaseResponse(
             success=True,
             data={"id": str(document_id)},

@@ -631,7 +631,6 @@ class UploadedDocument(Base):
         return "partial"
 
 
-
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
     __table_args__ = (
@@ -1773,7 +1772,7 @@ class QuizAttemptAnswer(Base):
     grading_status: Mapped[str] = mapped_column(
         String(20), default="not_required", server_default="not_required"
     )
-    
+
     grading_model: Mapped[str | None] = mapped_column(String(150), nullable=True)
 
     attempt: Mapped["QuizAttempt"] = relationship(back_populates="answers")
@@ -2074,7 +2073,9 @@ class ProfileKnowledge(Base):
 class ProfileKnowledgeEmbedding(Base):
     __tablename__ = "profile_knowledge_embeddings"
     __table_args__ = (
-        UniqueConstraint("knowledge_id", name="uq_profile_knowledge_embeddings_knowledge_id"),
+        UniqueConstraint(
+            "knowledge_id", name="uq_profile_knowledge_embeddings_knowledge_id"
+        ),
         CheckConstraint(
             f"dimensions = {EMBEDDING_DIMENSIONS}",
             name="dimensions_supported",
@@ -2103,7 +2104,9 @@ class ProfileKnowledgeEmbedding(Base):
         UTCDateTime(), server_default=func.now(), onupdate=func.now()
     )
 
-    knowledge: Mapped["ProfileKnowledge"] = relationship(back_populates="embedding_record")
+    knowledge: Mapped["ProfileKnowledge"] = relationship(
+        back_populates="embedding_record"
+    )
 
 
 class AiUsageLog(Base):
@@ -2279,8 +2282,12 @@ class SpacedRepetitionState(Base):
     interval_days: Mapped[float] = mapped_column(Float, default=0.0)
     ease_factor: Mapped[float] = mapped_column(Float, default=2.5)
     review_count: Mapped[int] = mapped_column(Integer, default=0)
-    next_review_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-    last_reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    next_review_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
 
 
 class ExamPlan(Base):
@@ -2381,7 +2388,9 @@ class ProfileDocument(Base):
 class ProfileDocumentChunk(Base):
     __tablename__ = "profile_document_chunks"
     __table_args__ = (
-        UniqueConstraint("document_id", "chunk_index", name="uq_profile_chunk_doc_index"),
+        UniqueConstraint(
+            "document_id", "chunk_index", name="uq_profile_chunk_doc_index"
+        ),
         UniqueConstraint(
             "id",
             "document_id",
@@ -2389,7 +2398,8 @@ class ProfileDocumentChunk(Base):
             name="uq_profile_document_chunks_id_doc_user",
         ),
         CheckConstraint(
-            "page_number IS NULL OR page_number >= 1", name="profile_chunk_page_number_positive"
+            "page_number IS NULL OR page_number >= 1",
+            name="profile_chunk_page_number_positive",
         ),
         CheckConstraint(
             "(page_number IS NULL AND end_page_number IS NULL) OR "
@@ -2495,7 +2505,9 @@ class ProfileChunkEmbedding(Base):
         UTCDateTime(), server_default=func.now(), onupdate=func.now()
     )
 
-    chunk: Mapped["ProfileDocumentChunk"] = relationship(back_populates="embedding_record")
+    chunk: Mapped["ProfileDocumentChunk"] = relationship(
+        back_populates="embedding_record"
+    )
 
 
 class ProfileDocumentPage(Base):
@@ -2508,7 +2520,8 @@ class ProfileDocumentPage(Base):
         ),
         CheckConstraint("content_index >= 0", name="profile_content_index_nonnegative"),
         CheckConstraint(
-            "page_number IS NULL OR page_number >= 1", name="profile_page_number_positive"
+            "page_number IS NULL OR page_number >= 1",
+            name="profile_page_number_positive",
         ),
         CheckConstraint(
             "raw_extraction_method IS NULL OR "
@@ -2593,7 +2606,9 @@ class ProfileDocumentPage(Base):
 class ProfileDocumentVisual(Base):
     __tablename__ = "profile_document_visuals"
     __table_args__ = (
-        UniqueConstraint("page_id", "visual_index", name="uq_profile_visual_page_index"),
+        UniqueConstraint(
+            "page_id", "visual_index", name="uq_profile_visual_page_index"
+        ),
         CheckConstraint("visual_index >= 0", name="profile_visual_index_nonnegative"),
         CheckConstraint(
             "visual_type IN "
@@ -2601,7 +2616,10 @@ class ProfileDocumentVisual(Base):
             "'other')",
             name="profile_visual_type_valid",
         ),
-        CheckConstraint("source IN ('image', 'table', 'drawing')", name="profile_visual_source_valid"),
+        CheckConstraint(
+            "source IN ('image', 'table', 'drawing')",
+            name="profile_visual_source_valid",
+        ),
         CheckConstraint(
             "bbox_x0 >= 0 AND bbox_y0 >= 0 AND bbox_x1 > bbox_x0 AND bbox_y1 > bbox_y0",
             name="profile_bbox_valid",
@@ -2767,4 +2785,3 @@ class ProfileProcessingJob(Base):
     )
 
     document: Mapped["ProfileDocument"] = relationship(back_populates="processing_jobs")
-

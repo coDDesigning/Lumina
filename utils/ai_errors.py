@@ -101,6 +101,8 @@ class ExamDateNotFutureError(RuntimeError):
     Only the first plan is gated. An existing plan stays readable forever, as
     a study resource does not expire with the exam it was built for.
     """
+
+
 class ExamPlanUnavailableError(RuntimeError):
     """A course cannot be planned from in the state it is currently in.
 

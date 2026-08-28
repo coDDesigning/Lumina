@@ -260,17 +260,23 @@ def processing_queue_metrics(
     p_row = session.execute(
         select(
             func.coalesce(
-                func.sum(case((ProfileProcessingJob.status == JOB_STATUS_QUEUED, 1), else_=0)),
-                0,
-            ),
-            func.coalesce(
                 func.sum(
-                    case((ProfileProcessingJob.status == JOB_STATUS_RUNNING, 1), else_=0)
+                    case((ProfileProcessingJob.status == JOB_STATUS_QUEUED, 1), else_=0)
                 ),
                 0,
             ),
             func.coalesce(
-                func.sum(case((ProfileProcessingJob.status == JOB_STATUS_FAILED, 1), else_=0)),
+                func.sum(
+                    case(
+                        (ProfileProcessingJob.status == JOB_STATUS_RUNNING, 1), else_=0
+                    )
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case((ProfileProcessingJob.status == JOB_STATUS_FAILED, 1), else_=0)
+                ),
                 0,
             ),
             func.min(
@@ -1072,7 +1078,9 @@ def recover_expired_jobs(
     if len(rows) < limit:
         profile_statement = (
             select(ProfileProcessingJob, ProfileDocument)
-            .join(ProfileDocument, ProfileDocument.id == ProfileProcessingJob.document_id)
+            .join(
+                ProfileDocument, ProfileDocument.id == ProfileProcessingJob.document_id
+            )
             .where(
                 ProfileProcessingJob.status == JOB_STATUS_RUNNING,
                 ProfileProcessingJob.lease_expires_at <= recovered_at,
@@ -1081,7 +1089,9 @@ def recover_expired_jobs(
             .limit(limit - len(rows))
         )
         if session.get_bind().dialect.name == "postgresql":
-            profile_statement = profile_statement.with_for_update(of=ProfileProcessingJob, skip_locked=True)
+            profile_statement = profile_statement.with_for_update(
+                of=ProfileProcessingJob, skip_locked=True
+            )
         profile_rows = session.execute(profile_statement).all()
 
     if not rows and not profile_rows:
@@ -1259,14 +1269,18 @@ def _lock_profile_job_and_document(
     session: Session,
     job_id: int,
 ) -> tuple[ProfileProcessingJob | None, ProfileDocument | None]:
-    job_statement = select(ProfileProcessingJob).where(ProfileProcessingJob.id == job_id)
+    job_statement = select(ProfileProcessingJob).where(
+        ProfileProcessingJob.id == job_id
+    )
     if session.get_bind().dialect.name == "postgresql":
         job_statement = job_statement.with_for_update(of=ProfileProcessingJob)
     job = session.scalar(job_statement)
     if job is None:
         return None, None
 
-    document_statement = select(ProfileDocument).where(ProfileDocument.id == job.document_id)
+    document_statement = select(ProfileDocument).where(
+        ProfileDocument.id == job.document_id
+    )
     if session.get_bind().dialect.name == "postgresql":
         document_statement = document_statement.with_for_update(of=ProfileDocument)
     document = session.scalar(document_statement)
@@ -1585,7 +1599,9 @@ def replace_profile_document_pages(
         return False
 
     session.execute(
-        delete(ProfileDocumentPage).where(ProfileDocumentPage.document_id == job.document_id)
+        delete(ProfileDocumentPage).where(
+            ProfileDocumentPage.document_id == job.document_id
+        )
     )
     session.add_all(
         ProfileDocumentPage(
@@ -1600,9 +1616,7 @@ def replace_profile_document_pages(
             has_images=page.has_images,
             needs_ocr=page.needs_ocr,
             raw_needs_ocr=(
-                page.raw_needs_ocr
-                if page.raw_needs_ocr is not None
-                else page.needs_ocr
+                page.raw_needs_ocr if page.raw_needs_ocr is not None else page.needs_ocr
             ),
             ocr_status=page.ocr_status or "not_required",
             has_visual_content=page.has_visual_content,
@@ -1681,11 +1695,15 @@ def complete_profile_job(
     _clear_profile_lease(job)
 
     session.execute(
-        delete(ProfileDocumentChunk).where(ProfileDocumentChunk.document_id == job.document_id)
+        delete(ProfileDocumentChunk).where(
+            ProfileDocumentChunk.document_id == job.document_id
+        )
     )
     if pages is not None:
         session.execute(
-            delete(ProfileDocumentPage).where(ProfileDocumentPage.document_id == job.document_id)
+            delete(ProfileDocumentPage).where(
+                ProfileDocumentPage.document_id == job.document_id
+            )
         )
         session.add_all(
             ProfileDocumentPage(
@@ -1851,7 +1869,9 @@ def retry_failed_profile_job(
     job = session.scalar(job_statement)
     if job is None:
         session.rollback()
-        raise ProcessingJobStateError("No processing job exists for this profile document")
+        raise ProcessingJobStateError(
+            "No processing job exists for this profile document"
+        )
 
     document_statement = select(ProfileDocument).where(
         ProfileDocument.id == document_id,

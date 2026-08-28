@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Trash2 } from 'lucide-react';
 import { courseHue } from '@/lib/courseLight';
 import { Badge } from './Badge';
+import { Brandmark, BrandLockup } from './Brandmark';
 import { Button } from './Button';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Dialog } from './Dialog';
@@ -15,6 +16,21 @@ import { Checkbox, Switch } from './Checkbox';
 import { Tabs } from './Tabs';
 import { ToastProvider } from './ToastProvider';
 import { useToast } from './toastContext';
+
+describe('Brandmark', () => {
+  it('renders the brand mark image with aria-hidden', () => {
+    const { container } = render(<Brandmark size="md" />);
+    const img = container.querySelector('img');
+    expect(img).toBeInTheDocument();
+    expect(img).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('renders BrandLockup with mark and wordmark images', () => {
+    render(<BrandLockup size="sm" />);
+    const wordmark = screen.getByRole('img', { name: 'Lumina' });
+    expect(wordmark).toBeInTheDocument();
+  });
+});
 
 describe('Button', () => {
   it('stays focusable while it works so the press does not lose focus', async () => {

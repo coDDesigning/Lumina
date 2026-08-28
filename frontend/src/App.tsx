@@ -7,6 +7,10 @@ import CourseSettingsPage from './features/courses/CourseSettingsPage'
 import CoursesPage from './features/courses/CoursesPage'
 import ActivityPage from './features/activity/ActivityPage'
 import ProgressPage from './features/workspace/ProgressPage'
+import ExamModePage from './features/examMode/ExamModePage'
+import ExamModePlanPage from './features/examMode/ExamModePlanPage'
+import ExamModeComparePage from './features/examMode/ExamModeComparePage'
+import ExamModeTopicPage from './features/examMode/ExamModeTopicPage'
 import QuizAttemptPage from './features/study/quiz/QuizAttemptPage'
 import QuizResultsPage from './features/study/quiz/QuizResultsPage'
 import WorkspacePage from './features/workspace/WorkspacePage'
@@ -380,6 +384,51 @@ function App() {
               workspaces={workspaces}
               onSelect={selectWorkspace}
               render={(workspace) => <ProgressPage key={workspace.id} workspace={workspace} />}
+            />
+          }
+        />
+        {/*
+          Exam Mode is course-scoped and every persistent identity is in the
+          URL, so a saved plan, a comparison, and a topic all open cold.
+          Most specific first: a plan's own path must not swallow its children.
+        */}
+        <Route
+          path="/courses/:courseId/exam-mode"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              render={(workspace) => <ExamModePage key={workspace.id} workspace={workspace} />}
+            />
+          }
+        />
+        <Route
+          path="/courses/:courseId/exam-mode/plans/:planId/compare/:otherPlanId"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              render={(workspace) => <ExamModeComparePage workspace={workspace} />}
+            />
+          }
+        />
+        <Route
+          path="/courses/:courseId/exam-mode/plans/:planId/topics/:topicKey"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              render={(workspace) => <ExamModeTopicPage workspace={workspace} />}
+            />
+          }
+        />
+        <Route
+          path="/courses/:courseId/exam-mode/plans/:planId"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              render={(workspace) => <ExamModePlanPage workspace={workspace} />}
             />
           }
         />

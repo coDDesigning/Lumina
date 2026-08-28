@@ -54,7 +54,7 @@ Search for `exception_type` matching `TextGenerationConnectionError`, `TextGener
 
 4. **Verify Application Readiness:**
    ```bash
-   curl -f http://127.0.0.1:8000/health/ready
+   curl -f http://127.0.0.1:8000/health/ready   # or http://127.0.0.1:8080/api/health/ready through the frontend
    ```
 
 ### Hosted Environment Multi-Provider Failover (Gemini / OpenAI / Claude)
@@ -102,7 +102,7 @@ Search for `exception_type` matching `TextGenerationConnectionError`, `TextGener
 
 1. **Verify Health Probes:**
    ```bash
-   curl -f http://127.0.0.1:8000/health/ready
+   curl -f http://127.0.0.1:8000/health/ready   # or http://127.0.0.1:8080/api/health/ready through the frontend
    ```
    Expected: HTTP 200 `{"status": "ready"}`.
 

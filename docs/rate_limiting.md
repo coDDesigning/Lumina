@@ -172,3 +172,10 @@ trusting only `127.0.0.1`; operators placing a reverse proxy in front of the
 API container must set `FORWARDED_ALLOW_IPS` to that proxy's CIDR. The
 application never parses `X-Forwarded-For` itself — trusting untrusted headers
 would allow spoofing.
+
+The self-hosted `frontend` service is exactly such a reverse proxy: it sets
+`X-Forwarded-For`, but the API only believes it when the proxy's address falls
+inside `FORWARDED_ALLOW_IPS`. Left at a value that does not cover the Compose
+network, every browser shares one per-IP bucket for login, registration, and
+verification, so one person mistyping a password throttles sign-in for
+everyone. The per-account lockout is unaffected, since it does not key on IP.

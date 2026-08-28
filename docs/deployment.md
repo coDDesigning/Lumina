@@ -27,19 +27,83 @@ The production image:
 - keeps application files root-owned and non-writable; and
 - uses an inert entrypoint that never applies migrations.
 
-Compose runs three roles from that image in both topologies:
+Compose runs three roles from that image in both topologies, plus a `frontend`
+role built from `Dockerfile.frontend` as a separate image:
 
 | Service | Responsibility | Expected state |
 | --- | --- | --- |
 | `migrate` | Apply `alembic upgrade head` once before runtime roles start | Exited with code 0 |
 | `api` | Serve HTTP and readiness probes | Running and healthy |
 | `worker` | Claim and process durable document jobs | Running and healthy |
+| `frontend` | Serve the built interface and proxy `/api` to `api` under one origin | Running and healthy |
+
+Four further services exist under the `maintenance` profile and are run on
+demand rather than left running: `backup`, `restore`, `course-purge`, and
+`embedding-backfill`.
 
 All roles run without Linux capabilities, with `no-new-privileges`, a read-only
 root filesystem, and a bounded temporary filesystem. Only `/data` is
-persistently writable. The API binds to host loopback by default; put a trusted
-reverse proxy in front of it instead of publishing the application port
-directly.
+persistently writable. Both published ports bind to host loopback by default.
+
+`frontend` is the entrypoint a browser uses, and it is the only one that has to
+be reachable: it serves the interface and proxies `/api` to `api` under a single
+origin, which is why `VITE_API_BASE_URL=/api` needs no CORS configuration. It
+publishes `${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-8080}:8080`. `api`
+continues to publish `${BACKEND_PORT:-8000}` for direct access, probes, and the
+runbook commands in this repository; an operator who does not want it exposed
+can remove that mapping without affecting the interface.
+
+### Self-hosted routing contract
+
+The `frontend` service is Nginx serving the built interface and proxying the
+API under one browser origin. It mirrors the hosted CloudFront behaviours in
+`terraform/modules/frontend/`, and the two are kept deliberately in step:
+
+| Request | Handling |
+| --- | --- |
+| `/api`, `/api/*` | Proxied to `api:8000` with the prefix preserved and no caching |
+| `/api/health/live`, `/api/health/ready` | Aliased onto the application's root-level probes |
+| `/assets/*` | Served immutably for a year; a missing file is a real 404 |
+| Extensionless `GET`/`HEAD` | Served `index.html`, so a hard refresh on a nested route works |
+| Anything else | A real 404, or 405 for a non-`GET`/`HEAD` method |
+
+The `/api` prefix is never rewritten. `backend/app/request_size.py` recognises a
+document upload by matching the request path, so stripping the prefix would
+reclassify a 50 MiB upload as an ordinary 1 MiB request.
+
+There is deliberately no distribution-wide error fallback and
+`proxy_intercept_errors` is off, so an unknown API route keeps its status, its
+JSON body, `X-Error-Code`, and `X-Request-ID` instead of returning `index.html`.
+
+Static responses carry the same CSP, `X-Content-Type-Options`,
+`X-Frame-Options`, and `Referrer-Policy` as the hosted distribution, minus
+`upgrade-insecure-requests` and HSTS: the default entrypoint is plain HTTP, and
+on `http://<lan-address>:8080` those two directives would make a browser refuse
+every subresource. A TLS terminator in front of this container supplies both,
+and is also where `SECURITY_HSTS_ENABLED=true` belongs.
+
+The application stays authoritative for every size limit it publishes. The
+proxy sets `client_max_body_size` on `/api` only as an outer ceiling, above
+`MAX_UPLOAD_SIZE_BYTES` plus the multipart overhead, so an oversized upload
+still reaches the application and receives its own JSON refusal rather than an
+Nginx error page. That ceiling is a literal in `ops/nginx/default.conf` because
+the configuration is baked into a read-only image; raising
+`MAX_UPLOAD_SIZE_BYTES` past it therefore also requires editing that file and
+rebuilding the frontend image.
+`tests/test_frontend_proxy_config.py` fails if the two drift apart.
+
+The upstream address is resolved per request through Docker's embedded DNS
+rather than once at startup, so recreating `api` does not strand the proxy on a
+stale address.
+
+`frontend` writes nothing durable. It is not part of the backup set and
+`ops/self_hosted_backup.sh` does not stop it; while that script has `api`
+stopped, the interface still loads and its API calls fail until `api` returns.
+
+Because every browser request now reaches the API from the proxy's address, the
+per-IP login and registration limits share one bucket for all users unless
+forwarded headers are trusted. See the proxy-trust limitation in
+`docs/rate_limiting.md`.
 
 ## First deployment
 
@@ -84,6 +148,7 @@ S3-compatible object store, using the same pinned production image:
 | `migrate` | Apply `alembic upgrade head` once | Exited with code 0 |
 | `api` | Serve HTTP and readiness probes | Running and healthy |
 | `worker` | Claim and process durable document jobs | Running and healthy |
+| `frontend` | Serve the built interface and proxy `/api` to `api` under one origin | Running and healthy |
 
 The stack requires `COMPOSE_PROJECT_NAME`, `STORAGE_NAMESPACE`,
 `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `JWT_SECRET_KEY`,
@@ -124,6 +189,10 @@ image (`Dockerfile`) and runs the same three roles:
 | Route53 | Optional frontend A/AAAA aliases to CloudFront and API-origin A alias to the ALB |
 
 ### Hosted frontend decision and routing contract
+
+This section is about AWS production. It rejects an Nginx sidecar *there*; it
+does not apply to Compose, where the `frontend` service described under
+"Self-hosted routing contract" below is the supported entrypoint.
 
 Hosted production uses private S3 plus CloudFront rather than an Nginx ECS
 sidecar. Static delivery therefore does not consume API/worker capacity or add
@@ -494,3 +563,12 @@ identifiers, and exception details.
 Use liveness only to recycle an unresponsive process. Route traffic only while
 readiness succeeds. Keep both endpoints on a trusted probe network instead of
 exposing them through public ingress.
+
+Compose reaches the same two probes at `/api/health/live` and
+`/api/health/ready` through the `frontend` service, which is what the quickstart
+in `README.md` checks. That entrypoint binds to loopback by default, so it is
+still a trusted path; an operator who changes `LUMINA_BIND_ADDRESS` or places a
+public ingress in front must restrict `/api/health/*` at that edge. The `api`
+container probes itself directly, and the `frontend` container probes its own
+`/healthz`, which answers without reaching the API so that stopping `api` for a
+backup does not mark a working proxy unhealthy.

@@ -185,9 +185,10 @@ def logout_user(
         payload = decode_access_token(token)
         jti = payload.get("jti")
         exp = payload.get("exp")
-        
+
         if jti and exp:
             from datetime import datetime, timezone
+
             expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
             subject = payload.get("sub")
             user_id = None
@@ -327,5 +328,5 @@ def confirm_password_reset(
         ) from None
 
     UserService.force_change_password(db, user, payload.new_password)
-    
+
     return {"message": "Password has been reset successfully. You can now log in."}

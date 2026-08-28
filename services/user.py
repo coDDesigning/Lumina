@@ -226,7 +226,7 @@ class UserService:
     @staticmethod
     def force_change_password(db: Session, user: User, new_password: str) -> None:
         """Replace a user's password without requiring the current one.
-        
+
         Used by the password reset flow. Invalidates all existing sessions.
         """
         try:

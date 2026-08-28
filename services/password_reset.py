@@ -1,8 +1,8 @@
 """Issuing and redeeming password reset links.
 
-This module provides the ability to securely issue single-use password reset 
-links and redeem them to rotate credentials. It shares its design with the 
-email verification flow: tokens are bearer credentials stored only as a digest, 
+This module provides the ability to securely issue single-use password reset
+links and redeem them to rotate credentials. It shares its design with the
+email verification flow: tokens are bearer credentials stored only as a digest,
 and redemption is a single guarded transaction using `consumed_at`.
 
 See docs/authentication.md.
@@ -28,7 +28,7 @@ RESET_SUBJECT = "Reset your Lumina password"
 
 class InvalidPasswordResetTokenError(RuntimeError):
     """The presented token is unknown, already used, or past its expiry.
-    
+
     One error for all three on purpose.
     """
 
@@ -60,7 +60,7 @@ class PasswordResetService:
     @staticmethod
     def issue_token(db: Session, user: User) -> str:
         """Mint one token for ``user`` and return the plaintext exactly once.
-        
+
         Outstanding tokens are consumed first.
         """
         now = datetime.now(timezone.utc)
@@ -104,39 +104,40 @@ class PasswordResetService:
         """Mint a token, commit it, then try to deliver it."""
         token = PasswordResetService.issue_token(db, user)
         db.commit()
-        PasswordResetService.send_reset_email(
-            user, token, sender or get_email_sender()
-        )
+        PasswordResetService.send_reset_email(user, token, sender or get_email_sender())
 
     @staticmethod
     def verify_token(db: Session, token: str) -> User:
         """Verify the token and return the associated user, without consuming it.
-        
+
         This allows the frontend to check if a token is still valid before
         prompting the user for a new password.
         """
         now = datetime.now(timezone.utc)
         user_id = db.scalar(
-            select(PasswordResetToken.user_id)
-            .where(
+            select(PasswordResetToken.user_id).where(
                 PasswordResetToken.token_hash == _digest(token),
                 PasswordResetToken.consumed_at.is_(None),
                 PasswordResetToken.expires_at > now,
             )
         )
         if user_id is None:
-            raise InvalidPasswordResetTokenError("Invalid or expired password reset link.")
-            
+            raise InvalidPasswordResetTokenError(
+                "Invalid or expired password reset link."
+            )
+
         user = db.scalar(select(User).where(User.id == user_id))
         if user is None:
-            raise InvalidPasswordResetTokenError("Invalid or expired password reset link.")
-            
+            raise InvalidPasswordResetTokenError(
+                "Invalid or expired password reset link."
+            )
+
         return user
 
     @staticmethod
     def redeem(db: Session, token: str) -> User:
         """Consume ``token`` and return the associated user.
-        
+
         It is the caller's responsibility to change the password and commit.
         """
         now = datetime.now(timezone.utc)
@@ -153,11 +154,15 @@ class PasswordResetService:
         )
         if claimed is None:
             db.rollback()
-            raise InvalidPasswordResetTokenError("Invalid or expired password reset link.")
+            raise InvalidPasswordResetTokenError(
+                "Invalid or expired password reset link."
+            )
 
         user = db.scalar(select(User).where(User.id == claimed).with_for_update())
         if user is None:
             db.rollback()
-            raise InvalidPasswordResetTokenError("Invalid or expired password reset link.")
+            raise InvalidPasswordResetTokenError(
+                "Invalid or expired password reset link."
+            )
 
         return user

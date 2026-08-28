@@ -394,7 +394,7 @@ class EmailVerificationToken(Base):
 
 class PasswordResetToken(Base):
     """One issued password reset link, stored as a hash of the credential.
-    
+
     Like EmailVerificationToken, the emailed token is a bearer credential, so
     only its SHA-256 digest is kept.
     """
@@ -2232,6 +2232,7 @@ class AiUsageLog(Base):
         Index("ix_ai_usage_logs_course_created", "course_id", "created_at"),
         Index("ix_ai_usage_logs_type_created", "generation_type", "created_at"),
         Index("ix_ai_usage_logs_success_created", "success", "created_at"),
+        Index("ix_ai_usage_logs_created_id", "created_at", "id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

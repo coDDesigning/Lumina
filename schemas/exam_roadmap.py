@@ -41,6 +41,7 @@ class RoadmapHorizon(str, Enum):
 class TopicSource(str, Enum):
     SYLLABUS = "syllabus"
     QUIZ = "quiz"
+    EXAM_PLAN = "exam_plan"
 
 
 class TopicMaterialStatus(str, Enum):
@@ -66,8 +67,22 @@ class ExamRoadmapRequest(BaseModel):
 
     The exam date is deliberately not a request field: the course owns it, and a
     plan a student can act on is the one their course date produces.
+
+    ``plan_output_id`` names an Exam Mode plan to schedule instead of the
+    course's declared topics. The plan's own ranking is preserved rather than
+    recomputed, because a student who reviewed and prioritised those topics has
+    already decided what matters and a second engine disagreeing with the first
+    would be two answers to one question.
     """
 
+    plan_output_id: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "The exam plan whose ranked topics to schedule, or omit to schedule "
+            "the course's own declared topics"
+        ),
+    )
     max_topics_per_day: int = Field(default=3, ge=1, le=6)
     include_materials: bool = Field(
         default=True,
@@ -99,11 +114,12 @@ class RankedTopicView(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     topic: str
+    topic_key: str | None = None
     source: TopicSource
     syllabus_position: int | None = None
     importance: float
     mastery_percentage: int | None = None
-    questions_answered: int = 0
+    questions_answered: int | None = 0
     priority: float
 
 
@@ -113,13 +129,14 @@ class RoadmapTopic(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     topic: str
+    topic_key: str | None = None
     goal: str
     pass_number: int = Field(ge=1)
     source: TopicSource
     syllabus_position: int | None = None
     importance: float
     mastery_percentage: int | None = None
-    questions_answered: int = 0
+    questions_answered: int | None = 0
     priority: float
     material_status: TopicMaterialStatus
     materials: list[RoadmapMaterial] = Field(default_factory=list)
@@ -164,6 +181,7 @@ class ExamRoadmap(BaseModel):
     attempts_considered: int = 0
     roadmap_version: int = Field(ge=1)
     adapted_from_output_id: int | None = None
+    plan_output_id: int | None = None
     ranked_topics: list[RankedTopicView] = Field(default_factory=list)
     days: list[RoadmapDay] = Field(default_factory=list)
     deferred_topics: list[DeferredTopic] = Field(default_factory=list)
@@ -186,6 +204,7 @@ class ExamRoadmapGenerationSettings(BaseModel):
     retrieval_min_similarity: float
     roadmap_version: int
     adapted_from_output_id: int | None = None
+    plan_output_id: int | None = None
 
 
 class ExamRoadmapGenerationContext(BaseModel):

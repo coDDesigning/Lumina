@@ -151,12 +151,16 @@ DEFAULT_RATE_LIMIT_LOCKOUT_BASE_SECONDS = 30
 DEFAULT_RATE_LIMIT_LOCKOUT_MAX_SECONDS = 1800
 DEFAULT_RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS = 5
 DEFAULT_RATE_LIMIT_VERIFICATION_WINDOW_SECONDS = 3600
+DEFAULT_RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS = 5
+DEFAULT_RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS = 3600
 
 # Authentication hardening. See docs/authentication.md.
 DEFAULT_PASSWORD_MIN_LENGTH = 12
 # bcrypt truncates at 72 bytes, so a longer minimum could not be enforced.
 MAX_PASSWORD_MIN_LENGTH = 64
 DEFAULT_EMAIL_VERIFICATION_TOKEN_TTL_HOURS = 24
+DEFAULT_ACCESS_TOKEN_EXPIRE_MINUTES = 60
+DEFAULT_PASSWORD_RESET_TOKEN_TTL_MINUTES = 60
 DEFAULT_SMTP_PORT = 587
 DEFAULT_SMTP_TIMEOUT_SECONDS = 10
 DEFAULT_HSTS_MAX_AGE_SECONDS = 31536000
@@ -305,11 +309,15 @@ class Settings:
     rate_limit_lockout_max_seconds: int
     rate_limit_verification_max_attempts: int
     rate_limit_verification_window_seconds: int
+    rate_limit_password_reset_max_attempts: int
+    rate_limit_password_reset_window_seconds: int
 
     # Authentication hardening. See docs/authentication.md.
     password_min_length: int
     email_verification_required: bool
     email_verification_token_ttl_hours: int
+    access_token_expire_minutes: int
+    password_reset_token_ttl_minutes: int
     app_public_base_url: str | None
     email_from_address: str | None
     smtp_host: str | None
@@ -1034,6 +1042,14 @@ def load_settings() -> Settings:
         "RATE_LIMIT_VERIFICATION_WINDOW_SECONDS",
         DEFAULT_RATE_LIMIT_VERIFICATION_WINDOW_SECONDS,
     )
+    rate_limit_password_reset_max_attempts = _positive_integer_setting(
+        "RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS",
+        DEFAULT_RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS,
+    )
+    rate_limit_password_reset_window_seconds = _positive_integer_setting(
+        "RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS",
+        DEFAULT_RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS,
+    )
 
     password_min_length = _bounded_positive_integer_setting(
         "PASSWORD_MIN_LENGTH",
@@ -1054,6 +1070,18 @@ def load_settings() -> Settings:
         DEFAULT_EMAIL_VERIFICATION_TOKEN_TTL_HOURS,
         minimum=1,
         maximum=168,
+    )
+    access_token_expire_minutes = _bounded_positive_integer_setting(
+        "ACCESS_TOKEN_EXPIRE_MINUTES",
+        DEFAULT_ACCESS_TOKEN_EXPIRE_MINUTES,
+        minimum=1,
+        maximum=60 * 24 * 365,
+    )
+    password_reset_token_ttl_minutes = _bounded_positive_integer_setting(
+        "PASSWORD_RESET_TOKEN_TTL_MINUTES",
+        DEFAULT_PASSWORD_RESET_TOKEN_TTL_MINUTES,
+        minimum=1,
+        maximum=60 * 24 * 7,
     )
     app_public_base_url = os.getenv("APP_PUBLIC_BASE_URL", "").strip() or None
     if app_public_base_url is not None:
@@ -1293,9 +1321,13 @@ def load_settings() -> Settings:
         rate_limit_lockout_max_seconds=rate_limit_lockout_max_seconds,
         rate_limit_verification_max_attempts=rate_limit_verification_max_attempts,
         rate_limit_verification_window_seconds=rate_limit_verification_window_seconds,
+        rate_limit_password_reset_max_attempts=rate_limit_password_reset_max_attempts,
+        rate_limit_password_reset_window_seconds=rate_limit_password_reset_window_seconds,
         password_min_length=password_min_length,
         email_verification_required=email_verification_required,
         email_verification_token_ttl_hours=email_verification_token_ttl_hours,
+        access_token_expire_minutes=access_token_expire_minutes,
+        password_reset_token_ttl_minutes=password_reset_token_ttl_minutes,
         app_public_base_url=app_public_base_url,
         email_from_address=email_from_address,
         smtp_host=smtp_host,

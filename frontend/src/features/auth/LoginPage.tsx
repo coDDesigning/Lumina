@@ -88,6 +88,10 @@ export default function LoginPage() {
           disabled={isSubmitting}
         />
 
+        <Link to="/forgot-password" className={styles.forgot}>
+          Forgot password?
+        </Link>
+
         <Button
           type="submit"
           variant="primary"

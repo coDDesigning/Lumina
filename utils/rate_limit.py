@@ -227,3 +227,17 @@ def rate_limit_generation(feature: str):
         )
 
     return _dependency
+
+
+def rate_limit_password_reset(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """Per-IP throttle for issuing password reset links."""
+    enforce(
+        db,
+        f"password_reset:ip:{client_ip(request)}",
+        window_seconds=settings.rate_limit_password_reset_window_seconds,
+        limit=settings.rate_limit_password_reset_max_attempts,
+        error_code="password_reset_rate_limited",
+    )

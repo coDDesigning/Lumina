@@ -94,6 +94,97 @@
         "title": "ActivityItem",
         "type": "object"
       },
+      "AdConfigResponse": {
+        "additionalProperties": false,
+        "description": "Public discovery payload for client ad initialization.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "publisher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher Id"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "AdConfigResponse",
+        "type": "object"
+      },
+      "AdTelemetryRequest": {
+        "additionalProperties": false,
+        "description": "Privacy-safe aggregate impression and status telemetry request.",
+        "properties": {
+          "placement": {
+            "description": "Abstract UI slot identifier.",
+            "enum": [
+              "sidebar",
+              "footer",
+              "dashboard",
+              "landing"
+            ],
+            "title": "Placement",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Ad provider network name.",
+            "maxLength": 64,
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "description": "Client render or failure status.",
+            "enum": [
+              "rendered",
+              "blocked",
+              "no_fill",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "placement",
+          "provider",
+          "status"
+        ],
+        "title": "AdTelemetryRequest",
+        "type": "object"
+      },
+      "AdTelemetryResponse": {
+        "additionalProperties": false,
+        "description": "Confirmation of recorded telemetry.",
+        "properties": {
+          "recorded": {
+            "default": true,
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "title": "AdTelemetryResponse",
+        "type": "object"
+      },
       "AiCostDailyRow": {
         "properties": {
           "completion_tokens": {
@@ -421,6 +512,62 @@
           "question"
         ],
         "title": "AiTutorRequest",
+        "type": "object"
+      },
+      "BaseResponse_AdConfigResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdConfigResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[AdConfigResponse]",
+        "type": "object"
+      },
+      "BaseResponse_AdTelemetryResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdTelemetryResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[AdTelemetryResponse]",
         "type": "object"
       },
       "BaseResponse_AiCostReport_": {
@@ -1179,6 +1326,62 @@
         "title": "BaseResponse[GeneratedOutputDetail]",
         "type": "object"
       },
+      "BaseResponse_ProfileDocumentStatusResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileDocumentStatusResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ProfileDocumentStatusResponse]",
+        "type": "object"
+      },
+      "BaseResponse_ProfileDocumentUploadResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileDocumentUploadResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ProfileDocumentUploadResponse]",
+        "type": "object"
+      },
       "BaseResponse_ProfileKnowledgeResponse_": {
         "properties": {
           "data": {
@@ -1517,6 +1720,38 @@
         "title": "BaseResponse[dict]",
         "type": "object"
       },
+      "BaseResponse_dict_str__str__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[dict[str, str]]",
+        "type": "object"
+      },
       "BaseResponse_list_ActivityItem__": {
         "properties": {
           "data": {
@@ -1773,6 +2008,38 @@
         "title": "BaseResponse[list[GeneratedOutputSummary]]",
         "type": "object"
       },
+      "BaseResponse_list_ProfileDocumentResponse__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ProfileDocumentResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[list[ProfileDocumentResponse]]",
+        "type": "object"
+      },
       "BaseResponse_list_ProfileKnowledgeResponse__": {
         "properties": {
           "data": {
@@ -2008,6 +2275,20 @@
           "document"
         ],
         "title": "Body_upload_document_api_courses__course_id__documents_post",
+        "type": "object"
+      },
+      "Body_upload_profile_document_api_profile_documents_post": {
+        "properties": {
+          "document": {
+            "contentMediaType": "application/octet-stream",
+            "title": "Document",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document"
+        ],
+        "title": "Body_upload_profile_document_api_profile_documents_post",
         "type": "object"
       },
       "Citation": {
@@ -6385,6 +6666,113 @@
         "title": "ProcessingJobResponse",
         "type": "object"
       },
+      "ProfileDocumentResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "file_size": {
+            "title": "File Size",
+            "type": "integer"
+          },
+          "file_type": {
+            "title": "File Type",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "mime_type": {
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "original_file_name": {
+            "title": "Original File Name",
+            "type": "string"
+          },
+          "processing_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing Error"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "original_file_name",
+          "file_type",
+          "mime_type",
+          "file_size",
+          "user_id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ProfileDocumentResponse",
+        "type": "object"
+      },
+      "ProfileDocumentStatusResponse": {
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/ProfileDocumentResponse"
+          },
+          "processing_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileProcessingJobResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "document",
+          "processing_job"
+        ],
+        "title": "ProfileDocumentStatusResponse",
+        "type": "object"
+      },
+      "ProfileDocumentUploadResponse": {
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/ProfileDocumentResponse"
+          },
+          "duplicate": {
+            "title": "Duplicate",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "document",
+          "duplicate"
+        ],
+        "title": "ProfileDocumentUploadResponse",
+        "type": "object"
+      },
       "ProfileKnowledgeCreate": {
         "description": "Payload to create a new profile knowledge entry.",
         "properties": {
@@ -6497,6 +6885,114 @@
           }
         },
         "title": "ProfileKnowledgeUpdate",
+        "type": "object"
+      },
+      "ProfileProcessingJobResponse": {
+        "properties": {
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "failed_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Stage"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "last_error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Message"
+          },
+          "max_attempts": {
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "processing_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing Stage"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "attempt_count",
+          "max_attempts",
+          "available_at",
+          "started_at",
+          "finished_at",
+          "last_error_code",
+          "last_error_message",
+          "processing_stage",
+          "failed_stage"
+        ],
+        "title": "ProfileProcessingJobResponse",
         "type": "object"
       },
       "PromptGenerationRequest": {
@@ -8940,6 +9436,70 @@
         "summary": "Change User Role",
         "tags": [
           "Admin"
+        ]
+      }
+    },
+    "/api/ads/config": {
+      "get": {
+        "description": "Return public advertising configuration.\n\nIn self-hosted mode or when ads are disabled, strictly returns enabled=False\nwith no provider metadata.",
+        "operationId": "get_ad_config_api_ads_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_AdConfigResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ad Config",
+        "tags": [
+          "Advertising"
+        ]
+      }
+    },
+    "/api/ads/telemetry/impression": {
+      "post": {
+        "description": "Record aggregate, privacy-safe impression and render status telemetry.\n\nNever accepts or records study content, user identifiers, or course context.",
+        "operationId": "record_ad_telemetry_api_ads_telemetry_impression_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdTelemetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_AdTelemetryResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Ad Telemetry",
+        "tags": [
+          "Advertising"
         ]
       }
     },
@@ -12825,6 +13385,223 @@
         "summary": "List Available Models",
         "tags": [
           "AI Models"
+        ]
+      }
+    },
+    "/api/profile-documents": {
+      "get": {
+        "description": "List all profile documents owned by the current user.",
+        "operationId": "list_profile_documents_api_profile_documents_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_list_ProfileDocumentResponse__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Profile Documents",
+        "tags": [
+          "Profile Documents"
+        ]
+      },
+      "post": {
+        "description": "Upload and enqueue a user profile background document.",
+        "operationId": "upload_profile_document_api_profile_documents_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_profile_document_api_profile_documents_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ProfileDocumentUploadResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Upload Profile Document",
+        "tags": [
+          "Profile Documents"
+        ]
+      }
+    },
+    "/api/profile-documents/{document_id}": {
+      "delete": {
+        "description": "Permanently delete a profile document, its chunks, and stored embeddings.",
+        "operationId": "delete_profile_document_api_profile_documents__document_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_dict_str__str__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Profile Document",
+        "tags": [
+          "Profile Documents"
+        ]
+      },
+      "get": {
+        "description": "Get the detail and processing status for one profile document.",
+        "operationId": "get_profile_document_status_api_profile_documents__document_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ProfileDocumentStatusResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Profile Document Status",
+        "tags": [
+          "Profile Documents"
+        ]
+      }
+    },
+    "/api/profile-documents/{document_id}/retry": {
+      "post": {
+        "description": "Retry extraction for a failed profile document.",
+        "operationId": "retry_profile_document_api_profile_documents__document_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ProfileDocumentStatusResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Retry Profile Document",
+        "tags": [
+          "Profile Documents"
         ]
       }
     },

@@ -152,7 +152,7 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
 }
 
 export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onClose }: StudyHistoryModalProps) {
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId ?? null);
 
   const listQuery = useQuery<GeneratedOutputSummary[]>({
     key: queryKeys.courseOutputs(courseId),
@@ -171,16 +171,12 @@ export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onC
     setSelectedId(output.id);
   }, []);
 
-  const outputs = listQuery.data;
-
   useEffect(() => {
-    if (!outputs || !initialSelectedId) {
+    if (!initialSelectedId) {
       return;
     }
-    if (outputs.some((output) => output.id === initialSelectedId)) {
-      setSelectedId(initialSelectedId);
-    }
-  }, [outputs, initialSelectedId]);
+    setSelectedId(initialSelectedId);
+  }, [initialSelectedId]);
 
   const listState: ListState =
     listQuery.status === 'error'

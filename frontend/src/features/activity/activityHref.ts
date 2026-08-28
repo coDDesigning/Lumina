@@ -10,7 +10,7 @@ export function activityHref(item: ActivityItem): string {
   }
 
   if (item.action_type === 'study_guide' && item.output_id !== null) {
-    return `${course}/guides/${item.output_id}`;
+    return `${course}?artifact=${item.output_id}`;
   }
 
   if (item.action_type === 'quiz' && item.quiz_id !== null) {

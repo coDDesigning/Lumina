@@ -1,47 +1,48 @@
 .mark {
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(150deg, var(--brand-from), var(--brand-to));
-  color: var(--brand-ink);
-  font-family: var(--font-display);
-  font-weight: var(--weight-bold);
-  letter-spacing: -0.02em;
+  display: block;
   flex: 0 0 auto;
-  box-shadow: var(--shadow-2);
+  object-fit: contain;
 }
 
 .sm {
   width: 1.75rem;
   height: 1.75rem;
-  font-size: var(--text-sm);
-  border-radius: var(--radius-sm);
 }
 
 .md {
   width: 2.25rem;
   height: 2.25rem;
-  font-size: var(--text-lg);
-  border-radius: var(--radius-md);
 }
 
 .lg {
   width: 2.75rem;
   height: 2.75rem;
-  font-size: var(--text-xl);
 }
 
 .lockup {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 0.375rem;
   text-decoration: none;
   color: var(--text);
 }
 
 .wordmark {
-  font-family: var(--font-display);
-  font-weight: var(--weight-bold);
-  font-size: var(--text-lg);
-  letter-spacing: var(--tracking-display);
+  display: block;
+  height: 1.75rem;
+  width: auto;
+  object-fit: contain;
+  transform: translateY(-1px);
+}
+
+.wordmark_sm {
+  height: 1.75rem;
+}
+
+.wordmark_md {
+  height: 1.625rem;
+}
+
+.wordmark_lg {
+  height: 2rem;
 }

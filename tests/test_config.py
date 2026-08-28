@@ -1630,6 +1630,8 @@ def test_every_implemented_image_provider_configures(
     provider: str,
 ) -> None:
     monkeypatch.setenv("IMAGE_PROVIDER", provider)
+    if provider == "gemini":
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
     assert load_settings().image_provider == provider
 
@@ -1637,6 +1639,133 @@ def test_every_implemented_image_provider_configures(
 def test_implemented_image_providers_are_recognized() -> None:
     assert IMPLEMENTED_IMAGE_PROVIDERS == ("none", "gemini", "ollama")
     assert set(IMPLEMENTED_IMAGE_PROVIDERS) <= set(RECOGNIZED_IMAGE_PROVIDERS)
+
+
+def test_image_provider_explicit_none_preserves_text_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", "none")
+    assert load_settings().image_provider == "none"
+
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+    monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("IMAGE_PROVIDER", "none")
+    assert load_settings().image_provider == "none"
+
+
+def test_hosted_mode_defaults_to_hosted_provider_vision_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+    monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    loaded = load_settings()
+    assert loaded.image_provider == "gemini"
+
+
+def test_hosted_mode_with_unsupported_vision_provider_defaults_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+    monkeypatch.setenv("AI_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
+    # Even if Gemini API key happens to exist in the environment, do not cross-route.
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    loaded = load_settings()
+    assert loaded.image_provider == "none"
+
+
+def test_self_hosted_mode_uses_advertised_vision_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AI_MODEL_CATALOG",
+        json.dumps(
+            {
+                "ollama": [
+                    {
+                        "model": "llama3.2-vision",
+                        "json_mode": True,
+                        "context_window": 8192,
+                        "vision": True,
+                    }
+                ]
+            }
+        ),
+    )
+    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "llama3.2-vision")
+
+    loaded = load_settings()
+    assert loaded.image_provider == "ollama"
+
+
+def test_self_hosted_mode_defaults_to_none_when_vision_not_advertised(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("INFO"):
+        loaded = load_settings()
+
+    assert loaded.image_provider == "none"
+    assert "Visual analysis is disabled (IMAGE_PROVIDER='none')" in caplog.text
+
+
+def test_explicit_gemini_image_provider_requires_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", "gemini")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="GEMINI_API_KEY is required"):
+        load_settings()
+
+
+def test_explicit_ollama_image_provider_rejects_model_declared_without_vision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "llama3.1")
+
+    with pytest.raises(
+        ValueError, match="OLLAMA_IMAGE_MODEL 'llama3.1' is declared with vision=False"
+    ):
+        load_settings()
+
+
+def test_explicit_ollama_image_provider_rejects_catalog_model_with_vision_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AI_MODEL_CATALOG",
+        json.dumps(
+            {
+                "ollama": [
+                    {
+                        "model": "custom-vision-disabled",
+                        "json_mode": True,
+                        "context_window": 8192,
+                        "vision": False,
+                    }
+                ]
+            }
+        ),
+    )
+    monkeypatch.setenv("IMAGE_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "custom-vision-disabled")
+
+    with pytest.raises(
+        ValueError,
+        match="OLLAMA_IMAGE_MODEL 'custom-vision-disabled' is declared with vision=False",
+    ):
+        load_settings()
 
 
 def test_ollama_image_model_rejects_unsafe_characters(

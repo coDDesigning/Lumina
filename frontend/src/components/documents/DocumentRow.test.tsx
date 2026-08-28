@@ -198,4 +198,42 @@ describe('DocumentRow', () => {
     expect(screen.queryByRole('button', { name: /try again/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /remove/i })).toBeNull();
   });
+
+  it.each([
+    ['completed', 'Visuals indexed'],
+    ['not_configured', 'Visual analysis disabled'],
+    ['pending', 'Analyzing visuals'],
+    ['partial', 'Partial visuals'],
+    ['failed', 'Visual analysis failed'],
+  ] as const)('displays truthful visual status %s as "%s"', (visualStatus, expectedLabel) => {
+    const row = entry('ready');
+    renderRow({
+      ...row,
+      document: { ...row.document, visual_analysis_status: visualStatus },
+    });
+
+    expect(screen.getByText(expectedLabel)).toBeInTheDocument();
+  });
+
+  it('keeps not_applicable visually quiet for text-only documents', () => {
+    const row = entry('ready');
+    renderRow({
+      ...row,
+      document: { ...row.document, visual_analysis_status: 'not_applicable' },
+    });
+
+    expect(screen.queryByText(/visual/i)).toBeNull();
+  });
+
+  it('handles older documents with absent visual metadata truthfully without showing false completion', () => {
+    const row = entry('ready');
+    const olderDocument = { ...row.document };
+    delete olderDocument.visual_analysis_status;
+    renderRow({
+      ...row,
+      document: olderDocument as DocumentResponse,
+    });
+
+    expect(screen.queryByText(/visual/i)).toBeNull();
+  });
 });

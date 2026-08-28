@@ -1,35 +1,32 @@
-"""API schemas for registered documents."""
+"""API schemas for profile-knowledge documents."""
 
 from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from schemas.prompt_context import DocumentMaterialKind
 
-
-class DocumentResponse(BaseModel):
+class ProfileDocumentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     original_file_name: str
     file_type: str
     mime_type: str
-    material_kind: DocumentMaterialKind = DocumentMaterialKind.UNSPECIFIED
     file_size: int
-    course_id: int
+    user_id: int
     status: str
-    visual_analysis_status: str = "not_applicable"
+    processing_error: str | None = None
     created_at: datetime
     updated_at: datetime
 
 
-class DocumentUploadResponse(BaseModel):
-    document: DocumentResponse
+class ProfileDocumentUploadResponse(BaseModel):
+    document: ProfileDocumentResponse
     duplicate: bool
 
 
-class ProcessingJobResponse(BaseModel):
+class ProfileProcessingJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -45,6 +42,6 @@ class ProcessingJobResponse(BaseModel):
     failed_stage: str | None
 
 
-class DocumentStatusResponse(BaseModel):
-    document: DocumentResponse
-    processing_job: ProcessingJobResponse
+class ProfileDocumentStatusResponse(BaseModel):
+    document: ProfileDocumentResponse
+    processing_job: ProfileProcessingJobResponse | None

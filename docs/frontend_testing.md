@@ -145,7 +145,7 @@ jsdom has no layout engine, so no component test can catch a contrast, overflow,
 |---|---|
 | `quiz.spec.ts` | The core learning interaction end to end — configure, answer one of each supported type, hand in, read the review, and confirm an ungraded written answer reads as unscored rather than wrong. Plus the live countdown and 360px layout. |
 | `auth.spec.ts` | Sign-in redirect, sign-in, landmarks, and client-side registration validation. |
-| `a11y.spec.ts` | axe over eight screens, failing on any serious or critical violation; one heading and one `<main>` per screen; no sideways scroll at 360px. |
+| `a11y.spec.ts` | axe over eight screens and representative open modal/dialog states, failing on any serious or critical violation; one heading and one `<main>` per screen; no sideways scroll at 360px. |
 
 Two conventions matter there. Click what a person clicks: a radio input is visually hidden beneath
 its letter badge, so target the label text rather than the input. And the accessibility spec
@@ -155,9 +155,7 @@ purpose, so darkening it is a palette decision rather than a test fix. The allow
 the colour, not the route, and a separate test asserts it is still the only failing pair — any new
 contrast failure breaks the build.
 
-CI runs the browser suite as **Frontend end-to-end**, currently `continue-on-error: true` while it
-proves itself. Job names are referenced by dormant branch rulesets, so flag the ruleset when that
-changes.
+CI runs the browser suite as **Frontend end-to-end**, a blocking quality gate alongside **Frontend quality and build** (which enforces global test coverage thresholds via `npm run test:coverage`). Job names are referenced by dormant branch rulesets, so flag the ruleset before renaming one.
 
 ## What is not covered
 

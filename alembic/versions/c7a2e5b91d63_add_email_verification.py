@@ -1,7 +1,7 @@
 """authentication hardening: email verification state and tokens
 
 Revision ID: c7a2e5b91d63
-Revises: d4a7c19e6b83
+Revises: e1a2b3c4d5e6
 Create Date: 2026-08-28 12:00:00.000000
 
 ``users.email_verified_at`` records when an address was proven reachable rather
@@ -33,7 +33,7 @@ from alembic import op
 import backend.app.models
 
 revision: str = "c7a2e5b91d63"
-down_revision: str | Sequence[str] | None = "d4a7c19e6b83"
+down_revision: str | Sequence[str] | None = "e1a2b3c4d5e6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -227,6 +227,14 @@ export type DocumentMaterialKind =
   | 'other'
   | 'unspecified';
 
+export type DocumentVisualAnalysisStatus =
+  | 'not_applicable'
+  | 'pending'
+  | 'not_configured'
+  | 'completed'
+  | 'partial'
+  | 'failed';
+
 export interface DocumentResponse {
   id: string;
   original_file_name: string;
@@ -236,6 +244,7 @@ export interface DocumentResponse {
   file_size: number;
   course_id: number;
   status: LooseUnion<DocumentStatus>;
+  visual_analysis_status?: LooseUnion<DocumentVisualAnalysisStatus>;
   created_at: string;
   updated_at: string;
 }
@@ -262,6 +271,29 @@ export interface ProcessingJobResponse {
 export interface DocumentStatusResponse {
   document: DocumentResponse;
   processing_job: ProcessingJobResponse;
+}
+
+export interface ProfileDocumentResponse {
+  id: string;
+  original_file_name: string;
+  file_type: string;
+  mime_type: string;
+  file_size: number;
+  user_id: number;
+  status: LooseUnion<DocumentStatus>;
+  processing_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProfileDocumentUploadResponse {
+  document: ProfileDocumentResponse;
+  duplicate: boolean;
+}
+
+export interface ProfileDocumentStatusResponse {
+  document: ProfileDocumentResponse;
+  processing_job: ProcessingJobResponse | null;
 }
 
 export interface BoundedContext {
@@ -889,4 +921,23 @@ export interface ReverseQuizResponse {
   explanation: string;
   feedback: string;
   misconceptions: Misconception[];
+}
+
+export type AdPlacement = 'sidebar' | 'footer' | 'dashboard' | 'landing';
+export type AdStatus = 'rendered' | 'blocked' | 'no_fill' | 'error';
+
+export interface AdConfigResponse {
+  enabled: boolean;
+  provider: string | null;
+  publisher_id: string | null;
+}
+
+export interface AdTelemetryRequest {
+  placement: AdPlacement;
+  provider: string;
+  status: AdStatus;
+}
+
+export interface AdTelemetryResponse {
+  recorded: boolean;
 }

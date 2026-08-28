@@ -21,9 +21,12 @@ docs/authentication.md.
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
+from backend.app.config import Settings
+
 CONTENT_SECURITY_POLICY_HEADER = b"content-security-policy"
 STRICT_TRANSPORT_SECURITY_HEADER = b"strict-transport-security"
 CONTENT_TYPE_OPTIONS_HEADER = b"x-content-type-options"
+FRAME_OPTIONS_HEADER = b"x-frame-options"
 REFERRER_POLICY_HEADER = b"referrer-policy"
 
 # What an API that returns JSON and owns no browsing context needs: nothing
@@ -57,6 +60,7 @@ DOCS_CONTENT_SECURITY_POLICY = (
 REFERRER_POLICY = "no-referrer"
 
 CONTENT_TYPE_OPTIONS = "nosniff"
+FRAME_OPTIONS = "DENY"
 
 DOCUMENTATION_PATHS = frozenset({"/docs", "/docs/oauth2-redirect", "/redoc"})
 
@@ -64,6 +68,32 @@ Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
+
+
+def build_csp_header(settings: Settings | None = None) -> str:
+    """Build the Content-Security-Policy header value based on deployment and ad settings."""
+    if settings and settings.enable_hosted_ads and settings.is_hosted:
+        script_sources = " ".join(["'self'", "https://media.ethicalads.io"])
+        connect_sources = " ".join(["'self'", "https://server.ethicalads.io"])
+        img_sources = " ".join(["'self'", "data:", "https://media.ethicalads.io", "https://server.ethicalads.io"])
+        return (
+            f"default-src 'self'; "
+            f"script-src {script_sources}; "
+            f"style-src 'self' 'unsafe-inline'; "
+            f"img-src {img_sources}; "
+            f"connect-src {connect_sources}; "
+            f"frame-src 'none'; "
+            f"object-src 'none';"
+        )
+    return (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-src 'none'; "
+        "object-src 'none';"
+    )
 
 
 def content_security_policy_for(path: str) -> str:
@@ -79,7 +109,7 @@ class SecurityHeadersMiddleware:
 
     Written as plain ASGI rather than ``BaseHTTPMiddleware`` so it also covers
     the responses the request-size limiter rejects before routing, and so it
-    costs nothing per request beyond appending four headers.
+    costs nothing per request beyond appending headers.
 
     Existing headers are left alone. Nothing in this application sets these,
     but a route that deliberately needed its own policy should be able to keep
@@ -90,15 +120,23 @@ class SecurityHeadersMiddleware:
         self,
         app: Callable[[Scope, Receive, Send], Awaitable[None]],
         *,
-        hsts_enabled: bool,
-        hsts_max_age_seconds: int,
+        hsts_enabled: bool = False,
+        hsts_max_age_seconds: int = 31536000,
+        settings: Settings | None = None,
     ) -> None:
         self.app = app
-        self._hsts_value = (
-            f"max-age={hsts_max_age_seconds}; includeSubDomains"
-            if hsts_enabled
-            else None
-        )
+        if settings is not None:
+            self._hsts_value = (
+                f"max-age={settings.hsts_max_age_seconds}; includeSubDomains"
+                if settings.hsts_enabled
+                else None
+            )
+        else:
+            self._hsts_value = (
+                f"max-age={hsts_max_age_seconds}; includeSubDomains"
+                if hsts_enabled
+                else None
+            )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -116,6 +154,7 @@ class SecurityHeadersMiddleware:
                         CONTENT_TYPE_OPTIONS_HEADER,
                         CONTENT_TYPE_OPTIONS.encode("latin-1"),
                     ),
+                    (FRAME_OPTIONS_HEADER, FRAME_OPTIONS.encode("latin-1")),
                     (REFERRER_POLICY_HEADER, REFERRER_POLICY.encode("latin-1")),
                     (CONTENT_SECURITY_POLICY_HEADER, policy.encode("latin-1")),
                 ]

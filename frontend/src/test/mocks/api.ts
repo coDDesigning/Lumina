@@ -52,6 +52,7 @@ export function createMockDocument(
     file_size: 1048576,
     course_id: 1,
     status: 'uploaded',
+    visual_analysis_status: 'not_applicable',
     created_at: '2026-08-19T10:00:00Z',
     updated_at: '2026-08-19T10:00:00Z',
     ...overrides,

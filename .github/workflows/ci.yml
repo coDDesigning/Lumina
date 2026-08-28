@@ -733,7 +733,7 @@ jobs:
         run: npm run lint
 
       - name: Test frontend
-        run: npm test
+        run: npm run test:coverage
 
       - name: Build frontend
         run: npm run build
@@ -746,9 +746,6 @@ jobs:
     name: Frontend end-to-end
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    # Non-blocking while the browser suite proves itself. Remove once it has run
-    # green across a few weeks, and update the branch ruleset in the same change.
-    continue-on-error: true
     defaults:
       run:
         working-directory: frontend

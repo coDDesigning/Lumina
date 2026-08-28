@@ -38,6 +38,71 @@ export const queryKeys = {
     'attempt',
     attemptId,
   ],
+  courseQuizSession: (courseId: number, quizId: number, sessionId: number): QueryKey => [
+    'course',
+    courseId,
+    'quiz',
+    quizId,
+    'session',
+    sessionId,
+  ],
+
+  // Exam Mode. Every key keeps the ['course', id] prefix so invalidating a
+  // course still reaches all of them, and prefix matching is element-wise, so
+  // course 1 can never invalidate course 11.
+  examSources: (courseId: number): QueryKey => ['course', courseId, 'examSources'],
+  examEntitlements: (courseId: number): QueryKey => ['course', courseId, 'examEntitlements'],
+  examAnalysis: (courseId: number, analysisId: number | null): QueryKey => [
+    'course',
+    courseId,
+    'examAnalysis',
+    analysisId,
+  ],
+  /** Prefix over every page and filter of one course's extracted questions. */
+  examQuestionsAll: (courseId: number): QueryKey => ['course', courseId, 'examQuestions'],
+  examQuestions: (
+    courseId: number,
+    analysisId: number,
+    topicKey: string | null,
+    limit: number,
+    offset: number,
+  ): QueryKey => [
+    'course',
+    courseId,
+    'examQuestions',
+    analysisId,
+    topicKey,
+    limit,
+    offset,
+  ],
+  examPlans: (courseId: number): QueryKey => ['course', courseId, 'examPlans'],
+  examPlan: (courseId: number, planId: number): QueryKey => [
+    'course',
+    courseId,
+    'examPlan',
+    planId,
+  ],
+  examTopicGuide: (courseId: number, topicKey: string): QueryKey => [
+    'course',
+    courseId,
+    'examTopicGuide',
+    topicKey,
+  ],
+  examTopicSummary: (courseId: number, topicKey: string): QueryKey => [
+    'course',
+    courseId,
+    'examTopicSummary',
+    topicKey,
+  ],
+  examSimilarQuestions: (courseId: number, topicKey: string): QueryKey => [
+    'course',
+    courseId,
+    'examSimilarQuestions',
+    topicKey,
+  ],
+  examMockExam: (courseId: number): QueryKey => ['course', courseId, 'examMockExam'],
+  examReviewSheet: (courseId: number): QueryKey => ['course', courseId, 'examReviewSheet'],
+
   courseConversations: (courseId: number): QueryKey => ['course', courseId, 'conversations'],
   courseConversation: (courseId: number, conversationId: number): QueryKey => [
     'course',

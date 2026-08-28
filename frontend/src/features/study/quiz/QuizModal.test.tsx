@@ -265,6 +265,9 @@ describe('taking a quiz', () => {
       total_questions: 3,
       time_spent_seconds: 30,
       created_at: '2026-08-23T10:00:00Z',
+      quiz_purpose: null,
+      timed: false,
+      expired: false,
       answers: [],
     });
 
@@ -296,6 +299,9 @@ describe('quiz results', () => {
     total_questions: 3,
     time_spent_seconds: 95,
     created_at: '2026-08-23T10:00:00Z',
+    quiz_purpose: null,
+    timed: false,
+    expired: false,
     answers: [
       {
         question_id: 1,

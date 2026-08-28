@@ -16,6 +16,7 @@ import type {
   StudyGuideResponse,
 } from '@/api/types';
 import { Alert } from '@/ui/Alert';
+import { Card } from '@/ui/Card';
 import { CitationList } from '@/ui/CitationChip';
 import { citedCitations, citedText } from './citations';
 import { Badge } from '@/ui/Badge';
@@ -75,7 +76,7 @@ export function StudyGuide({ guide, context = null }: StudyGuideProps) {
     guide.exam_tips.lecture_based.length > 0 || guide.exam_tips.ai_suggestions.length > 0;
 
   return (
-    <article className={styles.guide}>
+    <Card as="article" elevation="raised" padding="lg" className={styles.guide}>
       <header className={styles.masthead}>
         <h3 className={styles.title}>{guide.title}</h3>
         <div className={styles.facts}>
@@ -217,6 +218,6 @@ export function StudyGuide({ guide, context = null }: StudyGuideProps) {
           <p>{guide.confidence_notes}</p>
         </footer>
       ) : null}
-    </article>
+    </Card>
   );
 }

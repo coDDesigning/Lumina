@@ -878,6 +878,34 @@
         "title": "BaseResponse[ExamAnalysisView]",
         "type": "object"
       },
+      "BaseResponse_ExamEntitlementView_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamEntitlementView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamEntitlementView]",
+        "type": "object"
+      },
       "BaseResponse_ExamMockExamResult_": {
         "properties": {
           "data": {
@@ -3948,6 +3976,21 @@
         "title": "ExamAnalysisView",
         "type": "object"
       },
+      "ExamEntitlementView": {
+        "description": "Which of this course's topics the reader has already unlocked.\n\nA topic is bought once and covers every artifact of that topic, so a client\nthat only knew the price would disable a topic the student has already paid\nfor whenever their balance fell below it. The price itself is deliberately\nabsent: it belongs to ``GET /api/users/me/credits``, which is the single\nplace a client reads what generation costs.",
+        "properties": {
+          "unlocked_topic_keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Unlocked Topic Keys",
+            "type": "array"
+          }
+        },
+        "title": "ExamEntitlementView",
+        "type": "object"
+      },
       "ExamMockExamRequest": {
         "description": "What a student may configure about a mock examination.\n\nDuration is in minutes on the wire and seconds in the database: minutes are\nwhat a student sets and seconds are what a clock compares, and converting\nonce at the boundary keeps the two from disagreeing.",
         "properties": {
@@ -5048,6 +5091,17 @@
             "title": "Output Type",
             "type": "string"
           },
+          "plan_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Output Id"
+          },
           "ranked_topics": {
             "items": {
               "$ref": "#/components/schemas/RankedTopicView"
@@ -5091,7 +5145,7 @@
         "type": "object"
       },
       "ExamRoadmapRequest": {
-        "description": "Options for one roadmap generation.\n\nThe exam date is deliberately not a request field: the course owns it, and a\nplan a student can act on is the one their course date produces.",
+        "description": "Options for one roadmap generation.\n\nThe exam date is deliberately not a request field: the course owns it, and a\nplan a student can act on is the one their course date produces.\n\n``plan_output_id`` names an Exam Mode plan to schedule instead of the\ncourse's declared topics. The plan's own ranking is preserved rather than\nrecomputed, because a student who reviewed and prioritised those topics has\nalready decided what matters and a second engine disagreeing with the first\nwould be two answers to one question.",
         "properties": {
           "include_materials": {
             "default": true,
@@ -5105,6 +5159,19 @@
             "minimum": 1.0,
             "title": "Max Topics Per Day",
             "type": "integer"
+          },
+          "plan_output_id": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The exam plan whose ranked topics to schedule, or omit to schedule the course's own declared topics",
+            "title": "Plan Output Id"
           }
         },
         "title": "ExamRoadmapRequest",
@@ -7691,12 +7758,19 @@
         "type": "string"
       },
       "QuizSessionView": {
-        "description": "One timed sitting as the client is allowed to see it.\n\n``expires_at`` is the server's deadline and the only thing a countdown\nshould be built from. ``seconds_remaining`` is a convenience derived from\nthe same reading, never a second source of truth.",
+        "description": "One timed sitting as the client is allowed to see it.\n\n``expires_at`` is the server's deadline and the only thing a countdown\nshould be built from. ``seconds_remaining`` is a convenience derived from\nthe same reading, never a second source of truth.\n\n``answers`` carries every draft saved so far, because a reload has to put\nthe student's own work back on the screen. A count alone would leave a\nsitting that survived a refresh looking blank while the server still held\nthe answers it would grade.",
         "properties": {
           "answered_count": {
             "default": 0,
             "title": "Answered Count",
             "type": "integer"
+          },
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/QuizAnswerSubmission"
+            },
+            "title": "Answers",
+            "type": "array"
           },
           "attempt_id": {
             "anyOf": [
@@ -8074,9 +8148,16 @@
             "type": "number"
           },
           "questions_answered": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "default": 0,
-            "title": "Questions Answered",
-            "type": "integer"
+            "title": "Questions Answered"
           },
           "source": {
             "$ref": "#/components/schemas/TopicSource"
@@ -8095,6 +8176,17 @@
           "topic": {
             "title": "Topic",
             "type": "string"
+          },
+          "topic_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Key"
           }
         },
         "required": [
@@ -8322,9 +8414,16 @@
             "type": "number"
           },
           "questions_answered": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "default": 0,
-            "title": "Questions Answered",
-            "type": "integer"
+            "title": "Questions Answered"
           },
           "source": {
             "$ref": "#/components/schemas/TopicSource"
@@ -8343,6 +8442,17 @@
           "topic": {
             "title": "Topic",
             "type": "string"
+          },
+          "topic_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Key"
           }
         },
         "required": [
@@ -8787,7 +8897,8 @@
       "TopicSource": {
         "enum": [
           "syllabus",
-          "quiz"
+          "quiz",
+          "exam_plan"
         ],
         "title": "TopicSource",
         "type": "string"
@@ -10830,6 +10941,60 @@
         ]
       }
     },
+    "/api/courses/{course_id}/exam-mode/entitlements": {
+      "get": {
+        "description": "Name the topics this student has already unlocked in this course.\n\nOwner-scoped rather than reader-scoped on purpose: what somebody has bought\nis theirs, so the administrator read-any override deliberately stops here.\nAn unlock is keyed by (course, student, topic) with no plan identifier, so\nthe set answers for every plan version at once.",
+        "operationId": "list_exam_entitlements_api_courses__course_id__exam_mode_entitlements_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamEntitlementView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Exam Entitlements",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
     "/api/courses/{course_id}/exam-mode/mock-exam": {
       "get": {
         "description": "Reopen this course's most recent mock exam, answers hidden.\n\nServed from the quiz rows, because the quiz is the paper. A paper is still\nan examination when it is reopened, so the answers stay behind the attempt.",
@@ -11922,7 +12087,7 @@
     },
     "/api/courses/{course_id}/exam-roadmap": {
       "post": {
-        "description": "Plan every day from today to the exam date, and store the plan.\n\nNo text-generation provider is called and no credit is charged: the schedule\nis derived from the course's own topics, exam date, and quiz history.\nRegenerating writes a new version and leaves earlier ones untouched.",
+        "description": "Plan every day from today to the exam date, and store the plan.\n\nNo text-generation provider is called and no credit is charged: the schedule\nis derived from the course's own topics, exam date, and quiz history.\nRegenerating writes a new version and leaves earlier ones untouched.\n\nWith ``plan_output_id`` the schedule follows an Exam Mode plan's own ranked\ntopics instead, and each plan keeps its own version chain, so refreshing one\nplan's roadmap never supersedes another's.",
         "operationId": "generate_exam_roadmap_api_courses__course_id__exam_roadmap_post",
         "parameters": [
           {
@@ -11967,7 +12132,7 @@
             "description": "Authentication required"
           },
           "404": {
-            "description": "Course not found"
+            "description": "Course or exam plan not found"
           },
           "409": {
             "description": "The course has no exam date, its exam date has passed, or it has no topics to plan"

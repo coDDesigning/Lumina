@@ -52,7 +52,8 @@ ROADMAP_SCHEMA_PREP_REVISION = "4399b6d253bf"
 EXAM_MODE_REVISION = "a6d3f81c9b47"
 EXAM_UNLOCKS_REVISION = "b5e9a2c7d341"
 QUIZ_SESSIONS_REVISION = "d4a7c19e6b83"
-HEAD_REVISION = QUIZ_SESSIONS_REVISION
+PROFILE_DOCUMENTS_REVISION = "e1a2b3c4d5e6"
+HEAD_REVISION = PROFILE_DOCUMENTS_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -100,6 +101,7 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        PROFILE_DOCUMENTS_REVISION: QUIZ_SESSIONS_REVISION,
         QUIZ_SESSIONS_REVISION: EXAM_UNLOCKS_REVISION,
         EXAM_UNLOCKS_REVISION: EXAM_MODE_REVISION,
         EXAM_MODE_REVISION: ROADMAP_SCHEMA_PREP_REVISION,
@@ -3164,4 +3166,83 @@ def test_only_one_sitting_of_a_paper_may_be_live_at_a_time(tmp_path: Path) -> No
                 "VALUES (?, ?, 'active', 60, '2026-02-01 00:00:00', "
                 "'2026-02-01 01:00:00')",
                 (quiz_id, user_id),
+            )
+
+
+def test_upgrade_profile_documents_tables(tmp_path: Path) -> None:
+    """Upgrades to PROFILE_DOCUMENTS_REVISION and verifies table schemas and constraints."""
+    database_path = tmp_path / "profile-docs-migration.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", PROFILE_DOCUMENTS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        # Seed user
+        connection.execute(
+            "INSERT INTO users (name, email, password_hash, role_id) VALUES "
+            "('Test User', 'user@example.com', 'hash', 1)"
+        )
+        user_id = connection.execute(
+            "SELECT id FROM users WHERE email = 'user@example.com'"
+        ).fetchone()[0]
+
+        # Insert into profile_documents
+        doc_id = str(uuid4())
+        connection.execute(
+            "INSERT INTO profile_documents "
+            "(id, original_file_name, file_type, mime_type, file_size, file_hash, user_id, storage_provider, storage_key, status) "
+            "VALUES (?, 'notes.pdf', 'pdf', 'application/pdf', 1024, ?, ?, 'local:default', 'users/1/doc/source.pdf', 'ready')",
+            (doc_id, "a" * 64, user_id),
+        )
+
+        # Insert into profile_document_chunks
+        connection.execute(
+            "INSERT INTO profile_document_chunks (document_id, user_id, chunk_index, text) "
+            "VALUES (?, ?, 0, 'sample chunk text')",
+            (doc_id, user_id),
+        )
+        chunk_id = connection.execute(
+            "SELECT id FROM profile_document_chunks WHERE document_id = ?",
+            (doc_id,),
+        ).fetchone()[0]
+
+        # Insert into profile_chunk_embeddings
+        connection.execute(
+            "INSERT INTO profile_chunk_embeddings (chunk_id, document_id, user_id, chunk_index, embedding, embedding_provider, embedding_model, dimensions) "
+            "VALUES (?, ?, ?, 0, ?, 'test', 'test-model', 768)",
+            (chunk_id, doc_id, user_id, b"0" * (768 * 4)),
+        )
+
+        # Insert into profile_document_pages
+        connection.execute(
+            "INSERT INTO profile_document_pages (document_id, user_id, content_index, raw_text, text) "
+            "VALUES (?, ?, 0, 'raw', 'clean')",
+            (doc_id, user_id),
+        )
+        page_id = connection.execute(
+            "SELECT id FROM profile_document_pages WHERE document_id = ?",
+            (doc_id,),
+        ).fetchone()[0]
+
+        # Insert into profile_document_visuals
+        connection.execute(
+            "INSERT INTO profile_document_visuals (page_id, visual_index, visual_type, source, bbox_x0, bbox_y0, bbox_x1, bbox_y1) "
+            "VALUES (?, 0, 'diagram', 'image', 0.0, 0.0, 100.0, 100.0)",
+            (page_id,),
+        )
+
+        # Insert into profile_processing_jobs
+        connection.execute(
+            "INSERT INTO profile_processing_jobs (document_id, user_id, job_type, status, attempt_count, max_attempts) "
+            "VALUES (?, ?, 'extract_document', 'queued', 0, 3)",
+            (doc_id, user_id),
+        )
+
+        connection.commit()
+
+        # Duplicate file_hash for same user should fail
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO profile_documents "
+                "(id, original_file_name, file_type, mime_type, file_size, file_hash, user_id, storage_provider, storage_key, status) "
+                "VALUES (?, 'notes2.pdf', 'pdf', 'application/pdf', 1024, ?, ?, 'local:default', 'users/1/doc2/source.pdf', 'ready')",
+                (str(uuid4()), "a" * 64, user_id),
             )

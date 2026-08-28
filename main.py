@@ -22,9 +22,11 @@ from backend.app.request_size import (
     MULTIPART_OVERHEAD_BYTES,
     RequestSizeLimitMiddleware,
 )
+from backend.app.security_headers import SecurityHeadersMiddleware
 from routes import (
     activity,
     admin,
+    ads,
     ai_models,
     ai_tutor,
     auth,
@@ -72,6 +74,10 @@ app.add_middleware(
     max_concurrent_uploads=settings.max_concurrent_document_validations,
     upload_request_timeout_seconds=settings.upload_request_timeout_seconds,
 )
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    settings=settings,
+)
 app.include_router(auth.router)
 app.include_router(course.router)
 app.include_router(course_settings.router)
@@ -94,6 +100,7 @@ app.include_router(flashcard.router)
 app.include_router(prompt_generator.router)
 app.include_router(ai_tutor.router)
 app.include_router(course_qa.router)
+app.include_router(ads.router)
 app.add_exception_handler(
     RequestValidationError,
     document.upload_request_validation_error,

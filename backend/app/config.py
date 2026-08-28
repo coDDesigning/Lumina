@@ -150,6 +150,14 @@ DEFAULT_RATE_LIMIT_GENERATION_WINDOW_SECONDS = 3600
 DEFAULT_RATE_LIMIT_LOCKOUT_BASE_SECONDS = 30
 DEFAULT_RATE_LIMIT_LOCKOUT_MAX_SECONDS = 1800
 
+DEFAULT_ENABLE_HOSTED_ADS = False
+DEFAULT_HOSTED_ADS_PROVIDER = "ethicalads"
+DEFAULT_HOSTED_ADS_PUBLISHER_ID = "lumina"
+DEFAULT_HOSTED_ADS_CSP_ALLOWLIST = (
+    "https://media.ethicalads.io",
+    "https://server.ethicalads.io",
+)
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -292,6 +300,11 @@ class Settings:
     embedding_backfill_prune_orphans: bool
     ai_usage_retention_days: int
     ai_usage_cleanup_batch_size: int
+
+    # Optional hosted advertising configuration
+    enable_hosted_ads: bool
+    hosted_ads_provider: str | None
+    hosted_ads_publisher_id: str | None
 
     @property
     def is_hosted(self) -> bool:
@@ -997,6 +1010,36 @@ def load_settings() -> Settings:
         DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE,
     )
 
+    if mode == MODE_SELF_HOSTED:
+        raw_ads = os.getenv("ENABLE_HOSTED_ADS")
+        if raw_ads is not None and _boolean_setting("ENABLE_HOSTED_ADS", default=False):
+            raise ValueError(
+                "Self-hosted deployment mode does not permit ENABLE_HOSTED_ADS=true. "
+                "Advertising is strictly isolated to hosted deployments."
+            )
+        enable_hosted_ads = False
+        hosted_ads_provider = None
+        hosted_ads_publisher_id = None
+    else:
+        enable_hosted_ads = _boolean_setting(
+            "ENABLE_HOSTED_ADS",
+            default=DEFAULT_ENABLE_HOSTED_ADS,
+        )
+        if enable_hosted_ads:
+            hosted_ads_provider = (
+                os.getenv("HOSTED_ADS_PROVIDER", DEFAULT_HOSTED_ADS_PROVIDER).strip()
+                or DEFAULT_HOSTED_ADS_PROVIDER
+            )
+            hosted_ads_publisher_id = (
+                os.getenv(
+                    "HOSTED_ADS_PUBLISHER_ID", DEFAULT_HOSTED_ADS_PUBLISHER_ID
+                ).strip()
+                or DEFAULT_HOSTED_ADS_PUBLISHER_ID
+            )
+        else:
+            hosted_ads_provider = None
+            hosted_ads_publisher_id = None
+
     return Settings(
         app_env=app_env,
         app_debug=app_debug,
@@ -1125,6 +1168,9 @@ def load_settings() -> Settings:
         embedding_backfill_prune_orphans=embedding_backfill_prune_orphans,
         ai_usage_retention_days=ai_usage_retention_days,
         ai_usage_cleanup_batch_size=ai_usage_cleanup_batch_size,
+        enable_hosted_ads=enable_hosted_ads,
+        hosted_ads_provider=hosted_ads_provider,
+        hosted_ads_publisher_id=hosted_ads_publisher_id,
     )
 
 

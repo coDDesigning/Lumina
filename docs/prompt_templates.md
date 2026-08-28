@@ -4,9 +4,9 @@
 
 Lumina uses a versioned, structured, and learner-aware prompt template architecture for every AI prompt it sends. The eleven templates under `app/prompts/` cover study guides, quizzes, exam-style questions, quiz grading, flashcards, AI tutoring, course Q&A, prompt generation, image description, visual content understanding, and OCR cleanup. The only model-facing text outside this directory is the small set of composed fragments the templates are built from: the shared blocks in `services/prompt_components.py`, the learner-context directives in `schemas/prompt_context.py`, and the profile-context wrapper in `services/profile_knowledge.py`. Those are scanned for neutrality alongside the templates themselves (see **Prompt neutrality policy**), so a semantic prompt written inline anywhere in production fails CI.
 
-Every template carries a `status`. Eight are `active` and owned by a feature service. Three — `exam_style_question`, `ocr_cleanup`, and `visual_content` — are **explicitly deferred**: declared, validated, and tested, but refused by `PromptLoader.render` so they cannot reach a provider. See **Deferred templates** below for the decision and the reason behind each one. `image_description` is the one vision template that is wired, and `services/image_understanding.py` renders it for every extracted visual.
+Every template carries a `status`. Most are `active` and owned by a feature service. Two — `ocr_cleanup` and `visual_content` — are **explicitly deferred**: declared, validated, and tested, but refused by `PromptLoader.render` so they cannot reach a provider. See **Deferred templates** below for the decision and the reason behind each one. `image_description` is the one vision template that is wired, and `services/image_understanding.py` renders it for every extracted visual.
 
-Design.md §20 lists its prompt categories as *examples*, not as a contract. Four of them are wired today: summary generation (`study_guide`), quiz generation (`quiz`), image description (`image_description`), and written answer evaluation (`quiz_grading`). OCR cleanup and exam-style question generation are deferred rather than implemented, because naming a category in a design document is not on its own a reason to add an LLM call to production.
+Design.md §20 lists its prompt categories as *examples*, not as a contract. Four of them are wired today: summary generation (`study_guide`), quiz generation (`quiz`), image description (`image_description`), and written answer evaluation (`quiz_grading`). OCR cleanup is deferred rather than implemented, because naming a category in a design document is not on its own a reason to add an LLM call to production. Exam-style question generation is no longer among them: Exam Mode gave it the owning feature it lacked, and `exam_style_question` is now what writes a topic's similar questions.
 
 This system provides:
 - **Learner-Context Awareness**: Adapts explanations, terminology, and instructional framing dynamically to the student's profile (e.g. `high_school`, `undergraduate`, `graduate`, or `unspecified`) without compromising factual accuracy.
@@ -47,15 +47,14 @@ All templates reside in `app/prompts/<task_name>.json`:
 |---|---|---|---|---|---|
 | `study_guide` | `2.3.0` | active | `services/study_guide.py` | Comprehensive study guide generation | `StudyGuideResponse` |
 | `quiz` | `3.3.0` | active | `services/quiz.py` | Multi-format quiz generation | `QuizGenerationResponse` |
-| `exam_style_question` | `1.2.0` | deferred | Exam Mode / Similar Question Generation (not built) | Exam-style practice questions | `QuizGenerationResponse` |
+| `exam_style_question` | `2.0.0` | active | `services/exam_similar_questions.py` | Fresh attemptable questions in the observed style of the course's own past ones | `GeneratedSimilarQuestionResponse` |
 | `exam_topic_analysis` | `2.0.0` | active | `services/exam_source_analysis.py` | Exam Mode source analysis: topic discovery over the selected sources | `GeneratedExamAnalysisResponse` |
 | `past_exam_question_extraction` | `1.0.0` | active | `services/exam_question_extraction.py` | Transcribes the questions printed in one past examination paper | `GeneratedPastExamExtraction` |
 | `exam_topic_guide` | `1.0.0` | active | `services/exam_topic_study.py` | Exam Mode per-topic study guide | `GeneratedExamTopicGuide` |
 | `exam_topic_summary` | `1.0.0` | active | `services/exam_topic_study.py` | Exam Mode per-topic summary | `GeneratedExamTopicSummary` |
 | `exam_topic_practice` | `1.0.0` | active | `services/exam_quiz.py` | Exam Mode per-topic practice questions | `QuizGenerationResponse` |
 | `exam_topic_exam` | `1.0.0` | active | `services/exam_quiz.py` | Exam Mode per-topic examination | `QuizGenerationResponse` |
-| `exam_similar_questions` | `1.0.0` | active | `services/exam_similar_questions.py` | Fresh questions in the mould of the course's own past ones | `GeneratedSimilarQuestions` |
-| `exam_mock_exam` | `1.0.0` | active | `services/exam_course_artifacts.py` | Mock examination across a whole exam plan | `QuizGenerationResponse` |
+| `exam_mock_exam` | `2.0.0` | active | `services/exam_course_artifacts.py` | Timed mock examination assembled to calculated per-topic and per-type quotas | `QuizGenerationResponse` |
 | `exam_review_sheet` | `1.0.0` | active | `services/exam_course_artifacts.py` | Last-minute review sheet across a whole exam plan | `GeneratedExamReviewSheet` |
 | `quiz_grading` | `2.0.0` | active | `services/quiz_grading.py` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
 | `flashcard` | `2.2.0` | active | `services/flashcard.py` | Active recall flashcard decks | `FlashcardGenerationResponse` |
@@ -101,13 +100,6 @@ where every downstream summary and quiz would treat it as source material. Imple
 needs a separately scoped feature that defines when semantic restoration is appropriate, what
 grounding it guarantees, whether the original OCR is preserved alongside it, and what it
 costs in credits.
-
-**`exam_style_question` — deferred, owner named but not built.** Live quiz generation is owned
-solely by `quiz`. Exam Mode and Similar Question Generation (Design.md Core Features 3 and 6)
-are real planned features, but they are listed under §23 Future Extensions and have no
-endpoint, request schema, or persistence yet. Wiring a near-duplicate of `quiz` before that
-owner exists would leave two quiz prompts to drift apart — the next question-schema change
-would update one and forget the other.
 
 **`visual_content` — deferred, owner named but not built.** Wired vision is owned by
 `image_description`, which covers Design.md §5.3 Basic Image Understanding. `visual_content`

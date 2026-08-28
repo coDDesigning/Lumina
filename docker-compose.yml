@@ -96,7 +96,14 @@ x-lumina-environment: &lumina-environment
   RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS: ${RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS:-5}
   RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS: ${RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS:-3600}
   # Proxy trust for client IP resolution
-  FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+  # The frontend service proxies every browser request, so the API must trust
+  # the forwarded client address from it or all users collapse into a single
+  # per-IP rate-limit bucket. This covers the private range Docker allocates
+  # Compose networks from; a daemon configured with a different address pool
+  # needs this set explicitly. Widening it is safe here only because the API
+  # port is published on loopback and the proxy overwrites X-Forwarded-For
+  # rather than appending to whatever the client sent.
+  FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}
 
 x-lumina-service: &lumina-service
   image: ${LUMINA_IMAGE:-lumina:local}
@@ -136,8 +143,7 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?set BOOTSTRAP_ADMIN_EMAIL in .env}
       BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:?set BOOTSTRAP_ADMIN_TOKEN in .env}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
-    command:
-      ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--limit-concurrency", "100", "--timeout-graceful-shutdown", "330", "--no-access-log"]
+    command: ["sh", "-c", "exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330 --no-access-log --proxy-headers --forwarded-allow-ips \"${FORWARDED_ALLOW_IPS:-127.0.0.1}\""]
     depends_on:
       migrate:
         condition: service_completed_successfully

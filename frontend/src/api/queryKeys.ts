@@ -57,6 +57,8 @@ export const queryKeys = {
   ],
   models: (): QueryKey => ['models'],
   profileKnowledge: (): QueryKey => ['profileKnowledge'],
+  profileDocuments: (): QueryKey => ['profileDocuments'],
+  profileDocument: (id: string): QueryKey => ['profileDocuments', id],
 
   adminUsers: (): QueryKey => ['admin', 'users'],
   adminUserCourses: (email: string): QueryKey => ['admin', 'users', email, 'courses'],

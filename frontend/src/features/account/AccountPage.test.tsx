@@ -11,6 +11,7 @@ import AccountYouPage from './AccountYouPage'
 import { AiPreferencesSection } from './AiPreferencesSection'
 import { ProfileKnowledgeSection } from './ProfileKnowledgeSection'
 import { modelsAPI } from '@/api/models'
+import { profileDocumentsAPI } from '@/api/profileDocuments'
 import { profileKnowledgeAPI } from '@/api/profileKnowledge'
 import { userAPI } from '@/api/user'
 
@@ -67,6 +68,16 @@ vi.mock('@/api/profileKnowledge', () => ({
   },
 }))
 
+vi.mock('@/api/profileDocuments', () => ({
+  profileDocumentsAPI: {
+    list: vi.fn(),
+    getStatus: vi.fn(),
+    upload: vi.fn(),
+    retry: vi.fn(),
+    delete: vi.fn(),
+  },
+}))
+
 vi.mock('@/api/user', () => ({
   userAPI: {
     updatePreferredModel: vi.fn(),
@@ -79,6 +90,8 @@ const mockModelsList = vi.mocked(modelsAPI.list)
 const mockKnowledgeList = vi.mocked(profileKnowledgeAPI.list)
 const mockKnowledgeCreate = vi.mocked(profileKnowledgeAPI.create)
 const mockKnowledgeDelete = vi.mocked(profileKnowledgeAPI.delete)
+const mockProfileDocumentsList = vi.mocked(profileDocumentsAPI.list)
+const mockProfileDocumentsDelete = vi.mocked(profileDocumentsAPI.delete)
 const mockUpdatePreferredModel = vi.mocked(userAPI.updatePreferredModel)
 const mockUpdateEducationLevel = vi.mocked(userAPI.updateEducationLevel)
 const mockGetCreditTransactions = vi.mocked(userAPI.getCreditTransactions)
@@ -103,6 +116,8 @@ function renderAccountPage(path = '/account') {
 describe('AccountPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockProfileDocumentsList.mockResolvedValue([])
+    mockKnowledgeList.mockResolvedValue([])
     mockModelsList.mockResolvedValue([
       {
         id: 'gemini-1.5-flash',
@@ -258,18 +273,14 @@ describe('AccountPage', () => {
     expect(screen.getByText('Knowledge topic removed.')).toBeInTheDocument()
   })
 
-  it('confirms profile knowledge is structured-only and contains no file or document upload controls', async () => {
+  it('confirms profile knowledge includes background document upload controls', async () => {
     renderAccountPage('/account/background')
 
     expect(await screen.findByRole('heading', { name: 'Your background' })).toBeInTheDocument()
     expect(
       screen.getByText(/These notes belong to you, not to any course/),
     ).toBeInTheDocument()
-    expect(screen.queryByLabelText(/upload/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/upload document/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/drag and drop/i)).not.toBeInTheDocument()
-    const fileInputs = document.querySelectorAll('input[type="file"]')
-    expect(fileInputs.length).toBe(0)
+    expect(screen.getByRole('button', { name: /upload document/i })).toBeInTheDocument()
   })
 })
 
@@ -504,5 +515,36 @@ describe('when the account cannot be saved', () => {
     expect(
       screen.queryByText('Knowledge topic added successfully.'),
     ).not.toBeInTheDocument()
+  })
+
+  it('renders profile documents and allows deleting a background document', async () => {
+    const person = userEvent.setup()
+    mockProfileDocumentsList.mockResolvedValue([
+      {
+        id: 'doc-123',
+        original_file_name: 'quantum_syllabus.pdf',
+        file_type: 'pdf',
+        mime_type: 'application/pdf',
+        file_size: 1024,
+        user_id: 1,
+        status: 'ready',
+        processing_error: null,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    ])
+    mockProfileDocumentsDelete.mockResolvedValue(undefined)
+
+    renderAccountPage('/account/background')
+
+    expect(await screen.findByText('quantum_syllabus.pdf')).toBeInTheDocument()
+    expect(screen.getByText('Profile Document')).toBeInTheDocument()
+    expect(screen.getByText('Ready')).toBeInTheDocument()
+
+    await person.click(screen.getByRole('button', { name: 'Delete quantum_syllabus.pdf' }))
+    expect(screen.getByText('Delete “quantum_syllabus.pdf”?')).toBeInTheDocument()
+
+    await person.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(mockProfileDocumentsDelete).toHaveBeenCalledWith('doc-123')
   })
 })

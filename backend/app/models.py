@@ -313,6 +313,11 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
 
+    # Personal background documents uploaded by this user.
+    profile_documents: Mapped[list["ProfileDocument"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
+
     # Privacy-safe structured AI usage logs recorded for this user.
     ai_usage_logs: Mapped[list["AiUsageLog"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
@@ -2293,3 +2298,473 @@ class ExamPlan(Base):
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )
+
+
+class ProfileDocument(Base):
+    __tablename__ = "profile_documents"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "file_hash",
+            name="uq_profile_documents_user_id_file_hash",
+        ),
+        UniqueConstraint(
+            "id",
+            "user_id",
+            name="uq_profile_documents_id_user_id",
+        ),
+        CheckConstraint("length(file_hash) = 64", name="profile_doc_file_hash_length"),
+        CheckConstraint("file_size >= 0", name="profile_doc_file_size_nonnegative"),
+        CheckConstraint(
+            "status IN ('uploaded', 'processing', 'ready', 'failed', 'deleting')",
+            name="profile_doc_status_valid",
+        ),
+        Index(
+            "uq_profile_documents_storage_provider_storage_key",
+            "storage_provider",
+            "storage_key",
+            unique=True,
+        ),
+        Index(
+            "ix_profile_documents_user_status_created",
+            "user_id",
+            "status",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
+    original_file_name: Mapped[str] = mapped_column(String(255))
+    file_type: Mapped[str] = mapped_column(String(50))
+    mime_type: Mapped[str] = mapped_column(String(255))
+    file_size: Mapped[int] = mapped_column(BigInteger)
+    file_hash: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    storage_provider: Mapped[str] = mapped_column(String(50))
+    storage_key: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(
+        String(20), default="uploaded", server_default="uploaded"
+    )
+    processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="profile_documents")
+    chunks: Mapped[list["ProfileDocumentChunk"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ProfileDocumentChunk.chunk_index",
+    )
+    pages: Mapped[list["ProfileDocumentPage"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ProfileDocumentPage.content_index",
+    )
+    processing_jobs: Mapped[list["ProfileProcessingJob"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class ProfileDocumentChunk(Base):
+    __tablename__ = "profile_document_chunks"
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_index", name="uq_profile_chunk_doc_index"),
+        UniqueConstraint(
+            "id",
+            "document_id",
+            "user_id",
+            name="uq_profile_document_chunks_id_doc_user",
+        ),
+        CheckConstraint(
+            "page_number IS NULL OR page_number >= 1", name="profile_chunk_page_number_positive"
+        ),
+        CheckConstraint(
+            "(page_number IS NULL AND end_page_number IS NULL) OR "
+            "(page_number IS NOT NULL AND end_page_number IS NOT NULL AND "
+            "end_page_number >= page_number)",
+            name="profile_chunk_page_range_valid",
+        ),
+        CheckConstraint(
+            "chunk_index = CAST(chunk_index AS INTEGER) AND chunk_index >= 0",
+            name="profile_chunk_index_nonnegative",
+        ),
+        ForeignKeyConstraint(
+            ["document_id", "user_id"],
+            ["profile_documents.id", "profile_documents.user_id"],
+            name="fk_profile_document_chunks_doc_user",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_profile_document_chunks_user_doc_index",
+            "user_id",
+            "document_id",
+            "chunk_index",
+            "id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    document: Mapped["ProfileDocument"] = relationship(back_populates="chunks")
+    embedding_record: Mapped["ProfileChunkEmbedding | None"] = relationship(
+        back_populates="chunk",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
+
+
+class ProfileChunkEmbedding(Base):
+    __tablename__ = "profile_chunk_embeddings"
+    __table_args__ = (
+        UniqueConstraint("chunk_id", name="uq_profile_chunk_embeddings_chunk_id"),
+        CheckConstraint(
+            f"dimensions = {EMBEDDING_DIMENSIONS}",
+            name="profile_dimensions_supported",
+        ),
+        CheckConstraint(
+            "chunk_index = CAST(chunk_index AS INTEGER) AND chunk_index >= 0",
+            name="profile_chunk_emb_index_nonnegative",
+        ),
+        CheckConstraint(
+            f"length(trim(embedding_provider, '{_ASCII_WHITESPACE}')) > 0",
+            name="profile_emb_provider_nonblank",
+        ),
+        CheckConstraint(
+            f"length(trim(embedding_model, '{_ASCII_WHITESPACE}')) > 0",
+            name="profile_emb_model_nonblank",
+        ),
+        ForeignKeyConstraint(
+            ["chunk_id", "document_id", "user_id"],
+            [
+                "profile_document_chunks.id",
+                "profile_document_chunks.document_id",
+                "profile_document_chunks.user_id",
+            ],
+            name="fk_profile_chunk_embeddings_chunk_doc_user",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_profile_chunk_embeddings_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ).ddl_if(dialect="postgresql"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chunk_id: Mapped[int] = mapped_column(Integer)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    embedding: Mapped[list[float]] = mapped_column(EmbeddingVector())
+    embedding_provider: Mapped[str] = mapped_column(String(50))
+    embedding_model: Mapped[str] = mapped_column(String(128))
+    dimensions: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
+    )
+
+    chunk: Mapped["ProfileDocumentChunk"] = relationship(back_populates="embedding_record")
+
+
+class ProfileDocumentPage(Base):
+    __tablename__ = "profile_document_pages"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "content_index",
+            name="uq_profile_document_pages_document_content_index",
+        ),
+        CheckConstraint("content_index >= 0", name="profile_content_index_nonnegative"),
+        CheckConstraint(
+            "page_number IS NULL OR page_number >= 1", name="profile_page_number_positive"
+        ),
+        CheckConstraint(
+            "raw_extraction_method IS NULL OR "
+            "raw_extraction_method IN ('native', 'decoded')",
+            name="profile_raw_extraction_method_valid",
+        ),
+        CheckConstraint(
+            "extraction_method IS NULL OR "
+            "extraction_method IN ('native', 'decoded', 'ocr')",
+            name="profile_extraction_method_valid",
+        ),
+        CheckConstraint(
+            "NOT needs_ocr OR (page_number IS NOT NULL AND "
+            "(has_images OR has_visual_content))",
+            name="profile_ocr_candidate_valid",
+        ),
+        CheckConstraint(
+            "NOT raw_needs_ocr OR (page_number IS NOT NULL AND "
+            "(has_images OR has_visual_content))",
+            name="profile_raw_ocr_candidate_valid",
+        ),
+        CheckConstraint(
+            "ocr_status IN ('not_required', 'pending', 'succeeded', 'no_text')",
+            name="profile_ocr_status_valid",
+        ),
+        CheckConstraint(
+            "visual_analysis_status IN "
+            "('not_applicable', 'pending', 'not_configured', 'completed', "
+            "'partial', 'failed')",
+            name="profile_visual_analysis_status_valid",
+        ),
+        ForeignKeyConstraint(
+            ["document_id", "user_id"],
+            ["profile_documents.id", "profile_documents.user_id"],
+            name="fk_profile_document_pages_doc_user",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True))
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    content_index: Mapped[int] = mapped_column(Integer)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_text: Mapped[str] = mapped_column(Text)
+    text: Mapped[str] = mapped_column(Text)
+    raw_extraction_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    extraction_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    has_images: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    needs_ocr: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    raw_needs_ocr: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    ocr_status: Mapped[str] = mapped_column(
+        String(20), default="not_required", server_default="not_required"
+    )
+    has_visual_content: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    visual_analysis_status: Mapped[str] = mapped_column(
+        String(20), default="not_applicable", server_default="not_applicable"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    document: Mapped["ProfileDocument"] = relationship(back_populates="pages")
+    visuals: Mapped[list["ProfileDocumentVisual"]] = relationship(
+        back_populates="page",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ProfileDocumentVisual.visual_index",
+    )
+
+
+class ProfileDocumentVisual(Base):
+    __tablename__ = "profile_document_visuals"
+    __table_args__ = (
+        UniqueConstraint("page_id", "visual_index", name="uq_profile_visual_page_index"),
+        CheckConstraint("visual_index >= 0", name="profile_visual_index_nonnegative"),
+        CheckConstraint(
+            "visual_type IN "
+            "('diagram', 'table', 'chart', 'screenshot', 'figure', 'flowchart', "
+            "'other')",
+            name="profile_visual_type_valid",
+        ),
+        CheckConstraint("source IN ('image', 'table', 'drawing')", name="profile_visual_source_valid"),
+        CheckConstraint(
+            "bbox_x0 >= 0 AND bbox_y0 >= 0 AND bbox_x1 > bbox_x0 AND bbox_y1 > bbox_y0",
+            name="profile_bbox_valid",
+        ),
+        CheckConstraint(
+            "analysis_status IN "
+            "('pending', 'not_configured', 'succeeded', 'skipped', 'failed')",
+            name="profile_analysis_status_valid",
+        ),
+        CheckConstraint(
+            "description IS NULL OR analysis_status = 'succeeded'",
+            name="profile_description_status_valid",
+        ),
+        CheckConstraint(
+            "analysis_status <> 'failed' OR "
+            f"(error_code IS NOT NULL AND "
+            f"length(trim(error_code, '{_ASCII_WHITESPACE}')) > 0)",
+            name="profile_failed_error_code_required",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    page_id: Mapped[int] = mapped_column(
+        ForeignKey("profile_document_pages.id", ondelete="CASCADE"), index=True
+    )
+    visual_index: Mapped[int] = mapped_column(Integer)
+    visual_type: Mapped[str] = mapped_column(String(20))
+    source: Mapped[str] = mapped_column(String(20))
+    bbox_x0: Mapped[float] = mapped_column(Float)
+    bbox_y0: Mapped[float] = mapped_column(Float)
+    bbox_x1: Mapped[float] = mapped_column(Float)
+    bbox_y1: Mapped[float] = mapped_column(Float)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analysis_status: Mapped[str] = mapped_column(
+        String(20), default="pending", server_default="pending"
+    )
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    page: Mapped["ProfileDocumentPage"] = relationship(back_populates="visuals")
+
+
+class ProfileProcessingJob(Base):
+    __tablename__ = "profile_processing_jobs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["document_id", "user_id"],
+            ["profile_documents.id", "profile_documents.user_id"],
+            name="fk_profile_processing_jobs_doc_user",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "document_id", "job_type", name="uq_profile_processing_jobs_doc_type"
+        ),
+        CheckConstraint(
+            f"job_type = '{JOB_TYPE_EXTRACT_DOCUMENT}'", name="profile_job_type_valid"
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
+            name="profile_job_status_valid",
+        ),
+        CheckConstraint("attempt_count >= 0", name="profile_attempt_count_nonnegative"),
+        CheckConstraint("max_attempts > 0", name="profile_max_attempts_positive"),
+        CheckConstraint(
+            "attempt_count <= max_attempts", name="profile_attempt_count_within_limit"
+        ),
+        CheckConstraint(
+            "status <> 'queued' OR attempt_count < max_attempts",
+            name="profile_queued_attempts_available",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND attempt_count > 0 "
+            "AND lease_owner IS NOT NULL AND claim_token IS NOT NULL "
+            "AND claimed_at IS NOT NULL AND heartbeat_at IS NOT NULL "
+            "AND lease_expires_at IS NOT NULL "
+            "AND heartbeat_at >= claimed_at "
+            "AND lease_expires_at > heartbeat_at AND finished_at IS NULL) OR "
+            "(status <> 'running' AND lease_owner IS NULL "
+            "AND claim_token IS NULL AND claimed_at IS NULL "
+            "AND heartbeat_at IS NULL AND lease_expires_at IS NULL)",
+            name="profile_lease_state_valid",
+        ),
+        CheckConstraint(
+            "(status IN ('succeeded', 'failed') AND finished_at IS NOT NULL) OR "
+            "(status IN ('queued', 'running') AND finished_at IS NULL)",
+            name="profile_finished_state_valid",
+        ),
+        CheckConstraint(
+            "processing_stage IS NULL OR processing_stage IN "
+            f"({_DOCUMENT_PROCESSING_STAGES_SQL})",
+            name="profile_processing_stage_valid",
+        ),
+        CheckConstraint(
+            "failed_stage IS NULL OR failed_stage IN "
+            f"({_DOCUMENT_PROCESSING_STAGES_SQL})",
+            name="profile_failed_stage_valid",
+        ),
+        CheckConstraint(
+            "processing_stage IS NULL OR status = 'running'",
+            name="profile_processing_stage_status",
+        ),
+        CheckConstraint(
+            "failed_stage IS NULL OR status = 'failed'",
+            name="profile_failed_stage_status",
+        ),
+        CheckConstraint(
+            "status <> 'failed' OR (last_error_code IS NOT NULL AND "
+            f"length(trim(last_error_code, '{_ASCII_WHITESPACE}')) > 0)",
+            name="profile_failed_last_error_code_present",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    job_type: Mapped[str] = mapped_column(
+        String(50),
+        default=JOB_TYPE_EXTRACT_DOCUMENT,
+        server_default=JOB_TYPE_EXTRACT_DOCUMENT,
+    )
+    correlation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default=JOB_STATUS_QUEUED,
+        server_default=JOB_STATUS_QUEUED,
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+    )
+    max_attempts: Mapped[int] = mapped_column(Integer)
+    available_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        server_default=func.now(),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
+    lease_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processing_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    failed_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    document: Mapped["ProfileDocument"] = relationship(back_populates="processing_jobs")
+

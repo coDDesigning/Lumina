@@ -38,6 +38,7 @@ def test_hosted_mode_allows_enable_hosted_ads(monkeypatch):
     monkeypatch.setenv(
         "BOOTSTRAP_ADMIN_TOKEN", "token-at-least-32-chars-long-visible-ascii-here!"
     )
+    monkeypatch.setenv("EMAIL_VERIFICATION_REQUIRED", "false")
     monkeypatch.setenv("ENABLE_HOSTED_ADS", "true")
     monkeypatch.setenv("HOSTED_ADS_PROVIDER", "ethicalads")
     monkeypatch.setenv("HOSTED_ADS_PUBLISHER_ID", "lumina-pub-123")
@@ -74,6 +75,7 @@ def test_csp_header_content_with_hosted_ads(monkeypatch):
     monkeypatch.setenv(
         "BOOTSTRAP_ADMIN_TOKEN", "token-at-least-32-chars-long-visible-ascii-here!"
     )
+    monkeypatch.setenv("EMAIL_VERIFICATION_REQUIRED", "false")
     monkeypatch.setenv("ENABLE_HOSTED_ADS", "true")
     s = load_settings()
 
@@ -99,7 +101,7 @@ def test_security_headers_present_on_response():
     assert res.status_code == 200
     assert res.headers.get("X-Content-Type-Options") == "nosniff"
     assert res.headers.get("X-Frame-Options") == "DENY"
-    assert res.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+    assert res.headers.get("Referrer-Policy") == "no-referrer"
     assert "Content-Security-Policy" in res.headers
 
 

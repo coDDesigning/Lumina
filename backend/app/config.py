@@ -149,6 +149,17 @@ DEFAULT_RATE_LIMIT_GENERATION_MAX_ATTEMPTS = 30
 DEFAULT_RATE_LIMIT_GENERATION_WINDOW_SECONDS = 3600
 DEFAULT_RATE_LIMIT_LOCKOUT_BASE_SECONDS = 30
 DEFAULT_RATE_LIMIT_LOCKOUT_MAX_SECONDS = 1800
+DEFAULT_RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS = 5
+DEFAULT_RATE_LIMIT_VERIFICATION_WINDOW_SECONDS = 3600
+
+# Authentication hardening. See docs/authentication.md.
+DEFAULT_PASSWORD_MIN_LENGTH = 12
+# bcrypt truncates at 72 bytes, so a longer minimum could not be enforced.
+MAX_PASSWORD_MIN_LENGTH = 64
+DEFAULT_EMAIL_VERIFICATION_TOKEN_TTL_HOURS = 24
+DEFAULT_SMTP_PORT = 587
+DEFAULT_SMTP_TIMEOUT_SECONDS = 10
+DEFAULT_HSTS_MAX_AGE_SECONDS = 31536000
 
 DEFAULT_ENABLE_HOSTED_ADS = False
 DEFAULT_HOSTED_ADS_PROVIDER = "ethicalads"
@@ -292,6 +303,24 @@ class Settings:
     rate_limit_generation_window_seconds: int
     rate_limit_lockout_base_seconds: int
     rate_limit_lockout_max_seconds: int
+    rate_limit_verification_max_attempts: int
+    rate_limit_verification_window_seconds: int
+
+    # Authentication hardening. See docs/authentication.md.
+    password_min_length: int
+    email_verification_required: bool
+    email_verification_token_ttl_hours: int
+    app_public_base_url: str | None
+    email_from_address: str | None
+    smtp_host: str | None
+    smtp_port: int
+    smtp_username: str | None
+    smtp_password: str | None
+    smtp_use_tls: bool
+    smtp_timeout_seconds: int
+    security_headers_enabled: bool
+    hsts_enabled: bool
+    hsts_max_age_seconds: int
 
     # Periodic maintenance configuration
     course_purge_interval_seconds: float
@@ -317,6 +346,13 @@ class Settings:
     @property
     def requires_protected_admin_bootstrap(self) -> bool:
         return self.is_hosted or self.app_env == APP_ENV_PRODUCTION
+
+    @property
+    def email_delivery_configured(self) -> bool:
+        """Whether outbound mail has somewhere to go and a return address."""
+        return bool(
+            self.smtp_host and self.email_from_address and self.app_public_base_url
+        )
 
 
 def load_settings() -> Settings:
@@ -990,6 +1026,93 @@ def load_settings() -> Settings:
             "RATE_LIMIT_LOCKOUT_MAX_SECONDS must be at least "
             "RATE_LIMIT_LOCKOUT_BASE_SECONDS."
         )
+    rate_limit_verification_max_attempts = _positive_integer_setting(
+        "RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS",
+        DEFAULT_RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS,
+    )
+    rate_limit_verification_window_seconds = _positive_integer_setting(
+        "RATE_LIMIT_VERIFICATION_WINDOW_SECONDS",
+        DEFAULT_RATE_LIMIT_VERIFICATION_WINDOW_SECONDS,
+    )
+
+    password_min_length = _bounded_positive_integer_setting(
+        "PASSWORD_MIN_LENGTH",
+        DEFAULT_PASSWORD_MIN_LENGTH,
+        minimum=DEFAULT_PASSWORD_MIN_LENGTH,
+        maximum=MAX_PASSWORD_MIN_LENGTH,
+    )
+
+    # Verification gates the introductory credits, so it defaults on exactly
+    # where those credits are worth farming: a deployment whose inference the
+    # operator pays for.
+    email_verification_required = _boolean_setting(
+        "EMAIL_VERIFICATION_REQUIRED",
+        default=mode == MODE_HOSTED,
+    )
+    email_verification_token_ttl_hours = _bounded_positive_integer_setting(
+        "EMAIL_VERIFICATION_TOKEN_TTL_HOURS",
+        DEFAULT_EMAIL_VERIFICATION_TOKEN_TTL_HOURS,
+        minimum=1,
+        maximum=168,
+    )
+    app_public_base_url = os.getenv("APP_PUBLIC_BASE_URL", "").strip() or None
+    if app_public_base_url is not None:
+        app_public_base_url = _http_url_setting("APP_PUBLIC_BASE_URL", "")
+    email_from_address = os.getenv("EMAIL_FROM_ADDRESS", "").strip() or None
+    if email_from_address is not None:
+        try:
+            email_from_address = validate_email(
+                email_from_address,
+                check_deliverability=False,
+            ).normalized
+        except EmailNotValidError as exc:
+            raise ValueError(
+                "EMAIL_FROM_ADDRESS must be a valid email address."
+            ) from exc
+    smtp_host = os.getenv("SMTP_HOST", "").strip() or None
+    smtp_port = _bounded_positive_integer_setting(
+        "SMTP_PORT", DEFAULT_SMTP_PORT, minimum=1, maximum=65535
+    )
+    smtp_username = os.getenv("SMTP_USERNAME", "").strip() or None
+    smtp_password = os.getenv("SMTP_PASSWORD") or None
+    smtp_use_tls = _boolean_setting("SMTP_USE_TLS", default=True)
+    smtp_timeout_seconds = _bounded_positive_integer_setting(
+        "SMTP_TIMEOUT_SECONDS", DEFAULT_SMTP_TIMEOUT_SECONDS, minimum=1, maximum=120
+    )
+    if (smtp_username is None) != (smtp_password is None):
+        raise ValueError("SMTP_USERNAME and SMTP_PASSWORD must be set together.")
+    if email_verification_required:
+        # A deployment that gates credits on a link it cannot send would hand
+        # every new account a balance of zero and no way out of it.
+        missing = [
+            name
+            for name, value in (
+                ("APP_PUBLIC_BASE_URL", app_public_base_url),
+                ("EMAIL_FROM_ADDRESS", email_from_address),
+                ("SMTP_HOST", smtp_host),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "EMAIL_VERIFICATION_REQUIRED needs a way to deliver the "
+                f"verification link; set {', '.join(missing)}."
+            )
+
+    security_headers_enabled = _boolean_setting(
+        "SECURITY_HEADERS_ENABLED", default=True
+    )
+    # HSTS is a promise the browser remembers for a year, so it is only made by
+    # default where TLS is known to terminate in front of the API. A self-hosted
+    # operator serving over plain HTTP on a LAN would otherwise lock themselves
+    # out of their own deployment; behind a TLS proxy they turn it on.
+    hsts_enabled = _boolean_setting(
+        "SECURITY_HSTS_ENABLED",
+        default=mode == MODE_HOSTED,
+    )
+    hsts_max_age_seconds = _nonnegative_integer_setting(
+        "SECURITY_HSTS_MAX_AGE_SECONDS", DEFAULT_HSTS_MAX_AGE_SECONDS
+    )
 
     course_purge_interval_seconds = _nonnegative_float_setting(
         "COURSE_PURGE_INTERVAL_SECONDS",
@@ -1168,6 +1291,22 @@ def load_settings() -> Settings:
         rate_limit_generation_window_seconds=rate_limit_generation_window_seconds,
         rate_limit_lockout_base_seconds=rate_limit_lockout_base_seconds,
         rate_limit_lockout_max_seconds=rate_limit_lockout_max_seconds,
+        rate_limit_verification_max_attempts=rate_limit_verification_max_attempts,
+        rate_limit_verification_window_seconds=rate_limit_verification_window_seconds,
+        password_min_length=password_min_length,
+        email_verification_required=email_verification_required,
+        email_verification_token_ttl_hours=email_verification_token_ttl_hours,
+        app_public_base_url=app_public_base_url,
+        email_from_address=email_from_address,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        smtp_username=smtp_username,
+        smtp_password=smtp_password,
+        smtp_use_tls=smtp_use_tls,
+        smtp_timeout_seconds=smtp_timeout_seconds,
+        security_headers_enabled=security_headers_enabled,
+        hsts_enabled=hsts_enabled,
+        hsts_max_age_seconds=hsts_max_age_seconds,
         course_purge_interval_seconds=course_purge_interval_seconds,
         embedding_backfill_interval_seconds=embedding_backfill_interval_seconds,
         embedding_backfill_batch_size=embedding_backfill_batch_size,

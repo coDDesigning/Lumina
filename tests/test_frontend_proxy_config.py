@@ -186,5 +186,10 @@ def test_the_forwarded_host_keeps_the_port_the_browser_used() -> None:
 
 def test_the_client_address_and_scheme_are_forwarded() -> None:
     body = _uncommented(PROXY_CONF)
-    assert "X-Forwarded-For   $proxy_add_x_forwarded_for;" in body
+    assert "X-Forwarded-For   $remote_addr;" in body
     assert "X-Forwarded-Proto $scheme;" in body
+
+
+def test_a_client_supplied_forwarded_for_cannot_survive_the_proxy() -> None:
+    body = _uncommented(PROXY_CONF)
+    assert "$proxy_add_x_forwarded_for" not in body

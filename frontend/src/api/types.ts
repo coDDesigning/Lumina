@@ -196,6 +196,14 @@ export type DocumentMaterialKind =
   | 'other'
   | 'unspecified';
 
+export type DocumentVisualAnalysisStatus =
+  | 'not_applicable'
+  | 'pending'
+  | 'not_configured'
+  | 'completed'
+  | 'partial'
+  | 'failed';
+
 export interface DocumentResponse {
   id: string;
   original_file_name: string;
@@ -205,6 +213,7 @@ export interface DocumentResponse {
   file_size: number;
   course_id: number;
   status: LooseUnion<DocumentStatus>;
+  visual_analysis_status?: LooseUnion<DocumentVisualAnalysisStatus>;
   created_at: string;
   updated_at: string;
 }

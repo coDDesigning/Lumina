@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { cx } from '@/lib/cx';
 import { Brandmark } from '@/ui/Brandmark';
+import { AdConsentBanner } from '@/features/ads/AdConsentBanner';
 import { useTheme } from './themeContext';
 import styles from './AppShell.module.css';
 
@@ -84,6 +85,9 @@ export function AppShell() {
       <main id="main" className={styles.main} tabIndex={-1}>
         <Outlet />
       </main>
+
+      <AdConsentBanner />
     </div>
   );
 }
+

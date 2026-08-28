@@ -12,29 +12,89 @@ violation after the lockout expires grows the next one, capped at
 ``rate_limit_buckets``. See docs/rate_limiting.md.
 """
 
+import hashlib
+import logging
+import math
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import Depends, Request
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
-from backend.app.database import get_db
+from backend.app.database import begin_serialized_write, get_db
 from backend.app.models import RateLimitBucket
+from backend.app.observability import emit_emf_metrics
 from schemas.user import UserResponse
 from utils.deps import get_current_user
 from utils.exceptions import TooManyRequestsException
 
 MAX_LOCKOUT_DOUBLINGS = 6
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class RateLimitDecision:
     allowed: bool
     retry_after_seconds: int
+
+
+def rate_limit_key(control: str, value: str) -> str:
+    """Build a fixed-length key without retaining the identifying value."""
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return f"{control}:{digest}"
+
+
+def get_rate_limit_db(
+    request_db: Annotated[Session, Depends(get_db)],
+) -> Iterator[Session]:
+    """Give abuse controls a transaction isolated from domain persistence."""
+    db = Session(
+        bind=request_db.get_bind(),
+        expire_on_commit=False,
+        autoflush=False,
+    )
+    try:
+        yield db
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _begin_write(db: Session) -> None:
+    if not db.in_transaction():
+        begin_serialized_write(db)
+
+
+def _retention_seconds() -> int:
+    longest_policy = max(
+        settings.rate_limit_login_window_seconds,
+        settings.rate_limit_register_window_seconds,
+        settings.rate_limit_generation_window_seconds,
+        settings.rate_limit_verification_window_seconds,
+        settings.rate_limit_password_reset_window_seconds,
+        settings.rate_limit_lockout_max_seconds,
+    )
+    return longest_policy * 2
+
+
+def _prune_stale_buckets(db: Session, now: datetime) -> None:
+    cutoff = now - timedelta(seconds=_retention_seconds())
+    db.execute(
+        delete(RateLimitBucket).where(
+            RateLimitBucket.window_start < cutoff,
+            or_(
+                RateLimitBucket.locked_until.is_(None),
+                RateLimitBucket.locked_until <= now,
+            ),
+        )
+    )
 
 
 def check_and_increment(
@@ -62,11 +122,13 @@ def check_and_increment(
         lockout_base_seconds is not None and lockout_max_seconds is not None
     )
     now = datetime.now(timezone.utc)
+    _begin_write(db)
 
     bucket = db.scalar(
         select(RateLimitBucket).where(RateLimitBucket.key == key).with_for_update()
     )
     if bucket is None:
+        _prune_stale_buckets(db, now)
         bucket = RateLimitBucket(
             key=key,
             window_start=now,
@@ -80,6 +142,7 @@ def check_and_increment(
         except IntegrityError:
             # Lost a race to create this key; the winner's row now exists.
             db.rollback()
+            _begin_write(db)
             bucket = db.scalar(
                 select(RateLimitBucket)
                 .where(RateLimitBucket.key == key)
@@ -91,7 +154,7 @@ def check_and_increment(
         return RateLimitDecision(
             allowed=False,
             retry_after_seconds=max(
-                1, int((bucket.locked_until - now).total_seconds())
+                1, math.ceil((bucket.locked_until - now).total_seconds())
             ),
         )
     # Any lockout has lapsed by this point; clear the stale marker. Left
@@ -123,7 +186,7 @@ def check_and_increment(
         retry_after = lockout_seconds
     else:
         elapsed = (now - bucket.window_start).total_seconds()
-        retry_after = max(1, int(window_seconds - elapsed))
+        retry_after = max(1, math.ceil(window_seconds - elapsed))
 
     db.commit()
     return RateLimitDecision(allowed=False, retry_after_seconds=retry_after)
@@ -138,6 +201,8 @@ def enforce(
     lockout_base_seconds: int | None = None,
     lockout_max_seconds: int | None = None,
     error_code: str = "rate_limited",
+    control: str = "generic",
+    feature: str | None = None,
 ) -> None:
     """Raise ``TooManyRequestsException`` if ``key`` is over its limit."""
     decision = check_and_increment(
@@ -149,11 +214,36 @@ def enforce(
         lockout_max_seconds=lockout_max_seconds,
     )
     if not decision.allowed:
+        dimensions = {"Control": control, "ErrorCode": error_code}
+        if feature is not None:
+            dimensions["Feature"] = feature
+        logger.warning(
+            "Rate limit rejected request",
+            extra={
+                "event": "rate_limit_rejected",
+                "error_code": error_code,
+                "rate_limit_control": control,
+                "rate_limit_feature": feature,
+                "retry_after_seconds": decision.retry_after_seconds,
+            },
+        )
+        emit_emf_metrics(
+            {"RateLimitRejections": 1},
+            dimensions=dimensions,
+            namespace="Lumina/API",
+        )
         raise TooManyRequestsException(
             "Too many requests. Try again later.",
             retry_after_seconds=decision.retry_after_seconds,
             error_code=error_code,
         )
+
+
+def clear(db: Session, key: str) -> None:
+    """Forget a failure bucket after successful authentication."""
+    _begin_write(db)
+    db.execute(delete(RateLimitBucket).where(RateLimitBucket.key == key))
+    db.commit()
 
 
 def client_ip(request: Request) -> str:
@@ -172,21 +262,22 @@ def client_ip(request: Request) -> str:
 
 def rate_limit_register(
     request: Request,
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_rate_limit_db)],
 ) -> None:
     """Per-IP registration throttle, composed as a route dependency."""
     enforce(
         db,
-        f"register:ip:{client_ip(request)}",
+        rate_limit_key("register:ip", client_ip(request)),
         window_seconds=settings.rate_limit_register_window_seconds,
         limit=settings.rate_limit_register_max_attempts,
         error_code="registration_rate_limited",
+        control="registration_ip",
     )
 
 
 def rate_limit_verification(
     request: Request,
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_rate_limit_db)],
 ) -> None:
     """Per-IP throttle for issuing and redeeming verification links.
 
@@ -199,10 +290,11 @@ def rate_limit_verification(
     """
     enforce(
         db,
-        f"verification:ip:{client_ip(request)}",
+        rate_limit_key("verification:ip", client_ip(request)),
         window_seconds=settings.rate_limit_verification_window_seconds,
         limit=settings.rate_limit_verification_max_attempts,
         error_code="verification_rate_limited",
+        control="verification_ip",
     )
 
 
@@ -216,28 +308,33 @@ def rate_limit_generation(feature: str):
 
     def _dependency(
         current_user: Annotated[UserResponse, Depends(get_current_user)],
-        db: Annotated[Session, Depends(get_db)],
+        db: Annotated[Session, Depends(get_rate_limit_db)],
     ) -> None:
         enforce(
             db,
-            f"generation:user:{current_user.id}:{feature}",
+            f"generation:user:{current_user.id}",
             window_seconds=settings.rate_limit_generation_window_seconds,
             limit=settings.rate_limit_generation_max_attempts,
             error_code="generation_rate_limited",
+            control="generation_user",
+            feature=feature,
         )
 
+    _dependency.rate_limit_kind = "generation"  # type: ignore[attr-defined]
+    _dependency.rate_limit_feature = feature  # type: ignore[attr-defined]
     return _dependency
 
 
 def rate_limit_password_reset(
     request: Request,
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_rate_limit_db)],
 ) -> None:
     """Per-IP throttle for issuing password reset links."""
     enforce(
         db,
-        f"password_reset:ip:{client_ip(request)}",
+        rate_limit_key("password_reset:ip", client_ip(request)),
         window_seconds=settings.rate_limit_password_reset_window_seconds,
         limit=settings.rate_limit_password_reset_max_attempts,
         error_code="password_reset_rate_limited",
+        control="password_reset_ip",
     )

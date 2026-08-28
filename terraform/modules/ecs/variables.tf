@@ -164,3 +164,8 @@ variable "smtp_use_tls" {
 variable "tags" {
   type = map(string)
 }
+
+variable "vpc_cidr_block" {
+  description = "VPC CIDR block used as trusted proxy range for X-Forwarded-For headers."
+  type        = string
+}

@@ -81,6 +81,8 @@ locals {
     { name = "SMTP_PORT", value = tostring(var.smtp_port) },
     { name = "SMTP_USERNAME", value = var.smtp_username },
     { name = "SMTP_USE_TLS", value = tostring(var.smtp_use_tls) },
+    # Trust only the ALB (VPC CIDR) for forwarded headers
+    { name = "FORWARDED_ALLOW_IPS", value = var.vpc_cidr_block },
   ]
 
   app_secrets = concat([

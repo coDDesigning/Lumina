@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/courses", tags=["Exam Roadmap"])
     dependencies=[Depends(rate_limit_generation("exam_roadmap"))],
     responses={
         401: {"description": "Authentication required"},
-        404: {"description": "Course not found"},
+        404: {"description": "Course or exam plan not found"},
         409: {
             "description": (
                 "The course has no exam date, its exam date has passed, or it "
@@ -49,6 +49,10 @@ def generate_exam_roadmap(
     No text-generation provider is called and no credit is charged: the schedule
     is derived from the course's own topics, exam date, and quiz history.
     Regenerating writes a new version and leaves earlier ones untouched.
+
+    With ``plan_output_id`` the schedule follows an Exam Mode plan's own ranked
+    topics instead, and each plan keeps its own version chain, so refreshing one
+    plan's roadmap never supersedes another's.
     """
     try:
         generation = ExamRoadmapService.generate(

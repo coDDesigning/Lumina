@@ -891,3 +891,22 @@ export interface ReverseQuizResponse {
   feedback: string;
   misconceptions: Misconception[];
 }
+
+export type AdPlacement = 'sidebar' | 'footer' | 'dashboard' | 'landing';
+export type AdStatus = 'rendered' | 'blocked' | 'no_fill' | 'error';
+
+export interface AdConfigResponse {
+  enabled: boolean;
+  provider: string | null;
+  publisher_id: string | null;
+}
+
+export interface AdTelemetryRequest {
+  placement: AdPlacement;
+  provider: string;
+  status: AdStatus;
+}
+
+export interface AdTelemetryResponse {
+  recorded: boolean;
+}

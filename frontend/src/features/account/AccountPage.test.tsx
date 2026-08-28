@@ -14,6 +14,7 @@ import { modelsAPI } from '@/api/models'
 import { profileDocumentsAPI } from '@/api/profileDocuments'
 import { profileKnowledgeAPI } from '@/api/profileKnowledge'
 import { userAPI } from '@/api/user'
+import { adsAPI } from '@/api/ads'
 
 const creditState: { status: CreditStatus | null } = { status: null }
 
@@ -86,12 +87,20 @@ vi.mock('@/api/user', () => ({
   },
 }))
 
+vi.mock('@/api/ads', () => ({
+  adsAPI: {
+    getConfig: vi.fn(),
+    recordTelemetry: vi.fn(),
+  },
+}))
+
 const mockModelsList = vi.mocked(modelsAPI.list)
 const mockKnowledgeList = vi.mocked(profileKnowledgeAPI.list)
 const mockKnowledgeCreate = vi.mocked(profileKnowledgeAPI.create)
 const mockKnowledgeDelete = vi.mocked(profileKnowledgeAPI.delete)
 const mockProfileDocumentsList = vi.mocked(profileDocumentsAPI.list)
 const mockProfileDocumentsDelete = vi.mocked(profileDocumentsAPI.delete)
+const mockAdsGetConfig = vi.mocked(adsAPI.getConfig)
 const mockUpdatePreferredModel = vi.mocked(userAPI.updatePreferredModel)
 const mockUpdateEducationLevel = vi.mocked(userAPI.updateEducationLevel)
 const mockGetCreditTransactions = vi.mocked(userAPI.getCreditTransactions)
@@ -116,6 +125,11 @@ function renderAccountPage(path = '/account') {
 describe('AccountPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockAdsGetConfig.mockResolvedValue({
+      enabled: false,
+      provider: null,
+      publisher_id: null,
+    })
     mockProfileDocumentsList.mockResolvedValue([])
     mockKnowledgeList.mockResolvedValue([])
     mockModelsList.mockResolvedValue([
@@ -546,5 +560,23 @@ describe('when the account cannot be saved', () => {
 
     await person.click(screen.getByRole('button', { name: 'Delete' }))
     expect(mockProfileDocumentsDelete).toHaveBeenCalledWith('doc-123')
+  })
+
+  it('renders advertising preference when hosted ads are enabled and allows updating it', async () => {
+    const person = userEvent.setup()
+    mockAdsGetConfig.mockResolvedValue({
+      enabled: true,
+      provider: 'ethicalads',
+      publisher_id: 'lumina',
+    })
+
+    renderAccountPage('/account/appearance')
+
+    expect(await screen.findByText('Privacy & Advertising')).toBeInTheDocument()
+    const select = screen.getByLabelText('Advertising preference')
+    expect(select).toBeInTheDocument()
+
+    await person.selectOptions(select, 'allowed')
+    expect(localStorage.getItem('lumina_ad_consent')).toBe('granted')
   })
 })

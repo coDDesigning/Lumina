@@ -69,4 +69,5 @@ export const queryKeys = {
     email,
     limit,
   ],
+  adsConfig: (): QueryKey => ['ads', 'config'],
 };

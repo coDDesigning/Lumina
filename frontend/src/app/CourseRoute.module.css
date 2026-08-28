@@ -1,0 +1,14 @@
+.wrap {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--space-3);
+  min-height: 60vh;
+  width: 100%;
+  padding: var(--space-4);
+}
+
+.wrap > * {
+  width: 100%;
+  max-width: var(--width-prose);
+}

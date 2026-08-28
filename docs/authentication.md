@@ -237,8 +237,11 @@ All of these are documented with their defaults in `.env.example` and read in
 In the hosted AWS deployment the mail settings are supplied by
 `terraform/modules/ecs` to every task, because every task loads the same
 configuration module and one missing setting fails startup validation rather
-than starting without mail. `SMTP_PASSWORD` is referenced from SSM only when
-`smtp_username` is set. See [deployment](deployment.md).
+than starting without mail. The sender is `info@study-lumina.com`, which is the
+default of the `email_from_address` Terraform variable; the relay must be
+authorized to send as it or the message is rejected before it leaves.
+`SMTP_PASSWORD` is referenced from SSM only when `smtp_username` is set. See
+[deployment](deployment.md).
 
 ## Related
 

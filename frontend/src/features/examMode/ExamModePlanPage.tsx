@@ -11,7 +11,7 @@ import {
   afterExamRoadmapGenerated,
 } from '@/api/invalidations';
 import { queryKeys } from '@/api/queryKeys';
-import type { ExamPlanView, ExamReviewSheetDocument, ExamRoadmap } from '@/api/types';
+import type { ExamPlanView, ExamReviewSheetDocument } from '@/api/types';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { useAuth } from '@/context/AuthContext';
 import type { Workspace } from '@/data/workspaces';
@@ -30,8 +30,14 @@ import { ExamMockExamBuilder } from './ExamMockExamBuilder';
 import { ExamReviewSheet } from './ExamReviewSheet';
 import { ExamRoadmapPanel } from './ExamRoadmapPanel';
 import { RankedTopicList } from './RankedTopicList';
-import { describeStaleReasons, formatExamDate, stalenessAction } from './examModeFormatters';
+import {
+  describePlanWarning,
+  describeStaleReasons,
+  formatExamDate,
+  stalenessAction,
+} from './examModeFormatters';
 import { useElapsed } from './useElapsed';
+import { usePlanRoadmap } from './usePlanRoadmap';
 import styles from './ExamModePlanPage.module.css';
 
 export interface ExamModePlanPageProps {
@@ -54,7 +60,6 @@ export default function ExamModePlanPage({ workspace }: ExamModePlanPageProps) {
   const [busy, setBusy] = useState<Busy>(null);
   const [failure, setFailure] = useState<GenerationFailure | null>(null);
   const [exhausted, setExhausted] = useState(false);
-  const [roadmap, setRoadmap] = useState<ExamRoadmap | null>(null);
   const elapsed = useElapsed(busy !== null);
 
   const plan = useQuery<ExamPlanView>({
@@ -69,6 +74,8 @@ export default function ExamModePlanPage({ workspace }: ExamModePlanPageProps) {
     fetcher: ({ signal }) => examModeAPI.listEntitlements(courseId, { signal }),
     fallbackMessage: 'Your unlocked topics could not be loaded.',
   });
+
+  const savedRoadmap = usePlanRoadmap(courseId, planId);
 
   // A saved review sheet is read, never generated, when the page opens.
   const reviewSheet = useQuery<ExamReviewSheetDocument>({
@@ -176,11 +183,11 @@ export default function ExamModePlanPage({ workspace }: ExamModePlanPageProps) {
     setBusy('roadmap');
     setFailure(null);
     try {
-      const result = await examRoadmapAPI.generate(courseId, {
+      await examRoadmapAPI.generate(courseId, {
         plan_output_id: current.generated_output_id,
       });
       afterExamRoadmapGenerated(courseId);
-      setRoadmap(result.roadmap);
+      savedRoadmap.reload();
     } catch (error) {
       setFailure(describeGenerationError(error, 'That roadmap could not be built.'));
     } finally {
@@ -231,14 +238,19 @@ export default function ExamModePlanPage({ workspace }: ExamModePlanPageProps) {
           </p>
         </div>
 
+        {/*
+          One notice, not one per code. These are all the same kind of fact --
+          evidence the ranking did not have -- so stacking them as separate
+          warnings makes a plan that worked look broken.
+        */}
         {current.warnings.length > 0 ? (
-          <div className={styles.notices}>
-            {current.warnings.map((warning) => (
-              <Alert key={warning} tone="warning">
-                {warning}
-              </Alert>
-            ))}
-          </div>
+          <Alert tone="info" title="What this ranking could not see">
+            <ul className={styles.warnings}>
+              {current.warnings.map((warning) => (
+                <li key={warning}>{describePlanWarning(warning)}</li>
+              ))}
+            </ul>
+          </Alert>
         ) : null}
 
         {stale ? (
@@ -298,11 +310,13 @@ export default function ExamModePlanPage({ workspace }: ExamModePlanPageProps) {
               detail="Spreading this plan's topics across the time you have."
               elapsed={elapsed}
             />
-          ) : roadmap ? (
+          ) : savedRoadmap.isLoading ? (
+            <Skeleton variant="block" height="10rem" />
+          ) : savedRoadmap.roadmap ? (
             <ExamRoadmapPanel
               courseId={courseId}
               planId={current.generated_output_id}
-              roadmap={roadmap}
+              roadmap={savedRoadmap.roadmap}
             />
           ) : (
             <EmptyState

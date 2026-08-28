@@ -18,6 +18,7 @@ import { ProfileKnowledgeSection } from './features/account/ProfileKnowledgeSect
 import AdminPage from './features/admin/AdminPage'
 import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
+import VerifyEmailPage from './features/auth/VerifyEmailPage'
 import LandingPage from './features/marketing/LandingPage'
 import { AppShell } from './app/AppShell'
 import { ThemeProvider } from './app/ThemeProvider'
@@ -412,6 +413,7 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/verify-email" element={<VerifyEmailPage />} />
 
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>

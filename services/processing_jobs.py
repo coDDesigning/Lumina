@@ -24,6 +24,11 @@ from backend.app.models import (
     DocumentPage,
     DocumentVisual,
     ProcessingJob,
+    ProfileDocument,
+    ProfileDocumentChunk,
+    ProfileDocumentPage,
+    ProfileDocumentVisual,
+    ProfileProcessingJob,
     UploadedDocument,
 )
 from services.embeddings import configured_embedding_identity
@@ -75,6 +80,22 @@ class ClaimedJob:
     id: int
     document_id: UUID
     course_id: int
+    claim_token: str
+    attempt_count: int
+    max_attempts: int
+    storage_provider: str
+    storage_key: str
+    file_hash: str
+    file_type: str
+    file_size: int
+    correlation_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimedProfileJob:
+    id: int
+    document_id: UUID
+    user_id: int
     claim_token: str
     attempt_count: int
     max_attempts: int
@@ -236,14 +257,42 @@ def processing_queue_metrics(
             ),
         )
     ).one()
-    oldest = row[3]
+    p_row = session.execute(
+        select(
+            func.coalesce(
+                func.sum(case((ProfileProcessingJob.status == JOB_STATUS_QUEUED, 1), else_=0)),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case((ProfileProcessingJob.status == JOB_STATUS_RUNNING, 1), else_=0)
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(case((ProfileProcessingJob.status == JOB_STATUS_FAILED, 1), else_=0)),
+                0,
+            ),
+            func.min(
+                case(
+                    (
+                        ProfileProcessingJob.status == JOB_STATUS_QUEUED,
+                        ProfileProcessingJob.available_at,
+                    ),
+                    else_=None,
+                )
+            ),
+        )
+    ).one()
+    oldest_list = [t for t in (row[3], p_row[3]) if t is not None]
+    oldest = min(oldest_list) if oldest_list else None
     if oldest is not None and oldest.tzinfo is None:
         oldest = oldest.replace(tzinfo=timezone.utc)
     age = 0.0 if oldest is None else max(0.0, (current - oldest).total_seconds())
     return QueueMetrics(
-        queued=int(row[0]),
-        running=int(row[1]),
-        failed=int(row[2]),
+        queued=int(row[0]) + int(p_row[0]),
+        running=int(row[1]) + int(p_row[1]),
+        failed=int(row[2]) + int(p_row[2]),
         oldest_queued_age_seconds=age,
     )
 
@@ -1018,7 +1067,24 @@ def recover_expired_jobs(
     if session.get_bind().dialect.name == "postgresql":
         statement = statement.with_for_update(of=ProcessingJob, skip_locked=True)
     rows = session.execute(statement).all()
-    if not rows:
+
+    profile_rows = []
+    if len(rows) < limit:
+        profile_statement = (
+            select(ProfileProcessingJob, ProfileDocument)
+            .join(ProfileDocument, ProfileDocument.id == ProfileProcessingJob.document_id)
+            .where(
+                ProfileProcessingJob.status == JOB_STATUS_RUNNING,
+                ProfileProcessingJob.lease_expires_at <= recovered_at,
+            )
+            .order_by(ProfileProcessingJob.id)
+            .limit(limit - len(rows))
+        )
+        if session.get_bind().dialect.name == "postgresql":
+            profile_statement = profile_statement.with_for_update(of=ProfileProcessingJob, skip_locked=True)
+        profile_rows = session.execute(profile_statement).all()
+
+    if not rows and not profile_rows:
         session.rollback()
         return 0
 
@@ -1041,14 +1107,34 @@ def recover_expired_jobs(
         _clear_lease(job)
         document_updates.append((document, should_retry, message))
 
+    profile_doc_updates: list[tuple[ProfileDocument, bool, str]] = []
+    for p_job, p_document in profile_rows:
+        p_should_retry = p_job.attempt_count < p_job.max_attempts
+        p_message = "The worker lease expired before completion."
+        p_job.status = JOB_STATUS_QUEUED if p_should_retry else JOB_STATUS_FAILED
+        p_job.available_at = recovered_at
+        p_job.finished_at = None if p_should_retry else recovered_at
+        p_job.last_error_code = "LEASE_EXPIRED"
+        p_job.last_error_message = p_message
+        p_job.failed_stage = None if p_should_retry else p_job.processing_stage
+        p_job.processing_stage = None
+        p_job.updated_at = recovered_at
+        _clear_profile_lease(p_job)
+        profile_doc_updates.append((p_document, p_should_retry, p_message))
+
     session.flush()
     for document, should_retry, message in document_updates:
         document.status = "uploaded" if should_retry else "failed"
         document.processing_error = None if should_retry else message
         document.updated_at = recovered_at
 
+    for p_document, p_should_retry, p_message in profile_doc_updates:
+        p_document.status = "uploaded" if p_should_retry else "failed"
+        p_document.processing_error = None if p_should_retry else p_message
+        p_document.updated_at = recovered_at
+
     session.commit()
-    return len(rows)
+    return len(rows) + len(profile_rows)
 
 
 def retry_failed_job(
@@ -1159,3 +1245,645 @@ def fence_course_jobs(
     )
     session.flush()
     return len(jobs)
+
+
+def _clear_profile_lease(job: ProfileProcessingJob) -> None:
+    job.lease_owner = None
+    job.claim_token = None
+    job.claimed_at = None
+    job.heartbeat_at = None
+    job.lease_expires_at = None
+
+
+def _lock_profile_job_and_document(
+    session: Session,
+    job_id: int,
+) -> tuple[ProfileProcessingJob | None, ProfileDocument | None]:
+    job_statement = select(ProfileProcessingJob).where(ProfileProcessingJob.id == job_id)
+    if session.get_bind().dialect.name == "postgresql":
+        job_statement = job_statement.with_for_update(of=ProfileProcessingJob)
+    job = session.scalar(job_statement)
+    if job is None:
+        return None, None
+
+    document_statement = select(ProfileDocument).where(ProfileDocument.id == job.document_id)
+    if session.get_bind().dialect.name == "postgresql":
+        document_statement = document_statement.with_for_update(of=ProfileDocument)
+    document = session.scalar(document_statement)
+    if document is None:
+        return None, None
+    return job, document
+
+
+def _profile_document_visual(visual: VisualData) -> ProfileDocumentVisual:
+    return ProfileDocumentVisual(
+        visual_index=visual.visual_index,
+        visual_type=visual.visual_type,
+        source=visual.source,
+        bbox_x0=visual.bbox[0],
+        bbox_y0=visual.bbox[1],
+        bbox_x1=visual.bbox[2],
+        bbox_y1=visual.bbox[3],
+        description=visual.description,
+        analysis_status=visual.analysis_status,
+        error_code=visual.error_code,
+    )
+
+
+def _validate_profile_document_provenance(
+    session: Session,
+    document_id: UUID,
+    file_type: str,
+    chunks: list[ChunkData],
+    pages: list[PageData] | None,
+) -> None:
+    page_numbers = (
+        [page.page_number for page in pages]
+        if pages is not None
+        else list(
+            session.scalars(
+                select(ProfileDocumentPage.page_number)
+                .where(ProfileDocumentPage.document_id == document_id)
+                .order_by(ProfileDocumentPage.content_index)
+            )
+        )
+    )
+    if file_type != "pdf":
+        if any(page_number is not None for page_number in page_numbers):
+            raise ValueError("Non-PDF document pages cannot contain page numbers")
+        if any(chunk.page_number is not None for chunk in chunks):
+            raise ValueError("Non-PDF document chunks cannot contain page ranges")
+        return
+
+    if not page_numbers or page_numbers != list(range(1, len(page_numbers) + 1)):
+        raise ValueError("PDF document page numbers must be contiguous and one-based")
+    if any(chunk.page_number is None for chunk in chunks):
+        raise ValueError("PDF document chunks must contain page ranges")
+    page_number_set = set(page_numbers)
+    if not page_numbers or any(
+        chunk.page_number not in page_number_set
+        or chunk.end_page_number not in page_number_set
+        for chunk in chunks
+    ):
+        raise ValueError("PDF document chunk page ranges must reference document pages")
+
+
+def enqueue_profile_document_job(
+    session: Session,
+    document: ProfileDocument,
+    *,
+    correlation_id: str | None = None,
+    max_attempts: int | None = None,
+    now: datetime | None = None,
+) -> ProfileProcessingJob:
+    """Add an extraction job to the caller's profile document transaction."""
+    if max_attempts is None:
+        max_attempts = settings.processing_job_max_attempts
+    if max_attempts <= 0:
+        raise ValueError("max_attempts must be positive")
+
+    if correlation_id is None:
+        correlation_id = get_request_id()
+
+    available_at = _database_now(session, now)
+    job = ProfileProcessingJob(
+        document=document,
+        user_id=document.user_id,
+        job_type=JOB_TYPE_EXTRACT_DOCUMENT,
+        correlation_id=correlation_id,
+        status=JOB_STATUS_QUEUED,
+        attempt_count=0,
+        max_attempts=max_attempts,
+        available_at=available_at,
+    )
+    session.add(job)
+    session.flush()
+    return job
+
+
+def claim_next_profile_job(
+    session: Session,
+    worker_id: str,
+    storage_provider: str,
+    lease_seconds: int,
+    *,
+    now: datetime | None = None,
+) -> ClaimedProfileJob | None:
+    worker_id = worker_id.strip()
+    if not worker_id:
+        raise ValueError("worker_id must not be empty")
+    if not storage_provider.strip():
+        raise ValueError("storage_provider must not be empty")
+    if lease_seconds <= 0:
+        raise ValueError("lease_seconds must be positive")
+
+    _start_transition(session)
+    eligibility_time = _database_now(session, now)
+    dialect_name = session.get_bind().dialect.name
+
+    statement = (
+        select(ProfileProcessingJob.id)
+        .join(ProfileDocument, ProfileDocument.id == ProfileProcessingJob.document_id)
+        .where(
+            ProfileProcessingJob.job_type == JOB_TYPE_EXTRACT_DOCUMENT,
+            ProfileProcessingJob.status == JOB_STATUS_QUEUED,
+            ProfileProcessingJob.available_at <= eligibility_time,
+            ProfileProcessingJob.attempt_count < ProfileProcessingJob.max_attempts,
+            ProfileDocument.status == "uploaded",
+            ProfileDocument.storage_provider == storage_provider,
+        )
+        .order_by(ProfileProcessingJob.available_at, ProfileProcessingJob.id)
+        .limit(1)
+    )
+    if dialect_name == "postgresql":
+        statement = statement.with_for_update(of=ProfileProcessingJob, skip_locked=True)
+
+    job_id = session.scalar(statement)
+    if job_id is None:
+        session.rollback()
+        return None
+
+    detail_statement = (
+        select(
+            ProfileProcessingJob.id,
+            ProfileProcessingJob.document_id,
+            ProfileProcessingJob.user_id,
+            ProfileProcessingJob.attempt_count,
+            ProfileProcessingJob.max_attempts,
+            ProfileDocument.storage_provider,
+            ProfileDocument.storage_key,
+            ProfileDocument.file_hash,
+            ProfileDocument.file_type,
+            ProfileDocument.file_size,
+            ProfileProcessingJob.correlation_id,
+        )
+        .join(ProfileDocument, ProfileDocument.id == ProfileProcessingJob.document_id)
+        .where(
+            ProfileProcessingJob.id == job_id,
+            ProfileDocument.status == "uploaded",
+        )
+    )
+    if dialect_name == "postgresql":
+        detail_statement = detail_statement.with_for_update(of=ProfileDocument)
+    row = session.execute(detail_statement).one_or_none()
+    if row is None:
+        session.rollback()
+        return None
+
+    claimed_at = _database_now(session, now)
+    lease_expires_at = claimed_at + timedelta(seconds=lease_seconds)
+    claim_token = str(uuid4())
+    result = session.execute(
+        update(ProfileProcessingJob)
+        .where(
+            ProfileProcessingJob.id == job_id,
+            ProfileProcessingJob.status == JOB_STATUS_QUEUED,
+            ProfileProcessingJob.available_at <= claimed_at,
+            ProfileProcessingJob.attempt_count < ProfileProcessingJob.max_attempts,
+        )
+        .values(
+            status=JOB_STATUS_RUNNING,
+            attempt_count=ProfileProcessingJob.attempt_count + 1,
+            started_at=case(
+                (ProfileProcessingJob.started_at.is_(None), claimed_at),
+                else_=ProfileProcessingJob.started_at,
+            ),
+            claimed_at=claimed_at,
+            heartbeat_at=claimed_at,
+            lease_expires_at=lease_expires_at,
+            lease_owner=worker_id[:255],
+            claim_token=claim_token,
+            finished_at=None,
+            last_error_code=None,
+            last_error_message=None,
+            processing_stage="validating",
+            failed_stage=None,
+            updated_at=claimed_at,
+        )
+    )
+    if result.rowcount != 1:
+        session.rollback()
+        return None
+
+    session.execute(
+        update(ProfileDocument)
+        .where(
+            ProfileDocument.id == row.document_id,
+            ProfileDocument.status == "uploaded",
+        )
+        .values(status="processing", processing_error=None, updated_at=claimed_at)
+    )
+    session.commit()
+    return ClaimedProfileJob(
+        id=row.id,
+        document_id=row.document_id,
+        user_id=row.user_id,
+        claim_token=claim_token,
+        attempt_count=row.attempt_count + 1,
+        max_attempts=row.max_attempts,
+        storage_provider=row.storage_provider,
+        storage_key=row.storage_key,
+        file_hash=row.file_hash,
+        file_type=row.file_type,
+        file_size=row.file_size,
+        correlation_id=row.correlation_id,
+    )
+
+
+def heartbeat_profile_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    lease_seconds: int,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if lease_seconds <= 0:
+        raise ValueError("lease_seconds must be positive")
+
+    _start_transition(session)
+    job, document = _lock_profile_job_and_document(session, job_id)
+    if job is None or document is None:
+        session.rollback()
+        return False
+
+    heartbeat_at = _database_now(session, now)
+    if (
+        job.status != JOB_STATUS_RUNNING
+        or job.claim_token != claim_token
+        or job.lease_expires_at is None
+        or job.lease_expires_at <= heartbeat_at
+        or document.status != "processing"
+    ):
+        session.rollback()
+        return False
+
+    job.heartbeat_at = heartbeat_at
+    job.lease_expires_at = heartbeat_at + timedelta(seconds=lease_seconds)
+    job.updated_at = heartbeat_at
+    session.commit()
+    return True
+
+
+def update_profile_job_stage(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    stage: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if stage not in DOCUMENT_PROCESSING_STAGES:
+        raise ValueError(f"Unknown processing stage: '{stage}'")
+
+    _start_transition(session)
+    job, document = _lock_profile_job_and_document(session, job_id)
+    if job is None or document is None:
+        session.rollback()
+        return False
+
+    updated_at = _database_now(session, now)
+    if (
+        job.status != JOB_STATUS_RUNNING
+        or job.claim_token != claim_token
+        or job.lease_expires_at is None
+        or job.lease_expires_at <= updated_at
+        or document.status != "processing"
+    ):
+        session.rollback()
+        return False
+
+    job.processing_stage = stage
+    job.updated_at = updated_at
+    session.commit()
+    return True
+
+
+def replace_profile_document_pages(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    pages: list[PageData],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    _start_transition(session)
+    job, document = _lock_profile_job_and_document(session, job_id)
+    if job is None or document is None:
+        session.rollback()
+        return False
+
+    updated_at = _database_now(session, now)
+    if (
+        job.status != JOB_STATUS_RUNNING
+        or job.claim_token != claim_token
+        or job.lease_expires_at is None
+        or job.lease_expires_at <= updated_at
+        or document.status != "processing"
+    ):
+        session.rollback()
+        return False
+
+    session.execute(
+        delete(ProfileDocumentPage).where(ProfileDocumentPage.document_id == job.document_id)
+    )
+    session.add_all(
+        ProfileDocumentPage(
+            document_id=job.document_id,
+            user_id=job.user_id,
+            content_index=page.content_index,
+            page_number=page.page_number,
+            raw_text=(page.raw_text or "").replace("\x00", ""),
+            text=page.text.replace("\x00", ""),
+            raw_extraction_method=page.raw_extraction_method,
+            extraction_method=page.extraction_method,
+            has_images=page.has_images,
+            needs_ocr=page.needs_ocr,
+            raw_needs_ocr=(
+                page.raw_needs_ocr
+                if page.raw_needs_ocr is not None
+                else page.needs_ocr
+            ),
+            ocr_status=page.ocr_status or "not_required",
+            has_visual_content=page.has_visual_content,
+            visual_analysis_status=page.visual_analysis_status,
+            visuals=[_profile_document_visual(visual) for visual in page.visuals],
+        )
+        for page in pages
+    )
+    job.updated_at = updated_at
+    session.commit()
+    return True
+
+
+def complete_profile_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    chunks: list[ChunkData],
+    embeddings: list[list[float]],
+    *,
+    pages: list[PageData] | None = None,
+    vector_store: VectorStore | None = None,
+    now: datetime | None = None,
+) -> bool:
+    if not chunks:
+        raise ValueError("Job completion requires at least one chunk")
+    if len(chunks) != len(embeddings):
+        raise ValueError("Every chunk must have exactly one embedding")
+    for position, embedding in enumerate(embeddings):
+        if len(embedding) != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Embedding at position {position} has {len(embedding)} dimensions; "
+                f"expected {EMBEDDING_DIMENSIONS}"
+            )
+        if any(not isfinite(value) for value in embedding):
+            raise ValueError(
+                f"Embedding at position {position} contains a non-finite float"
+            )
+
+    _start_transition(session)
+    job, document = _lock_profile_job_and_document(session, job_id)
+    if job is None or document is None:
+        session.rollback()
+        return False
+
+    try:
+        _validate_profile_document_provenance(
+            session,
+            job.document_id,
+            document.file_type,
+            chunks,
+            pages,
+        )
+    except ValueError:
+        session.rollback()
+        raise
+    finished_at = _database_now(session, now)
+    if (
+        job.status != JOB_STATUS_RUNNING
+        or job.claim_token != claim_token
+        or job.lease_expires_at is None
+        or job.lease_expires_at <= finished_at
+        or job.processing_stage != "generating_embeddings"
+        or document.status != "processing"
+    ):
+        session.rollback()
+        return False
+
+    job.status = JOB_STATUS_SUCCEEDED
+    job.finished_at = finished_at
+    job.last_error_code = None
+    job.last_error_message = None
+    job.processing_stage = None
+    job.failed_stage = None
+    job.updated_at = finished_at
+    _clear_profile_lease(job)
+
+    session.execute(
+        delete(ProfileDocumentChunk).where(ProfileDocumentChunk.document_id == job.document_id)
+    )
+    if pages is not None:
+        session.execute(
+            delete(ProfileDocumentPage).where(ProfileDocumentPage.document_id == job.document_id)
+        )
+        session.add_all(
+            ProfileDocumentPage(
+                document_id=job.document_id,
+                user_id=job.user_id,
+                content_index=page.content_index,
+                page_number=page.page_number,
+                raw_text=(page.raw_text or "").replace("\x00", ""),
+                text=page.text.replace("\x00", ""),
+                raw_extraction_method=page.raw_extraction_method,
+                extraction_method=page.extraction_method,
+                has_images=page.has_images,
+                needs_ocr=page.needs_ocr,
+                raw_needs_ocr=(
+                    page.raw_needs_ocr
+                    if page.raw_needs_ocr is not None
+                    else page.needs_ocr
+                ),
+                ocr_status=page.ocr_status or "not_required",
+                has_visual_content=page.has_visual_content,
+                visual_analysis_status=page.visual_analysis_status,
+                visuals=[_profile_document_visual(visual) for visual in page.visuals],
+            )
+            for page in pages
+        )
+    session.add_all(
+        ProfileDocumentChunk(
+            document_id=job.document_id,
+            user_id=job.user_id,
+            chunk_index=index,
+            page_number=chunk.page_number,
+            end_page_number=chunk.end_page_number,
+            text=chunk.text.replace("\x00", ""),
+        )
+        for index, chunk in enumerate(chunks)
+    )
+    session.flush()
+
+    stored_chunks = list(
+        session.scalars(
+            select(ProfileDocumentChunk)
+            .where(ProfileDocumentChunk.document_id == job.document_id)
+            .order_by(ProfileDocumentChunk.chunk_index)
+        ).all()
+    )
+    if len(stored_chunks) != len(chunks):
+        session.rollback()
+        raise RuntimeError("Persisted chunk count does not match the completed chunks")
+
+    embedding_provider, embedding_model = configured_embedding_identity()
+    store = vector_store if vector_store is not None else get_vector_store()
+    try:
+        store.replace_profile_document_vectors(
+            session,
+            document_id=job.document_id,
+            user_id=job.user_id,
+            records=[
+                VectorRecord(
+                    chunk_id=stored.id,
+                    document_id=job.document_id,
+                    course_id=job.user_id,
+                    chunk_index=stored.chunk_index,
+                    embedding=embeddings[position],
+                )
+                for position, stored in enumerate(stored_chunks)
+            ],
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+        )
+    except VectorStoreError:
+        session.rollback()
+        raise
+
+    document.status = "ready"
+    document.processing_error = None
+    document.updated_at = finished_at
+    session.flush()
+    session.commit()
+    return True
+
+
+def fail_profile_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    error_code: str,
+    error_message: str | None,
+    *,
+    failed_stage: str | None = None,
+    retryable: bool = False,
+    retry_delay_seconds: int = 60,
+    now: datetime | None = None,
+) -> bool:
+    error_code = error_code.strip()
+    if not error_code:
+        raise ValueError("error_code must not be empty")
+    if retry_delay_seconds < 0:
+        raise ValueError("retry_delay_seconds must be non-negative")
+    if failed_stage is not None and failed_stage not in DOCUMENT_PROCESSING_STAGES:
+        raise ValueError(f"Unknown failed stage: '{failed_stage}'")
+
+    _start_transition(session)
+    job, document = _lock_profile_job_and_document(session, job_id)
+    if job is None or document is None:
+        session.rollback()
+        return False
+
+    failed_at = _database_now(session, now)
+    if (
+        job.status != JOB_STATUS_RUNNING
+        or job.claim_token != claim_token
+        or job.lease_expires_at is None
+        or job.lease_expires_at <= failed_at
+        or document.status != "processing"
+    ):
+        session.rollback()
+        return False
+
+    public_message = _public_error_message(error_message or error_code)
+    stage = failed_stage or job.processing_stage
+    can_retry = retryable and job.attempt_count < job.max_attempts
+    job.last_error_code = error_code[:100]
+    job.last_error_message = public_message
+    job.failed_stage = None if can_retry else stage
+    job.processing_stage = None
+    job.updated_at = failed_at
+    _clear_profile_lease(job)
+
+    if can_retry:
+        job.status = JOB_STATUS_QUEUED
+        job.available_at = failed_at + timedelta(seconds=retry_delay_seconds)
+        job.finished_at = None
+        document.status = "uploaded"
+        document.processing_error = None
+        document.updated_at = failed_at
+    else:
+        job.status = JOB_STATUS_FAILED
+        job.available_at = failed_at
+        job.finished_at = failed_at
+        document.status = "failed"
+        document.processing_error = public_message
+        document.updated_at = failed_at
+
+    session.commit()
+    return True
+
+
+def retry_failed_profile_job(
+    session: Session,
+    document_id: UUID,
+    user_id: int,
+    *,
+    now: datetime | None = None,
+) -> tuple[ProfileDocument, ProfileProcessingJob]:
+    _start_transition(session)
+    job_statement = select(ProfileProcessingJob).where(
+        ProfileProcessingJob.document_id == document_id,
+        ProfileProcessingJob.user_id == user_id,
+        ProfileProcessingJob.job_type == JOB_TYPE_EXTRACT_DOCUMENT,
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        job_statement = job_statement.with_for_update(of=ProfileProcessingJob)
+    job = session.scalar(job_statement)
+    if job is None:
+        session.rollback()
+        raise ProcessingJobStateError("No processing job exists for this profile document")
+
+    document_statement = select(ProfileDocument).where(
+        ProfileDocument.id == document_id,
+        ProfileDocument.user_id == user_id,
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        document_statement = document_statement.with_for_update(of=ProfileDocument)
+    document = session.scalar(document_statement)
+    if document is None:
+        session.rollback()
+        raise ProcessingJobStateError("No matching profile document exists")
+
+    available_at = _database_now(session, now)
+    if document.status != "failed" or job.status != JOB_STATUS_FAILED:
+        session.rollback()
+        raise ProcessingJobStateError(
+            "Only failed profile documents with terminal jobs can be manually retried"
+        )
+
+    job.status = JOB_STATUS_QUEUED
+    job.attempt_count = 0
+    job.available_at = available_at
+    job.started_at = None
+    job.finished_at = None
+    job.last_error_code = None
+    job.last_error_message = None
+    job.processing_stage = None
+    job.failed_stage = None
+    job.updated_at = available_at
+    _clear_profile_lease(job)
+    document.status = "uploaded"
+    document.processing_error = None
+    document.updated_at = available_at
+    session.commit()
+    return document, job

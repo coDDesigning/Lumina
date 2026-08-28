@@ -26,6 +26,7 @@ from backend.app.security_headers import SecurityHeadersMiddleware
 from routes import (
     activity,
     admin,
+    ads,
     ai_models,
     ai_tutor,
     auth,
@@ -38,6 +39,7 @@ from routes import (
     exam_roadmap,
     flashcard,
     generated_output,
+    profile_document,
     profile_knowledge,
     progress,
     prompt_generator,
@@ -79,6 +81,7 @@ if settings.security_headers_enabled:
         SecurityHeadersMiddleware,
         hsts_enabled=settings.hsts_enabled,
         hsts_max_age_seconds=settings.hsts_max_age_seconds,
+        settings=settings,
     )
 app.include_router(auth.router)
 app.include_router(course.router)
@@ -89,6 +92,7 @@ app.include_router(admin.router)
 app.include_router(user.router)
 app.include_router(ai_models.router)
 app.include_router(profile_knowledge.router)
+app.include_router(profile_document.router)
 app.include_router(document.router)
 app.include_router(study_guide.router)
 app.include_router(exam_roadmap.router)
@@ -101,6 +105,7 @@ app.include_router(flashcard.router)
 app.include_router(prompt_generator.router)
 app.include_router(ai_tutor.router)
 app.include_router(course_qa.router)
+app.include_router(ads.router)
 app.add_exception_handler(
     RequestValidationError,
     document.upload_request_validation_error,

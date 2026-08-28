@@ -7,6 +7,7 @@ this file is the single source of truth for "what the environment says".
 """
 
 import json
+import logging
 import math
 import os
 import re
@@ -29,6 +30,8 @@ from .database_config import (
     load_database_url,
     load_deployment_mode,
 )
+
+logger = logging.getLogger(__name__)
 
 STORAGE_BACKEND_LOCAL = "local"
 STORAGE_BACKEND_S3 = "s3"
@@ -157,6 +160,14 @@ DEFAULT_EMAIL_VERIFICATION_TOKEN_TTL_HOURS = 24
 DEFAULT_SMTP_PORT = 587
 DEFAULT_SMTP_TIMEOUT_SECONDS = 10
 DEFAULT_HSTS_MAX_AGE_SECONDS = 31536000
+
+DEFAULT_ENABLE_HOSTED_ADS = False
+DEFAULT_HOSTED_ADS_PROVIDER = "ethicalads"
+DEFAULT_HOSTED_ADS_PUBLISHER_ID = "lumina"
+DEFAULT_HOSTED_ADS_CSP_ALLOWLIST = (
+    "https://media.ethicalads.io",
+    "https://server.ethicalads.io",
+)
 
 
 @dataclass(frozen=True)
@@ -318,6 +329,11 @@ class Settings:
     embedding_backfill_prune_orphans: bool
     ai_usage_retention_days: int
     ai_usage_cleanup_batch_size: int
+
+    # Optional hosted advertising configuration
+    enable_hosted_ads: bool
+    hosted_ads_provider: str | None
+    hosted_ads_publisher_id: str | None
 
     @property
     def is_hosted(self) -> bool:
@@ -819,10 +835,38 @@ def load_settings() -> Settings:
         maximum=300,
     )
 
-    image_provider = (
-        os.getenv("IMAGE_PROVIDER", DEFAULT_IMAGE_PROVIDER).strip().lower()
-        or DEFAULT_IMAGE_PROVIDER
-    )
+    raw_image_provider = os.getenv("IMAGE_PROVIDER")
+    if raw_image_provider is not None and raw_image_provider.strip():
+        image_provider = raw_image_provider.strip().lower()
+    else:
+        if mode == MODE_HOSTED:
+            if ai_provider == AI_PROVIDER_GEMINI:
+                gemini_entries = ai_model_catalog.get(AI_PROVIDER_GEMINI, [])
+                if any(bool(entry.get("vision")) for entry in gemini_entries):
+                    image_provider = IMAGE_PROVIDER_GEMINI
+                else:
+                    image_provider = IMAGE_PROVIDER_NONE
+            else:
+                image_provider = IMAGE_PROVIDER_NONE
+        else:
+            ollama_entries = ai_model_catalog.get(AI_PROVIDER_OLLAMA, [])
+            configured_ollama_image_model = os.getenv(
+                "OLLAMA_IMAGE_MODEL",
+                DEFAULT_OLLAMA_IMAGE_MODEL,
+            ).strip()
+            has_advertised_vision = any(
+                entry.get("model") == configured_ollama_image_model
+                and bool(entry.get("vision"))
+                for entry in ollama_entries
+            )
+            if has_advertised_vision:
+                image_provider = IMAGE_PROVIDER_OLLAMA
+            else:
+                image_provider = IMAGE_PROVIDER_NONE
+                logger.info(
+                    "Visual analysis is disabled (IMAGE_PROVIDER='none'); visual content in uploaded documents will not be described or indexed for retrieval."
+                )
+
     if image_provider not in RECOGNIZED_IMAGE_PROVIDERS:
         raise ValueError(
             f"IMAGE_PROVIDER must be one of: {', '.join(RECOGNIZED_IMAGE_PROVIDERS)}."
@@ -849,6 +893,25 @@ def load_settings() -> Settings:
     ).strip()
     if not gemini_image_model or len(gemini_image_model) > 128:
         raise ValueError("GEMINI_IMAGE_MODEL must contain 1-128 non-blank characters.")
+
+    if image_provider == IMAGE_PROVIDER_GEMINI:
+        if not gemini_api_key:
+            raise ValueError(
+                "GEMINI_API_KEY is required when gemini is configured as IMAGE_PROVIDER."
+            )
+        gemini_entries = ai_model_catalog.get(AI_PROVIDER_GEMINI, [])
+        for entry in gemini_entries:
+            if entry.get("model") == gemini_image_model and entry.get("vision") is False:
+                raise ValueError(
+                    f"GEMINI_IMAGE_MODEL '{gemini_image_model}' is declared with vision=False in AI_MODEL_CATALOG."
+                )
+    elif image_provider == IMAGE_PROVIDER_OLLAMA:
+        ollama_entries = ai_model_catalog.get(AI_PROVIDER_OLLAMA, [])
+        for entry in ollama_entries:
+            if entry.get("model") == ollama_image_model and entry.get("vision") is False:
+                raise ValueError(
+                    f"OLLAMA_IMAGE_MODEL '{ollama_image_model}' is declared with vision=False in AI_MODEL_CATALOG."
+                )
 
     image_understanding_timeout_seconds = _bounded_positive_integer_setting(
         "IMAGE_UNDERSTANDING_TIMEOUT_SECONDS",
@@ -1070,6 +1133,36 @@ def load_settings() -> Settings:
         DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE,
     )
 
+    if mode == MODE_SELF_HOSTED:
+        raw_ads = os.getenv("ENABLE_HOSTED_ADS")
+        if raw_ads is not None and _boolean_setting("ENABLE_HOSTED_ADS", default=False):
+            raise ValueError(
+                "Self-hosted deployment mode does not permit ENABLE_HOSTED_ADS=true. "
+                "Advertising is strictly isolated to hosted deployments."
+            )
+        enable_hosted_ads = False
+        hosted_ads_provider = None
+        hosted_ads_publisher_id = None
+    else:
+        enable_hosted_ads = _boolean_setting(
+            "ENABLE_HOSTED_ADS",
+            default=DEFAULT_ENABLE_HOSTED_ADS,
+        )
+        if enable_hosted_ads:
+            hosted_ads_provider = (
+                os.getenv("HOSTED_ADS_PROVIDER", DEFAULT_HOSTED_ADS_PROVIDER).strip()
+                or DEFAULT_HOSTED_ADS_PROVIDER
+            )
+            hosted_ads_publisher_id = (
+                os.getenv(
+                    "HOSTED_ADS_PUBLISHER_ID", DEFAULT_HOSTED_ADS_PUBLISHER_ID
+                ).strip()
+                or DEFAULT_HOSTED_ADS_PUBLISHER_ID
+            )
+        else:
+            hosted_ads_provider = None
+            hosted_ads_publisher_id = None
+
     return Settings(
         app_env=app_env,
         app_debug=app_debug,
@@ -1214,6 +1307,9 @@ def load_settings() -> Settings:
         embedding_backfill_prune_orphans=embedding_backfill_prune_orphans,
         ai_usage_retention_days=ai_usage_retention_days,
         ai_usage_cleanup_batch_size=ai_usage_cleanup_batch_size,
+        enable_hosted_ads=enable_hosted_ads,
+        hosted_ads_provider=hosted_ads_provider,
+        hosted_ads_publisher_id=hosted_ads_publisher_id,
     )
 
 

@@ -22,11 +22,16 @@ from backend.app.config import (
     VECTOR_BACKEND_PGVECTOR,
     settings,
 )
-from backend.app.models import EMBEDDING_DIMENSIONS, ChunkEmbedding
+from backend.app.models import (
+    EMBEDDING_DIMENSIONS,
+    ChunkEmbedding,
+    ProfileChunkEmbedding,
+)
 
 logger = logging.getLogger(__name__)
 
 CHROMA_COLLECTION_NAME = "lumina_chunks"
+CHROMA_PROFILE_COLLECTION_NAME = "lumina_profile_chunks"
 SIMILARITY_METRIC = "cosine"
 
 
@@ -120,6 +125,35 @@ class VectorStore(Protocol):
         document_ids: Sequence[UUID] | None = None,
     ) -> list[SearchResult]: ...
 
+    def replace_profile_document_vectors(
+        self,
+        session: Session,
+        *,
+        document_id: UUID,
+        user_id: int,
+        records: Sequence[VectorRecord],
+        embedding_provider: str,
+        embedding_model: str,
+    ) -> None: ...
+
+    def delete_profile_document_vectors(
+        self, session: Session, document_id: UUID
+    ) -> None: ...
+
+    def delete_user_profile_vectors(
+        self, session: Session, user_id: int
+    ) -> None: ...
+
+    def search_profile(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        query_embedding: list[float],
+        limit: int,
+        document_ids: Sequence[UUID] | None = None,
+    ) -> list[SearchResult]: ...
+
 
 def _narrowing_documents(document_ids: Sequence[UUID] | None) -> list[UUID] | None:
     """The deduplicated document filter for one search, or ``None`` for all.
@@ -148,10 +182,37 @@ def _validated(
         record.validate()
         if record.document_id != document_id or record.course_id != course_id:
             raise ValueError(
-                "Vector records must belong to the document being replaced"
+                "All vector records in a replacement batch must match the batch "
+                "document_id and course_id."
             )
         if record.chunk_id in seen:
-            raise ValueError("Vector records must not repeat a chunk")
+            raise ValueError(
+                "Vector replacement batches must not contain duplicate chunk_ids."
+            )
+        seen.add(record.chunk_id)
+        validated.append(record)
+    return validated
+
+
+def _validated_profile(
+    records: Sequence[VectorRecord],
+    *,
+    document_id: UUID,
+    user_id: int,
+) -> list[VectorRecord]:
+    validated: list[VectorRecord] = []
+    seen: set[int] = set()
+    for record in records:
+        record.validate()
+        if record.document_id != document_id or record.course_id != user_id:
+            raise ValueError(
+                "All vector records in a profile replacement batch must match the batch "
+                "document_id and user_id."
+            )
+        if record.chunk_id in seen:
+            raise ValueError(
+                "Vector replacement batches must not contain duplicate chunk_ids."
+            )
         seen.add(record.chunk_id)
         validated.append(record)
     return validated
@@ -346,6 +407,119 @@ class PgVectorStore:
             for row in rows
         ]
 
+    def replace_profile_document_vectors(
+        self,
+        session: Session,
+        *,
+        document_id: UUID,
+        user_id: int,
+        records: Sequence[VectorRecord],
+        embedding_provider: str,
+        embedding_model: str,
+    ) -> None:
+        validated = _validated_profile(records, document_id=document_id, user_id=user_id)
+        session.execute(
+            delete(ProfileChunkEmbedding).where(
+                ProfileChunkEmbedding.document_id == document_id
+            )
+        )
+        session.flush()
+        if not validated:
+            return
+        session.add_all(
+            ProfileChunkEmbedding(
+                chunk_id=record.chunk_id,
+                document_id=record.document_id,
+                user_id=record.course_id,
+                chunk_index=record.chunk_index,
+                embedding=record.embedding,
+                embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                dimensions=EMBEDDING_DIMENSIONS,
+            )
+            for record in validated
+        )
+        session.flush()
+
+    def delete_profile_document_vectors(
+        self, session: Session, document_id: UUID
+    ) -> None:
+        session.execute(
+            delete(ProfileChunkEmbedding).where(
+                ProfileChunkEmbedding.document_id == document_id
+            )
+        )
+        session.flush()
+
+    def delete_user_profile_vectors(
+        self, session: Session, user_id: int
+    ) -> None:
+        session.execute(
+            delete(ProfileChunkEmbedding).where(
+                ProfileChunkEmbedding.user_id == user_id
+            )
+        )
+        session.flush()
+
+    def search_profile(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        query_embedding: list[float],
+        limit: int,
+        document_ids: Sequence[UUID] | None = None,
+    ) -> list[SearchResult]:
+        if len(query_embedding) != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Query embeddings must contain {EMBEDDING_DIMENSIONS} values, "
+                f"got {len(query_embedding)}"
+            )
+        if limit < 1:
+            raise ValueError("Search limit must be a positive integer")
+        identifiers = _narrowing_documents(document_ids)
+        if session.get_bind().dialect.name != "postgresql":
+            raise VectorStoreConfigurationError(
+                "pgvector similarity search requires a PostgreSQL connection."
+            )
+        query = "[" + ",".join(repr(value) for value in query_embedding) + "]"
+        document_filter = (
+            " AND document_id = ANY(CAST(:document_ids AS uuid[]))"
+            if identifiers
+            else ""
+        )
+        statement = text(
+            "SELECT chunk_id, document_id, user_id, chunk_index, "
+            "1.0 - (embedding <=> CAST(:query AS vector)) AS similarity "
+            "FROM profile_chunk_embeddings "
+            "WHERE user_id = :user_id" + document_filter + " "
+            "ORDER BY embedding <=> CAST(:query AS vector) "
+            "LIMIT :limit"
+        )
+        parameters: dict[str, object] = {
+            "query": query,
+            "user_id": user_id,
+            "limit": limit,
+        }
+        if identifiers:
+            parameters["document_ids"] = [str(value) for value in identifiers]
+        try:
+            session.execute(text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
+            session.execute(text("SET LOCAL hnsw.max_scan_tuples = 20000"))
+            rows = session.execute(statement, parameters)
+        except Exception as exc:
+            raise VectorStoreError("The vector store could not be searched.") from exc
+        return [
+            SearchResult(
+                chunk_id=row.chunk_id,
+                document_id=row.document_id,
+                course_id=row.user_id,
+                chunk_index=row.chunk_index,
+                similarity=row.similarity,
+            )
+            for row in rows
+        ]
+
 
 class ChromaVectorStore:
     """Vectors in a local persistent Chroma collection.
@@ -366,6 +540,7 @@ class ChromaVectorStore:
         )
         self._client = None
         self._collection = None
+        self._profile_collection = None
 
     def _get_collection(self):
         if self._collection is not None:
@@ -373,7 +548,8 @@ class ChromaVectorStore:
         try:
             import chromadb
 
-            self._client = chromadb.PersistentClient(path=self._persist_directory)
+            if self._client is None:
+                self._client = chromadb.PersistentClient(path=self._persist_directory)
             self._collection = self._client.get_or_create_collection(
                 name=CHROMA_COLLECTION_NAME,
                 embedding_function=None,
@@ -383,8 +559,26 @@ class ChromaVectorStore:
             raise VectorStoreError("The vector store could not be opened.") from exc
         return self._collection
 
+    def _get_profile_collection(self):
+        if self._profile_collection is not None:
+            return self._profile_collection
+        try:
+            import chromadb
+
+            if self._client is None:
+                self._client = chromadb.PersistentClient(path=self._persist_directory)
+            self._profile_collection = self._client.get_or_create_collection(
+                name=CHROMA_PROFILE_COLLECTION_NAME,
+                embedding_function=None,
+                configuration={"hnsw": {"space": SIMILARITY_METRIC}},
+            )
+        except Exception as exc:
+            raise VectorStoreError("The vector store could not be opened.") from exc
+        return self._profile_collection
+
     def close(self) -> None:
         self._collection = None
+        self._profile_collection = None
         self._client = None
 
     def _discard_client(self) -> None:
@@ -412,17 +606,24 @@ class ChromaVectorStore:
         API serving rather than failing every later request.
         """
         try:
-            return operation(self._get_collection())
+            collection = self._get_collection()
+            return operation(collection)
         except VectorStoreError:
             raise
         except Exception:
             self._discard_client()
         try:
-            return operation(self._get_collection())
-        except VectorStoreError:
-            raise
+            collection = self._get_collection()
+            return operation(collection)
         except Exception as exc:
             raise VectorStoreError(message) from exc
+
+    def _run_profile(self, operation, error_message: str):
+        collection = self._get_profile_collection()
+        try:
+            return operation(collection)
+        except Exception as exc:
+            raise VectorStoreError(error_message) from exc
 
     @staticmethod
     def _metadata(
@@ -599,6 +800,109 @@ class ChromaVectorStore:
         if not metadatas:
             raise VectorStoreError("The requested embedding is not stored.")
         return dict(metadatas[0])
+
+    def replace_profile_document_vectors(
+        self,
+        session: Session,
+        *,
+        document_id: UUID,
+        user_id: int,
+        records: Sequence[VectorRecord],
+        embedding_provider: str,
+        embedding_model: str,
+    ) -> None:
+        validated = _validated_profile(records, document_id=document_id, user_id=user_id)
+        self._run_profile(
+            lambda collection: collection.delete(where={"document_id": str(document_id)}),
+            "The vector store could not remove stale profile embeddings.",
+        )
+        if not validated:
+            return
+        self._run_profile(
+            lambda collection: collection.add(
+                ids=[str(record.chunk_id) for record in validated],
+                embeddings=[record.embedding for record in validated],
+                metadatas=[
+                    {
+                        "chunk_id": record.chunk_id,
+                        "document_id": str(record.document_id),
+                        "user_id": user_id,
+                        "chunk_index": record.chunk_index,
+                        "embedding_provider": embedding_provider,
+                        "embedding_model": embedding_model,
+                    }
+                    for record in validated
+                ],
+            ),
+            "The vector store could not persist the requested profile embeddings.",
+        )
+
+    def delete_profile_document_vectors(
+        self, session: Session, document_id: UUID
+    ) -> None:
+        self._run_profile(
+            lambda collection: collection.delete(where={"document_id": str(document_id)}),
+            "The vector store could not remove the requested profile embeddings.",
+        )
+
+    def delete_user_profile_vectors(
+        self, session: Session, user_id: int
+    ) -> None:
+        self._run_profile(
+            lambda collection: collection.delete(where={"user_id": user_id}),
+            "The vector store could not remove the requested profile embeddings.",
+        )
+
+    def search_profile(
+        self,
+        session: Session,
+        *,
+        user_id: int,
+        query_embedding: list[float],
+        limit: int,
+        document_ids: Sequence[UUID] | None = None,
+    ) -> list[SearchResult]:
+        if len(query_embedding) != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Query embeddings must contain {EMBEDDING_DIMENSIONS} values, "
+                f"got {len(query_embedding)}"
+            )
+        if limit < 1:
+            raise ValueError("Search limit must be a positive integer")
+        identifiers = _narrowing_documents(document_ids)
+        if identifiers is None:
+            where: dict = {"user_id": user_id}
+        else:
+            where = {
+                "$and": [
+                    {"user_id": {"$eq": user_id}},
+                    {"document_id": {"$in": [str(value) for value in identifiers]}},
+                ]
+            }
+        found = self._run_profile(
+            lambda collection: collection.query(
+                query_embeddings=[query_embedding],
+                where=where,
+                n_results=limit,
+                include=["metadatas", "distances"],
+            ),
+            "The vector store could not be searched.",
+        )
+        ids = found.get("ids", [[]])[0]
+        metadatas = found.get("metadatas", [[]])[0] or []
+        distances = found.get("distances", [[]])[0] or []
+        return [
+            SearchResult(
+                chunk_id=int(identifier),
+                document_id=UUID(metadata["document_id"]),
+                course_id=metadata["user_id"],
+                chunk_index=metadata["chunk_index"],
+                similarity=1.0 - distance,
+            )
+            for identifier, metadata, distance in zip(
+                ids, metadatas, distances, strict=True
+            )
+        ]
 
 
 _store: VectorStore | None = None

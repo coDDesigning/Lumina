@@ -29,7 +29,7 @@ describe('activityHref', () => {
 
   it('opens the stored guide for a study guide', () => {
     expect(activityHref(item({ action_type: 'study_guide', output_id: 12 }))).toBe(
-      '/courses/7/guides/12',
+      '/courses/7?artifact=12',
     );
   });
 

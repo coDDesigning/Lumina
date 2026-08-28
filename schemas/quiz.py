@@ -373,6 +373,13 @@ class QuizQuestionView(BaseModel):
 
 
 class QuizView(BaseModel):
+    """One quiz as the client sees it.
+
+    ``quiz_purpose`` and the two exam-mode identifiers are surfaced so a client
+    can tell a mock exam from an ordinary quiz without parsing generation
+    settings JSON, which would make a private document part of the contract.
+    """
+
     quiz_id: int
     course_id: int
     title: str
@@ -381,6 +388,12 @@ class QuizView(BaseModel):
     model_used: str | None = None
     generation_settings: dict | None = None
     generation_context: dict | None = None
+    quiz_purpose: str | None = None
+    exam_plan_output_id: int | None = None
+    exam_topic_key: str | None = None
+    timed: bool = False
+    time_limit_seconds: int | None = None
+    answers_hidden: bool = False
     questions: list[QuizQuestionView]
 
 
@@ -399,6 +412,11 @@ class QuizSummary(BaseModel):
     model_used: str | None = None
     generation_settings: dict | None = None
     generation_context: dict | None = None
+    quiz_purpose: str | None = None
+    exam_plan_output_id: int | None = None
+    exam_topic_key: str | None = None
+    timed: bool = False
+    time_limit_seconds: int | None = None
 
 
 class QuizGenerationResult(RetrievedContext):

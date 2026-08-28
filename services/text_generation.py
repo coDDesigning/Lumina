@@ -1342,6 +1342,7 @@ def get_text_generation_provider(
     effective_model: str | None = None,
     *,
     require_json_mode: bool = False,
+    overall_timeout_seconds: int | None = None,
 ) -> TextGenerationProvider:
     primary_name = settings.ai_provider
     provider_names = [primary_name]
@@ -1408,4 +1409,5 @@ def get_text_generation_provider(
         providers,
         semaphore=get_shared_generation_semaphore(),
         max_concurrency=settings.ai_generation_max_concurrency,
+        overall_timeout_seconds=overall_timeout_seconds,
     )

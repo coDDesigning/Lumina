@@ -124,7 +124,7 @@ immutable `pgvector/pgvector` image digest; the pgvector extension is required
 because the schema declares a `vector` column and an HNSW index. The live job
 verifies the complete Alembic upgrade/downgrade/re-upgrade cycle, schema drift,
 role seeds, readiness, UUID and timezone round trips, unloaded database cascades
-across all 31 tables, pgvector provisioning and cosine ranking, and
+across all 33 tables, pgvector provisioning and cosine ranking, and
 `SKIP LOCKED` worker claims. Tests marked `database_contract` run unchanged
 against copies of an Alembic-migrated SQLite database and the disposable
 PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other
@@ -662,6 +662,59 @@ None of the three carries a `CHECK` or a foreign key, for the same reason
 would force a `batch_alter_table` rebuild. A null `purpose` is a quiz that
 predates Exam Mode, and nothing back-fills it — writing `practice` would assert
 something about rows nobody classified.
+
+Similar-question sets join the same list under `purpose = 'exam_similar_questions'`,
+and each of their questions carries `quiz_questions.source_past_exam_question_id`,
+the past question it was written in the mould of. That column has no foreign key
+either, and deliberately so: extraction replaces a paper's questions wholesale on
+every re-run, so the pointer is expected to stop resolving, and a cascade would
+delete a quiz a student had already sat. A pointer that resolves to nothing means
+the original is gone; the generated question keeps its own denormalized citations
+regardless, exactly as a citation outlives the document it came from.
+
+`quizzes.generation_request_id` is the client's own identifier for the request
+that produced a quiz, unique per `(course_id, user_id, generation_request_id)` so
+a retry after a timeout returns the quiz already paid for instead of generating a
+second one. It is a unique index rather than a constraint, so SQLite adds it
+without rebuilding `quizzes`, and NULL is distinct on both engines, so every
+existing row and every generation made without an identifier is unaffected.
+
+### Timed sittings
+
+`quizzes.time_limit_seconds` is what makes a quiz timed. A positive value means
+the ordinary attempt endpoint refuses it: elapsed time has to be measured by the
+server, and that endpoint would take the client's word for it.
+
+`quiz_sessions` is one student's sitting of one paper. The server writes
+`started_at` and `expires_at` and never accepts either from a client, because a
+deadline the candidate sets is not a deadline. Expiry is a comparison against
+`expires_at` in whatever statement reads the row, the way
+`processing_jobs.lease_expires_at` works, so nothing is scheduled and a read can
+report a sitting as over before any write has said so. A read never writes; only
+a write reconciles the stored `status` first.
+
+`quiz_session_answers` holds the answers as they are given, one row per
+`(session, question)` so a save is an upsert rather than an append. They are
+never deleted when a sitting expires. That is what makes a deadline cost a
+student the right to keep answering and nothing else: a submission arriving after
+it finalises exactly the answers saved before it, and a slow final request is not
+mistaken for a blank paper.
+
+Two constraints carry the anti-double-submit rule. `attempt_id` is unique, and
+`submitted_state_valid` forbids a submitted row without one, so a sitting that
+produced two attempts is not a state this schema can hold. The race between two
+simultaneous submissions is resolved by a guarded `UPDATE` whose `rowcount` names
+the winner — the idiom job claiming uses, and the one that behaves the same on
+both engines, unlike `SELECT ... FOR UPDATE`, which SQLite silently ignores.
+
+`uq_quiz_sessions_active_quiz_user` is partial on `status = 'active'`. One live
+sitting per student per paper means a reloaded page rejoins its own clock instead
+of opening a second and splitting the drafts; finished sittings stay out of the
+index, so retakes are free.
+
+An expired sitting is still submittable. The student already spent the time and
+the answers were already saved, so `expired` is a statement about the deadline
+rather than a terminal state, and `expired_at` survives the move to `submitted`.
 
 Exam-mode quizzes are **not** hidden from the course's quiz list, and their
 attempts count toward progress and mastery like any other. That is the point:

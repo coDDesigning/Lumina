@@ -51,7 +51,8 @@ DATA_RETENTION_REVISION = "a6e2c8f41b90"
 ROADMAP_SCHEMA_PREP_REVISION = "4399b6d253bf"
 EXAM_MODE_REVISION = "a6d3f81c9b47"
 EXAM_UNLOCKS_REVISION = "b5e9a2c7d341"
-HEAD_REVISION = EXAM_UNLOCKS_REVISION
+QUIZ_SESSIONS_REVISION = "d4a7c19e6b83"
+HEAD_REVISION = QUIZ_SESSIONS_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -99,6 +100,7 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        QUIZ_SESSIONS_REVISION: EXAM_UNLOCKS_REVISION,
         EXAM_UNLOCKS_REVISION: EXAM_MODE_REVISION,
         EXAM_MODE_REVISION: ROADMAP_SCHEMA_PREP_REVISION,
         ROADMAP_SCHEMA_PREP_REVISION: DATA_RETENTION_REVISION,
@@ -2949,3 +2951,217 @@ def test_progress_read_indexes_upgrade_downgrade_and_reupgrade(tmp_path: Path) -
         attempt_indexes = index_columns(connection, "quiz_attempts")
         assert "ix_quiz_attempts_user_id" not in attempt_indexes
         assert "ix_quiz_attempts_quiz_id" not in attempt_indexes
+
+
+def _seed_quiz(connection, *, email: str, title: str = "Paper"):
+    """A user, a course, and one quiz, using this suite's own legacy helpers."""
+    user_id = insert_legacy_user(connection, email=email, credits=10.0)
+    course_id = connection.execute(
+        "INSERT INTO courses (title, is_deleted, owner_id) VALUES (?, 0, ?)",
+        ("Legacy", user_id),
+    ).lastrowid
+    quiz_id = connection.execute(
+        "INSERT INTO quizzes (course_id, user_id, title) VALUES (?, ?, ?)",
+        (course_id, user_id, title),
+    ).lastrowid
+    return user_id, course_id, quiz_id
+
+
+def test_the_quiz_sessions_migration_adds_only_what_it_claims_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    """The revision is add-only, so downgrading must leave no trace of it."""
+    database_path = tmp_path / "quiz-sessions.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_UNLOCKS_REVISION)
+
+    def tables(connection) -> set[str]:
+        return {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+
+    with sqlite3.connect(database_path) as connection:
+        assert not tables(connection) & {"quiz_sessions", "quiz_session_answers"}
+        assert not _exam_mode_columns(connection, "quizzes") & {
+            "time_limit_seconds",
+            "generation_request_id",
+        }
+        assert "source_past_exam_question_id" not in _exam_mode_columns(
+            connection, "quiz_questions"
+        )
+
+    run_alembic(database_path, tmp_path, "upgrade", QUIZ_SESSIONS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert tables(connection) >= {"quiz_sessions", "quiz_session_answers"}
+        assert _exam_mode_columns(connection, "quiz_sessions") >= {
+            "quiz_id",
+            "user_id",
+            "attempt_id",
+            "status",
+            "time_limit_seconds",
+            "started_at",
+            "expires_at",
+            "submitted_at",
+            "expired_at",
+        }
+        assert _exam_mode_columns(connection, "quiz_session_answers") >= {
+            "session_id",
+            "quiz_question_id",
+            "selected_option_index",
+            "text_response",
+        }
+        assert _exam_mode_columns(connection, "quizzes") >= {
+            "time_limit_seconds",
+            "generation_request_id",
+        }
+        assert "source_past_exam_question_id" in _exam_mode_columns(
+            connection, "quiz_questions"
+        )
+
+    run_alembic(database_path, tmp_path, "downgrade", EXAM_UNLOCKS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        assert not tables(connection) & {"quiz_sessions", "quiz_session_answers"}
+        assert not _exam_mode_columns(connection, "quizzes") & {
+            "time_limit_seconds",
+            "generation_request_id",
+        }
+        assert "source_past_exam_question_id" not in _exam_mode_columns(
+            connection, "quiz_questions"
+        )
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+
+def test_an_existing_quiz_is_not_given_an_invented_time_limit(tmp_path: Path) -> None:
+    """A null time limit is the truth for every quiz that predates the clock."""
+    database_path = tmp_path / "quiz-sessions-legacy.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", EXAM_UNLOCKS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        _, _, quiz_id = _seed_quiz(
+            connection, email="legacy-timing@example.com", title="Legacy quiz"
+        )
+
+    run_alembic(database_path, tmp_path, "upgrade", QUIZ_SESSIONS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            "SELECT time_limit_seconds, generation_request_id FROM quizzes WHERE id = ?",
+            (quiz_id,),
+        ).fetchone()
+
+    assert row == (None, None)
+
+
+def test_two_quizzes_may_share_a_null_generation_request_id(tmp_path: Path) -> None:
+    """Null is distinct in the unique index, so nothing needs back-filling.
+
+    Without that, every existing quiz would collide the moment the index was
+    created, and the revision could not be add-only.
+    """
+    database_path = tmp_path / "quiz-sessions-null.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", QUIZ_SESSIONS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        user_id, course_id, _ = _seed_quiz(
+            connection, email="null-request@example.com", title="One"
+        )
+        connection.execute(
+            "INSERT INTO quizzes (course_id, user_id, title) VALUES (?, ?, ?)",
+            (course_id, user_id, "Two"),
+        )
+        connection.execute(
+            "INSERT INTO quizzes "
+            "(course_id, user_id, title, generation_request_id) VALUES (?, ?, ?, ?)",
+            (course_id, user_id, "Three", "same-request"),
+        )
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO quizzes "
+                "(course_id, user_id, title, generation_request_id) "
+                "VALUES (?, ?, ?, ?)",
+                (course_id, user_id, "Four", "same-request"),
+            )
+
+
+def test_a_sitting_cannot_claim_to_be_submitted_without_an_attempt(
+    tmp_path: Path,
+) -> None:
+    """The bad state is unrepresentable, not merely avoided by the application."""
+    database_path = tmp_path / "quiz-sessions-states.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", QUIZ_SESSIONS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        user_id, _, quiz_id = _seed_quiz(connection, email="session-states@example.com")
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO quiz_sessions "
+                "(quiz_id, user_id, status, time_limit_seconds, started_at, "
+                "expires_at, submitted_at, attempt_id) "
+                "VALUES (?, ?, 'submitted', 60, '2026-01-01 00:00:00', "
+                "'2026-01-01 01:00:00', '2026-01-01 00:30:00', NULL)",
+                (quiz_id, user_id),
+            )
+
+
+def test_a_sitting_cannot_expire_before_it_started(tmp_path: Path) -> None:
+    database_path = tmp_path / "quiz-sessions-order.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", QUIZ_SESSIONS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        user_id, _, quiz_id = _seed_quiz(connection, email="session-order@example.com")
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO quiz_sessions "
+                "(quiz_id, user_id, status, time_limit_seconds, started_at, expires_at) "
+                "VALUES (?, ?, 'active', 60, '2026-01-01 01:00:00', "
+                "'2026-01-01 00:00:00')",
+                (quiz_id, user_id),
+            )
+
+
+def test_only_one_sitting_of_a_paper_may_be_live_at_a_time(tmp_path: Path) -> None:
+    """A reloaded page must rejoin its clock rather than start a second one.
+
+    The index is partial, so a finished sitting never blocks a retake.
+    """
+    database_path = tmp_path / "quiz-sessions-active.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", QUIZ_SESSIONS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        user_id, _, quiz_id = _seed_quiz(connection, email="session-live@example.com")
+        connection.execute(
+            "INSERT INTO quiz_sessions "
+            "(quiz_id, user_id, status, time_limit_seconds, started_at, expires_at) "
+            "VALUES (?, ?, 'active', 60, '2026-01-01 00:00:00', "
+            "'2026-01-01 01:00:00')",
+            (quiz_id, user_id),
+        )
+        connection.execute(
+            "INSERT INTO quiz_sessions "
+            "(quiz_id, user_id, status, time_limit_seconds, started_at, expires_at, "
+            "expired_at) "
+            "VALUES (?, ?, 'expired', 60, '2025-01-01 00:00:00', "
+            "'2025-01-01 01:00:00', '2025-01-01 01:00:00')",
+            (quiz_id, user_id),
+        )
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO quiz_sessions "
+                "(quiz_id, user_id, status, time_limit_seconds, started_at, expires_at) "
+                "VALUES (?, ?, 'active', 60, '2026-02-01 00:00:00', "
+                "'2026-02-01 01:00:00')",
+                (quiz_id, user_id),
+            )

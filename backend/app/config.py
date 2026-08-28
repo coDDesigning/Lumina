@@ -126,6 +126,7 @@ DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS = 10.0
 DEFAULT_AI_GENERATION_MAX_CONCURRENCY = 10
 DEFAULT_AI_GENERATION_OVERALL_TIMEOUT_SECONDS = 110
+DEFAULT_AI_GRADING_OVERALL_TIMEOUT_SECONDS = 45
 MAX_AI_MODEL_COST_RATE_USD_PER_MILLION = 1_000_000.0
 MAX_AI_EVENT_ESTIMATED_COST_USD = 1_000_000.0
 DEFAULT_DATABASE_POOL_SIZE = 5
@@ -207,6 +208,7 @@ class Settings:
     ai_generation_backoff_max_seconds: float
     ai_generation_max_concurrency: int
     ai_generation_overall_timeout_seconds: int
+    ai_grading_overall_timeout_seconds: int
 
     # Embedding provider and durable vector storage configuration
     embedding_provider: str
@@ -724,6 +726,16 @@ def load_settings() -> Settings:
         minimum=1,
         maximum=300,
     )
+    # Grading runs inside the transaction that writes the attempt, and a
+    # hosted database closes a transaction left idle for sixty seconds.
+    # Bounded below that, so a slow grader costs a student their marks
+    # rather than the answers they wrote.
+    ai_grading_overall_timeout_seconds = _bounded_positive_integer_setting(
+        "AI_GRADING_OVERALL_TIMEOUT_SECONDS",
+        DEFAULT_AI_GRADING_OVERALL_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=55,
+    )
 
     embedding_provider = (
         os.getenv("EMBEDDING_PROVIDER", DEFAULT_EMBEDDING_PROVIDER).strip().lower()
@@ -978,6 +990,7 @@ def load_settings() -> Settings:
         ai_generation_backoff_max_seconds=ai_generation_backoff_max_seconds,
         ai_generation_max_concurrency=ai_generation_max_concurrency,
         ai_generation_overall_timeout_seconds=ai_generation_overall_timeout_seconds,
+        ai_grading_overall_timeout_seconds=ai_grading_overall_timeout_seconds,
         embedding_provider=embedding_provider,
         ollama_embedding_model=ollama_embedding_model,
         gemini_embedding_model=gemini_embedding_model,

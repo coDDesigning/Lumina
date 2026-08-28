@@ -52,11 +52,13 @@ class PasswordChangeRequest(BaseModel):
 
     The current password is required even though the caller already holds a
     valid token, because a token that leaked is exactly the case this stops
-    from becoming a permanent takeover.
+    from becoming a permanent takeover. The new password is bounded here only
+    to reject empty and absurd input cheaply; ``UserService.change_password``
+    applies the real policy through ``utils/password_policy.py``.
     """
 
-    current_password: str
-    new_password: str
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=1, max_length=255)
 
 
 class UserResponse(UserBase):
@@ -101,8 +103,3 @@ class UserUpdate(BaseModel):
         if any(getattr(self, field) is None for field in explicitly_null):
             raise ValueError("Required user fields cannot be null")
         return self
-
-
-class PasswordChangeRequest(BaseModel):
-    current_password: str = Field(min_length=1)
-    new_password: str = Field(min_length=1, max_length=255)

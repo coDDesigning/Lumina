@@ -656,4 +656,3 @@ def test_route_inventory_generation_rate_limiting() -> None:
         == "generation"
         for dep in getattr(plan_route, "dependencies", [])
     )
-

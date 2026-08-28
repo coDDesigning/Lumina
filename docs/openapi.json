@@ -6720,6 +6720,7 @@
         "type": "object"
       },
       "PasswordChangeRequest": {
+        "description": "An authenticated password change: prove the old one, then set a new one.\n\nThe current password is required even though the caller already holds a\nvalid token, because a token that leaked is exactly the case this stops\nfrom becoming a permanent takeover. The new password is bounded here only\nto reject empty and absurd input cheaply; ``UserService.change_password``\napplies the real policy through ``utils/password_policy.py``.",
         "properties": {
           "current_password": {
             "minLength": 1,

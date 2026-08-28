@@ -51,4 +51,8 @@ USER 10001:10001
 EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--limit-concurrency", "100", "--timeout-graceful-shutdown", "330", "--no-access-log", "--proxy-headers", "--forwarded-allow-ips", "${FORWARDED_ALLOW_IPS:-127.0.0.1}"]
+# Shell form so FORWARDED_ALLOW_IPS is expanded. A JSON exec-form CMD passes
+# "${FORWARDED_ALLOW_IPS:-127.0.0.1}" to uvicorn literally, and uvicorn parses
+# that into a trusted-host set matching nothing, silently disabling proxy
+# header trust. exec keeps uvicorn as the signal-receiving process.
+CMD ["sh", "-c", "exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330 --no-access-log --proxy-headers --forwarded-allow-ips \"${FORWARDED_ALLOW_IPS:-127.0.0.1}\""]

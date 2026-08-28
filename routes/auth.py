@@ -28,8 +28,11 @@ from services.token_revocation import TokenRevocationService
 from utils.deps import get_current_user, oauth2_scheme
 from utils.exceptions import ConflictException
 from utils.rate_limit import (
+    clear,
     client_ip,
     enforce,
+    get_rate_limit_db,
+    rate_limit_key,
     rate_limit_register,
     rate_limit_verification,
     rate_limit_password_reset,
@@ -62,6 +65,7 @@ RESEND_ACCEPTED_MESSAGE = (
 RESET_SENT_MESSAGE = (
     "If that address belongs to an account, a password reset link is on its way."
 )
+DUMMY_PASSWORD_HASH = "$2b$12$h0nO5PzF915P7BGkRVjKbehZ9sgg5kgKPsCEF7cMiXsrmN0EwCIO."
 
 
 @router.post(
@@ -113,6 +117,7 @@ def login_user(
     request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[Session, Depends(get_db)],
+    rate_limit_db: Annotated[Session, Depends(get_rate_limit_db)],
 ):
     """
     Handles user login and returns a JWT Access Token.
@@ -121,33 +126,41 @@ def login_user(
     # Checked before any password verification, so a lockout also caps the
     # number of bcrypt comparisons an attacker can force per window.
     enforce(
-        db,
-        f"login:ip:{client_ip(request)}",
+        rate_limit_db,
+        rate_limit_key("login:ip", client_ip(request)),
         window_seconds=settings.rate_limit_login_window_seconds,
         limit=settings.rate_limit_login_max_attempts,
         error_code="login_rate_limited",
+        control="login_ip",
     )
     account_key = (
         UserService.canonicalize_email(form_data.username)
         or form_data.username.strip().lower()
     )
-    enforce(
-        db,
-        f"login:account:{account_key}",
-        window_seconds=settings.rate_limit_login_window_seconds,
-        limit=settings.rate_limit_login_max_attempts,
-        lockout_base_seconds=settings.rate_limit_lockout_base_seconds,
-        lockout_max_seconds=settings.rate_limit_lockout_max_seconds,
-        error_code="login_rate_limited",
-    )
-
     user = UserService.get_user_by_email(db, form_data.username)
-    if not user or not verify_password(form_data.password, user.password_hash):
+    password_matches = verify_password(
+        form_data.password,
+        user.password_hash if user is not None else DUMMY_PASSWORD_HASH,
+    )
+    account_bucket_key = rate_limit_key("login:account", account_key)
+    if user is None or not password_matches:
+        enforce(
+            rate_limit_db,
+            account_bucket_key,
+            window_seconds=settings.rate_limit_login_window_seconds,
+            limit=settings.rate_limit_login_max_attempts,
+            lockout_base_seconds=settings.rate_limit_lockout_base_seconds,
+            lockout_max_seconds=settings.rate_limit_lockout_max_seconds,
+            error_code="login_rate_limited",
+            control="login_account",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    clear(rate_limit_db, account_bucket_key)
 
     if user.is_banned:
         raise HTTPException(status_code=403, detail="Your account has been banned.")

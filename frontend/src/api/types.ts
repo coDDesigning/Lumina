@@ -116,6 +116,30 @@ export interface AuthResponse {
   token_type: string;
 }
 
+/**
+ * What registration answers with. The account exists either way; where the
+ * deployment verifies, it holds no introductory credits until the emailed link
+ * is redeemed, so the screen after this one is a prompt rather than a workspace.
+ */
+export interface RegistrationResult {
+  message: string;
+  user_email: string;
+  role: string;
+  email_verification_required: boolean;
+  is_email_verified: boolean;
+}
+
+/**
+ * The outcome of redeeming or re-requesting a verification link.
+ * `credits_granted` is null when this redemption granted nothing — the account
+ * was already verified, is unmetered, or had its opening balance before.
+ */
+export interface EmailVerificationResult {
+  message: string;
+  is_email_verified: boolean;
+  credits_granted: number | null;
+}
+
 export type EducationLevel =
   | 'high_school'
   | 'undergraduate'

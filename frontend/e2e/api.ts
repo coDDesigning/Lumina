@@ -176,6 +176,8 @@ const CITATION = {
   page_end: 14,
 }
 
+export { EXAM_PLAN, EXAM_ROADMAP }
+
 export const QUIZ = {
   quiz_id: 4,
   course_id: 1,
@@ -285,6 +287,277 @@ const CONTEXT = {
   highest_similarity: 0.88,
 }
 
+// --------------------------------------------------------------- Exam Mode
+
+const EXAM_SOURCES = {
+  syllabus_present: true,
+  syllabus_characters: 820,
+  course_topics: ['Graph Traversal Algorithms'],
+  documents: [
+    {
+      id: '0f5f4a1e-0000-4000-8000-000000000001',
+      label: 'Lecture 4 — Graphs',
+      material_kind: 'lecture',
+      status: 'ready',
+      is_past_exam: false,
+      is_syllabus: false,
+    },
+    {
+      id: '0f5f4a1e-0000-4000-8000-000000000002',
+      label: '2025 Final Paper',
+      material_kind: 'past_exam',
+      status: 'ready',
+      is_past_exam: true,
+      is_syllabus: false,
+    },
+    {
+      id: '0f5f4a1e-0000-4000-8000-000000000003',
+      label: 'Week 9 slides',
+      material_kind: 'lecture',
+      status: 'processing',
+      is_past_exam: false,
+      is_syllabus: false,
+    },
+  ],
+  ready_document_count: 2,
+  past_exam_document_count: 1,
+  chunks_available: 42,
+}
+
+const EXAM_TOPIC_KEYS = [
+  'graph-traversal-algorithms',
+  'dynamic-programming',
+  'hashing-and-collision-resolution',
+  'asymptotic-analysis',
+]
+
+const EXAM_LABELS: Record<string, string> = {
+  'graph-traversal-algorithms': 'Graph Traversal Algorithms',
+  'dynamic-programming': 'Dynamic Programming',
+  'hashing-and-collision-resolution': 'Hashing and Collision Resolution',
+  'asymptotic-analysis': 'Asymptotic Analysis',
+}
+
+const EXAM_ANALYSIS = {
+  generated_output_id: 501,
+  created_at: '2026-05-01T09:00:00Z',
+  model_used: 'ollama:qwen3:8b',
+  candidate_count: EXAM_TOPIC_KEYS.length,
+  past_exam_question_count: 2,
+  documents_analysed: [
+    '0f5f4a1e-0000-4000-8000-000000000001',
+    '0f5f4a1e-0000-4000-8000-000000000002',
+  ],
+  manual_review_recommended: true,
+  topics: EXAM_TOPIC_KEYS.map((key, index) => ({
+    topic_key: key,
+    display_label: EXAM_LABELS[key],
+    aliases: [],
+    in_syllabus: index === 0,
+    in_course_topics: index === 0,
+    in_past_exams: index < 2,
+    in_material: true,
+    discovery_confidence: 0.8,
+    syllabus_weight_percent: index === 0 ? 30 : null,
+    syllabus_mention_count: index === 0 ? 3 : 0,
+    past_exam_question_count: index < 2 ? 2 : 0,
+    material_chunk_count: 6 - index,
+    citations: [CITATION],
+  })),
+  selection_carry_over: {
+    previous_plan_output_id: null,
+    preselected_topic_keys: [],
+    high_priority_topic_keys: [],
+    new_topic_keys: [],
+    unsupported_topic_keys: [],
+  },
+  coverage: null,
+  confidence_notes: '',
+}
+
+const EXAM_PLAN = {
+  generated_output_id: 601,
+  analysis_output_id: 501,
+  plan_version: 3,
+  supersedes_output_id: 600,
+  created_at: '2026-05-01T10:00:00Z',
+  exam_date: '2026-09-16',
+  days_until_exam: 138,
+  selection_mode: 'all_discovered',
+  manual_review_recommended: true,
+  ranking_engine: 'deterministic',
+  ranking_policy_version: 1,
+  configured_weights: { syllabus: 30, past_exams: 25, mastery: 25, material: 20 },
+  effective_weights: { mastery: 56, material: 44 },
+  signals_available: { syllabus: false, past_exams: false, mastery: true, material: true },
+  signal_bases: { mastery: 'attempts', material: 'chunks' },
+  unmapped_mastery_labels: 2,
+  warnings: ['no_syllabus_evidence', 'no_past_exam_evidence', 'unmapped_mastery_labels'],
+  topics: EXAM_TOPIC_KEYS.map((key, index) => ({
+    topic_key: key,
+    display_label: EXAM_LABELS[key],
+    rank: index + 1,
+    is_high_priority: index === 0,
+    priority_score: 88 - index * 14,
+    priority_band: ['critical', 'high', 'medium', 'low'][index],
+    has_any_evidence: true,
+    is_unattempted: index > 1,
+    mastery_percentage: index === 0 ? 0 : index === 1 ? 45 : null,
+    signals: { mastery: { normalized_value: 1 }, syllabus: null },
+    reason_codes: ['weak_mastery'],
+    explanation:
+      'You are scoring 0% on it. Your course material covers it in depth. No syllabus evidence was available, so its weighting was redistributed.',
+  })),
+  staleness: { is_stale: false, requires_rescan: false, stale_reasons: [] },
+}
+
+const EXAM_PLAN_LIST = {
+  current_plan_output_id: 601,
+  plans: [
+    {
+      generated_output_id: 601,
+      analysis_output_id: 501,
+      plan_version: 3,
+      supersedes_output_id: 600,
+      created_at: '2026-05-01T10:00:00Z',
+      exam_date: '2026-09-16',
+      topic_count: 4,
+      selection_mode: 'all_discovered',
+      is_current: true,
+    },
+    {
+      generated_output_id: 600,
+      analysis_output_id: 501,
+      plan_version: 2,
+      supersedes_output_id: null,
+      created_at: '2026-04-28T10:00:00Z',
+      exam_date: '2026-09-16',
+      topic_count: 3,
+      selection_mode: 'manual',
+      is_current: false,
+    },
+  ],
+}
+
+const EXAM_QUESTIONS = {
+  analysis_output_id: 501,
+  document_ids: ['0f5f4a1e-0000-4000-8000-000000000002'],
+  total: 2,
+  limit: 50,
+  offset: 0,
+  questions: [
+    {
+      position: 1,
+      document_id: '0f5f4a1e-0000-4000-8000-000000000002',
+      page_start: 2,
+      page_end: 2,
+      question_label: 'Q3(b)',
+      question_number: 3,
+      question_text: 'Trace breadth-first search over the graph in Figure 2.',
+      subparts: [],
+      question_type: 'structured',
+      difficulty: 'medium',
+      marks: 8,
+      answer_guidance: null,
+      marking_points: [],
+      visual_refs: [],
+      topic_key: 'graph-traversal-algorithms',
+      topic_mappings: [],
+      citations: [CITATION],
+    },
+  ],
+}
+
+const EXAM_ROADMAP = {
+  version: 1,
+  output_type: 'exam_roadmap',
+  course_id: 1,
+  exam_date: '2026-09-16',
+  generated_on: '2026-05-01',
+  starts_on: '2026-05-01',
+  days_until_exam: 138,
+  scheduled_days: 2,
+  lead_in_days: 0,
+  horizon: 'standard',
+  materials_available: true,
+  attempts_considered: 3,
+  roadmap_version: 1,
+  adapted_from_output_id: null,
+  plan_output_id: 601,
+  ranked_topics: [],
+  days: [
+    {
+      day_index: 1,
+      date: '2026-05-01',
+      kind: 'study',
+      is_exam_day: false,
+      focus: 'Graph Traversal Algorithms',
+      topics: [
+        {
+          topic: 'Graph Traversal Algorithms',
+          topic_key: 'graph-traversal-algorithms',
+          goal: 'Work through breadth-first and depth-first search until you can trace both.',
+          pass_number: 1,
+          source: 'exam_plan',
+          syllabus_position: 1,
+          importance: 0.88,
+          mastery_percentage: 0,
+          questions_answered: null,
+          priority: 0.88,
+          material_status: 'resolved',
+          materials: [],
+          citations: [CITATION],
+        },
+      ],
+    },
+    {
+      day_index: 2,
+      date: '2026-05-02',
+      kind: 'final_review',
+      is_exam_day: false,
+      focus: 'Dynamic Programming',
+      topics: [
+        {
+          topic: 'Dynamic Programming',
+          topic_key: 'dynamic-programming',
+          goal: 'Revisit memoisation until the recurrence comes without prompting.',
+          pass_number: 1,
+          source: 'exam_plan',
+          syllabus_position: 2,
+          importance: 0.74,
+          mastery_percentage: 45,
+          questions_answered: null,
+          priority: 0.74,
+          material_status: 'no_match',
+          materials: [],
+          citations: [],
+        },
+      ],
+    },
+  ],
+  deferred_topics: [],
+  notes: [],
+}
+
+const EXAM_REVIEW_SHEET = {
+  version: 1,
+  output_type: 'exam_review_sheet',
+  plan_output_id: 601,
+  exam_date: '2026-09-16',
+  days_until_exam: 138,
+  title: 'Last-minute review',
+  topics: [
+    {
+      topic_key: 'graph-traversal-algorithms',
+      topic_label: 'Graph Traversal Algorithms',
+      must_remember: [{ text: 'BFS settles vertices in order of edge count.', citations: [CITATION] }],
+      traps: [{ text: 'Marking a vertex visited on pop rather than on push.', citations: [] }],
+    },
+  ],
+  final_checks: [{ text: 'Check every recurrence has a base case.', citations: [] }],
+  confidence_notes: '',
+}
+
 type Answer = [RegExp, (match: RegExpMatchArray) => unknown]
 
 const ROUTES: Answer[] = [
@@ -299,6 +572,17 @@ const ROUTES: Answer[] = [
   [/^\/api\/progress\/?$/, () => envelope(PROGRESS_SUMMARIES)],
   [/^\/api\/admin\/users/, () => envelope(ADMIN_USERS)],
   [/^\/api\/admin\/ai-costs/, () => envelope(AI_COSTS)],
+  [/^\/api\/courses\/(\d+)\/exam-mode\/sources$/, () => envelope(EXAM_SOURCES)],
+  [/^\/api\/courses\/(\d+)\/exam-mode\/entitlements$/, () => envelope({ unlocked_topic_keys: [] })],
+  [
+    /^\/api\/courses\/(\d+)\/exam-mode\/analysis\/(\d+)\/questions$/,
+    () => envelope(EXAM_QUESTIONS),
+  ],
+  [/^\/api\/courses\/(\d+)\/exam-mode\/analysis$/, () => envelope(EXAM_ANALYSIS)],
+  [/^\/api\/courses\/(\d+)\/exam-mode\/plans\/(\d+)$/, () => envelope(EXAM_PLAN)],
+  [/^\/api\/courses\/(\d+)\/exam-mode\/plans$/, () => envelope(EXAM_PLAN_LIST)],
+  [/^\/api\/courses\/(\d+)\/exam-mode\/review-sheet$/, () => envelope(EXAM_REVIEW_SHEET)],
+  [/^\/api\/courses\/(\d+)\/exam-roadmap$/, () => envelope({ roadmap: EXAM_ROADMAP, generated_output_id: 701 })],
   [/^\/api\/courses\/(\d+)\/documents/, () => envelope(DOCUMENTS)],
   [/^\/api\/courses\/(\d+)\/progress/, () => envelope(PROGRESS)],
   [/^\/api\/courses\/(\d+)\/settings/, () => envelope(SETTINGS)],

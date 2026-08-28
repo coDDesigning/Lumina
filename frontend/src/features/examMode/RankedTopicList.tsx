@@ -41,7 +41,7 @@ function describeSignal(value: unknown): string {
   return String(value);
 }
 
-function TopicRow({
+function TopicCard({
   courseId,
   planId,
   topic,
@@ -57,17 +57,12 @@ function TopicRow({
   const mastery = masteryNote(topic);
 
   return (
-    <li className={styles.row}>
-      <span className={styles.rank}>
-        <span className="visually-hidden">Rank </span>
-        {topic.rank}
-        <span
-          className={cx(styles.band, BAND_CLASSES[topic.priority_band.toLowerCase()])}
-          aria-hidden="true"
-        />
-      </span>
-
-      <div className={styles.body}>
+    <li className={cx(styles.card, BAND_CLASSES[topic.priority_band.toLowerCase()])}>
+      <div className={styles.head}>
+        <span className={styles.rank}>
+          <span className="visually-hidden">Rank </span>
+          {topic.rank}
+        </span>
         <Link
           className={styles.title}
           to={`/courses/${courseId}/exam-mode/plans/${planId}/topics/${encodeURIComponent(
@@ -76,45 +71,45 @@ function TopicRow({
         >
           {topic.display_label}
         </Link>
-
-        <p className={styles.meta}>
-          <span>{topic.priority_band} priority</span>
-          {topic.is_high_priority ? (
-            <span>
-              <Star aria-hidden="true" size={14} /> you marked this
-            </span>
-          ) : null}
-          {mastery ? <span>{mastery}</span> : null}
-          {!topic.has_any_evidence ? <span>no signal available</span> : null}
-          {unlocked ? <span>unlocked</span> : null}
-        </p>
-
-        {topic.explanation ? <p className={styles.explanation}>{topic.explanation}</p> : null}
-
-        {hasAudit ? (
-          <details className={styles.audit}>
-            <summary>Why this rank</summary>
-            <dl className={styles.signals}>
-              <div className={styles.signal}>
-                <dt>Priority score</dt>
-                <dd className="tabular">{topic.priority_score}</dd>
-              </div>
-              {topic.reason_codes.length > 0 ? (
-                <div className={styles.signal}>
-                  <dt>Reasons</dt>
-                  <dd>{topic.reason_codes.join(', ')}</dd>
-                </div>
-              ) : null}
-              {signals.map(([name, value]) => (
-                <div key={name} className={styles.signal}>
-                  <dt>{name.replace(/_/g, ' ')}</dt>
-                  <dd>{describeSignal(value)}</dd>
-                </div>
-              ))}
-            </dl>
-          </details>
-        ) : null}
       </div>
+
+      <p className={styles.meta}>
+        <span>{topic.priority_band} priority</span>
+        {topic.is_high_priority ? (
+          <span className={styles.marked}>
+            <Star aria-hidden="true" size={14} /> you marked this
+          </span>
+        ) : null}
+        {mastery ? <span>{mastery}</span> : null}
+        {!topic.has_any_evidence ? <span>no signal available</span> : null}
+        {unlocked ? <span>unlocked</span> : null}
+      </p>
+
+      {topic.explanation ? <p className={styles.explanation}>{topic.explanation}</p> : null}
+
+      {hasAudit ? (
+        <details className={styles.audit}>
+          <summary>Why this rank</summary>
+          <dl className={styles.signals}>
+            <div className={styles.signal}>
+              <dt>Priority score</dt>
+              <dd className="tabular">{topic.priority_score}</dd>
+            </div>
+            {topic.reason_codes.length > 0 ? (
+              <div className={styles.signal}>
+                <dt>Reasons</dt>
+                <dd>{topic.reason_codes.join(', ')}</dd>
+              </div>
+            ) : null}
+            {signals.map(([name, value]) => (
+              <div key={name} className={styles.signal}>
+                <dt>{name.replace(/_/g, ' ')}</dt>
+                <dd>{describeSignal(value)}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      ) : null}
     </li>
   );
 }
@@ -129,18 +124,16 @@ function TopicRow({
  */
 export function RankedTopicList({ courseId, plan, unlockedTopicKeys }: RankedTopicListProps) {
   return (
-    <div className={styles.panel}>
-      <ol className={styles.list}>
-        {plan.topics.map((topic) => (
-          <TopicRow
-            key={topic.topic_key}
-            courseId={courseId}
-            planId={plan.generated_output_id}
-            topic={topic}
-            unlocked={Boolean(unlockedTopicKeys?.has(topic.topic_key))}
-          />
-        ))}
-      </ol>
-    </div>
+    <ol className={styles.grid}>
+      {plan.topics.map((topic) => (
+        <TopicCard
+          key={topic.topic_key}
+          courseId={courseId}
+          planId={plan.generated_output_id}
+          topic={topic}
+          unlocked={Boolean(unlockedTopicKeys?.has(topic.topic_key))}
+        />
+      ))}
+    </ol>
   );
 }

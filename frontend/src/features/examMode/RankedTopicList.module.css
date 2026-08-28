@@ -1,77 +1,61 @@
 /*
-  The ranked list is what Exam Mode is for, and rank is the one thing on this
-  screen that is genuinely ordinal -- every other list in this product is
-  chronological. So the rank numeral carries the structure: it is set in the
-  display face at figure size, and everything around it stays quiet.
+  Ranked topics are cards, so a plan reads as a set of things to pick up rather
+  than a queue to work down. Rank is still the structure -- the numeral sits in
+  the card's own corner, and source order is left to right, top to bottom.
 
-  Priority band is drawn as a rule beside the numeral *and* written as a word in
-  the meta line. The rule is reinforcement; the word is the signal.
+  Priority band is a rule along the card's leading edge *and* a word in the meta
+  line. The rule is reinforcement; the word is the signal.
 */
-.panel {
-  background: var(--surface-raised);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-1);
-  overflow: hidden;
-}
-
-.list {
+.grid {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
 }
 
-.row {
-  display: grid;
-  grid-template-columns: 3.25rem minmax(0, 1fr);
-  gap: 0 var(--space-4);
-  align-items: start;
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
   padding: var(--space-4);
-  border-top: var(--border-width) solid var(--border);
+  padding-left: calc(var(--space-4) - var(--border-width-strong));
+  background: var(--surface-raised);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-1);
+  border-left: var(--border-width-strong) solid var(--border-strong);
+}
+
+.bandCritical {
+  border-left-color: var(--destructive);
+}
+
+.bandHigh {
+  border-left-color: var(--warning);
+}
+
+.bandMedium {
+  border-left-color: var(--accent);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
   min-width: 0;
 }
 
-.row:first-child {
-  border-top: none;
-}
-
 .rank {
-  display: flex;
-  align-items: baseline;
-  justify-content: flex-end;
-  gap: var(--space-2);
   font-family: var(--font-display);
   font-size: var(--text-xl);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
   letter-spacing: var(--tracking-display);
   font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-}
-
-.band {
-  width: var(--border-width-strong);
-  align-self: stretch;
-  border-radius: var(--radius-full);
-  background: var(--border-strong);
-}
-
-.bandCritical {
-  background: var(--destructive);
-}
-
-.bandHigh {
-  background: var(--warning);
-}
-
-.bandMedium {
-  background: var(--accent);
-}
-
-.body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
+  color: var(--text-subtle);
+  flex: none;
 }
 
 .title {
@@ -79,9 +63,11 @@
   font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-display);
+  line-height: var(--leading-snug);
   color: var(--text);
   text-decoration: none;
   overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .title:hover {
@@ -93,15 +79,27 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1) var(--space-3);
+  margin: 0;
   font-size: var(--text-sm);
   color: var(--text-muted);
+}
+
+.marked {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--warning);
 }
 
 .explanation {
   margin: 0;
   color: var(--text-muted);
   line-height: var(--leading-normal);
-  max-width: var(--measure-prose);
+}
+
+/* Pushed to the card's foot so every card's disclosure lines up. */
+.audit {
+  margin-top: auto;
 }
 
 .audit > summary {
@@ -126,7 +124,8 @@
 
 .signals {
   margin: var(--space-3) 0 0;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3);
   border-radius: var(--radius-lg);
@@ -134,9 +133,9 @@
 }
 
 .signal {
-  display: grid;
-  grid-template-columns: minmax(8rem, 12rem) minmax(0, 1fr);
-  gap: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
   font-size: var(--text-sm);
 }
 
@@ -148,26 +147,4 @@
   margin: 0;
   color: var(--text-muted);
   overflow-wrap: anywhere;
-}
-
-@media (max-width: 30rem) {
-  .row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-2);
-  }
-
-  .rank {
-    justify-content: flex-start;
-  }
-
-  .band {
-    width: 1.5rem;
-    height: var(--border-width-strong);
-    align-self: center;
-  }
-
-  .signal {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-  }
 }

@@ -232,3 +232,99 @@ def test_retrieval_priority_and_opt_out(authz_api):
         assert not context_opt_in.is_empty
         assert "visual diagrams" in context_opt_in.text
         assert context_opt_in.items_used >= 1
+
+
+class DeterministicEmbeddingProvider:
+    provider = "fake-provider"
+    model = "fake-model"
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1] * 768 for _ in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return [0.1] * 768
+
+
+def test_worker_processes_profile_document_to_ready(authz_api):
+    from workers.document_processor import process_next_job
+
+    client = authz_api.client
+    headers = authz_api.authorization_a
+
+    # Drain any existing fixture jobs first
+    while process_next_job(
+        session_factory=authz_api.session_factory,
+        storage=authz_api.storage,
+        embedding_provider=DeterministicEmbeddingProvider(),
+    ):
+        pass
+
+    file_content = b"Background notes on advanced mathematical physics and partial differential equations."
+    res = client.post(
+        "/api/profile-documents",
+        headers=headers,
+        files={"document": ("physics.txt", io.BytesIO(file_content), "text/plain")},
+    )
+    assert res.status_code == 201
+    doc_id = UUID(res.json()["data"]["document"]["id"])
+
+    # Worker processes the queued job
+    processed = process_next_job(
+        session_factory=authz_api.session_factory,
+        storage=authz_api.storage,
+        embedding_provider=DeterministicEmbeddingProvider(),
+    )
+    assert processed is True
+
+    # Assert document is now ready and job is succeeded
+    with authz_api.session_factory() as session:
+        doc = session.scalar(select(ProfileDocument).where(ProfileDocument.id == doc_id))
+        job = session.scalar(select(ProfileProcessingJob).where(ProfileProcessingJob.document_id == doc_id))
+        chunks = session.scalars(select(ProfileDocumentChunk).where(ProfileDocumentChunk.document_id == doc_id)).all()
+        assert doc.status == "ready"
+        assert doc.processing_error is None
+        assert job.status == "succeeded"
+        assert len(chunks) >= 1
+        assert "mathematical physics" in chunks[0].text
+
+
+def test_worker_recovers_expired_profile_job(authz_api):
+    from datetime import datetime, timedelta, timezone
+    from services.processing_jobs import recover_expired_jobs
+
+    client = authz_api.client
+    headers = authz_api.authorization_a
+
+    file_content = b"Content for expired lease recovery test."
+    res = client.post(
+        "/api/profile-documents",
+        headers=headers,
+        files={"document": ("lease.txt", io.BytesIO(file_content), "text/plain")},
+    )
+    assert res.status_code == 201
+    doc_id = UUID(res.json()["data"]["document"]["id"])
+
+    # Simulate expired running job with valid lease fields matching check constraint
+    past_time = datetime.now(timezone.utc) - timedelta(hours=2)
+    with authz_api.session_factory() as session:
+        doc = session.scalar(select(ProfileDocument).where(ProfileDocument.id == doc_id))
+        job = session.scalar(select(ProfileProcessingJob).where(ProfileProcessingJob.document_id == doc_id))
+        doc.status = "processing"
+        job.status = "running"
+        job.attempt_count = 1
+        job.lease_owner = "worker-test"
+        job.claim_token = "expired-token"
+        job.claimed_at = past_time
+        job.heartbeat_at = past_time
+        job.lease_expires_at = past_time + timedelta(minutes=5)
+        session.commit()
+
+    with authz_api.session_factory() as session:
+        recovered = recover_expired_jobs(session, now=past_time + timedelta(minutes=10))
+        assert recovered >= 1
+
+    with authz_api.session_factory() as session:
+        doc = session.scalar(select(ProfileDocument).where(ProfileDocument.id == doc_id))
+        job = session.scalar(select(ProfileProcessingJob).where(ProfileProcessingJob.document_id == doc_id))
+        assert doc.status == "uploaded"
+        assert job.status == "queued"

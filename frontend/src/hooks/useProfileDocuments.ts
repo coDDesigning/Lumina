@@ -77,16 +77,18 @@ function mergeListing(
   previous: ProfileDocumentEntry[],
   documents: ProfileDocumentResponse[],
 ): ProfileDocumentEntry[] {
-  const known = new Map(previous.map((entry) => [entry.document.id, entry]));
-  const serverIds = new Set(documents.map((document) => document.id));
+  const validPrev = previous.filter((entry) => Boolean(entry?.document?.id));
+  const known = new Map(validPrev.map((entry) => [entry.document.id, entry]));
+  const validDocs = (documents ?? []).filter((doc) => Boolean(doc?.id));
+  const serverIds = new Set(validDocs.map((document) => document.id));
 
-  const merged = documents.map((document) => {
+  const merged = validDocs.map((document) => {
     const existing = known.get(document.id);
     if (!existing) return newEntry(document);
     return isNewer(document, existing.document) ? { ...existing, document } : existing;
   });
 
-  const optimistic = previous.filter((entry) => !serverIds.has(entry.document.id));
+  const optimistic = validPrev.filter((entry) => !serverIds.has(entry.document.id));
 
   return [...optimistic, ...merged];
 }
@@ -146,8 +148,8 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
         return;
       }
       setEntries((previous) =>
-        previous.map((entry) => {
-          if (entry.document.id !== documentId) return entry;
+        (previous ?? []).map((entry) => {
+          if (!entry?.document || entry.document.id !== documentId) return entry;
           const nextDocument = isNewer(status.document, entry.document)
             ? status.document
             : entry.document;
@@ -174,26 +176,25 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
         });
         if (cancelled) return;
 
-        failures.set(documentId, 0);
+        failures.delete(documentId);
         applyStatus(documentId, result);
 
         if (isTerminalDocumentStatus(result.document.status)) {
           stop(documentId);
-          void queryCache.invalidate(queryKeys.profileDocuments());
           return;
         }
 
-        attempts.set(documentId, attempt + 1);
-        schedule(documentId, delayFor(POLL_DELAYS_MS, attempt));
+        const nextAttempt = attempt + 1;
+        attempts.set(documentId, nextAttempt);
+        schedule(documentId, delayFor(POLL_DELAYS_MS, nextAttempt));
       } catch (error) {
         if (cancelled || isAbortError(error)) return;
 
         if (error instanceof APIError && error.status === 404) {
           stop(documentId);
           setEntries((previous) =>
-            previous.filter((entry) => entry.document.id !== documentId),
+            (previous ?? []).filter((entry) => entry?.document?.id !== documentId),
           );
-          queryCache.invalidatePrefix(queryKeys.profileDocuments());
           return;
         }
 
@@ -207,9 +208,9 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
             'Document status could not be verified.',
           );
           setEntries((previous) =>
-            previous.map((entry) =>
-              entry.document.id === documentId
-                ? { ...entry, error: message }
+            (previous ?? []).map((entry) =>
+              entry?.document?.id === documentId
+                ? { ...entry, error: message.message }
                 : entry,
             ),
           );
@@ -225,15 +226,17 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
     controlRef.current = { signal: controller.signal, schedule, stop };
 
     seedRef.current = (documents: ProfileDocumentResponse[]) => {
-      let stagger = 0;
-      for (const document of documents) {
-        if (isTerminalDocumentStatus(document.status)) continue;
-        if (timers.has(document.id) || inFlight.has(document.id)) continue;
-        attempts.set(document.id, 0);
-        failures.set(document.id, 0);
-        schedule(document.id, stagger);
-        stagger += SEED_STAGGER_MS;
-      }
+      if (cancelled) return;
+      const validDocs = (documents ?? []).filter((doc) => Boolean(doc?.id));
+      setEntries((previous) => mergeListing(previous, validDocs));
+      validDocs
+        .filter((document) => !isTerminalDocumentStatus(document.status))
+        .forEach((document, index) => {
+          if (timers.has(document.id) || inFlight.has(document.id)) return;
+          attempts.set(document.id, 0);
+          failures.set(document.id, 0);
+          schedule(document.id, index * SEED_STAGGER_MS);
+        });
     };
 
     return () => {
@@ -250,23 +253,24 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
   }, []);
 
   useEffect(() => {
-    if (listing.data === undefined) return;
-    setEntries((previous) => {
-      const merged = mergeListing(previous, listing.data ?? []);
-      seedRef.current?.(listing.data ?? []);
-      return merged;
-    });
+    if (listing.data) {
+      seedRef.current?.(listing.data);
+    }
   }, [listing.data]);
 
   const addUploaded = useCallback((document: ProfileDocumentResponse) => {
+    if (!document || !document.id) {
+      return;
+    }
     setEntries((previous) => {
-      const exists = previous.some((entry) => entry.document.id === document.id);
-      if (exists) {
-        return previous.map((entry) =>
-          entry.document.id === document.id ? { ...entry, document, error: null } : entry,
-        );
+      const validPrev = (previous ?? []).filter((entry) => Boolean(entry?.document?.id));
+      const index = validPrev.findIndex((entry) => entry.document.id === document.id);
+      if (index === -1) {
+        return [newEntry(document), ...validPrev];
       }
-      return [newEntry(document), ...previous];
+      const next = [...validPrev];
+      next[index] = { ...next[index], document, error: null, pending: null };
+      return next;
     });
     if (!isTerminalDocumentStatus(document.status)) {
       controlRef.current?.schedule(document.id, 0);
@@ -276,7 +280,9 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
   const uploadDocument = useCallback(
     async (file: File): Promise<void> => {
       const response = await profileDocumentsAPI.upload(file);
-      addUploaded(response.document);
+      if (response?.document) {
+        addUploaded(response.document);
+      }
       void queryCache.invalidate(queryKeys.profileDocuments());
     },
     [addUploaded],
@@ -284,8 +290,8 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
 
   const retryDocument = useCallback(async (documentId: string): Promise<void> => {
     setEntries((previous) =>
-      previous.map((entry) =>
-        entry.document.id === documentId
+      (previous ?? []).map((entry) =>
+        entry?.document?.id === documentId
           ? {
               ...entry,
               pending: 'retry',
@@ -299,8 +305,8 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
     try {
       const result = await profileDocumentsAPI.retry(documentId);
       setEntries((previous) =>
-        previous.map((entry) =>
-          entry.document.id === documentId
+        (previous ?? []).map((entry) =>
+          entry?.document?.id === documentId
             ? {
                 ...entry,
                 pending: null,
@@ -318,12 +324,12 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
         'Processing could not be retried.',
       );
       setEntries((previous) =>
-        previous.map((entry) =>
-          entry.document.id === documentId
+        (previous ?? []).map((entry) =>
+          entry?.document?.id === documentId
             ? {
                 ...entry,
                 pending: null,
-                error: message,
+                error: message.message,
                 document: { ...entry.document, status: 'failed' },
               }
             : entry,
@@ -338,12 +344,12 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
       controlRef.current?.stop(documentId);
 
       const snapshot = entriesRef.current.find(
-        (entry) => entry.document.id === documentId,
+        (entry) => entry?.document?.id === documentId,
       );
 
       setEntries((previous) =>
-        previous.map((entry) =>
-          entry.document.id === documentId
+        (previous ?? []).map((entry) =>
+          entry?.document?.id === documentId
             ? {
                 ...entry,
                 pending: 'delete',
@@ -356,7 +362,7 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
       try {
         await profileDocumentsAPI.delete(documentId);
         setEntries((previous) =>
-          previous.filter((entry) => entry.document.id !== documentId),
+          (previous ?? []).filter((entry) => entry?.document?.id !== documentId),
         );
         void queryCache.invalidate(queryKeys.profileDocuments());
       } catch (error) {
@@ -365,11 +371,11 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
           'Document could not be deleted.',
         );
         setEntries((previous) =>
-          previous.map((entry) =>
-            entry.document.id === documentId
+          (previous ?? []).map((entry) =>
+            entry?.document?.id === documentId
               ? snapshot
-                ? { ...snapshot, error: message, pending: null }
-                : { ...entry, error: message, pending: null }
+                ? { ...snapshot, error: message.message, pending: null }
+                : { ...entry, error: message.message, pending: null }
               : entry,
           ),
         );
@@ -380,7 +386,7 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
   );
 
   const readyCount = useMemo(
-    () => entries.filter((entry) => entry.document.status === 'ready').length,
+    () => entries.filter((entry) => entry?.document?.status === 'ready').length,
     [entries],
   );
 

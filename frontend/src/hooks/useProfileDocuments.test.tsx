@@ -16,6 +16,7 @@ vi.mock('../api/profileDocuments', () => ({
 
 const listDocuments = vi.mocked(profileDocumentsAPI.list);
 const getDocumentStatus = vi.mocked(profileDocumentsAPI.getStatus);
+const uploadDoc = vi.mocked(profileDocumentsAPI.upload);
 const retryDocument = vi.mocked(profileDocumentsAPI.retry);
 const deleteDocument = vi.mocked(profileDocumentsAPI.delete);
 
@@ -142,5 +143,39 @@ describe('useProfileDocuments hook', () => {
 
     expect(deleteDocument).toHaveBeenCalledWith('doc-delete');
     expect(result.current.entries).toHaveLength(0);
+  });
+
+  it('uploads a document, appends it to state, and updates readyCount without error', async () => {
+    listDocuments.mockResolvedValue([]);
+    uploadDoc.mockResolvedValue({
+      document: profileDoc('uploaded', '2026-08-19T10:00:00Z', 'doc-uploaded'),
+      duplicate: false,
+    });
+    getDocumentStatus.mockResolvedValue(
+      docStatus('ready', '2026-08-19T10:00:05Z', 'doc-uploaded'),
+    );
+
+    const { result } = renderHook(() => useProfileDocuments());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+
+    expect(result.current.entries).toHaveLength(0);
+
+    const fakeFile = new File(['test content'], 'syllabus.pdf', { type: 'application/pdf' });
+    await act(async () => {
+      await result.current.uploadDocument(fakeFile);
+    });
+
+    expect(uploadDoc).toHaveBeenCalledWith(fakeFile);
+    expect(result.current.entries).toHaveLength(1);
+    expect(result.current.entries[0].document.id).toBe('doc-uploaded');
+    expect(result.current.entries[0].document.status).toBe('uploaded');
+
+    await advance(0);
+    expect(result.current.entries[0].document.status).toBe('ready');
+    expect(result.current.readyCount).toBe(1);
   });
 });

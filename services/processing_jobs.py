@@ -257,14 +257,42 @@ def processing_queue_metrics(
             ),
         )
     ).one()
-    oldest = row[3]
+    p_row = session.execute(
+        select(
+            func.coalesce(
+                func.sum(case((ProfileProcessingJob.status == JOB_STATUS_QUEUED, 1), else_=0)),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case((ProfileProcessingJob.status == JOB_STATUS_RUNNING, 1), else_=0)
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(case((ProfileProcessingJob.status == JOB_STATUS_FAILED, 1), else_=0)),
+                0,
+            ),
+            func.min(
+                case(
+                    (
+                        ProfileProcessingJob.status == JOB_STATUS_QUEUED,
+                        ProfileProcessingJob.available_at,
+                    ),
+                    else_=None,
+                )
+            ),
+        )
+    ).one()
+    oldest_list = [t for t in (row[3], p_row[3]) if t is not None]
+    oldest = min(oldest_list) if oldest_list else None
     if oldest is not None and oldest.tzinfo is None:
         oldest = oldest.replace(tzinfo=timezone.utc)
     age = 0.0 if oldest is None else max(0.0, (current - oldest).total_seconds())
     return QueueMetrics(
-        queued=int(row[0]),
-        running=int(row[1]),
-        failed=int(row[2]),
+        queued=int(row[0]) + int(p_row[0]),
+        running=int(row[1]) + int(p_row[1]),
+        failed=int(row[2]) + int(p_row[2]),
         oldest_queued_age_seconds=age,
     )
 
@@ -1039,7 +1067,24 @@ def recover_expired_jobs(
     if session.get_bind().dialect.name == "postgresql":
         statement = statement.with_for_update(of=ProcessingJob, skip_locked=True)
     rows = session.execute(statement).all()
-    if not rows:
+
+    profile_rows = []
+    if len(rows) < limit:
+        profile_statement = (
+            select(ProfileProcessingJob, ProfileDocument)
+            .join(ProfileDocument, ProfileDocument.id == ProfileProcessingJob.document_id)
+            .where(
+                ProfileProcessingJob.status == JOB_STATUS_RUNNING,
+                ProfileProcessingJob.lease_expires_at <= recovered_at,
+            )
+            .order_by(ProfileProcessingJob.id)
+            .limit(limit - len(rows))
+        )
+        if session.get_bind().dialect.name == "postgresql":
+            profile_statement = profile_statement.with_for_update(of=ProfileProcessingJob, skip_locked=True)
+        profile_rows = session.execute(profile_statement).all()
+
+    if not rows and not profile_rows:
         session.rollback()
         return 0
 
@@ -1062,14 +1107,34 @@ def recover_expired_jobs(
         _clear_lease(job)
         document_updates.append((document, should_retry, message))
 
+    profile_doc_updates: list[tuple[ProfileDocument, bool, str]] = []
+    for p_job, p_document in profile_rows:
+        p_should_retry = p_job.attempt_count < p_job.max_attempts
+        p_message = "The worker lease expired before completion."
+        p_job.status = JOB_STATUS_QUEUED if p_should_retry else JOB_STATUS_FAILED
+        p_job.available_at = recovered_at
+        p_job.finished_at = None if p_should_retry else recovered_at
+        p_job.last_error_code = "LEASE_EXPIRED"
+        p_job.last_error_message = p_message
+        p_job.failed_stage = None if p_should_retry else p_job.processing_stage
+        p_job.processing_stage = None
+        p_job.updated_at = recovered_at
+        _clear_profile_lease(p_job)
+        profile_doc_updates.append((p_document, p_should_retry, p_message))
+
     session.flush()
     for document, should_retry, message in document_updates:
         document.status = "uploaded" if should_retry else "failed"
         document.processing_error = None if should_retry else message
         document.updated_at = recovered_at
 
+    for p_document, p_should_retry, p_message in profile_doc_updates:
+        p_document.status = "uploaded" if p_should_retry else "failed"
+        p_document.processing_error = None if p_should_retry else p_message
+        p_document.updated_at = recovered_at
+
     session.commit()
-    return len(rows)
+    return len(rows) + len(profile_rows)
 
 
 def retry_failed_job(
@@ -1744,7 +1809,7 @@ def fail_profile_job(
     can_retry = retryable and job.attempt_count < job.max_attempts
     job.last_error_code = error_code[:100]
     job.last_error_message = public_message
-    job.failed_stage = stage
+    job.failed_stage = None if can_retry else stage
     job.processing_stage = None
     job.updated_at = failed_at
     _clear_profile_lease(job)
@@ -1754,7 +1819,7 @@ def fail_profile_job(
         job.available_at = failed_at + timedelta(seconds=retry_delay_seconds)
         job.finished_at = None
         document.status = "uploaded"
-        document.processing_error = public_message
+        document.processing_error = None
         document.updated_at = failed_at
     else:
         job.status = JOB_STATUS_FAILED

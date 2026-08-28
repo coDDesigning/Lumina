@@ -6,11 +6,10 @@ from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from backend.app.config import settings
 from backend.app.database import begin_serialized_write
 from backend.app.models import (
     JOB_TYPE_EXTRACT_DOCUMENT,
@@ -57,9 +56,7 @@ class ProfileDocumentService:
         user_id: int,
     ) -> ProfileDocumentUploadResult:
         try:
-            user_exists = db.scalar(
-                select(User.id).where(User.id == user_id)
-            )
+            user_exists = db.scalar(select(User.id).where(User.id == user_id))
         except SQLAlchemyError as exc:
             raise ProfileDocumentRegistrationError from exc
 
@@ -88,7 +85,9 @@ class ProfileDocumentService:
         if existing is not None:
             if existing.status == "deleting":
                 db.rollback()
-                raise ConflictException("A matching profile document is currently being deleted.")
+                raise ConflictException(
+                    "A matching profile document is currently being deleted."
+                )
             try:
                 file_exists = (
                     existing.storage_provider != storage.provider
@@ -173,7 +172,9 @@ class ProfileDocumentService:
             )
             if existing is not None:
                 return ProfileDocumentUploadResult(document=existing, duplicate=True)
-            raise ConflictException("A profile document with identical content already exists.")
+            raise ConflictException(
+                "A profile document with identical content already exists."
+            )
         except Exception as exc:
             ProfileDocumentService._rollback_and_remove(db, storage, storage_key)
             raise ProfileDocumentRegistrationError from exc
@@ -187,7 +188,10 @@ class ProfileDocumentService:
         try:
             storage.delete(storage_key)
         except Exception:
-            logger.warning("Could not delete orphan storage key %s after registration error", storage_key)
+            logger.warning(
+                "Could not delete orphan storage key %s after registration error",
+                storage_key,
+            )
 
     @staticmethod
     def list_user_documents(db: Session, user_id: int) -> Sequence[ProfileDocument]:
@@ -284,7 +288,9 @@ class ProfileDocumentService:
         try:
             store.delete_profile_document_vectors(db, document_id)
         except VectorStoreError as exc:
-            logger.warning("Could not delete vectors for profile document %s: %s", document_id, exc)
+            logger.warning(
+                "Could not delete vectors for profile document %s: %s", document_id, exc
+            )
 
         # Clean storage
         try:

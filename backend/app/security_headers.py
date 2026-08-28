@@ -12,7 +12,14 @@ def build_csp_header(settings: Settings) -> str:
     if settings.enable_hosted_ads and settings.is_hosted:
         script_sources = " ".join(["'self'", "https://media.ethicalads.io"])
         connect_sources = " ".join(["'self'", "https://server.ethicalads.io"])
-        img_sources = " ".join(["'self'", "data:", "https://media.ethicalads.io", "https://server.ethicalads.io"])
+        img_sources = " ".join(
+            [
+                "'self'",
+                "data:",
+                "https://media.ethicalads.io",
+                "https://server.ethicalads.io",
+            ]
+        )
         return (
             f"default-src 'self'; "
             f"script-src {script_sources}; "

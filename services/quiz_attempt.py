@@ -353,15 +353,17 @@ class QuizAttemptService:
             .where(
                 GeneratedOutput.course_id == course_id,
                 GeneratedOutput.user_id == user_id,
-                GeneratedOutput.output_type == "reverse_quiz"
+                GeneratedOutput.output_type == "reverse_quiz",
             )
             .order_by(GeneratedOutput.created_at.desc())
         ).all()
-        
+
         for output in reverse_quizzes:
             try:
                 rq = ReverseQuizResponse.model_validate_json(output.content)
-                has_misconception = any(m.status == ConceptStatus.CONTRADICTED for m in rq.misconceptions)
+                has_misconception = any(
+                    m.status == ConceptStatus.CONTRADICTED for m in rq.misconceptions
+                )
                 if has_misconception:
                     rq_label = f"{rq.topic} (Reverse Quiz)"
                     if rq_label not in weak_topics:

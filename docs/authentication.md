@@ -167,7 +167,7 @@ With it running, start the API with verification on and pointed at it:
 ```
 EMAIL_VERIFICATION_REQUIRED=true
 APP_PUBLIC_BASE_URL=http://localhost:5173
-EMAIL_FROM_ADDRESS=info@study-lumina.com
+EMAIL_FROM_ADDRESS=info@lumina-study.com
 SMTP_HOST=127.0.0.1
 SMTP_PORT=1025
 SMTP_USE_TLS=false
@@ -274,7 +274,7 @@ All of these are documented with their defaults in `.env.example` and read in
 In the hosted AWS deployment the mail settings are supplied by
 `terraform/modules/ecs` to every task, because every task loads the same
 configuration module and one missing setting fails startup validation rather
-than starting without mail. The sender is `info@study-lumina.com`, which is the
+than starting without mail. The sender is `info@lumina-study.com`, which is the
 default of the `email_from_address` Terraform variable; the relay must be
 authorized to send as it or the message is rejected before it leaves.
 `SMTP_PASSWORD` is referenced from SSM only when `smtp_username` is set. See

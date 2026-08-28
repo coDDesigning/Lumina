@@ -171,20 +171,25 @@ def _record_failure(
         or job.attempt_count >= job.max_attempts
     ):
         scope_info = f"user {job.user_id}" if isinstance(job, ClaimedProfileJob) else f"course {job.course_id}"
+        extra_fields = {
+            "event": "permanent_document_failure",
+            "job_id": job.id,
+            "document_id": str(job.document_id),
+            "failed_stage": stage,
+            "error_code": error.code,
+            "runbook": "docs/runbooks/stuck_document.md",
+        }
+        if isinstance(job, ClaimedJob):
+            extra_fields["course_id"] = job.course_id
+        else:
+            extra_fields["user_id"] = job.user_id
         logger.error(
             "Permanent document processing failure for job %s (document %s, %s): %s",
             job.id,
             job.document_id,
             scope_info,
             error.code,
-            extra={
-                "event": "permanent_document_failure",
-                "job_id": job.id,
-                "document_id": str(job.document_id),
-                "failed_stage": stage,
-                "error_code": error.code,
-                "runbook": "docs/runbooks/stuck_document.md",
-            },
+            extra=extra_fields,
         )
     return resulting_status
 
@@ -470,8 +475,7 @@ def process_next_job(
             else:
                 prompt_context = resolve_prompt_context(
                     session,
-                    user=session.get(User, job.user_id),
-                    document_ids=[job.document_id],
+                    user_id=job.user_id,
                 )
         else:
             prompt_context = None
@@ -691,7 +695,8 @@ def process_next_job(
             # is ready and its chunks exist. It is best-effort by design: a
             # paper whose questions could not be read is still indexed material,
             # and the failure belongs on the document rather than on the job.
-            extract_past_exam_questions(session_factory, job.document_id)
+            if isinstance(job, ClaimedJob):
+                extract_past_exam_questions(session_factory, job.document_id)
             emit_emf_metrics(
                 {
                     "JobsSucceeded": 1,

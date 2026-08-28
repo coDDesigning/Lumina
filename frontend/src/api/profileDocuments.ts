@@ -32,11 +32,12 @@ export const profileDocumentsAPI = {
   ): Promise<ProfileDocumentUploadResponse> => {
     const formData = new FormData();
     formData.append('document', file);
-    return apiClient.postForm<ProfileDocumentUploadResponse>(
+    const res = await apiClient.postForm<BaseResponse<ProfileDocumentUploadResponse>>(
       '/profile-documents',
       formData,
       options,
     );
+    return unwrapData(res, 'Profile document upload');
   },
 
   retry: async (

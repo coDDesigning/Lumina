@@ -340,7 +340,8 @@ export function ProfileKnowledgeSection() {
         ) : (
           <div className={styles.stack}>
             {docEntries.map((entry) => {
-              const { document, job, pending } = entry;
+              if (!entry?.document?.id) return null;
+              const { document, pending } = entry;
               const busy = isDocumentBusy(document.status);
               const failed = document.status === 'failed';
               const ready = document.status === 'ready';
@@ -351,7 +352,7 @@ export function ProfileKnowledgeSection() {
                     <span className={styles.docBadge}>Profile Document</span>
                     <p className={styles.rowTitle}>{document.original_file_name}</p>
                     <div className={styles.docFacts}>
-                      <span>{document.file_type.toUpperCase()}</span>
+                      <span>{(document.file_type || '').toUpperCase()}</span>
                       <span>·</span>
                       <span>{formatFileSize(document.file_size)}</span>
                       <span>·</span>

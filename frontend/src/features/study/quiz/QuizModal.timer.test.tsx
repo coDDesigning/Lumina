@@ -75,6 +75,9 @@ const ATTEMPT: QuizAttemptResponse = {
   total_questions: 2,
   time_spent_seconds: 120,
   created_at: '2026-08-23T10:00:00Z',
+  quiz_purpose: null,
+  timed: false,
+  expired: false,
   answers: [],
 };
 

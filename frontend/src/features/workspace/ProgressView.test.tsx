@@ -29,6 +29,9 @@ const SAMPLE_PROGRESS: CourseProgressResponse = {
       total_questions: 2,
       time_spent_seconds: 40,
       created_at: '2026-08-23T10:00:00Z',
+      quiz_purpose: null,
+      timed: false,
+      expired: false,
     },
     {
       attempt_id: 102,
@@ -38,6 +41,9 @@ const SAMPLE_PROGRESS: CourseProgressResponse = {
       total_questions: 2,
       time_spent_seconds: 35,
       created_at: '2026-08-23T11:00:00Z',
+      quiz_purpose: null,
+      timed: false,
+      expired: false,
     },
   ],
 };

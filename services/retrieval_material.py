@@ -13,7 +13,7 @@ The module reads no settings: every bound is supplied by the calling feature,
 the same way ``load_course_material`` takes its character budget today.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -98,6 +98,10 @@ class RetrievedCourseMaterial(CourseMaterial):
     lowest_similarity: float | None = None
     highest_similarity: float | None = None
     citations: tuple[SuppliedCitation, ...] = ()
+    # What the caller asked to read, as distinct from ``document_ids``, which
+    # is what the budget actually reached. Persisting both is what makes a
+    # stored generation auditable against the sources it claimed to use.
+    document_ids_requested: tuple[UUID, ...] = ()
 
     @property
     def retrieval_narrowed(self) -> bool:
@@ -109,7 +113,12 @@ class RetrievedCourseMaterial(CourseMaterial):
 
 
 def _validate(
-    *, query: str, limit: int, min_similarity: float, max_characters: int
+    *,
+    query: str,
+    limit: int,
+    min_similarity: float,
+    max_characters: int,
+    document_ids: Sequence[UUID] | None,
 ) -> None:
     if not query or not query.strip():
         raise ValueError("Retrieval requires a non-blank query")
@@ -119,6 +128,8 @@ def _validate(
         raise ValueError("Retrieval min_similarity must be between 0.0 and 1.0")
     if max_characters <= 0:
         raise ValueError("max_characters must be a positive integer.")
+    if document_ids is not None and not list(document_ids):
+        raise ValueError("Retrieval document_ids must not be empty when supplied")
 
 
 def _rank(
@@ -127,6 +138,7 @@ def _rank(
     *,
     query: str,
     limit: int,
+    document_ids: Sequence[UUID] | None,
     provider: EmbeddingProvider | None,
     store: VectorStore | None,
 ) -> list[RetrievedChunk]:
@@ -136,6 +148,7 @@ def _rank(
             course_id=course_id,
             query=query,
             limit=limit,
+            document_ids=document_ids,
             provider=provider,
             store=store,
         )
@@ -232,6 +245,7 @@ def load_retrieved_material(
     min_similarity: float,
     max_characters: int,
     include_citations: bool,
+    document_ids: Sequence[UUID] | None = None,
     provider: EmbeddingProvider | None = None,
     store: VectorStore | None = None,
 ) -> RetrievedCourseMaterial:
@@ -240,16 +254,28 @@ def load_retrieved_material(
     Selection spends the character budget in similarity order so the most
     relevant material is never the part that gets cut. Emission is in corpus
     order so the prompt still reads as coherent prose.
+
+    ``document_ids`` narrows the search to sources the caller chose. It never
+    widens the course scope, and an empty selection is rejected rather than
+    quietly treated as the whole course.
     """
     _validate(
         query=query,
         limit=limit,
         min_similarity=min_similarity,
         max_characters=max_characters,
+        document_ids=document_ids,
     )
+    requested = tuple(dict.fromkeys(document_ids)) if document_ids is not None else ()
 
     ranked = _rank(
-        db, course_id, query=query, limit=limit, provider=provider, store=store
+        db,
+        course_id,
+        query=query,
+        limit=limit,
+        document_ids=document_ids,
+        provider=provider,
+        store=store,
     )
     # Nothing ranked at all means the course holds no vectors: the caller has
     # already established it has ready chunks, so this is an indexing gap.
@@ -321,4 +347,5 @@ def load_retrieved_material(
         lowest_similarity=min(similarities),
         highest_similarity=max(similarities),
         citations=citations,
+        document_ids_requested=requested,
     )

@@ -101,6 +101,28 @@ cosine` for the Chroma collection), and the similarity search in
 HNSW was chosen over IVFFlat because it handles incremental inserts without the
 train-then-populate workflow IVFFlat needs, and documents arrive one at a time.
 
+## Narrowing a search to chosen documents
+
+`search` takes an optional `document_ids`, and both backends implement it the
+same way: pgvector adds `AND document_id = ANY(...)` beside the mandatory course
+predicate, and Chroma adds a `$in` metadata clause beside the same one. Exam
+Mode is the only caller today, because it asks a question of the sources a
+student picked rather than of the course as a whole.
+
+Three properties are load-bearing. The course predicate is applied first and
+unconditionally, so a document filter can only ever narrow within one course and
+never reach across them. An empty selection raises rather than meaning
+"everything" — silently widening it would be the whole-corpus fallback this
+layer exists to refuse. And Chroma's metadata stores `document_id` as a string,
+so the operand must be the string form; a UUID object would match nothing and be
+indistinguishable from an honest empty result.
+
+Narrowing changes what the HNSW index has to scan. When the selected documents
+are a thin slice of a large course, pgvector can return fewer than `limit` rows
+even though more exist; `hnsw.iterative_scan` and `hnsw.max_scan_tuples` already
+bound that, and the shortfall is reported truthfully through `chunks_ranked` and
+`chunks_retrieved` rather than hidden by raising the scan budget.
+
 ## Dimensions
 
 `EMBEDDING_DIMENSIONS = 768`, fixed in `backend/app/models.py`. It is a schema

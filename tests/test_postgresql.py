@@ -65,7 +65,7 @@ VISUAL_REVISION = "f7a3c9d2e541"
 CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
-HEAD_REVISION = "4399b6d253bf"
+HEAD_REVISION = "d4a7c19e6b83"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -716,6 +716,40 @@ def test_postgresql_schema_readiness_and_role_seeds(
     } >= {
         "ck_quiz_questions_question_index_nonnegative",
         "ck_quiz_questions_correct_option_index_nonnegative",
+    }
+    assert {index["name"] for index in inspector.get_indexes("generated_outputs")} >= {
+        "uq_generated_outputs_id_course_id"
+    }
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("exam_topic_candidates")
+    } >= {
+        "ck_exam_topic_candidates_topic_key_nonblank",
+        "ck_exam_topic_candidates_discovery_confidence_fraction",
+        "ck_exam_topic_candidates_at_least_one_source",
+    }
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("past_exam_questions")
+    } >= {
+        "ck_past_exam_questions_question_type_valid",
+        "ck_past_exam_questions_page_requires_document",
+        "ck_past_exam_questions_page_range_valid",
+    }
+    # Both composite keys carry course_id, which is what forces an analysis and
+    # the paper it cites into the same course.
+    assert {
+        (key["name"], tuple(key["constrained_columns"]))
+        for key in inspector.get_foreign_keys("past_exam_questions")
+    } >= {
+        (
+            "fk_past_exam_questions_analysis_course_generated_outputs",
+            ("analysis_output_id", "course_id"),
+        ),
+        (
+            "fk_past_exam_questions_document_course_uploaded_documents",
+            ("document_id", "course_id"),
+        ),
     }
     conversation_columns = {
         column["name"]: column for column in inspector.get_columns("conversations")

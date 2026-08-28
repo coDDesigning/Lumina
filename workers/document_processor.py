@@ -35,6 +35,7 @@ from services.document_extraction import (
     DocumentProcessingError,
     extract_document,
 )
+from services.exam_question_extraction import extract_past_exam_questions
 from services.processing_jobs import (
     ClaimedJob,
     ChunkData,
@@ -621,6 +622,11 @@ def process_next_job(
         if not completed:
             logger.info("Processing claim was lost before job %s completed", job.id)
         else:
+            # Past exam papers give up their questions here, after the document
+            # is ready and its chunks exist. It is best-effort by design: a
+            # paper whose questions could not be read is still indexed material,
+            # and the failure belongs on the document rather than on the job.
+            extract_past_exam_questions(session_factory, job.document_id)
             emit_emf_metrics(
                 {
                     "JobsSucceeded": 1,

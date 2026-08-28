@@ -14,6 +14,7 @@ const SECTIONS = [
   { to: '/account/background', label: 'Your background', end: false },
   { to: '/account/ai', label: 'AI', end: false },
   { to: '/account/appearance', label: 'Appearance', end: false },
+  { to: '/account/security', label: 'Security', end: false },
 ];
 
 function initials(name: string): string {

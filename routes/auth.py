@@ -11,6 +11,8 @@ from schemas.auth import (
     EmailVerificationRequest,
     EmailVerificationResendRequest,
     EmailVerificationResponse,
+    PasswordResetConfirm,
+    PasswordResetRequest,
     RegistrationResponse,
     Token,
 )
@@ -21,15 +23,18 @@ from services.email_verification import (
     InvalidVerificationTokenError,
 )
 from services.user import UserService
-from utils.deps import get_current_user
+from services.password_reset import InvalidPasswordResetTokenError, PasswordResetService
+from services.token_revocation import TokenRevocationService
+from utils.deps import get_current_user, oauth2_scheme
 from utils.exceptions import ConflictException
 from utils.rate_limit import (
     client_ip,
     enforce,
     rate_limit_register,
     rate_limit_verification,
+    rate_limit_password_reset,
 )
-from utils.security import create_access_token, verify_password
+from utils.security import create_access_token, decode_access_token, verify_password
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +58,9 @@ INVALID_VERIFICATION_TOKEN_MESSAGE = (
 RESEND_ACCEPTED_MESSAGE = (
     "If that address belongs to an unverified account, a new verification link "
     "is on its way."
+)
+RESET_SENT_MESSAGE = (
+    "If that address belongs to an account, a password reset link is on its way."
 )
 
 
@@ -152,6 +160,37 @@ def login_user(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+@router.post("/logout")
+def logout_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """
+    Handles user logout by adding the token's JTI to the denylist.
+    """
+    try:
+        payload = decode_access_token(token)
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        
+        if jti and exp:
+            from datetime import datetime, timezone
+            expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
+            subject = payload.get("sub")
+            user_id = None
+            if isinstance(subject, str):
+                user = UserService.get_user_by_email(db, subject)
+                if user:
+                    user_id = user.id
+            TokenRevocationService.revoke_token(db, jti, expires_at, user_id=user_id)
+            db.commit()
+    except Exception:
+        # If token is invalid or expired, we don't care during logout
+        pass
+
+    return {"message": "Logged out successfully"}
+
+
 @router.post(
     "/verify-email",
     response_model=EmailVerificationResponse,
@@ -229,3 +268,51 @@ def read_users_me(
     Requires a valid JWT Bearer token to access.
     """
     return current_user
+
+
+@router.post(
+    "/reset-password",
+    dependencies=[Depends(rate_limit_password_reset)],
+)
+def request_password_reset(
+    payload: PasswordResetRequest,
+    db: Annotated[Session, Depends(get_db)],
+):
+    """
+    Issue a password reset link to the given address, if it exists.
+    """
+    user = UserService.get_user_by_email(db, payload.email)
+    if user is not None and not user.is_banned:
+        try:
+            PasswordResetService.issue_and_send(db, user)
+        except EmailDeliveryError:
+            logger.warning(
+                "Password reset email could not be delivered",
+                extra={
+                    "event": "password_reset_email_undelivered",
+                    "user_id": user.id,
+                },
+            )
+
+    return {"message": RESET_SENT_MESSAGE}
+
+
+@router.post("/reset-password/confirm")
+def confirm_password_reset(
+    payload: PasswordResetConfirm,
+    db: Annotated[Session, Depends(get_db)],
+):
+    """
+    Redeem a password reset link and set a new password.
+    """
+    try:
+        user = PasswordResetService.redeem(db, payload.token)
+    except InvalidPasswordResetTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This password reset link is invalid or has expired.",
+        ) from None
+
+    UserService.force_change_password(db, user, payload.new_password)
+    
+    return {"message": "Password has been reset successfully. You can now log in."}

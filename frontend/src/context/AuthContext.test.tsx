@@ -8,6 +8,7 @@ vi.mock('../api/auth', () => ({
   authAPI: {
     me: vi.fn(),
     login: vi.fn(),
+    logout: vi.fn(),
     register: vi.fn(),
   },
 }));
@@ -116,8 +117,8 @@ describe('AuthContext', () => {
       expect(result.current.isAuthenticated).toBe(true);
     });
 
-    act(() => {
-      result.current.logout();
+    await act(async () => {
+      await result.current.logout();
     });
 
     expect(localStorage.getItem('token')).toBeNull();
@@ -180,7 +181,7 @@ describe('AuthContext', () => {
     act(() => {
       login = result.current.login('stale-token');
     });
-    act(() => result.current.logout());
+    await act(async () => { await result.current.logout(); });
     await act(async () => resolveUser(staleUser));
     await login;
 

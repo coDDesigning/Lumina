@@ -4,6 +4,7 @@ from email_validator import EmailNotValidError, validate_email
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
+from datetime import datetime, timezone
 
 from backend.app.config import settings
 from backend.app.models import Role as RoleModel
@@ -219,6 +220,22 @@ class UserService:
             raise BadRequestException(str(exc)) from exc
 
         user.password_hash = get_password_hash(new_password)
+        user.tokens_valid_after = datetime.now(timezone.utc)
+        db.commit()
+
+    @staticmethod
+    def force_change_password(db: Session, user: User, new_password: str) -> None:
+        """Replace a user's password without requiring the current one.
+        
+        Used by the password reset flow. Invalidates all existing sessions.
+        """
+        try:
+            validate_password(new_password, identifiers=(user.name, user.email))
+        except PasswordPolicyError as exc:
+            raise BadRequestException(str(exc)) from exc
+
+        user.password_hash = get_password_hash(new_password)
+        user.tokens_valid_after = datetime.now(timezone.utc)
         db.commit()
 
     @staticmethod

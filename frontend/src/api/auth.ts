@@ -35,5 +35,17 @@ export const authAPI = {
 
   me: async (options?: RequestInit): Promise<User> => {
     return apiClient.get<User>('/auth/me', options);
+  },
+
+  logout: async (): Promise<void> => {
+    await apiClient.post('/auth/logout');
+  },
+
+  requestPasswordReset: async (email: string): Promise<{ message: string }> => {
+    return apiClient.post<{ message: string }>('/auth/reset-password', { email });
+  },
+
+  confirmPasswordReset: async (token: string, new_password: string): Promise<{ message: string }> => {
+    return apiClient.post<{ message: string }>('/auth/reset-password/confirm', { token, new_password });
   }
 };

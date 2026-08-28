@@ -15,10 +15,13 @@ import AccountYouPage from './features/account/AccountYouPage'
 import AccountAppearancePage from './features/account/AccountAppearancePage'
 import { AiPreferencesSection } from './features/account/AiPreferencesSection'
 import { ProfileKnowledgeSection } from './features/account/ProfileKnowledgeSection'
+import AccountSecurityPage from './features/account/AccountSecurityPage'
 import AdminPage from './features/admin/AdminPage'
 import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
 import VerifyEmailPage from './features/auth/VerifyEmailPage'
+import ForgotPasswordPage from './features/auth/ForgotPasswordPage'
+import ResetPasswordPage from './features/auth/ResetPasswordPage'
 import LandingPage from './features/marketing/LandingPage'
 import { AppShell } from './app/AppShell'
 import { ThemeProvider } from './app/ThemeProvider'
@@ -414,6 +417,8 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/verify-email" element={<VerifyEmailPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
 
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
@@ -504,6 +509,7 @@ function App() {
           <Route path="background" element={<ProfileKnowledgeSection />} />
           <Route path="ai" element={<AiPreferencesSection />} />
           <Route path="appearance" element={<AccountAppearancePage />} />
+          <Route path="security" element={<AccountSecurityPage />} />
         </Route>
         <Route
           path="/admin"

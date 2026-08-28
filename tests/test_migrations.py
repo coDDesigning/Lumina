@@ -52,7 +52,8 @@ ROADMAP_SCHEMA_PREP_REVISION = "4399b6d253bf"
 EXAM_MODE_REVISION = "a6d3f81c9b47"
 EXAM_UNLOCKS_REVISION = "b5e9a2c7d341"
 QUIZ_SESSIONS_REVISION = "d4a7c19e6b83"
-HEAD_REVISION = QUIZ_SESSIONS_REVISION
+EMAIL_VERIFICATION_REVISION = "c7a2e5b91d63"
+HEAD_REVISION = EMAIL_VERIFICATION_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -100,6 +101,7 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        EMAIL_VERIFICATION_REVISION: QUIZ_SESSIONS_REVISION,
         QUIZ_SESSIONS_REVISION: EXAM_UNLOCKS_REVISION,
         EXAM_UNLOCKS_REVISION: EXAM_MODE_REVISION,
         EXAM_MODE_REVISION: ROADMAP_SCHEMA_PREP_REVISION,

@@ -31,6 +31,8 @@ const mockGetCredits = vi.mocked(userAPI.getCredits);
 const UNMETERED: CreditStatus = {
   credits: null,
   metering_enabled: false,
+  email_verification_required: false,
+  is_email_verified: true,
   monthly_grant: null,
   balance_cap: null,
   next_grant_at: null,

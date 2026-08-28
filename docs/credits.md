@@ -22,7 +22,7 @@ These are all of them. There are no others.
 
 | Mechanism | Hosted | Self-hosted | Implemented |
 |---|---|---|---|
-| Initial grant at registration | Yes | Recorded, not enforced | Yes |
+| Initial grant, at verification when required and at registration otherwise | Yes | Recorded, not enforced | Yes |
 | Monthly grant, trimmed to a ceiling | Yes | No | Yes |
 | Administrator credit change, either sign | Yes | No | Yes |
 | Purchase with money | No | No | **No** |
@@ -45,16 +45,25 @@ otherwise.
 | Does every operation cost the same? | No. A quiz containing open-ended questions costs 2 because it prepays its AI grading. |
 | When is a refund issued? | When a charge was taken and the generation then failed. |
 | What does a null balance mean? | The account is not metered. Administrators have always worked this way. |
+| What does a zero balance on a brand-new account mean? | It has not verified its address yet, where the deployment asks. Zero is metered and empty; null is unmetered. |
 
 ## The mechanisms in detail
 
 ### Initial grant
 
-A new account receives `CREDIT_INITIAL_GRANT` (default 50) once, at
-registration, recorded as `initial_grant` with `actor_type = system`. The row
-carries the registration month in `grant_period`, which is what stops a
-brand-new account also collecting that same month's periodic grant — 50 in the
-first month, not 100.
+A new account receives `CREDIT_INITIAL_GRANT` (default 50) once, recorded as
+`initial_grant` with `actor_type = system`. The row carries the granting month
+in `grant_period`, which is what stops a brand-new account also collecting that
+same month's periodic grant — 50 in the first month, not 100.
+
+**When the grant happens depends on `EMAIL_VERIFICATION_REQUIRED`.** Where
+verification is off, it happens at registration. Where it is on — the hosted
+default — registration opens the account at a balance of `0.0` with no ledger
+row, and redeeming the emailed link is what grants the 50, once, in the same
+transaction that marks the address verified. `grant_initial_credits` refuses if
+an `initial_grant` or `metering_reset` row already exists, so no account can
+collect an opening balance twice. See
+[authentication hardening](authentication.md).
 
 Administrators are created with a null balance and receive nothing.
 
@@ -87,8 +96,12 @@ many race. The loser of that race sees the same quiet skip as a caller who
 found the row already there: the duplicate is rejected when the row is
 flushed, and the whole attempt is rolled back rather than surfacing.
 
-**Eligibility.** Active, metered, non-banned accounts. A banned account is
-skipped and receives nothing for the months it stays banned.
+**Eligibility.** Active, metered, non-banned accounts, and — where the
+deployment verifies addresses — verified ones. `may_receive_automatic_grants`
+is checked before the period is granted; without it an unverified account would
+be handed the monthly grant on its next balance read and the verification gate
+would be worth nothing. A banned account is skipped and receives nothing for the
+months it stays banned.
 
 ### Administrator credit changes
 
@@ -237,8 +250,14 @@ credit the account already held.
 
 ## Recovering an exhausted account
 
-A balance of zero is not a dead end. There are exactly two ways out, and no
+A balance of zero is not a dead end. There are exactly three ways out, and no
 others.
+
+**Verify the address**, when the account is new and the deployment asks for it.
+This is the only route that applies to an account that has never been granted
+anything, and it is the one a client should offer when
+`GET /api/users/me/credits` reports `email_verification_required` true and
+`is_email_verified` false.
 
 **Wait for the next month.** The monthly grant is lazy, so it lands on the
 account's next charge or balance read in a new period. Nobody has to intervene
@@ -280,15 +299,22 @@ the registration grant is still recorded, so the balance and the ledger stay in
 agreement. An operator who later enables metering finds real balances rather
 than a reset, and the invariant still holds.
 
-## Abuse controls, and the WP12 dependency
+## Abuse controls
 
-The initial grant is tied to account creation, so **repeated registration is the
-standing credit-farming vector**. This ticket does not close it; account
-verification (WP12) does. Until verification lands, a hosted deployment's real
-protection is that registration is cheap to attempt and the per-account ceiling
-bounds what any single account can accumulate.
+The initial grant used to be tied to account creation, which made **repeated
+registration the standing credit-farming vector**. Email verification (WP12)
+closes it: where `EMAIL_VERIFICATION_REQUIRED` is on, an account holds no
+spendable credits until somebody reachable at that address redeems a
+single-use link, so farming costs one controlled mailbox per account rather
+than one form submission. Nothing in the ledger's shape had to change for
+that — the grant simply moved to a later moment.
 
-Controls that do exist:
+Controls that exist:
+
+- Introductory credits are granted only after the address is verified, and only
+  once per account.
+- Automatic monthly grants are withheld from unverified accounts, so waiting is
+  not a way around verification.
 
 - The ceiling bounds accumulation per account, so an idle account cannot hoard
   indefinitely.
@@ -297,8 +323,8 @@ Controls that do exist:
 - Banned accounts are not replenished.
 - Only administrators can grant, and every grant names the administrator.
 
-When verification arrives, the initial grant should move behind it. Nothing in
-the ledger's shape needs to change for that.
+A self-hosted deployment needs none of this: metering is off, so there are no
+credits to farm.
 
 ## The `credit_transactions` table
 
@@ -422,7 +448,7 @@ share `409`. The header is the stable contract; the prose in `detail` is not.
 | Variable | Default | Meaning |
 |---|---|---|
 | `CREDIT_METERING_ENABLED` | `true` hosted, `false` self-hosted | Whether credits are enforced at all |
-| `CREDIT_INITIAL_GRANT` | `50.0` | Registration allowance |
+| `CREDIT_INITIAL_GRANT` | `50.0` | Opening allowance, granted at verification where required |
 | `CREDIT_PERIODIC_GRANT` | `50.0` | Monthly allowance before trimming |
 | `CREDIT_MAX_BALANCE` | `100.0` | Ceiling for automatic granting only |
 

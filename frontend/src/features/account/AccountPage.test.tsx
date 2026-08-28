@@ -39,6 +39,7 @@ vi.mock('@/context/AuthContext', () => ({
       email: 'ada@example.com',
       role: 'Student',
       is_banned: false,
+      is_email_verified: true,
       credits: 42,
       preferred_model: 'gemini-1.5-flash',
       education_level: 'unspecified',
@@ -178,6 +179,7 @@ describe('AccountPage', () => {
       email: 'ada@example.com',
       role: 'Student',
       is_banned: false,
+      is_email_verified: true,
       credits: 42,
       preferred_model: 'gpt-4o-mini',
       education_level: 'unspecified',
@@ -285,6 +287,8 @@ describe('AccountPage credits', () => {
     creditState.status = {
       credits: 7,
       metering_enabled: true,
+      email_verification_required: false,
+      is_email_verified: true,
       monthly_grant: 20,
       balance_cap: 40,
       next_grant_at: '2026-12-01T00:00:00Z',
@@ -301,6 +305,8 @@ describe('AccountPage credits', () => {
     creditState.status = {
       credits: 7,
       metering_enabled: true,
+      email_verification_required: false,
+      is_email_verified: true,
       monthly_grant: 20,
       balance_cap: 40,
       next_grant_at: '2026-12-01T00:00:00Z',

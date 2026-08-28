@@ -86,6 +86,20 @@ variable "route53_zone_id" {
   }
 }
 
+variable "additional_connect_src" {
+  description = "Exact extra origins the SPA is permitted to call, such as a separately hosted API host during a cutover. The distribution's own origin is always allowed; entries here must be complete https origins, never scheme wildcards."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for origin in var.additional_connect_src :
+      can(regex("^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+(?::[0-9]{1,5})?$", origin))
+    ])
+    error_message = "Each additional_connect_src entry must be a complete lowercase https origin such as https://api.example.com, with no path, no wildcard, and no bare scheme."
+  }
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

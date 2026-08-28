@@ -12,6 +12,9 @@ export interface User {
   email: string;
   role: string;
   is_banned: boolean;
+  /** Whether the address was proven reachable. False accounts hold no credits
+   * where the deployment verifies; see docs/authentication.md. */
+  is_email_verified: boolean;
   credits: number | null;
   preferred_model: string;
   education_level: EducationLevel;
@@ -98,6 +101,10 @@ export interface CreditStatus {
   /** null means this account is not metered, so no credit UI applies. */
   credits: number | null;
   metering_enabled: boolean;
+  /** Together these tell a zero balance that was spent apart from one that was
+   * never granted, which is the difference between no next action and one. */
+  email_verification_required: boolean;
+  is_email_verified: boolean;
   monthly_grant: number | null;
   balance_cap: number | null;
   next_grant_at: string | null;

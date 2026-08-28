@@ -148,6 +148,7 @@ describe('RegisterPage', () => {
       email: 'deniz@uni.edu',
       role: 'user',
       is_banned: false,
+      is_email_verified: true,
       credits: 20,
       preferred_model: 'gemini:gemini-3.6-flash',
       education_level: 'unspecified',

@@ -56,7 +56,7 @@ describe('RecentActivity', () => {
     renderActivity();
 
     const link = await screen.findByRole('link', { name: /Study guide/ });
-    expect(link).toHaveAttribute('href', '/courses/7/guides/12');
+    expect(link).toHaveAttribute('href', '/courses/7?artifact=12');
   });
 
   it('opens the attempt an attempt event refers to', async () => {

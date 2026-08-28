@@ -7,7 +7,6 @@ import CourseSettingsPage from './features/courses/CourseSettingsPage'
 import CoursesPage from './features/courses/CoursesPage'
 import ActivityPage from './features/activity/ActivityPage'
 import ProgressPage from './features/workspace/ProgressPage'
-import GuidePage from './features/study/GuidePage'
 import QuizAttemptPage from './features/study/quiz/QuizAttemptPage'
 import QuizResultsPage from './features/study/quiz/QuizResultsPage'
 import WorkspacePage from './features/workspace/WorkspacePage'
@@ -171,6 +170,15 @@ type CourseSettingsRouteProps = WorkspaceRouteProps & {
 function LegacyEditRedirect() {
   const { courseId } = useParams()
   return <Navigate to={`/courses/${courseId}/settings`} replace />
+}
+
+function LegacyGuideRedirect() {
+  const { courseId, outputId } = useParams()
+  const id = Number(outputId)
+  const target = Number.isInteger(id) && id > 0
+    ? `/courses/${courseId}?artifact=${id}`
+    : `/courses/${courseId}`
+  return <Navigate to={target} replace />
 }
 
 function LegacyWorkspaceRedirect() {
@@ -460,14 +468,7 @@ function App() {
         />
         <Route
           path="/courses/:courseId/guides/:outputId"
-          element={
-            <CourseScopedRoute
-              workspaces={workspaces}
-              isLoading={!haveWorkspacesArrived}
-              onSelect={selectWorkspace}
-              render={(workspace) => <GuidePage workspace={workspace} />}
-            />
-          }
+          element={<LegacyGuideRedirect />}
         />
         <Route
           path="/courses/:courseId/practice/:quizId/attempts/:attemptId"

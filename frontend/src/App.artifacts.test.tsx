@@ -85,17 +85,49 @@ const mockDocumentList = vi.mocked(coursesAPI.listDocuments);
 const mockProgress = vi.mocked(progressAPI.get);
 const mockListProgress = vi.mocked(progressAPI.listAll);
 const mockOutputList = vi.mocked(generatedOutputsAPI.list);
+const mockOutputGet = vi.mocked(generatedOutputsAPI.get);
 const mockQuizGenerate = vi.mocked(quizAPI.generate);
 const mockFlashcards = vi.mocked(flashcardsAPI.generate);
 const mockStudyGuide = vi.mocked(studyGuideAPI.generate);
 
-function renderWorkspace() {
+function renderWorkspace(initialEntry = '/courses/1') {
   render(
-    <MemoryRouter initialEntries={['/courses/1']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <App />
     </MemoryRouter>,
   );
   return userEvent.setup();
+}
+
+function mockSavedStudyGuide() {
+  const summary = {
+    id: 12,
+    course_id: 1,
+    output_type: 'study_guide',
+    user_id: 1,
+    model_used: 'gemini:gemini-3.6-flash',
+    created_at: '2026-08-28T10:00:00Z',
+    generation_settings: null,
+    generation_context: null,
+  };
+  mockOutputList.mockResolvedValue([summary]);
+  mockOutputGet.mockResolvedValue({
+    ...summary,
+    content: {
+      title: 'Stored Paging Guide',
+      summary: 'This saved guide opens without replacing the conversation.',
+      key_points: [],
+      important_terms: [],
+      common_mistakes: [],
+      exam_tips: { lecture_based: [], ai_suggestions: [] },
+      difficulty: { level: 'Medium', reason: 'Address translation has several steps.' },
+      estimated_study_time: '30 minutes',
+      prerequisites: [],
+      learning_objectives: [],
+      coverage: { status: 'Partial', estimated_completeness: 60 },
+      confidence_notes: '',
+    },
+  });
 }
 
 beforeEach(() => {
@@ -144,6 +176,74 @@ describe('making something from the course', () => {
 
     expect(
       await screen.findByRole('button', { name: /write my study guide/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps a generated study guide over the current conversation', async () => {
+    mockStudyGuide.mockResolvedValue({
+      generated_output_id: 12,
+      context_truncated: false,
+      retrieval_narrowed: false,
+      lowest_similarity: 0.41,
+      highest_similarity: 0.88,
+      chunks_used: 4,
+      chunks_available: 10,
+      study_guide: {
+        title: 'Paging Guide',
+        summary: 'Paging keeps processes isolated in virtual memory.',
+        key_points: [],
+        important_terms: [],
+        common_mistakes: [],
+        exam_tips: { lecture_based: [], ai_suggestions: [] },
+        difficulty: { level: 'Medium', reason: 'Address translation has several steps.' },
+        estimated_study_time: '30 minutes',
+        prerequisites: [],
+        learning_objectives: [],
+        coverage: { status: 'Partial', estimated_completeness: 60 },
+        confidence_notes: '',
+      },
+    });
+    const person = renderWorkspace();
+
+    await person.click(await screen.findByRole('button', { name: 'Study guide' }));
+    await person.click(await screen.findByRole('button', { name: /write my study guide/i }));
+
+    expect(
+      await screen.findByText('Paging keeps processes isolated in virtual memory.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Study guide');
+    expect(
+      screen.getByPlaceholderText(/Ask anything about Operating Systems/),
+    ).toBeInTheDocument();
+  });
+
+  it('opens a saved study guide over the current conversation', async () => {
+    mockSavedStudyGuide();
+    const person = renderWorkspace();
+
+    await person.click(
+      await screen.findByRole('button', { name: /Study guide Whole course/ }),
+    );
+
+    expect(
+      await screen.findByText('This saved guide opens without replacing the conversation.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Made for you');
+    expect(
+      screen.getByPlaceholderText(/Ask anything about Operating Systems/),
+    ).toBeInTheDocument();
+  });
+
+  it('opens an old study guide address over the course conversation', async () => {
+    mockSavedStudyGuide();
+    renderWorkspace('/courses/1/guides/12');
+
+    expect(
+      await screen.findByText('This saved guide opens without replacing the conversation.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Made for you');
+    expect(
+      screen.getByPlaceholderText(/Ask anything about Operating Systems/),
     ).toBeInTheDocument();
   });
 

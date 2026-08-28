@@ -76,9 +76,10 @@ class UserResponse(UserBase):
 class UserUpdate(BaseModel):
     """Schema for updating user profile or admin actions."""
 
+    name: str | None = Field(None, max_length=255)
     role: Role | None = None
     is_banned: bool | None = None
-    preferred_model: str | None = Field(default=None, min_length=1, max_length=100)
+    preferred_model: str | None = Field(None, min_length=1, max_length=100)
     education_level: EducationLevel | None = None
 
     @field_validator("preferred_model")
@@ -100,3 +101,8 @@ class UserUpdate(BaseModel):
         if any(getattr(self, field) is None for field in explicitly_null):
             raise ValueError("Required user fields cannot be null")
         return self
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=1, max_length=255)

@@ -81,6 +81,7 @@ def test_first_upload_returns_201_uploaded_document_with_trusted_metadata(
         "file_size": len(content),
         "course_id": upload_api.course_id,
         "status": "uploaded",
+        "visual_analysis_status": "not_applicable",
         "created_at": document["created_at"],
         "updated_at": document["updated_at"],
     }

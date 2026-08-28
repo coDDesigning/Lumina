@@ -6,8 +6,10 @@ from jose import JWTError
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
+from datetime import datetime, timezone
 from schemas.user import Role, UserResponse
 from services.user import UserService
+from services.token_revocation import TokenRevocationService
 from utils.security import decode_access_token
 
 # Defines the OAuth2 scheme and token URL for Swagger UI
@@ -43,6 +45,19 @@ def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account has been banned.",
         )
+
+    jti = payload.get("jti")
+    if jti and TokenRevocationService.is_token_revoked(db, jti):
+        raise credentials_exception
+
+    iat = payload.get("iat")
+    if user.tokens_valid_after and iat:
+        try:
+            iat_dt = datetime.fromtimestamp(iat, tz=timezone.utc)
+            if iat_dt < user.tokens_valid_after.replace(tzinfo=timezone.utc):
+                raise credentials_exception
+        except (ValueError, TypeError):
+            pass
 
     return UserService.to_response(user)
 

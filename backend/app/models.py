@@ -268,6 +268,9 @@ class User(Base):
     email_verified_at: Mapped[datetime | None] = mapped_column(
         UTCDateTime(), nullable=True
     )
+    tokens_valid_after: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
     education_level: Mapped[str] = mapped_column(
         String(20), default="unspecified", server_default="unspecified"
     )
@@ -344,6 +347,18 @@ class User(Base):
         passive_deletes=True,
     )
 
+    password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    revoked_tokens: Mapped[list["RevokedToken"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
 
 class EmailVerificationToken(Base):
     """One issued email-verification link, stored as a hash of the credential.
@@ -375,6 +390,47 @@ class EmailVerificationToken(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="email_verification_tokens")
+
+
+class PasswordResetToken(Base):
+    """One issued password reset link, stored as a hash of the credential.
+    
+    Like EmailVerificationToken, the emailed token is a bearer credential, so
+    only its SHA-256 digest is kept.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="password_reset_tokens")
+
+
+class RevokedToken(Base):
+    """A revoked JWT jti stored until its natural expiration."""
+
+    __tablename__ = "revoked_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    jti: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="revoked_tokens")
 
 
 class Course(Base):

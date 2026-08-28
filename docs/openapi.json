@@ -6653,13 +6653,15 @@
         "type": "object"
       },
       "PasswordChangeRequest": {
-        "description": "An authenticated password change: prove the old one, then set a new one.\n\nThe current password is required even though the caller already holds a\nvalid token, because a token that leaked is exactly the case this stops\nfrom becoming a permanent takeover.",
         "properties": {
           "current_password": {
+            "minLength": 1,
             "title": "Current Password",
             "type": "string"
           },
           "new_password": {
+            "maxLength": 255,
+            "minLength": 1,
             "title": "New Password",
             "type": "string"
           }
@@ -6669,6 +6671,45 @@
           "new_password"
         ],
         "title": "PasswordChangeRequest",
+        "type": "object"
+      },
+      "PasswordResetConfirm": {
+        "description": "Redeems a password reset link to set a new password.",
+        "properties": {
+          "new_password": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "New Password",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "new_password"
+        ],
+        "title": "PasswordResetConfirm",
+        "type": "object"
+      },
+      "PasswordResetRequest": {
+        "description": "A request to issue a password reset link.",
+        "properties": {
+          "email": {
+            "format": "email",
+            "maxLength": 255,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "PasswordResetRequest",
         "type": "object"
       },
       "ProcessingJobResponse": {
@@ -9697,6 +9738,31 @@
         ]
       }
     },
+    "/api/auth/logout": {
+      "post": {
+        "description": "Handles user logout by adding the token's JTI to the denylist.",
+        "operationId": "logout_user_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Logout User",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
     "/api/auth/me": {
       "get": {
         "description": "Protected endpoint to test token verification.\nRequires a valid JWT Bearer token to access.",
@@ -9779,6 +9845,86 @@
           }
         },
         "summary": "Register User",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/reset-password": {
+      "post": {
+        "description": "Issue a password reset link to the given address, if it exists.",
+        "operationId": "request_password_reset_api_auth_reset_password_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Password Reset",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/reset-password/confirm": {
+      "post": {
+        "description": "Redeem a password reset link and set a new password.",
+        "operationId": "confirm_password_reset_api_auth_reset_password_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Password Reset",
         "tags": [
           "Authentication"
         ]

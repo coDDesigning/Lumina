@@ -35,7 +35,7 @@ type, so the floor is raised instead.
 | --- | --- | --- |
 | Registration | `POST /api/auth/register` | name, email |
 | Authenticated change | `PUT /api/users/me/password` | name, email |
-| Reset | not implemented yet (WP12-RW3) | must call `validate_password` |
+| Reset | `POST /api/auth/reset-password/confirm` | name, email |
 
 `PUT /api/users/me/password` requires the current password before it will set a
 new one, so a stolen session alone cannot take an account over. A wrong current
@@ -43,9 +43,9 @@ password and a rejected new password both return `400`; the rejection message is
 `policy_description()`, so the user is told the rule rather than being made to
 guess it. Passwords persist only as `password_hash` and are never logged.
 
-A password reset flow is deliberately not part of this change. When it is built
-it must call `validate_password` rather than repeat the rules, which is the
-reason the module exists as a separate seam.
+Changing your password automatically invalidates all existing JWT sessions. 
+The password reset flow is implemented using single-use expiring tokens and 
+calls `validate_password` internally to ensure consistent policy enforcement.
 
 ## Email verification
 
@@ -286,9 +286,10 @@ authorized to send as it or the message is rejected before it leaves.
 - [Rate limiting](rate_limiting.md) — the throttles in front of these endpoints.
 - [Deployment](deployment.md) — where the settings are supplied per topology.
 
-## Not in this change
+## Access Token Revocation and Shortened Lifetimes
 
-Password reset (WP12-RW3), JWT revocation, and the seven-day access-token
-lifetime are separate work. The token lifetime in `utils/security.py` is
-unchanged, so verifying an address does not invalidate an existing session and a
-password change does not either.
+Access tokens (JWTs) have a default lifespan of 60 minutes. When a user logs out, 
+the token's unique ID (`jti`) is added to a denylist in the `revoked_tokens` table.
+Furthermore, changing a password updates the `tokens_valid_after` column, which 
+automatically rejects any JWTs issued before the change. These checks are 
+performed on every authenticated request by the `get_current_user` dependency.

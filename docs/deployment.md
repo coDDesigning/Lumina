@@ -420,7 +420,7 @@ supply `APP_PUBLIC_BASE_URL`, `EMAIL_FROM_ADDRESS`, and `SMTP_HOST` or startup
 fails naming whichever is missing — a deployment that gates introductory credits
 on a link it cannot send would create accounts nobody could finish. In
 Terraform these come from `email_from_address`, which defaults to the hosted
-sender `info@study-lumina.com`, from `smtp_host`, and from the SPA's own
+sender `info@lumina-study.com`, from `smtp_host`, and from the SPA's own
 `frontend_domain_name`; `SMTP_PASSWORD` is read from
 `/<prefix>/smtp-password` in SSM and is referenced only when `smtp_username` is
 set. Every task carries them, not just the API, because each one loads the same

@@ -1,4 +1,5 @@
 import AxeBuilder from '@axe-core/playwright'
+import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import { open } from './support'
 
@@ -43,27 +44,89 @@ function isKnownGap(node: { any: { message?: string }[] }): boolean {
   )
 }
 
+async function assertNoBlockingViolations(page: Page, contextName: string) {
+  const { violations } = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze()
+
+  const blocking = violations
+    .filter((violation) => BLOCKING.includes(violation.impact ?? ''))
+    .flatMap((violation) =>
+      violation.nodes
+        .filter((node) => !(violation.id === 'color-contrast' && isKnownGap(node)))
+        .map((node) => `${violation.id}: ${node.target.join(' ')}`),
+    )
+
+  expect(
+    blocking,
+    `${contextName} must not ship a serious or critical violation. The only allowance is ${KNOWN_CONTRAST_GAP.reason}`,
+  ).toEqual([])
+}
+
 for (const route of ROUTES) {
   test(`${route.name} has no serious accessibility violation`, async ({ page }) => {
     await open(page, route.path)
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+    await assertNoBlockingViolations(page, route.path)
+  })
+}
 
-    const { violations } = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-      .analyze()
+const MODAL_FLOWS = [
+  {
+    name: 'the create course dialog',
+    path: '/dashboard',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: /new course/i }).click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+  {
+    name: 'the practice quiz modal',
+    path: '/courses/1',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: 'Practice quiz' }).click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+  {
+    name: 'the study guide modal',
+    path: '/courses/1',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: 'Study guide' }).click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+  {
+    name: 'the flashcard modal',
+    path: '/courses/1',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: 'Flashcards' }).click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+  {
+    name: 'the exam roadmap modal',
+    path: '/courses/1',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: 'Exam roadmap' }).click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+  {
+    name: 'the delete course confirmation dialog',
+    path: '/courses/1/settings',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: /^delete /i }).click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+]
 
-    const blocking = violations
-      .filter((violation) => BLOCKING.includes(violation.impact ?? ''))
-      .flatMap((violation) =>
-        violation.nodes
-          .filter((node) => !(violation.id === 'color-contrast' && isKnownGap(node)))
-          .map((node) => `${violation.id}: ${node.target.join(' ')}`),
-      )
-
-    expect(
-      blocking,
-      `${route.path} must not ship a serious or critical violation. The only allowance is ${KNOWN_CONTRAST_GAP.reason}`,
-    ).toEqual([])
+for (const modal of MODAL_FLOWS) {
+  test(`${modal.name} has no serious accessibility violation when opened`, async ({ page }) => {
+    await open(page, modal.path)
+    await modal.openModal(page)
+    await assertNoBlockingViolations(page, modal.name)
   })
 }
 

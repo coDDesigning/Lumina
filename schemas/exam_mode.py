@@ -21,7 +21,14 @@ from schemas.citation import (
     MaybeGeneratedCitedText,
 )
 from schemas.generation import RetrievalGenerationContext, RetrievedContext
-from schemas.quiz import QuizView
+from schemas.quiz import (
+    MAX_QUIZ_QUESTIONS,
+    MAX_TITLE_CHARS,
+    MIN_QUIZ_QUESTIONS,
+    GeneratedQuizQuestion,
+    QuizQuestionType,
+    QuizView,
+)
 from schemas.study_guide import Coverage
 
 MAX_SELECTED_DOCUMENTS = 50
@@ -37,6 +44,12 @@ MAX_GUIDE_SECTIONS = 12
 MAX_GUIDE_ITEMS = 12
 MAX_SUMMARY_POINTS = 10
 MAX_SIMILAR_QUESTIONS = 20
+
+# Bounds a student may set a paper's clock within. Shared by the request schema
+# and its tests, so the two cannot disagree about what a valid sitting is.
+MIN_MOCK_EXAM_MINUTES = 5
+MAX_MOCK_EXAM_MINUTES = 360
+DEFAULT_MOCK_EXAM_MINUTES = 60
 MAX_REVIEW_TOPICS = 60
 MAX_REVIEW_ITEMS = 12
 
@@ -767,6 +780,82 @@ class ExamTopicSummaryResult(RetrievedContext):
 # --------------------------------------------------------------- similar questions
 
 
+class SimilarQuestionDifficultyPolicy(str, Enum):
+    """How hard the new questions should be relative to the ones they mirror."""
+
+    MATCH_SOURCE = "match_source"
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+
+class SimilarQuestionRequest(ExamTopicArtifactRequest):
+    """What a student may ask for when requesting similar questions.
+
+    Deliberately narrow. The topic is the canonical key in the route, and the
+    originals are named by the identifiers of rows this course already owns --
+    never by text, never by a document, and never by a course the caller does
+    not hold. Anything wider would let a request describe its own grounding,
+    which is the one thing the server has to decide for itself.
+    """
+
+    source_question_ids: list[int] | None = Field(
+        default=None,
+        max_length=MAX_SIMILAR_QUESTIONS,
+        description=(
+            "Which of this topic's extracted past questions to mirror, or omit "
+            "to use the ones the plan already found relevant"
+        ),
+    )
+    question_count: int = Field(
+        default=5,
+        ge=MIN_QUIZ_QUESTIONS,
+        le=MAX_QUIZ_QUESTIONS,
+        description="How many questions to write",
+    )
+    difficulty_policy: SimilarQuestionDifficultyPolicy = Field(
+        default=SimilarQuestionDifficultyPolicy.MATCH_SOURCE,
+        description="Match each source's difficulty, or pin every question to one level",
+    )
+    requested_question_types: list[QuizQuestionType] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=4,
+        description="Restrict the set to these question types, or omit to allow all",
+    )
+    request_id: UUID | None = Field(
+        default=None,
+        description=(
+            "A client-generated identifier that makes a retry return the first "
+            "result instead of generating and charging a second time"
+        ),
+    )
+
+    @field_validator("source_question_ids")
+    @classmethod
+    def _reject_duplicate_sources(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        if not value:
+            raise ValueError("source_question_ids must not be empty when supplied")
+        if len(set(value)) != len(value):
+            raise ValueError("source_question_ids must not repeat an identifier")
+        if any(identifier < 1 for identifier in value):
+            raise ValueError("source_question_ids must be positive identifiers")
+        return value
+
+    @field_validator("requested_question_types")
+    @classmethod
+    def _reject_duplicate_types(
+        cls, value: list[QuizQuestionType] | None
+    ) -> list[QuizQuestionType] | None:
+        if value is None:
+            return None
+        if len(set(value)) != len(value):
+            raise ValueError("requested_question_types must not repeat a type")
+        return value
+
+
 class GeneratedSimilarQuestion(BaseModel):
     """One fresh question written in the mould of an original.
 
@@ -774,62 +863,48 @@ class GeneratedSimilarQuestion(BaseModel):
     not a database identifier. A model is never shown a row id and never asked
     to echo one back; the application resolves the number against the questions
     it actually supplied, exactly as it resolves a citation key.
+
+    The question itself is the ordinary quiz contract, which is what lets the
+    result be stored, attempted, and graded by the machinery that already
+    exists rather than by a second copy of it.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     source_number: int = Field(ge=1)
-    question_text: str = Field(min_length=1)
-    reference_answer: str = Field(min_length=1)
-    what_changed: str = ""
-    difficulty: ExamDifficulty = ExamDifficulty.MEDIUM
-    citations: CitationKeys = []
+    question: GeneratedQuizQuestion
 
 
-class GeneratedSimilarQuestions(BaseModel):
+class GeneratedSimilarQuestionResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    title: str = Field(min_length=1, max_length=MAX_TITLE_CHARS)
     questions: list[GeneratedSimilarQuestion] = Field(
         default_factory=list, max_length=MAX_SIMILAR_QUESTIONS
     )
-    confidence_notes: str = ""
 
 
-class ExamSimilarQuestion(BaseModel):
-    """One generated question beside the one it was modelled on."""
+class ExamSimilarQuestionsSettings(ExamQuizGenerationSettings):
+    """What one similar-question set was generated from.
 
-    source_question_id: int
-    source_question_text: str
-    source_page_start: int | None = None
-    source_page_end: int | None = None
-    question_text: str
-    reference_answer: str
-    what_changed: str = ""
-    difficulty: str = "medium"
-    citations: list[Citation] = []
+    The source identifiers are recorded because the set's whole claim is that
+    it mirrors questions this course actually set. Without them a reader cannot
+    check that claim, and a deleted paper would leave the quiz asserting a
+    provenance nothing can confirm.
+    """
 
-
-class ExamSimilarQuestionsDocument(BaseModel):
-    """The ``generated_outputs.content`` payload of one similar-question run."""
-
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    version: Literal[1] = 1
-    output_type: Literal["exam_similar_questions"] = "exam_similar_questions"
-    topic_key: str
-    display_label: str
-    plan_output_id: int
     source_question_ids: list[int] = []
-    questions: list[ExamSimilarQuestion] = []
-    confidence_notes: str = ""
+    difficulty_policy: str = SimilarQuestionDifficultyPolicy.MATCH_SOURCE.value
 
 
 class ExamSimilarQuestionsResult(RetrievedContext):
-    similar_questions: ExamSimilarQuestionsDocument
+    quiz: QuizView
     generated_output_id: int
     created_at: datetime
     model_used: str | None = None
     credits_charged: float = 0.0
+    answers_hidden: bool = True
+    source_question_ids: list[int] = []
 
 
 # --------------------------------------------------------------- course-level
@@ -897,13 +972,93 @@ class ExamPlanArtifactRequest(BaseModel):
     )
 
 
+class MockExamQuestionMixEntry(BaseModel):
+    """Exactly how many questions of one type the paper must hold."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question_type: QuizQuestionType
+    count: int = Field(ge=1, le=MAX_QUIZ_QUESTIONS)
+
+
 class ExamMockExamRequest(ExamPlanArtifactRequest):
+    """What a student may configure about a mock examination.
+
+    Duration is in minutes on the wire and seconds in the database: minutes are
+    what a student sets and seconds are what a clock compares, and converting
+    once at the boundary keeps the two from disagreeing.
+    """
+
     question_count: int | None = Field(
         default=None,
-        ge=1,
-        le=20,
+        ge=MIN_QUIZ_QUESTIONS,
+        le=MAX_QUIZ_QUESTIONS,
         description="How many questions the paper should hold, or omit for the default",
     )
+    duration_minutes: int = Field(
+        default=DEFAULT_MOCK_EXAM_MINUTES,
+        ge=MIN_MOCK_EXAM_MINUTES,
+        le=MAX_MOCK_EXAM_MINUTES,
+        description="How long a sitting of this paper may last",
+    )
+    question_mix: list[MockExamQuestionMixEntry] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=4,
+        description=(
+            "Exactly how many questions of each type, or omit for the default shape"
+        ),
+    )
+    topic_keys: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_SELECTED_TOPICS,
+        description=(
+            "Which of the plan's topics the paper should cover, or omit for all of them"
+        ),
+    )
+    request_id: UUID | None = Field(
+        default=None,
+        description=(
+            "A client-generated identifier that makes a retry return the first "
+            "result instead of generating and charging a second time"
+        ),
+    )
+
+    @field_validator("question_mix")
+    @classmethod
+    def _reject_repeated_type(
+        cls, value: list["MockExamQuestionMixEntry"] | None
+    ) -> list["MockExamQuestionMixEntry"] | None:
+        if value is None:
+            return None
+        seen = [entry.question_type for entry in value]
+        if len(set(seen)) != len(seen):
+            raise ValueError("question_mix must not name a question type twice")
+        return value
+
+    @field_validator("topic_keys")
+    @classmethod
+    def _reject_repeated_topic(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        cleaned = [key.strip() for key in value]
+        if any(not key for key in cleaned):
+            raise ValueError("topic_keys must not contain a blank key")
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("topic_keys must not repeat a key")
+        return cleaned
+
+    @model_validator(mode="after")
+    def _mix_matches_the_paper_length(self) -> "ExamMockExamRequest":
+        if self.question_mix is None or self.question_count is None:
+            return self
+        total = sum(entry.count for entry in self.question_mix)
+        if total != self.question_count:
+            raise ValueError(
+                "question_mix must sum to question_count when both are supplied"
+            )
+        return self
 
 
 class ExamCourseArtifactSettings(BaseModel):
@@ -925,6 +1080,12 @@ class ExamCourseArtifactSettings(BaseModel):
     prompt_version: str
     question_count: int | None = None
     answers_hidden: bool = False
+    # The split the application calculated, recorded so a reader can check the
+    # paper against what was actually asked for rather than taking it on trust.
+    duration_minutes: int | None = None
+    topic_quotas: list[dict] = []
+    question_type_quotas: list[dict] = []
+    allocation_policy_version: int | None = None
 
 
 class ExamCourseArtifactContext(RetrievalGenerationContext):
@@ -939,6 +1100,8 @@ class ExamMockExamResult(RetrievedContext):
     model_used: str | None = None
     credits_charged: float = 0.0
     answers_hidden: bool = True
+    duration_minutes: int = 0
+    time_limit_seconds: int = 0
 
 
 class ExamReviewSheetResult(RetrievedContext):

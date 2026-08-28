@@ -927,34 +927,6 @@
         "title": "BaseResponse[ExamRoadmapResult]",
         "type": "object"
       },
-      "BaseResponse_ExamSimilarQuestionsDocument_": {
-        "properties": {
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ExamSimilarQuestionsDocument"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "message": {
-            "title": "Message",
-            "type": "string"
-          },
-          "success": {
-            "title": "Success",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "message"
-        ],
-        "title": "BaseResponse[ExamSimilarQuestionsDocument]",
-        "type": "object"
-      },
       "BaseResponse_ExamSimilarQuestionsResult_": {
         "properties": {
           "data": {
@@ -1317,6 +1289,62 @@
           "message"
         ],
         "title": "BaseResponse[QuizGenerationResult]",
+        "type": "object"
+      },
+      "BaseResponse_QuizSessionStartResult_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuizSessionStartResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[QuizSessionStartResult]",
+        "type": "object"
+      },
+      "BaseResponse_QuizSessionView_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuizSessionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[QuizSessionView]",
         "type": "object"
       },
       "BaseResponse_QuizView_": {
@@ -3635,7 +3663,16 @@
         "type": "object"
       },
       "ExamMockExamRequest": {
+        "description": "What a student may configure about a mock examination.\n\nDuration is in minutes on the wire and seconds in the database: minutes are\nwhat a student sets and seconds are what a clock compares, and converting\nonce at the boundary keeps the two from disagreeing.",
         "properties": {
+          "duration_minutes": {
+            "default": 60,
+            "description": "How long a sitting of this paper may last",
+            "maximum": 360.0,
+            "minimum": 5.0,
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
           "model": {
             "anyOf": [
               {
@@ -3674,6 +3711,53 @@
             ],
             "description": "How many questions the paper should hold, or omit for the default",
             "title": "Question Count"
+          },
+          "question_mix": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MockExamQuestionMixEntry"
+                },
+                "maxItems": 4,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exactly how many questions of each type, or omit for the default shape",
+            "title": "Question Mix"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A client-generated identifier that makes a retry return the first result instead of generating and charging a second time",
+            "title": "Request Id"
+          },
+          "topic_keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 60,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which of the plan's topics the paper should cover, or omit for all of them",
+            "title": "Topic Keys"
           }
         },
         "title": "ExamMockExamRequest",
@@ -3707,6 +3791,11 @@
             "default": 0.0,
             "title": "Credits Charged",
             "type": "number"
+          },
+          "duration_minutes": {
+            "default": 0,
+            "title": "Duration Minutes",
+            "type": "integer"
           },
           "generated_output_id": {
             "title": "Generated Output Id",
@@ -3761,6 +3850,11 @@
           "retrieval_narrowed": {
             "title": "Retrieval Narrowed",
             "type": "boolean"
+          },
+          "time_limit_seconds": {
+            "default": 0,
+            "title": "Time Limit Seconds",
+            "type": "integer"
           }
         },
         "required": [
@@ -4797,134 +4891,13 @@
         "title": "ExamSelectionCarryOver",
         "type": "object"
       },
-      "ExamSimilarQuestion": {
-        "description": "One generated question beside the one it was modelled on.",
-        "properties": {
-          "citations": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/Citation"
-            },
-            "title": "Citations",
-            "type": "array"
-          },
-          "difficulty": {
-            "default": "medium",
-            "title": "Difficulty",
-            "type": "string"
-          },
-          "question_text": {
-            "title": "Question Text",
-            "type": "string"
-          },
-          "reference_answer": {
-            "title": "Reference Answer",
-            "type": "string"
-          },
-          "source_page_end": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Page End"
-          },
-          "source_page_start": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Page Start"
-          },
-          "source_question_id": {
-            "title": "Source Question Id",
-            "type": "integer"
-          },
-          "source_question_text": {
-            "title": "Source Question Text",
-            "type": "string"
-          },
-          "what_changed": {
-            "default": "",
-            "title": "What Changed",
-            "type": "string"
-          }
-        },
-        "required": [
-          "source_question_id",
-          "source_question_text",
-          "question_text",
-          "reference_answer"
-        ],
-        "title": "ExamSimilarQuestion",
-        "type": "object"
-      },
-      "ExamSimilarQuestionsDocument": {
-        "description": "The ``generated_outputs.content`` payload of one similar-question run.",
-        "properties": {
-          "confidence_notes": {
-            "default": "",
-            "title": "Confidence Notes",
-            "type": "string"
-          },
-          "display_label": {
-            "title": "Display Label",
-            "type": "string"
-          },
-          "output_type": {
-            "const": "exam_similar_questions",
-            "default": "exam_similar_questions",
-            "title": "Output Type",
-            "type": "string"
-          },
-          "plan_output_id": {
-            "title": "Plan Output Id",
-            "type": "integer"
-          },
-          "questions": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/ExamSimilarQuestion"
-            },
-            "title": "Questions",
-            "type": "array"
-          },
-          "source_question_ids": {
-            "default": [],
-            "items": {
-              "type": "integer"
-            },
-            "title": "Source Question Ids",
-            "type": "array"
-          },
-          "topic_key": {
-            "title": "Topic Key",
-            "type": "string"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "topic_key",
-          "display_label",
-          "plan_output_id"
-        ],
-        "title": "ExamSimilarQuestionsDocument",
-        "type": "object"
-      },
       "ExamSimilarQuestionsResult": {
         "properties": {
+          "answers_hidden": {
+            "default": true,
+            "title": "Answers Hidden",
+            "type": "boolean"
+          },
           "chunks_available": {
             "title": "Chunks Available",
             "type": "integer"
@@ -4994,12 +4967,20 @@
             "title": "Profile Knowledge Used",
             "type": "boolean"
           },
+          "quiz": {
+            "$ref": "#/components/schemas/QuizView"
+          },
           "retrieval_narrowed": {
             "title": "Retrieval Narrowed",
             "type": "boolean"
           },
-          "similar_questions": {
-            "$ref": "#/components/schemas/ExamSimilarQuestionsDocument"
+          "source_question_ids": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Source Question Ids",
+            "type": "array"
           }
         },
         "required": [
@@ -5007,7 +4988,7 @@
           "chunks_used",
           "chunks_available",
           "retrieval_narrowed",
-          "similar_questions",
+          "quiz",
           "generated_output_id",
           "created_at"
         ],
@@ -6230,6 +6211,27 @@
         "title": "Misconception",
         "type": "object"
       },
+      "MockExamQuestionMixEntry": {
+        "additionalProperties": false,
+        "description": "Exactly how many questions of one type the paper must hold.",
+        "properties": {
+          "count": {
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "question_type": {
+            "$ref": "#/components/schemas/QuizQuestionType"
+          }
+        },
+        "required": [
+          "question_type",
+          "count"
+        ],
+        "title": "MockExamQuestionMixEntry",
+        "type": "object"
+      },
       "MultipleChoiceAnswer": {
         "properties": {
           "option_index": {
@@ -6772,6 +6774,11 @@
             "title": "Created At",
             "type": "string"
           },
+          "expired": {
+            "default": false,
+            "title": "Expired",
+            "type": "boolean"
+          },
           "graded_count": {
             "title": "Graded Count",
             "type": "integer"
@@ -6779,6 +6786,17 @@
           "quiz_id": {
             "title": "Quiz Id",
             "type": "integer"
+          },
+          "quiz_purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiz Purpose"
           },
           "score": {
             "title": "Score",
@@ -6794,6 +6812,11 @@
               }
             ],
             "title": "Time Spent Seconds"
+          },
+          "timed": {
+            "default": false,
+            "title": "Timed",
+            "type": "boolean"
           },
           "total_questions": {
             "title": "Total Questions",
@@ -6906,9 +6929,25 @@
             "title": "Created At",
             "type": "string"
           },
+          "expired": {
+            "default": false,
+            "title": "Expired",
+            "type": "boolean"
+          },
           "quiz_id": {
             "title": "Quiz Id",
             "type": "integer"
+          },
+          "quiz_purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiz Purpose"
           },
           "score": {
             "title": "Score",
@@ -6924,6 +6963,11 @@
               }
             ],
             "title": "Time Spent Seconds"
+          },
+          "timed": {
+            "default": false,
+            "title": "Timed",
+            "type": "boolean"
           },
           "total_questions": {
             "title": "Total Questions",
@@ -7119,6 +7163,98 @@
         "title": "QuizRequest",
         "type": "object"
       },
+      "QuizSessionStartResult": {
+        "description": "A sitting and the paper to sit, with its answers withheld.",
+        "properties": {
+          "quiz": {
+            "$ref": "#/components/schemas/QuizView"
+          },
+          "session": {
+            "$ref": "#/components/schemas/QuizSessionView"
+          }
+        },
+        "required": [
+          "session",
+          "quiz"
+        ],
+        "title": "QuizSessionStartResult",
+        "type": "object"
+      },
+      "QuizSessionStatus": {
+        "enum": [
+          "active",
+          "submitted",
+          "expired"
+        ],
+        "title": "QuizSessionStatus",
+        "type": "string"
+      },
+      "QuizSessionView": {
+        "description": "One timed sitting as the client is allowed to see it.\n\n``expires_at`` is the server's deadline and the only thing a countdown\nshould be built from. ``seconds_remaining`` is a convenience derived from\nthe same reading, never a second source of truth.",
+        "properties": {
+          "answered_count": {
+            "default": 0,
+            "title": "Answered Count",
+            "type": "integer"
+          },
+          "attempt_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt Id"
+          },
+          "elapsed_seconds": {
+            "title": "Elapsed Seconds",
+            "type": "integer"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "quiz_id": {
+            "title": "Quiz Id",
+            "type": "integer"
+          },
+          "seconds_remaining": {
+            "title": "Seconds Remaining",
+            "type": "integer"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/QuizSessionStatus"
+          },
+          "time_limit_seconds": {
+            "title": "Time Limit Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session_id",
+          "quiz_id",
+          "status",
+          "started_at",
+          "expires_at",
+          "time_limit_seconds",
+          "seconds_remaining",
+          "elapsed_seconds"
+        ],
+        "title": "QuizSessionView",
+        "type": "object"
+      },
       "QuizSummary": {
         "description": "One stored quiz without its questions, for history listings.",
         "properties": {
@@ -7146,6 +7282,28 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "exam_plan_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Plan Output Id"
+          },
+          "exam_topic_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Topic Key"
           },
           "generation_context": {
             "anyOf": [
@@ -7201,6 +7359,33 @@
             "title": "Quiz Id",
             "type": "integer"
           },
+          "quiz_purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiz Purpose"
+          },
+          "time_limit_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Limit Seconds"
+          },
+          "timed": {
+            "default": false,
+            "title": "Timed",
+            "type": "boolean"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -7228,7 +7413,13 @@
         "type": "object"
       },
       "QuizView": {
+        "description": "One quiz as the client sees it.\n\n``quiz_purpose`` and the two exam-mode identifiers are surfaced so a client\ncan tell a mock exam from an ordinary quiz without parsing generation\nsettings JSON, which would make a private document part of the contract.",
         "properties": {
+          "answers_hidden": {
+            "default": false,
+            "title": "Answers Hidden",
+            "type": "boolean"
+          },
           "course_id": {
             "title": "Course Id",
             "type": "integer"
@@ -7237,6 +7428,28 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "exam_plan_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Plan Output Id"
+          },
+          "exam_topic_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Topic Key"
           },
           "generation_context": {
             "anyOf": [
@@ -7283,6 +7496,33 @@
           "quiz_id": {
             "title": "Quiz Id",
             "type": "integer"
+          },
+          "quiz_purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiz Purpose"
+          },
+          "time_limit_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Limit Seconds"
+          },
+          "timed": {
+            "default": false,
+            "title": "Timed",
+            "type": "boolean"
           },
           "title": {
             "title": "Title",
@@ -7652,6 +7892,108 @@
           "text"
         ],
         "title": "ShortAnswerAnswer",
+        "type": "object"
+      },
+      "SimilarQuestionDifficultyPolicy": {
+        "description": "How hard the new questions should be relative to the ones they mirror.",
+        "enum": [
+          "match_source",
+          "easy",
+          "medium",
+          "hard"
+        ],
+        "title": "SimilarQuestionDifficultyPolicy",
+        "type": "string"
+      },
+      "SimilarQuestionRequest": {
+        "description": "What a student may ask for when requesting similar questions.\n\nDeliberately narrow. The topic is the canonical key in the route, and the\noriginals are named by the identifiers of rows this course already owns --\nnever by text, never by a document, and never by a course the caller does\nnot hold. Anything wider would let a request describe its own grounding,\nwhich is the one thing the server has to decide for itself.",
+        "properties": {
+          "difficulty_policy": {
+            "$ref": "#/components/schemas/SimilarQuestionDifficultyPolicy",
+            "default": "match_source",
+            "description": "Match each source's difficulty, or pin every question to one level"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit model override, or omit to use the preferred model",
+            "title": "Model"
+          },
+          "plan_output_id": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The plan to study from, or omit to use the current one",
+            "title": "Plan Output Id"
+          },
+          "question_count": {
+            "default": 5,
+            "description": "How many questions to write",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Question Count",
+            "type": "integer"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A client-generated identifier that makes a retry return the first result instead of generating and charging a second time",
+            "title": "Request Id"
+          },
+          "requested_question_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/QuizQuestionType"
+                },
+                "maxItems": 4,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Restrict the set to these question types, or omit to allow all",
+            "title": "Requested Question Types"
+          },
+          "source_question_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which of this topic's extracted past questions to mirror, or omit to use the ones the plan already found relevant",
+            "title": "Source Question Ids"
+          }
+        },
+        "title": "SimilarQuestionRequest",
         "type": "object"
       },
       "StudyGuideGenerationResult": {
@@ -9924,6 +10266,58 @@
       }
     },
     "/api/courses/{course_id}/exam-mode/mock-exam": {
+      "get": {
+        "description": "Reopen this course's most recent mock exam, answers hidden.\n\nServed from the quiz rows, because the quiz is the paper. A paper is still\nan examination when it is reopened, so the answers stay behind the attempt.",
+        "operationId": "get_mock_exam_api_courses__course_id__exam_mode_mock_exam_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_QuizView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or mock exam not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Mock Exam",
+        "tags": [
+          "Exam Mode"
+        ]
+      },
       "post": {
         "description": "Write one paper across the whole plan, weighted by its own ranking.\n\nPriced on its own rather than under a topic's unlock: a student who paid for\none topic has not paid for a paper covering twelve. Served with its answers\nhidden, because a paper you can read the answers to is not a mock exam.",
         "operationId": "generate_mock_exam_api_courses__course_id__exam_mode_mock_exam_post",
@@ -10671,6 +11065,7 @@
     },
     "/api/courses/{course_id}/exam-mode/topics/{topic_key}/similar-questions": {
       "get": {
+        "description": "Reopen this topic's most recent similar-question set, answers hidden.\n\nServed from the quiz rows rather than the history document, because the\nquiz is the assessment. A set generated before these were quizzes has no\nrow to serve and is answered as missing rather than half-read from an\nolder shape; it remains readable in the course's generated-output history.",
         "operationId": "get_similar_questions_api_courses__course_id__exam_mode_topics__topic_key__similar_questions_get",
         "parameters": [
           {
@@ -10698,7 +11093,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BaseResponse_ExamSimilarQuestionsDocument_"
+                  "$ref": "#/components/schemas/BaseResponse_QuizView_"
                 }
               }
             },
@@ -10732,7 +11127,7 @@
         ]
       },
       "post": {
-        "description": "Write a fresh question in the mould of each of this topic's past ones.\n\nThe originals are checked before the topic is unlocked, so a topic this\ncourse has never examined is a conflict naming what to do about it rather\nthan a charge for an empty page.",
+        "description": "Write fresh questions in the mould of this topic's past ones.\n\nThe originals are resolved and checked before the topic is unlocked, so a\ntopic this course has never examined is a conflict naming what to do about\nit rather than a charge for an empty page, and an identifier belonging to\nanother course is answered as a missing one.\n\nThe result is served with its answers hidden. This is an assessment a\nstudent is meant to sit, and the answers arrive through the attempt they\nsubmit rather than through the page that sets it.",
         "operationId": "generate_similar_questions_api_courses__course_id__exam_mode_topics__topic_key__similar_questions_post",
         "parameters": [
           {
@@ -10759,7 +11154,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExamTopicArtifactRequest"
+                "$ref": "#/components/schemas/SimilarQuestionRequest"
               }
             }
           },
@@ -11511,7 +11906,7 @@
     },
     "/api/courses/{course_id}/quizzes/{quiz_id}": {
       "get": {
-        "description": "Return one stored quiz, questions in stable order, without regenerating.",
+        "description": "Return one stored quiz, questions in stable order, without regenerating.\n\nAn assessment is served with its answers withheld. Exam Mode redacts its own\nresponses, but this endpoint reads the same rows, so without the same rule\nhere a candidate could simply ask for the quiz and read the answers off it.\nPractice keeps its answers, because immediate feedback is its whole point.",
         "operationId": "get_quiz_api_courses__course_id__quizzes__quiz_id__get",
         "parameters": [
           {
@@ -11635,6 +12030,7 @@
         ]
       },
       "post": {
+        "description": "Record one attempt at an untimed quiz.\n\nA quiz with a time limit is refused here. Its elapsed time has to be\nmeasured by the server, and this endpoint would take the client's word for\nit, which is the whole thing a timed sitting exists to prevent.",
         "operationId": "submit_quiz_attempt_api_courses__course_id__quizzes__quiz_id__attempts_post",
         "parameters": [
           {
@@ -11768,6 +12164,319 @@
           }
         ],
         "summary": "Get Quiz Attempt",
+        "tags": [
+          "Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/quizzes/{quiz_id}/sessions": {
+      "post": {
+        "description": "Open a timed sitting, or rejoin the one already running.\n\nThe deadline in the response is the server's own and the only one that\ncounts. A reloaded page rejoins its sitting rather than starting a second\nclock, so the drafts stay together.",
+        "operationId": "start_quiz_session_api_courses__course_id__quizzes__quiz_id__sessions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "quiz_id",
+            "required": true,
+            "schema": {
+              "title": "Quiz Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_QuizSessionStartResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course, quiz, or session not found"
+          },
+          "409": {
+            "description": "The session cannot be used in its current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Start Quiz Session",
+        "tags": [
+          "Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/quizzes/{quiz_id}/sessions/{session_id}": {
+      "get": {
+        "description": "Report a sitting, including one whose deadline has quietly passed.",
+        "operationId": "read_quiz_session_api_courses__course_id__quizzes__quiz_id__sessions__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "quiz_id",
+            "required": true,
+            "schema": {
+              "title": "Quiz Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_QuizSessionView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course, quiz, or session not found"
+          },
+          "409": {
+            "description": "The session cannot be used in its current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Read Quiz Session",
+        "tags": [
+          "Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/quizzes/{quiz_id}/sessions/{session_id}/answers/{question_id}": {
+      "put": {
+        "description": "Save one answer as it stands, so the deadline cannot cost the student it.",
+        "operationId": "save_quiz_session_answer_api_courses__course_id__quizzes__quiz_id__sessions__session_id__answers__question_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "quiz_id",
+            "required": true,
+            "schema": {
+              "title": "Quiz Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "title": "Question Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuizAnswerSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_QuizSessionView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The answer is not valid for this question"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course, quiz, or session not found"
+          },
+          "409": {
+            "description": "The session cannot be used in its current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Save Quiz Session Answer",
+        "tags": [
+          "Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/quizzes/{quiz_id}/sessions/{session_id}/submit": {
+      "post": {
+        "description": "Finalise a sitting into an ordinary attempt, exactly once.\n\nWhat is graded is the answers saved before the deadline. Submitting twice\nreturns the same attempt rather than grading the paper again.",
+        "operationId": "submit_quiz_session_api_courses__course_id__quizzes__quiz_id__sessions__session_id__submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "quiz_id",
+            "required": true,
+            "schema": {
+              "title": "Quiz Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_QuizAttemptResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course, quiz, or session not found"
+          },
+          "409": {
+            "description": "The session cannot be used in its current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Submit Quiz Session",
         "tags": [
           "Quiz"
         ]

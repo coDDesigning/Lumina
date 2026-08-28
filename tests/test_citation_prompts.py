@@ -13,7 +13,7 @@ CITING_TEMPLATES = (
     "exam_topic_summary",
     "exam_topic_practice",
     "exam_topic_exam",
-    "exam_similar_questions",
+    "exam_style_question",
     "exam_mock_exam",
     "exam_review_sheet",
 )

@@ -5,6 +5,7 @@ from prompt_neutrality_policy import (
     assert_only_the_supplied_level_directive,
 )
 from backend.app.models import DocumentChunk, UploadedDocument
+from schemas.exam_mode import SimilarQuestionDifficultyPolicy
 from schemas.prompt_context import (
     EducationLevel,
     MaterialKind,
@@ -144,6 +145,8 @@ def _exam_mock_exam_prompt(context: PromptContext) -> str:
         context,
         question_count=20,
         style="Past question style",
+        quotas=exam_course_artifacts.topic_quotas(_PLANNED_EXAM, None, 20),
+        types=exam_course_artifacts.type_quotas(None, 20),
     )
 
 
@@ -151,12 +154,15 @@ def _exam_review_sheet_prompt(context: PromptContext) -> str:
     return exam_course_artifacts._review_prompt("material", _PLANNED_EXAM, context)
 
 
-def _exam_similar_questions_prompt(context: PromptContext) -> str:
+def _exam_style_question_prompt(context: PromptContext) -> str:
     return exam_similar_questions._build_prompt(
         "material",
         _PLANNED_TOPIC,
         context,
         originals="1. Explain breadth-first search.",
+        question_count=5,
+        policy=SimilarQuestionDifficultyPolicy.MATCH_SOURCE,
+        question_types=exam_similar_questions.SIMILAR_QUESTION_TYPES,
     )
 
 
@@ -184,7 +190,7 @@ BUILDERS = {
     "exam_topic_summary": _exam_topic_summary_prompt,
     "exam_topic_practice": _exam_topic_practice_prompt,
     "exam_topic_exam": _exam_topic_exam_prompt,
-    "exam_similar_questions": _exam_similar_questions_prompt,
+    "exam_style_question": _exam_style_question_prompt,
     "exam_mock_exam": _exam_mock_exam_prompt,
     "exam_review_sheet": _exam_review_sheet_prompt,
 }

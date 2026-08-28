@@ -545,6 +545,9 @@ class QuizService:
         purpose: str | None = None,
         exam_plan_output_id: int | None = None,
         exam_topic_key: str | None = None,
+        time_limit_seconds: int | None = None,
+        generation_request_id: str | None = None,
+        source_question_ids: Sequence[int | None] | None = None,
     ) -> Quiz:
         """Write the quiz, its questions, and its generated output record in one transaction.
 
@@ -563,6 +566,15 @@ class QuizService:
         ``record_output`` writes the ``quiz`` history row. Exam Mode turns it
         off and writes its own row under its own output type, so one generated
         quiz never appears twice in a course's history under two names.
+
+        ``source_question_ids`` is positional against ``quiz_data.questions``
+        and records which past exam question each one was written in the mould
+        of. It exists so a similar-question set can be checked against the
+        originals it claims to mirror rather than taken on trust.
+
+        ``time_limit_seconds`` is what makes a quiz a timed one: a positive
+        value is the signal the ordinary attempt endpoint uses to insist on a
+        server-owned session instead of trusting a clock the client controls.
         """
         quiz = Quiz(
             course_id=course_id,
@@ -574,6 +586,8 @@ class QuizService:
             purpose=purpose,
             exam_plan_output_id=exam_plan_output_id,
             exam_topic_key=exam_topic_key,
+            time_limit_seconds=time_limit_seconds,
+            generation_request_id=generation_request_id,
         )
 
         try:
@@ -599,6 +613,12 @@ class QuizService:
                                 question.citations, citations or {}
                             )
                         ],
+                        source_past_exam_question_id=(
+                            source_question_ids[question_index]
+                            if source_question_ids is not None
+                            and question_index < len(source_question_ids)
+                            else None
+                        ),
                     )
                 )
 
@@ -683,6 +703,30 @@ class QuizService:
         return quiz
 
     @staticmethod
+    def hide_answers(view: QuizView) -> QuizView:
+        """The same quiz with everything a candidate must not see removed.
+
+        A view-layer redaction only. Grading reads the rows, so nothing
+        downstream is affected, and an assessment served through this cannot be
+        answered by reading the page that sets it.
+        """
+        return view.model_copy(
+            update={
+                "questions": [
+                    question.model_copy(
+                        update={
+                            "correct_answer": None,
+                            "correct_option_index": None,
+                            "explanation": "",
+                        }
+                    )
+                    for question in view.questions
+                ],
+                "answers_hidden": True,
+            }
+        )
+
+    @staticmethod
     def build_question_view(row: QuizQuestion) -> QuizQuestionView:
         return QuizQuestionView(
             question_id=row.id,
@@ -710,6 +754,11 @@ class QuizService:
             model_used=quiz.model_used,
             generation_settings=cls._document(quiz, "generation_settings"),
             generation_context=cls._document(quiz, "generation_context"),
+            quiz_purpose=quiz.purpose,
+            exam_plan_output_id=quiz.exam_plan_output_id,
+            exam_topic_key=quiz.exam_topic_key,
+            timed=bool(quiz.time_limit_seconds),
+            time_limit_seconds=quiz.time_limit_seconds,
             questions=[cls.build_question_view(row) for row in questions],
         )
 
@@ -736,6 +785,11 @@ class QuizService:
             model_used=quiz.model_used,
             generation_settings=cls._document(quiz, "generation_settings"),
             generation_context=cls._document(quiz, "generation_context"),
+            quiz_purpose=quiz.purpose,
+            exam_plan_output_id=quiz.exam_plan_output_id,
+            exam_topic_key=quiz.exam_topic_key,
+            timed=bool(quiz.time_limit_seconds),
+            time_limit_seconds=quiz.time_limit_seconds,
         )
 
     @staticmethod

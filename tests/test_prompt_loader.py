@@ -101,15 +101,14 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "ai_tutor": "2.3.0",
     "course_qa": "2.3.0",
     "prompt_generator": "2.0.0",
-    "exam_style_question": "1.2.0",
+    "exam_style_question": "2.0.0",
     "exam_topic_analysis": "2.0.0",
     "past_exam_question_extraction": "1.0.0",
     "exam_topic_guide": "1.0.0",
     "exam_topic_summary": "1.0.0",
     "exam_topic_practice": "1.0.0",
     "exam_topic_exam": "1.0.0",
-    "exam_similar_questions": "1.0.0",
-    "exam_mock_exam": "1.0.0",
+    "exam_mock_exam": "2.0.0",
     "exam_review_sheet": "1.0.0",
     "image_description": "1.0.0",
     "visual_content": "2.1.0",
@@ -557,18 +556,13 @@ SAMPLE_TEMPLATE_INPUTS = {
         "PAST_QUESTION_STYLE": "Past question style",
         "TEXT": "Course material text",
     },
-    "exam_similar_questions": {
-        **SHARED_PROMPT_VARIABLES,
-        "TOPIC_LABEL": "Graph Traversal",
-        "ORIGINAL_QUESTIONS": "1. Explain breadth-first search.",
-        "TEXT": "Course material text",
-    },
     "exam_mock_exam": {
         **SHARED_PROMPT_VARIABLES,
         "PLAN_TOPICS": "- Graph Traversal (weight 2)",
         "PAST_QUESTION_STYLE": "Past question style",
         "QUESTION_COUNT": "20",
         "QUESTION_TYPE_DIRECTIVES": "Type directives",
+        "QUESTION_TYPE_QUOTAS": "Type quotas",
         "QUESTION_TYPE_SCHEMAS": "Type schemas",
         "TEXT": "Course material text",
     },
@@ -616,12 +610,13 @@ SAMPLE_TEMPLATE_INPUTS = {
     },
     "exam_style_question": {
         **SHARED_PROMPT_VARIABLES,
-        "TEXT": "Material",
+        "TOPIC_LABEL": "Graph Traversal",
+        "ORIGINAL_QUESTIONS": "1. Explain breadth-first search.",
         "QUESTION_COUNT": "5",
-        "QUESTION_SCHEMAS": '{"question_type": "multiple_choice"}',
-        "REQUESTED_DIFFICULTY": "hard",
-        "TOPIC_FOCUS": "All Topics",
-        "PROFILE_CONTEXT": "",
+        "DIFFICULTY_DIRECTIVE": "Match the difficulty of each source.",
+        "QUESTION_TYPE_DIRECTIVES": "Type directives",
+        "QUESTION_TYPE_SCHEMAS": "Type schemas",
+        "TEXT": "Course material text",
     },
 }
 
@@ -875,7 +870,7 @@ def test_ocr_cleanup_template() -> None:
 # ---------------------------------------------------------------------------
 
 
-DEFERRED_TEMPLATES = {"ocr_cleanup", "exam_style_question", "visual_content"}
+DEFERRED_TEMPLATES = {"ocr_cleanup", "visual_content"}
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CATALOG_DOC = _REPO_ROOT / "docs" / "prompt_templates.md"
@@ -929,7 +924,7 @@ ACTIVE_TEMPLATE_OWNERS = {
     "exam_topic_summary": ("services.exam_topic_study", "SUMMARY_TEMPLATE_NAME"),
     "exam_topic_practice": ("services.exam_quiz", "PRACTICE_TEMPLATE_NAME"),
     "exam_topic_exam": ("services.exam_quiz", "EXAM_TEMPLATE_NAME"),
-    "exam_similar_questions": ("services.exam_similar_questions", "TEMPLATE_NAME"),
+    "exam_style_question": ("services.exam_similar_questions", "TEMPLATE_NAME"),
     "exam_mock_exam": ("services.exam_course_artifacts", "MOCK_TEMPLATE_NAME"),
     "exam_review_sheet": (
         "services.exam_course_artifacts",

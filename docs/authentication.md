@@ -152,6 +152,43 @@ verification on for an existing hosted deployment therefore leaves those
 accounts unverified; they keep the balance they already have, and
 `grant_initial_credits` will not grant them a second one when they verify.
 
+### Trying it locally
+
+Verification can be exercised without a relay. `scripts/dev_mail_catcher.py` is
+an SMTP sink that accepts anything on `127.0.0.1:1025` and appends it to
+`data/maildrop.txt`:
+
+```bash
+python scripts/dev_mail_catcher.py
+```
+
+With it running, start the API with verification on and pointed at it:
+
+```
+EMAIL_VERIFICATION_REQUIRED=true
+APP_PUBLIC_BASE_URL=http://localhost:5173
+EMAIL_FROM_ADDRESS=info@study-lumina.com
+SMTP_HOST=127.0.0.1
+SMTP_PORT=1025
+SMTP_USE_TLS=false
+CREDIT_METERING_ENABLED=true
+```
+
+`APP_PUBLIC_BASE_URL` is the SPA's own origin, because that is where the link
+has to land; the Vite dev server proxies `/api` to the backend, so nothing else
+has to change. `CREDIT_METERING_ENABLED` is optional and only makes the withheld
+grant visible: without it a self-hosted balance is null either way.
+
+Register through the SPA, read `data/maildrop.txt`, and open the link it
+contains. The body is quoted-printable, so a long link is split across lines
+with a trailing `=`; join the pieces and drop the `=` before pasting, or let a
+mail client do it. The account exists and can sign in from the moment it
+registers — what the link releases is the credits.
+
+The first account of an empty database becomes the administrator, and
+administrators are unmetered. Register a second account to watch a balance go
+from `0.0` to `CREDIT_INITIAL_GRANT`.
+
 ## Response security headers
 
 ### Boundary

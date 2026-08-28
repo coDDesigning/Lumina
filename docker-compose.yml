@@ -53,6 +53,21 @@ x-lumina-environment: &lumina-environment
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  # Self-hosted deployments do not verify addresses by default: there are no
+  # introductory credits to farm, so demanding a relay would be a cost with no
+  # benefit. An operator running a shared instance turns it on and supplies the
+  # rest; the application names whichever one is missing. A relay on the Docker
+  # host is reached at host.docker.internal, not localhost.
+  EMAIL_VERIFICATION_REQUIRED: ${EMAIL_VERIFICATION_REQUIRED:-false}
+  EMAIL_VERIFICATION_TOKEN_TTL_HOURS: ${EMAIL_VERIFICATION_TOKEN_TTL_HOURS:-24}
+  APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-}
+  EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+  SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
   PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-12}
   SECURITY_HEADERS_ENABLED: ${SECURITY_HEADERS_ENABLED:-true}
   # Off unless this deployment is reached over HTTPS. Turn it on once a TLS

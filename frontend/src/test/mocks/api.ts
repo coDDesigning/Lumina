@@ -14,6 +14,7 @@ export function createMockUser(overrides: Partial<User> = {}): User {
     email: 'student@example.com',
     role: 'student',
     is_banned: false,
+    is_email_verified: true,
     credits: 100,
     preferred_model: 'gemini-1.5-flash',
     education_level: 'unspecified',

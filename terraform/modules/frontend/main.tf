@@ -1,6 +1,26 @@
 locals {
   s3_origin_id  = "frontend-s3"
   api_origin_id = "api-alb"
+
+  # The SPA and the API are served from this one distribution, so the page has
+  # nowhere else it needs to reach and connect-src is its own origin. Anything
+  # further is named host by host: a scheme wildcard such as `https:` would
+  # permit every host on the internet, which is not a policy.
+  connect_src = join(" ", concat(["'self'"], var.additional_connect_src))
+
+  content_security_policy = join(" ", [
+    "default-src 'self';",
+    "base-uri 'self';",
+    "connect-src ${local.connect_src};",
+    "font-src 'self';",
+    "form-action 'self';",
+    "frame-ancestors 'none';",
+    "img-src 'self' data: blob:;",
+    "object-src 'none';",
+    "script-src 'self';",
+    "style-src 'self' 'unsafe-inline';",
+    "upgrade-insecure-requests",
+  ])
 }
 
 resource "aws_s3_bucket" "this" {
@@ -110,7 +130,7 @@ resource "aws_cloudfront_response_headers_policy" "security" {
 
   security_headers_config {
     content_security_policy {
-      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https:; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; upgrade-insecure-requests"
+      content_security_policy = local.content_security_policy
       override                = true
     }
 

@@ -9,7 +9,7 @@ from backend.app.models import User
 from schemas.credits import CreditStatusResponse, CreditTransactionResponse
 from schemas.prompt_context import EducationLevel
 from schemas.response import BaseResponse
-from schemas.user import UserResponse, UserUpdate
+from schemas.user import PasswordChangeRequest, UserResponse, UserUpdate
 from services.credits import (
     DEFAULT_HISTORY_LIMIT,
     GENERATION_CREDIT_COSTS,
@@ -58,6 +58,31 @@ def update_education_level(
     )
 
 
+@router.put("/me/password", response_model=BaseResponse[None])
+def change_my_password(
+    payload: PasswordChangeRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Changes the account password after proving the current one.
+
+    The new password is checked by ``utils/password_policy.py``, which is also
+    what registration uses, so a password this endpoint accepts is one
+    registration would have accepted too.
+    """
+    UserService.change_password(
+        db,
+        current_user.id,
+        payload.current_password,
+        payload.new_password,
+    )
+    return BaseResponse(
+        success=True,
+        message="Password changed",
+        data=None,
+    )
+
+
 @router.get("/me/credits", response_model=BaseResponse[CreditStatusResponse])
 def get_my_credits(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
@@ -79,6 +104,8 @@ def get_my_credits(
     status = CreditStatusResponse(
         credits=balance,
         metering_enabled=CreditService.metering_enabled(),
+        email_verification_required=settings.email_verification_required,
+        is_email_verified=user is not None and user.email_verified_at is not None,
         monthly_grant=settings.credit_periodic_grant if metered else None,
         balance_cap=settings.credit_max_balance if metered else None,
         next_grant_at=next_grant_at() if metered else None,

@@ -1179,6 +1179,28 @@
         "title": "BaseResponse[GeneratedOutputDetail]",
         "type": "object"
       },
+      "BaseResponse_NoneType_": {
+        "properties": {
+          "data": {
+            "title": "Data",
+            "type": "null"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[NoneType]",
+        "type": "object"
+      },
       "BaseResponse_ProfileKnowledgeResponse_": {
         "properties": {
           "data": {
@@ -3106,7 +3128,7 @@
         "type": "string"
       },
       "CreditStatusResponse": {
-        "description": "The balance plus the policy a client needs to explain and recover it.",
+        "description": "The balance plus the policy a client needs to explain and recover it.\n\n``email_verification_required`` and ``is_email_verified`` travel with the\nbalance for the same reason the grant policy does: without them a client\ncannot tell an account that has spent its credits from one that has not\nbeen given any yet, and only the second has a next action.",
         "properties": {
           "balance_cap": {
             "anyOf": [
@@ -3130,12 +3152,22 @@
             ],
             "title": "Credits"
           },
+          "email_verification_required": {
+            "default": false,
+            "title": "Email Verification Required",
+            "type": "boolean"
+          },
           "generation_costs": {
             "additionalProperties": {
               "type": "number"
             },
             "title": "Generation Costs",
             "type": "object"
+          },
+          "is_email_verified": {
+            "default": true,
+            "title": "Is Email Verified",
+            "type": "boolean"
           },
           "metering_enabled": {
             "title": "Metering Enabled",
@@ -3466,6 +3498,68 @@
         ],
         "title": "EducationLevel",
         "type": "string"
+      },
+      "EmailVerificationRequest": {
+        "description": "One verification token, as it arrived in the emailed link.",
+        "properties": {
+          "token": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "EmailVerificationRequest",
+        "type": "object"
+      },
+      "EmailVerificationResendRequest": {
+        "description": "A request for a fresh verification link for one address.",
+        "properties": {
+          "email": {
+            "format": "email",
+            "maxLength": 255,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "EmailVerificationResendRequest",
+        "type": "object"
+      },
+      "EmailVerificationResponse": {
+        "description": "The outcome of redeeming a verification token.",
+        "properties": {
+          "credits_granted": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credits Granted"
+          },
+          "is_email_verified": {
+            "title": "Is Email Verified",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "is_email_verified"
+        ],
+        "title": "EmailVerificationResponse",
+        "type": "object"
       },
       "ExamAnalysisRequest": {
         "properties": {
@@ -6272,6 +6366,25 @@
         "title": "OpenEndedAnswer",
         "type": "object"
       },
+      "PasswordChangeRequest": {
+        "description": "An authenticated password change: prove the old one, then set a new one.\n\nThe current password is required even though the caller already holds a\nvalid token, because a token that leaked is exactly the case this stops\nfrom becoming a permanent takeover.",
+        "properties": {
+          "current_password": {
+            "title": "Current Password",
+            "type": "string"
+          },
+          "new_password": {
+            "title": "New Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "title": "PasswordChangeRequest",
+        "type": "object"
+      },
       "ProcessingJobResponse": {
         "properties": {
           "attempt_count": {
@@ -7605,6 +7718,41 @@
         "title": "RankedTopicView",
         "type": "object"
       },
+      "RegistrationResponse": {
+        "description": "What registration tells the client to do next.\n\n``email_verification_required`` is what a hosted client branches on: the\naccount exists and can sign in, but it holds no introductory credits until\nthe address is verified, so the screen after registration is a prompt to\ncheck the inbox rather than a workspace.",
+        "properties": {
+          "email_verification_required": {
+            "title": "Email Verification Required",
+            "type": "boolean"
+          },
+          "is_email_verified": {
+            "title": "Is Email Verified",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "user_email": {
+            "format": "email",
+            "title": "User Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "user_email",
+          "role",
+          "email_verification_required",
+          "is_email_verified"
+        ],
+        "title": "RegistrationResponse",
+        "type": "object"
+      },
       "ReverseQuizRequest": {
         "properties": {
           "explanation": {
@@ -8339,7 +8487,6 @@
             "type": "string"
           },
           "password": {
-            "minLength": 8,
             "title": "Password",
             "type": "string"
           }
@@ -8384,6 +8531,10 @@
             "title": "Is Banned",
             "type": "boolean"
           },
+          "is_email_verified": {
+            "title": "Is Email Verified",
+            "type": "boolean"
+          },
           "name": {
             "maxLength": 255,
             "minLength": 1,
@@ -8404,6 +8555,7 @@
           "id",
           "role",
           "is_banned",
+          "is_email_verified",
           "credits",
           "preferred_model"
         ],
@@ -9009,7 +9161,7 @@
     },
     "/api/auth/register": {
       "post": {
-        "description": "Handles user registration. Hashes password and prepares it for the database service.",
+        "description": "Handles user registration. Hashes password and prepares it for the database service.\n\nWhere verification is required the account is created unverified and holds\nno spendable introductory credits; redeeming the emailed link is what grants\nthem. A relay failure does not undo the registration -- the account exists\nand the resend endpoint is the way back to a working link.",
         "operationId": "register_user_api_auth_register_post",
         "parameters": [
           {
@@ -9043,7 +9195,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -9060,6 +9214,90 @@
           }
         },
         "summary": "Register User",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/verify-email": {
+      "post": {
+        "description": "Redeem one verification link.\n\nUnauthenticated on purpose: the link is clicked from a mail client that may\nnot carry the session, and the token itself is the proof.",
+        "operationId": "verify_email_api_auth_verify_email_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Email",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/verify-email/resend": {
+      "post": {
+        "description": "Issue a fresh verification link, replacing any outstanding one.\n\nAnswers identically for an unknown address, an already verified one, and a\ngenuine resend, so it cannot be used to enumerate accounts. The only\ndistinguishable answer is the one that says this deployment does not verify\naddresses at all, which is a property of the server rather than of anyone's\naccount.",
+        "operationId": "resend_verification_email_api_auth_verify_email_resend_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailVerificationResendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resend Verification Email",
         "tags": [
           "Authentication"
         ]
@@ -13416,6 +13654,53 @@
           }
         ],
         "summary": "Update Preferred Model",
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/api/users/me/password": {
+      "put": {
+        "description": "Changes the account password after proving the current one.\n\nThe new password is checked by ``utils/password_policy.py``, which is also\nwhat registration uses, so a password this endpoint accepts is one\nregistration would have accepted too.",
+        "operationId": "change_my_password_api_users_me_password_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_NoneType_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Change My Password",
         "tags": [
           "Users"
         ]

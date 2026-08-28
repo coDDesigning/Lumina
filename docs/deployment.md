@@ -412,6 +412,26 @@ The hosted Compose fixes these values instead:
 | `S3_FORCE_PATH_STYLE` | `true` |
 | `VECTOR_BACKEND` | `pgvector` |
 
+### Email verification and response headers
+
+The hosted Compose and the AWS task definitions both run `DEPLOYMENT_MODE=hosted`,
+where `EMAIL_VERIFICATION_REQUIRED` defaults to true. That deployment must
+supply `APP_PUBLIC_BASE_URL`, `EMAIL_FROM_ADDRESS`, and `SMTP_HOST` or startup
+fails naming whichever is missing — a deployment that gates introductory credits
+on a link it cannot send would create accounts nobody could finish. In
+Terraform these come from `email_from_address`, `smtp_host`, and the SPA's own
+`frontend_domain_name`; `SMTP_PASSWORD` is read from
+`/<prefix>/smtp-password` in SSM and is referenced only when `smtp_username` is
+set. Every task carries them, not just the API, because each one loads the same
+configuration module.
+
+The self-hosted Compose leaves verification off, since metering is off there and
+there are no introductory credits to farm. It also leaves
+`SECURITY_HSTS_ENABLED` false: HSTS is a promise a browser remembers for a year,
+and an operator serving over plain HTTP on a LAN would lock themselves out. Set
+it to true once a TLS reverse proxy fronts the API. The other three response
+headers are on everywhere. See [authentication hardening](authentication.md).
+
 API authentication values, storage namespace, upload limits, validation limits,
 and worker limits are interpolated from `.env`. `JWT_SECRET_KEY` must contain at
 least 32 characters. `BOOTSTRAP_ADMIN_TOKEN` must contain at least 32 visible

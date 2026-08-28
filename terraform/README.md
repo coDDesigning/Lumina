@@ -128,6 +128,7 @@ parameters exist; they retry automatically, so run the secrets step
 | --- | --- |
 | `/<prefix>/jwt-secret-key` | `JWT_SECRET_KEY`, min 32 characters |
 | `/<prefix>/bootstrap-admin-token` | `BOOTSTRAP_ADMIN_TOKEN`, min 32 visible ASCII |
+| `/<prefix>/smtp-password` | `SMTP_PASSWORD`, only when `smtp_username` is set |
 | `/<prefix>/gemini-api-key` | `GEMINI_API_KEY` for hosted AI and embeddings |
 
 Database values are stored in three Secrets Manager entries:

@@ -22,6 +22,7 @@ from backend.app.request_size import (
     MULTIPART_OVERHEAD_BYTES,
     RequestSizeLimitMiddleware,
 )
+from backend.app.security_headers import SecurityHeadersMiddleware
 from routes import (
     activity,
     admin,
@@ -71,6 +72,14 @@ app.add_middleware(
     max_concurrent_uploads=settings.max_concurrent_document_validations,
     upload_request_timeout_seconds=settings.upload_request_timeout_seconds,
 )
+if settings.security_headers_enabled:
+    # Added after the size limiter so it wraps it, and therefore covers the
+    # responses that limiter returns before a route is ever reached.
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        hsts_enabled=settings.hsts_enabled,
+        hsts_max_age_seconds=settings.hsts_max_age_seconds,
+    )
 app.include_router(auth.router)
 app.include_router(course.router)
 app.include_router(course_settings.router)

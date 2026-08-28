@@ -40,6 +40,8 @@ function status(credits: number | null = 50): CreditStatus {
   return {
     credits,
     metering_enabled: true,
+    email_verification_required: false,
+    is_email_verified: true,
     monthly_grant: 50,
     balance_cap: 100,
     next_grant_at: '2026-09-01T00:00:00Z',

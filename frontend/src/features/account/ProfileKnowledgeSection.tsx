@@ -1,12 +1,14 @@
-import { useCallback, useMemo, useState } from 'react';
-import type { FormEvent } from 'react';
-import { Plus } from 'lucide-react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
+import { AlertTriangle, Check, Loader2, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { describeError } from '@/api/errors';
 import { profileKnowledgeAPI } from '@/api/profileKnowledge';
 import { queryKeys } from '@/api/queryKeys';
 import { queryCache } from '@/lib/query/cache';
 import { useQuery } from '@/lib/query/useQuery';
 import type { ProfileKnowledgeItem } from '@/api/types';
+import { useProfileDocuments } from '@/hooks/useProfileDocuments';
+import { formatFileSize, isDocumentBusy } from '@/components/documents/documentLabels';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
 import { Card } from '@/ui/Card';
@@ -54,6 +56,25 @@ export function ProfileKnowledgeSection() {
   const [deleting, setDeleting] = useState<ProfileKnowledgeItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Profile Documents State
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
+  const [deletingDocName, setDeletingDocName] = useState<string | null>(null);
+  const [isDeletingDoc, setIsDeletingDoc] = useState(false);
+  const [deleteDocError, setDeleteDocError] = useState<string | null>(null);
+
+  const {
+    entries: docEntries,
+    isLoading: isDocsLoading,
+    listError: docsListError,
+    reload: reloadDocs,
+    uploadDocument,
+    retryDocument,
+    deleteDocument,
+  } = useProfileDocuments();
 
   const query = useQuery<ProfileKnowledgeItem[]>({
     key: queryKeys.profileKnowledge(),
@@ -158,6 +179,42 @@ export function ProfileKnowledgeSection() {
     }
   }
 
+  async function handleFileUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setUploadError(null);
+    try {
+      await uploadDocument(file);
+      setNotice(`Document "${file.name}" uploaded for processing.`);
+    } catch (caught) {
+      setUploadError(describeError(caught, 'The document could not be uploaded.').message);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }
+
+  async function handleConfirmDeleteDoc() {
+    if (!deletingDocId) return;
+
+    setIsDeletingDoc(true);
+    setDeleteDocError(null);
+    try {
+      await deleteDocument(deletingDocId);
+      setNotice('Profile document removed.');
+      setDeletingDocId(null);
+      setDeletingDocName(null);
+    } catch (caught) {
+      setDeleteDocError(describeError(caught, 'Document could not be deleted.').message);
+    } finally {
+      setIsDeletingDoc(false);
+    }
+  }
+
   return (
     <section className={styles.section}>
       <div className={styles.sectionHead}>
@@ -230,11 +287,136 @@ export function ProfileKnowledgeSection() {
         </div>
       )}
 
+      {/* Profile Documents Sub-section */}
+      <div className={styles.subSection}>
+        <div className={styles.sectionHead}>
+          <div>
+            <h3 className={styles.subSectionHeading}>Background documents</h3>
+            <p className={styles.sectionLede}>
+              Personal reference documents (syllabi, degree guidelines, formulas) that persist across all your courses.
+              Course deletion never touches these files.
+            </p>
+          </div>
+          <div className={styles.headActions}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className={styles.fileInput}
+              accept=".pdf,.txt,.md,.markdown"
+              onChange={(e) => void handleFileUpload(e)}
+            />
+            <Button
+              variant="secondary"
+              icon={<Upload aria-hidden="true" />}
+              isLoading={isUploading}
+              loadingLabel="Uploading"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Upload document
+            </Button>
+          </div>
+        </div>
+
+        {uploadError ? (
+          <Alert tone="destructive" live="alert">
+            {uploadError}
+          </Alert>
+        ) : null}
+
+        {docsListError ? (
+          <ErrorState onRetry={() => void reloadDocs()}>{docsListError}</ErrorState>
+        ) : null}
+
+        {isDocsLoading ? (
+          <div className={styles.stack} aria-hidden="true">
+            <Skeleton variant="block" />
+          </div>
+        ) : docEntries.length === 0 && !docsListError ? (
+          <Card elevation="flat" padding="lg">
+            <p className={styles.rowBody}>
+              No profile documents uploaded yet. Upload a syllabus or reference document to provide deep background context across your studies.
+            </p>
+          </Card>
+        ) : (
+          <div className={styles.stack}>
+            {docEntries.map((entry) => {
+              const { document, job, pending } = entry;
+              const busy = isDocumentBusy(document.status);
+              const failed = document.status === 'failed';
+              const ready = document.status === 'ready';
+
+              return (
+                <Card key={document.id} className={styles.row}>
+                  <div className={styles.rowText}>
+                    <span className={styles.docBadge}>Profile Document</span>
+                    <p className={styles.rowTitle}>{document.original_file_name}</p>
+                    <div className={styles.docFacts}>
+                      <span>{document.file_type.toUpperCase()}</span>
+                      <span>·</span>
+                      <span>{formatFileSize(document.file_size)}</span>
+                      <span>·</span>
+                      <span className={styles.docStatus}>
+                        {ready ? (
+                          <span className={styles.statusReady}>
+                            <Check size={14} aria-hidden="true" /> Ready
+                          </span>
+                        ) : busy ? (
+                          <span className={styles.statusBusy}>
+                            <Loader2 size={14} className="spin" aria-hidden="true" /> Processing
+                          </span>
+                        ) : failed ? (
+                          <span className={styles.statusFailed}>
+                            <AlertTriangle size={14} aria-hidden="true" /> Processing failed
+                          </span>
+                        ) : (
+                          <span>{document.status}</span>
+                        )}
+                      </span>
+                    </div>
+                    {document.processing_error ? (
+                      <p className={styles.rowBody}>{document.processing_error}</p>
+                    ) : null}
+                  </div>
+                  <div className={styles.rowActions}>
+                    {failed ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        icon={<RotateCcw size={14} aria-hidden="true" />}
+                        isLoading={pending === 'retry'}
+                        loadingLabel="Retrying"
+                        onClick={() => void retryDocument(document.id)}
+                      >
+                        Retry
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Trash2 size={14} aria-hidden="true" />}
+                      aria-label={`Delete ${document.original_file_name}`}
+                      disabled={pending === 'delete'}
+                      onClick={() => {
+                        setDeleteDocError(null);
+                        setDeletingDocId(document.id);
+                        setDeletingDocName(document.original_file_name);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       <Dialog
         open={isComposing}
         onClose={() => setIsComposing(false)}
         title={editing ? 'Edit knowledge topic' : 'Add knowledge topic'}
-        description="Written notes only. There is no document upload here — profile-level ingestion is not built."
+        description="Student-provided background notes used as supplementary context across your courses."
         size="md"
         spreadFooter
         footer={
@@ -295,6 +477,27 @@ export function ProfileKnowledgeSection() {
         {deleteError ? (
           <Alert tone="destructive" live="alert">
             {deleteError}
+          </Alert>
+        ) : null}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={deletingDocId !== null}
+        onClose={() => {
+          setDeletingDocId(null);
+          setDeletingDocName(null);
+          setDeleteDocError(null);
+        }}
+        onConfirm={handleConfirmDeleteDoc}
+        title={deletingDocName ? `Delete “${deletingDocName}”?` : 'Delete document?'}
+        description="This profile background document and its stored vectors will be permanently removed. Your courses are not affected."
+        confirmLabel="Delete"
+        pendingLabel="Deleting"
+        isPending={isDeletingDoc}
+      >
+        {deleteDocError ? (
+          <Alert tone="destructive" live="alert">
+            {deleteDocError}
           </Alert>
         ) : null}
       </ConfirmDialog>

@@ -233,6 +233,29 @@ export interface DocumentStatusResponse {
   processing_job: ProcessingJobResponse;
 }
 
+export interface ProfileDocumentResponse {
+  id: string;
+  original_file_name: string;
+  file_type: string;
+  mime_type: string;
+  file_size: number;
+  user_id: number;
+  status: LooseUnion<DocumentStatus>;
+  processing_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProfileDocumentUploadResponse {
+  document: ProfileDocumentResponse;
+  duplicate: boolean;
+}
+
+export interface ProfileDocumentStatusResponse {
+  document: ProfileDocumentResponse;
+  processing_job: ProcessingJobResponse | null;
+}
+
 export interface BoundedContext {
   context_truncated: boolean;
   chunks_used: number;

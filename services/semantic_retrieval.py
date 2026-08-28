@@ -14,7 +14,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.models import EMBEDDING_DIMENSIONS, DocumentChunk
+from backend.app.models import (
+    EMBEDDING_DIMENSIONS,
+    DocumentChunk,
+    ProfileDocumentChunk,
+)
 from services.embeddings import (
     EmbeddingDimensionMismatchError,
     EmbeddingProvider,
@@ -99,6 +103,80 @@ def retrieve_course_chunks(
     chunks = {
         chunk.id: chunk
         for chunk in db.scalars(select(DocumentChunk).where(*predicates)).all()
+    }
+    retrieved: list[RetrievedChunk] = []
+    for result in results:
+        chunk = chunks.get(result.chunk_id)
+        if chunk is None or not chunk.text or not chunk.text.strip():
+            continue
+        retrieved.append(
+            RetrievedChunk(
+                chunk_id=result.chunk_id,
+                document_id=result.document_id,
+                course_id=result.course_id,
+                chunk_index=result.chunk_index,
+                similarity=result.similarity,
+                text=chunk.text,
+                page_number=chunk.page_number,
+                end_page_number=chunk.end_page_number,
+            )
+        )
+    return retrieved
+
+
+def retrieve_profile_chunks(
+    db: Session,
+    *,
+    user_id: int,
+    query: str,
+    limit: int,
+    document_ids: Sequence[UUID] | None = None,
+    store: VectorStore | None = None,
+    provider: EmbeddingProvider | None = None,
+) -> list[RetrievedChunk]:
+    """Rank the profile document chunks of one user by semantic similarity to the query.
+
+    The user scope is mandatory: nothing from another user can ever be returned.
+    Results are ordered best-first and exclude chunks that no longer exist in
+    the relational database.
+    """
+    if not query or not query.strip():
+        raise ValueError("Retrieval requires a non-blank query")
+    if limit < 1:
+        raise ValueError("Retrieval limit must be a positive integer")
+    identifiers: list[UUID] | None = None
+    if document_ids is not None:
+        identifiers = list(dict.fromkeys(document_ids))
+        if not identifiers:
+            raise ValueError("Retrieval document_ids must not be empty when supplied")
+
+    embedding_provider = provider or get_embedding_provider()
+    query_embedding = embedding_provider.embed_query(query)
+    if len(query_embedding) != EMBEDDING_DIMENSIONS:
+        raise EmbeddingDimensionMismatchError(
+            f"Query embeddings must contain {EMBEDDING_DIMENSIONS} values, "
+            f"got {len(query_embedding)}."
+        )
+
+    results = (store or get_vector_store()).search_profile(
+        db,
+        user_id=user_id,
+        query_embedding=query_embedding,
+        limit=limit,
+        document_ids=identifiers,
+    )
+    if not results:
+        return []
+
+    predicates = [
+        ProfileDocumentChunk.id.in_([result.chunk_id for result in results]),
+        ProfileDocumentChunk.user_id == user_id,
+    ]
+    if identifiers is not None:
+        predicates.append(ProfileDocumentChunk.document_id.in_(identifiers))
+    chunks = {
+        chunk.id: chunk
+        for chunk in db.scalars(select(ProfileDocumentChunk).where(*predicates)).all()
     }
     retrieved: list[RetrievedChunk] = []
     for result in results:

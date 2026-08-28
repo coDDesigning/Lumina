@@ -37,6 +37,7 @@ from routes import (
     exam_roadmap,
     flashcard,
     generated_output,
+    profile_document,
     profile_knowledge,
     progress,
     prompt_generator,
@@ -80,6 +81,7 @@ app.include_router(admin.router)
 app.include_router(user.router)
 app.include_router(ai_models.router)
 app.include_router(profile_knowledge.router)
+app.include_router(profile_document.router)
 app.include_router(document.router)
 app.include_router(study_guide.router)
 app.include_router(exam_roadmap.router)

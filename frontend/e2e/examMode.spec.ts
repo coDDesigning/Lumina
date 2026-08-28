@@ -87,3 +87,40 @@ test.describe('Exam Mode content', () => {
     await expect(page).toHaveURL(/\/courses\/1\/exam-mode$/)
   })
 })
+
+test.describe('sitting a timed paper', () => {
+  test('does not start the clock while the instructions are being read', async ({ page }) => {
+    // Writing a paper and sitting it are separate acts. A countdown that began
+    // when the paper appeared would take time the candidate never used.
+    await open(page, '/courses/1/practice/9')
+
+    await expect(page.getByRole('button', { name: 'Begin the timed paper' })).toBeVisible()
+    await expect(page.getByRole('timer')).toHaveCount(0)
+  })
+
+  test('starts the sitting at its own address, with the server clock', async ({ page }) => {
+    await open(page, '/courses/1/practice/9')
+
+    await page.getByRole('button', { name: 'Begin the timed paper' }).click()
+
+    await expect(page).toHaveURL(/\/practice\/9\/sessions\/55$/)
+    await expect(page.getByRole('timer', { name: 'Time remaining' })).toBeVisible()
+  })
+
+  test('puts the candidate back on their own answers after a reload', async ({ page }) => {
+    await open(page, '/courses/1/practice/9/sessions/55')
+
+    await expect(page.getByRole('radio', { name: /Breadth-first search/ })).toBeChecked()
+  })
+
+  test('never scrolls sideways at 360px', async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 720 })
+    await open(page, '/courses/1/practice/9/sessions/55')
+    await expect(page.getByRole('timer', { name: 'Time remaining' })).toBeVisible()
+
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    expect(overflow).toBeLessThanOrEqual(0)
+  })
+})

@@ -558,6 +558,33 @@ const EXAM_REVIEW_SHEET = {
   confidence_notes: '',
 }
 
+const TIMED_QUIZ = {
+  ...QUIZ,
+  quiz_id: 9,
+  title: 'Mock exam',
+  quiz_purpose: 'exam_mock_exam',
+  exam_plan_output_id: 601,
+  exam_topic_key: null,
+  timed: true,
+  time_limit_seconds: 3600,
+  answers_hidden: true,
+}
+
+/** A sitting with work already in it, so a reload has something to restore. */
+const QUIZ_SESSION = {
+  session_id: 55,
+  quiz_id: 9,
+  status: 'active',
+  started_at: new Date(Date.now() - 60_000).toISOString(),
+  expires_at: new Date(Date.now() + 3_540_000).toISOString(),
+  time_limit_seconds: 3600,
+  seconds_remaining: 3540,
+  elapsed_seconds: 60,
+  answered_count: 1,
+  answers: [{ question_id: 1, selected_option_index: 1, text_response: null }],
+  attempt_id: null,
+}
+
 type Answer = [RegExp, (match: RegExpMatchArray) => unknown]
 
 const ROUTES: Answer[] = [
@@ -572,6 +599,14 @@ const ROUTES: Answer[] = [
   [/^\/api\/progress\/?$/, () => envelope(PROGRESS_SUMMARIES)],
   [/^\/api\/admin\/users/, () => envelope(ADMIN_USERS)],
   [/^\/api\/admin\/ai-costs/, () => envelope(AI_COSTS)],
+  [
+    /^\/api\/courses\/(\d+)\/exam-mode\/topics\/([^/]+)\/guide$/,
+    () => ({ success: false, message: 'not generated', data: null }),
+  ],
+  [
+    /^\/api\/courses\/(\d+)\/exam-mode\/topics\/([^/]+)\/similar-questions$/,
+    () => envelope({ ...EXAM_QUESTIONS }),
+  ],
   [/^\/api\/courses\/(\d+)\/exam-mode\/sources$/, () => envelope(EXAM_SOURCES)],
   [/^\/api\/courses\/(\d+)\/exam-mode\/entitlements$/, () => envelope({ unlocked_topic_keys: [] })],
   [
@@ -588,6 +623,23 @@ const ROUTES: Answer[] = [
   [/^\/api\/courses\/(\d+)\/settings/, () => envelope(SETTINGS)],
   [/^\/api\/courses\/(\d+)\/generated-outputs/, () => envelope([])],
   [/^\/api\/courses\/(\d+)\/conversations/, () => envelope([])],
+  [
+    /^\/api\/courses\/(\d+)\/quizzes\/(\d+)\/sessions$/,
+    () => envelope({ session: QUIZ_SESSION, quiz: TIMED_QUIZ }),
+  ],
+  [
+    /^\/api\/courses\/(\d+)\/quizzes\/(\d+)\/sessions\/(\d+)\/submit$/,
+    () => envelope(ATTEMPT),
+  ],
+  [
+    /^\/api\/courses\/(\d+)\/quizzes\/(\d+)\/sessions\/(\d+)\/answers\/(\d+)$/,
+    () => envelope(QUIZ_SESSION),
+  ],
+  [
+    /^\/api\/courses\/(\d+)\/quizzes\/(\d+)\/sessions\/(\d+)$/,
+    () => envelope(QUIZ_SESSION),
+  ],
+  [/^\/api\/courses\/(\d+)\/quizzes\/9$/, () => envelope(TIMED_QUIZ)],
   [/^\/api\/courses\/(\d+)\/quizzes\/(\d+)\/attempts\/(\d+)$/, () => envelope(ATTEMPT)],
   [/^\/api\/courses\/(\d+)\/quizzes\/(\d+)\/attempts/, () => envelope(ATTEMPT)],
   [/^\/api\/courses\/(\d+)\/quizzes\/(\d+)$/, () => envelope(QUIZ)],

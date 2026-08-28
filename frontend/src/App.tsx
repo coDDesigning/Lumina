@@ -12,6 +12,7 @@ import ExamModePlanPage from './features/examMode/ExamModePlanPage'
 import ExamModeComparePage from './features/examMode/ExamModeComparePage'
 import ExamModeTopicPage from './features/examMode/ExamModeTopicPage'
 import QuizAttemptPage from './features/study/quiz/QuizAttemptPage'
+import QuizSessionPage from './features/study/quiz/QuizSessionPage'
 import QuizResultsPage from './features/study/quiz/QuizResultsPage'
 import WorkspacePage from './features/workspace/WorkspacePage'
 import AccountLayout from './features/account/AccountLayout'
@@ -435,6 +436,20 @@ function App() {
         <Route
           path="/courses/:courseId/guides/:outputId"
           element={<LegacyGuideRedirect />}
+        />
+        {/*
+          A timed sitting has its own address, so a reload rejoins the same one
+          with the answers already saved rather than starting a second.
+        */}
+        <Route
+          path="/courses/:courseId/practice/:quizId/sessions/:sessionId"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              render={(workspace) => <QuizSessionPage workspace={workspace} />}
+            />
+          }
         />
         <Route
           path="/courses/:courseId/practice/:quizId/attempts/:attemptId"

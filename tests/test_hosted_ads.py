@@ -1,6 +1,5 @@
 """Tests for optional hosted advertising configuration, security headers, and privacy telemetry."""
 
-import os
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8,7 +7,6 @@ from backend.app.config import (
     MODE_HOSTED,
     MODE_SELF_HOSTED,
     load_settings,
-    settings,
 )
 from backend.app.security_headers import build_csp_header
 from main import app
@@ -19,18 +17,27 @@ def test_self_hosted_disallows_enable_hosted_ads(monkeypatch):
     monkeypatch.setenv("DEPLOYMENT_MODE", MODE_SELF_HOSTED)
     monkeypatch.setenv("ENABLE_HOSTED_ADS", "true")
 
-    with pytest.raises(ValueError, match="Self-hosted deployment mode does not permit ENABLE_HOSTED_ADS=true"):
+    with pytest.raises(
+        ValueError,
+        match="Self-hosted deployment mode does not permit ENABLE_HOSTED_ADS=true",
+    ):
         load_settings()
 
 
 def test_hosted_mode_allows_enable_hosted_ads(monkeypatch):
     """Hosted deployment mode allows toggling ENABLE_HOSTED_ADS."""
     monkeypatch.setenv("DEPLOYMENT_MODE", MODE_HOSTED)
-    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/lumina_ci")
-    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-that-is-at-least-32-chars-long!")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/lumina_ci"
+    )
+    monkeypatch.setenv(
+        "JWT_SECRET_KEY", "test-secret-key-that-is-at-least-32-chars-long!"
+    )
     monkeypatch.setenv("STORAGE_NAMESPACE", "hosted-test")
     monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
-    monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "token-at-least-32-chars-long-visible-ascii-here!")
+    monkeypatch.setenv(
+        "BOOTSTRAP_ADMIN_TOKEN", "token-at-least-32-chars-long-visible-ascii-here!"
+    )
     monkeypatch.setenv("EMAIL_VERIFICATION_REQUIRED", "false")
     monkeypatch.setenv("ENABLE_HOSTED_ADS", "true")
     monkeypatch.setenv("HOSTED_ADS_PROVIDER", "ethicalads")
@@ -57,11 +64,17 @@ def test_csp_header_content_in_self_hosted_mode(monkeypatch):
 def test_csp_header_content_with_hosted_ads(monkeypatch):
     """When hosted ads are enabled, CSP contains the narrow ethicalads allowlist."""
     monkeypatch.setenv("DEPLOYMENT_MODE", MODE_HOSTED)
-    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/lumina_ci")
-    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-that-is-at-least-32-chars-long!")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/lumina_ci"
+    )
+    monkeypatch.setenv(
+        "JWT_SECRET_KEY", "test-secret-key-that-is-at-least-32-chars-long!"
+    )
     monkeypatch.setenv("STORAGE_NAMESPACE", "hosted-test")
     monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
-    monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "token-at-least-32-chars-long-visible-ascii-here!")
+    monkeypatch.setenv(
+        "BOOTSTRAP_ADMIN_TOKEN", "token-at-least-32-chars-long-visible-ascii-here!"
+    )
     monkeypatch.setenv("EMAIL_VERIFICATION_REQUIRED", "false")
     monkeypatch.setenv("ENABLE_HOSTED_ADS", "true")
     s = load_settings()

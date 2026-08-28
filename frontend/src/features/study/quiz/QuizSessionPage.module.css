@@ -1,0 +1,87 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: 0 var(--space-5) var(--space-7);
+  min-width: 0;
+}
+
+.pending {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.position {
+  margin: 0;
+  font-weight: var(--weight-medium);
+}
+
+.answered {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: var(--surface-raised);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-5);
+  min-width: 0;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-label);
+}
+
+.question {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-display);
+  line-height: var(--leading-snug);
+}
+
+/*
+  The controls stay in flow beneath the question rather than pinned over it: a
+  bar floating above a written answer covers the thing being written.
+*/
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+@media (max-width: 48rem) {
+  .body {
+    padding: 0 var(--space-4) var(--space-6);
+  }
+
+  .card {
+    padding: var(--space-4);
+  }
+}

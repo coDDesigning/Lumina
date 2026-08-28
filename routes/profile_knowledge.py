@@ -182,4 +182,3 @@ def delete_all_profile_knowledge(
         message=f"Successfully deleted {count} profile knowledge entries",
         data={"deleted_count": count},
     )
-

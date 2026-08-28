@@ -124,6 +124,46 @@ def _plan_course(session_factory, course_id: int, *, exam_in_days, topics) -> No
         session.commit()
 
 
+def _store_plan(
+    api, course_id: int, topics: list[tuple[str, str, int]], *, user_id: int
+) -> int:
+    """Persist an exam plan row the way Exam Mode writes one.
+
+    The roadmap only ever reads the stored document, so writing it directly
+    keeps this suite free of a provider while still exercising the exact shape
+    ``ExamPlanService.readout`` hands back.
+    """
+    content = {
+        "version": 1,
+        "output_type": "exam_plan",
+        "analysis_output_id": 0,
+        "plan_version": 1,
+        "selection_mode": "manual",
+        "topics": [
+            {
+                "topic_key": key,
+                "display_label": label,
+                "rank": index + 1,
+                "priority_score": score,
+                "priority_band": "high",
+                "mastery_percentage": None,
+                "is_unattempted": True,
+            }
+            for index, (key, label, score) in enumerate(topics)
+        ],
+    }
+    with api.session_factory() as session:
+        output = GeneratedOutput(
+            course_id=course_id,
+            user_id=user_id,
+            output_type="exam_plan",
+            content=json.dumps(content),
+        )
+        session.add(output)
+        session.commit()
+        return output.id
+
+
 def _page_the_chunks(session_factory, course_id: int, pages: list[int]) -> None:
     """Give already-indexed chunks page numbers, so citations carry a page."""
     with session_factory() as session:
@@ -1337,3 +1377,298 @@ def test_a_review_sheet_carries_the_same_citations_as_a_study_guide(
     citations = response.json()["data"]["study_guide"]["summary"]["citations"]
     assert [citation["key"] for citation in citations] == ["S1"]
     assert citations[0]["document_label"]
+
+
+# --------------------------------------------------- scheduling an exam plan
+
+
+PLAN_TOPICS = [
+    ("shortest-paths", "Shortest Paths", 88),
+    ("dynamic-programming", "Dynamic Programming", 61),
+    ("hashing", "Hashing", 34),
+]
+
+
+def _every_source_is(roadmap: dict, source: str) -> bool:
+    return all(topic["source"] == source for topic in roadmap["ranked_topics"])
+
+
+def test_a_plan_scoped_roadmap_schedules_the_plan_s_own_topics(upload_api) -> None:
+    """The plan already decided what matters, so the schedule follows it."""
+    _plan_course(
+        upload_api.session_factory,
+        upload_api.course_id,
+        exam_in_days=6,
+        topics=["Something The Course Declares"],
+    )
+    plan_id = _store_plan(
+        upload_api, upload_api.course_id, PLAN_TOPICS, user_id=upload_api.user_id
+    )
+
+    roadmap = _roadmap_of(
+        _generate(
+            upload_api,
+            upload_api.course_id,
+            plan_output_id=plan_id,
+            include_materials=False,
+        )
+    )
+
+    assert roadmap["plan_output_id"] == plan_id
+    assert [topic["topic"] for topic in roadmap["ranked_topics"]] == [
+        "Shortest Paths",
+        "Dynamic Programming",
+        "Hashing",
+    ]
+    assert [topic["topic_key"] for topic in roadmap["ranked_topics"]] == [
+        "shortest-paths",
+        "dynamic-programming",
+        "hashing",
+    ]
+    assert _every_source_is(roadmap, TopicSource.EXAM_PLAN.value)
+    assert "Something The Course Declares" not in json.dumps(roadmap)
+
+
+def test_a_scheduled_plan_topic_carries_the_key_that_links_it_back(
+    upload_api,
+) -> None:
+    """Without the canonical key a scheduled day cannot open the topic it names."""
+    _plan_course(
+        upload_api.session_factory, upload_api.course_id, exam_in_days=6, topics=["X"]
+    )
+    plan_id = _store_plan(
+        upload_api, upload_api.course_id, PLAN_TOPICS, user_id=upload_api.user_id
+    )
+
+    roadmap = _roadmap_of(
+        _generate(
+            upload_api,
+            upload_api.course_id,
+            plan_output_id=plan_id,
+            include_materials=False,
+        )
+    )
+
+    scheduled = _scheduled_topics(roadmap)
+    assert scheduled
+    assert all(topic["topic_key"] for topic in scheduled)
+    assert {topic["topic_key"] for topic in scheduled} <= {
+        key for key, _, _ in PLAN_TOPICS
+    }
+
+
+def test_a_plan_topic_reports_no_question_count_rather_than_zero(upload_api) -> None:
+    """A plan records mastery, not how many questions produced it.
+
+    Zero answered questions is a measurement this path never made, so it is
+    absent rather than invented.
+    """
+    _plan_course(
+        upload_api.session_factory, upload_api.course_id, exam_in_days=6, topics=["X"]
+    )
+    plan_id = _store_plan(
+        upload_api, upload_api.course_id, PLAN_TOPICS, user_id=upload_api.user_id
+    )
+
+    roadmap = _roadmap_of(
+        _generate(
+            upload_api,
+            upload_api.course_id,
+            plan_output_id=plan_id,
+            include_materials=False,
+        )
+    )
+
+    assert all(
+        topic["questions_answered"] is None for topic in roadmap["ranked_topics"]
+    )
+
+
+def test_the_first_scheduled_day_leads_with_the_plan_s_first_ranked_topic(
+    upload_api,
+) -> None:
+    _plan_course(
+        upload_api.session_factory, upload_api.course_id, exam_in_days=6, topics=["X"]
+    )
+    plan_id = _store_plan(
+        upload_api, upload_api.course_id, PLAN_TOPICS, user_id=upload_api.user_id
+    )
+
+    roadmap = _roadmap_of(
+        _generate(
+            upload_api,
+            upload_api.course_id,
+            plan_output_id=plan_id,
+            include_materials=False,
+            max_topics_per_day=1,
+        )
+    )
+
+    assert roadmap["days"][0]["topics"][0]["topic_key"] == "shortest-paths"
+
+
+def test_each_plan_keeps_its_own_roadmap_version_chain(upload_api) -> None:
+    """Refreshing one plan's roadmap must not supersede another plan's.
+
+    They schedule different topics, so pointing one at the other as the version
+    it adapts from would claim a lineage that does not exist.
+    """
+    _plan_course(
+        upload_api.session_factory, upload_api.course_id, exam_in_days=6, topics=["X"]
+    )
+    first = _store_plan(
+        upload_api, upload_api.course_id, PLAN_TOPICS, user_id=upload_api.user_id
+    )
+    second = _store_plan(
+        upload_api,
+        upload_api.course_id,
+        [("hashing", "Hashing", 90)],
+        user_id=upload_api.user_id,
+    )
+
+    one = _roadmap_of(
+        _generate(
+            upload_api,
+            upload_api.course_id,
+            plan_output_id=first,
+            include_materials=False,
+        )
+    )
+    two = _roadmap_of(
+        _generate(
+            upload_api,
+            upload_api.course_id,
+            plan_output_id=second,
+            include_materials=False,
+        )
+    )
+    again = _roadmap_of(
+        _generate(
+            upload_api,
+            upload_api.course_id,
+            plan_output_id=first,
+            include_materials=False,
+        )
+    )
+
+    assert one["roadmap_version"] == 1
+    assert one["adapted_from_output_id"] is None
+    assert two["roadmap_version"] == 1
+    assert two["adapted_from_output_id"] is None
+    assert again["roadmap_version"] == 2
+    assert again["adapted_from_output_id"] is not None
+
+
+def test_a_course_wide_roadmap_ignores_the_plan_scoped_versions(upload_api) -> None:
+    _plan_course(
+        upload_api.session_factory,
+        upload_api.course_id,
+        exam_in_days=6,
+        topics=["Graph Traversal", "Hashing"],
+    )
+    plan_id = _store_plan(
+        upload_api, upload_api.course_id, PLAN_TOPICS, user_id=upload_api.user_id
+    )
+    _generate(
+        upload_api,
+        upload_api.course_id,
+        plan_output_id=plan_id,
+        include_materials=False,
+    )
+
+    course_wide = _roadmap_of(
+        _generate(upload_api, upload_api.course_id, include_materials=False)
+    )
+
+    assert course_wide["plan_output_id"] is None
+    assert course_wide["roadmap_version"] == 1
+    assert course_wide["adapted_from_output_id"] is None
+    assert [topic["topic"] for topic in course_wide["ranked_topics"]] == [
+        "Graph Traversal",
+        "Hashing",
+    ]
+
+
+def test_omitting_the_plan_reproduces_the_course_wide_roadmap_exactly(
+    upload_api,
+) -> None:
+    """The plan mode is additive: without it, nothing about the output moves."""
+    _plan_course(
+        upload_api.session_factory,
+        upload_api.course_id,
+        exam_in_days=4,
+        topics=["Graph Traversal", "Hashing"],
+    )
+
+    roadmap = _roadmap_of(
+        _generate(upload_api, upload_api.course_id, include_materials=False)
+    )
+
+    assert roadmap["plan_output_id"] is None
+    assert _every_source_is(roadmap, TopicSource.SYLLABUS.value)
+    assert all(topic["topic_key"] is None for topic in roadmap["ranked_topics"])
+    assert all(topic["questions_answered"] == 0 for topic in roadmap["ranked_topics"])
+
+
+def test_a_plan_from_another_course_is_answered_as_a_missing_one(
+    upload_api, authz_api
+) -> None:
+    """The plan lookup is course-scoped, so a foreign identifier discloses nothing."""
+    _plan_course(
+        upload_api.session_factory, upload_api.course_id, exam_in_days=6, topics=["X"]
+    )
+    foreign = _store_plan(
+        authz_api, authz_api.a_course_id, PLAN_TOPICS, user_id=authz_api.user_a_id
+    )
+
+    response = _generate(
+        upload_api,
+        upload_api.course_id,
+        plan_output_id=foreign,
+        include_materials=False,
+    )
+
+    assert response.status_code == 404
+    assert "shortest-paths" not in response.text
+
+
+def test_a_plan_identifier_that_names_nothing_is_a_missing_one(upload_api) -> None:
+    _plan_course(
+        upload_api.session_factory, upload_api.course_id, exam_in_days=6, topics=["X"]
+    )
+
+    response = _generate(
+        upload_api,
+        upload_api.course_id,
+        plan_output_id=999_999,
+        include_materials=False,
+    )
+
+    assert response.status_code == 404
+
+
+def test_a_stored_plan_roadmap_reopens_with_its_plan_named(upload_api) -> None:
+    """A reopen is a database read, and it has to say which plan it belongs to."""
+    _plan_course(
+        upload_api.session_factory, upload_api.course_id, exam_in_days=6, topics=["X"]
+    )
+    plan_id = _store_plan(
+        upload_api, upload_api.course_id, PLAN_TOPICS, user_id=upload_api.user_id
+    )
+    generated = _generate(
+        upload_api,
+        upload_api.course_id,
+        plan_output_id=plan_id,
+        include_materials=False,
+    )
+    output_id = generated.json()["data"]["generated_output_id"]
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/generated-outputs/{output_id}",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    assert body["generation_settings"]["plan_output_id"] == plan_id
+    assert ExamRoadmap.model_validate(body["content"]).plan_output_id == plan_id

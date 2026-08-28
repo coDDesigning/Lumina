@@ -7,7 +7,12 @@ import CourseSettingsPage from './features/courses/CourseSettingsPage'
 import CoursesPage from './features/courses/CoursesPage'
 import ActivityPage from './features/activity/ActivityPage'
 import ProgressPage from './features/workspace/ProgressPage'
+import ExamModePage from './features/examMode/ExamModePage'
+import ExamModePlanPage from './features/examMode/ExamModePlanPage'
+import ExamModeComparePage from './features/examMode/ExamModeComparePage'
+import ExamModeTopicPage from './features/examMode/ExamModeTopicPage'
 import QuizAttemptPage from './features/study/quiz/QuizAttemptPage'
+import QuizSessionPage from './features/study/quiz/QuizSessionPage'
 import QuizResultsPage from './features/study/quiz/QuizResultsPage'
 import WorkspacePage from './features/workspace/WorkspacePage'
 import AccountLayout from './features/account/AccountLayout'
@@ -24,7 +29,7 @@ import { AppShell } from './app/AppShell'
 import { ThemeProvider } from './app/ThemeProvider'
 import { ToastProvider } from './ui/ToastProvider'
 import { ProtectedRoute } from './components/ProtectedRoute'
-import { RouteLoading } from './app/RouteLoading'
+import { CourseRoute } from './app/CourseRoute'
 import { useAuth } from './context/AuthContext'
 import { coursesAPI } from './api/courses'
 import {
@@ -46,121 +51,50 @@ const workspaceAccents: Workspace['accent'][] = [
   'amber',
 ]
 
-function WorkspaceLoading() {
-  return <RouteLoading label="Loading course" />
-}
-
 type WorkspaceRouteProps = {
   workspaces: Workspace[]
-  isLoading?: boolean
   onSelect: (courseId: string) => void
   onUpdateProgress?: (courseId: string, progress: Partial<WorkspaceProgress>) => void
 }
 
-function useResolvedWorkspace(
-  courseId: string | undefined,
-  workspaces: Workspace[],
-  onSelect?: (id: string) => void,
-) {
-  const numericId = Number(courseId)
-  const isNumeric = Number.isInteger(numericId) && numericId > 0
-  const found = workspaces.find(({ id }) => id === courseId)
-
-  const singleCourseQuery = useQuery<Course>({
-    key: !found && isNumeric ? queryKeys.course(numericId) : null,
-    fetcher: ({ signal }) => coursesAPI.get(numericId, { signal }),
-    fallbackMessage: 'Course could not be loaded.',
-  })
-
-  const workspace = useMemo(() => {
-    if (found) return found
-    if (singleCourseQuery.data) {
-      return mapCourseToWorkspace(singleCourseQuery.data, 0, null)
-    }
-    return null
-  }, [found, singleCourseQuery.data])
-
-  useEffect(() => {
-    if (workspace && onSelect) {
-      onSelect(workspace.id)
-    }
-  }, [onSelect, workspace])
-
-  const isLoading =
-    !found &&
-    isNumeric &&
-    (singleCourseQuery.status === 'pending' || singleCourseQuery.status === 'idle')
-  const isNotFound = !found && (!isNumeric || singleCourseQuery.status === 'error')
-
-  return { workspace, isLoading, isNotFound }
+function toWorkspace(course: Course): Workspace {
+  return mapCourseToWorkspace(course, 0, null)
 }
 
 function WorkspaceRoute({
   workspaces,
-  isLoading: isListLoading,
   onSelect,
   onUpdateProgress,
 }: WorkspaceRouteProps) {
-  const { courseId } = useParams()
-  const { workspace, isLoading: isSingleLoading, isNotFound } = useResolvedWorkspace(
-    courseId,
-    workspaces,
-    onSelect,
-  )
-
-  if (isListLoading && !workspace) {
-    return <WorkspaceLoading />
-  }
-
-  if (isSingleLoading) {
-    return <WorkspaceLoading />
-  }
-
-  if (isNotFound || !workspace) return <Navigate to="/" replace />
   return (
-    <WorkspacePage
-      key={workspace.id}
-      workspace={workspace}
-      onUpdateProgress={onUpdateProgress}
+    <CourseRoute
+      workspaces={workspaces}
+      onSelect={onSelect}
+      toWorkspace={toWorkspace}
+      render={(workspace) => (
+        <WorkspacePage
+          key={workspace.id}
+          workspace={workspace}
+          onUpdateProgress={onUpdateProgress}
+        />
+      )}
     />
   )
 }
 
 function CourseScopedRoute({
   workspaces,
-  isLoading: isListLoading,
   onSelect,
   render,
 }: WorkspaceRouteProps & { render: (workspace: Workspace) => ReactElement }) {
-  const { courseId } = useParams()
-  const { workspace, isLoading: isSingleLoading, isNotFound } = useResolvedWorkspace(
-    courseId,
-    workspaces,
-    onSelect,
+  return (
+    <CourseRoute
+      workspaces={workspaces}
+      onSelect={onSelect}
+      toWorkspace={toWorkspace}
+      render={render}
+    />
   )
-
-  if (isListLoading && !workspace) return <WorkspaceLoading />
-  if (isSingleLoading) return <WorkspaceLoading />
-  if (isNotFound || !workspace) return <Navigate to="/" replace />
-  return render(workspace)
-}
-
-function ProgressRoute({
-  workspaces,
-  isLoading: isListLoading,
-  onSelect,
-}: WorkspaceRouteProps) {
-  const { courseId } = useParams()
-  const { workspace, isLoading: isSingleLoading, isNotFound } = useResolvedWorkspace(
-    courseId,
-    workspaces,
-    onSelect,
-  )
-
-  if (isListLoading && !workspace) return <WorkspaceLoading />
-  if (isSingleLoading) return <WorkspaceLoading />
-  if (isNotFound || !workspace) return <Navigate to="/" replace />
-  return <ProgressPage key={workspace.id} workspace={workspace} />
 }
 
 type CourseSettingsRouteProps = WorkspaceRouteProps & {
@@ -190,33 +124,23 @@ function LegacyWorkspaceRedirect() {
 
 function CourseSettingsRoute({
   workspaces,
-  isLoading: isListLoading,
   onSelect,
   onSave,
   onDelete,
 }: CourseSettingsRouteProps) {
-  const { courseId } = useParams()
-  const { workspace, isLoading: isSingleLoading, isNotFound } = useResolvedWorkspace(
-    courseId,
-    workspaces,
-    onSelect,
-  )
-
-  if (isListLoading && !workspace) {
-    return <WorkspaceLoading />
-  }
-
-  if (isSingleLoading) {
-    return <WorkspaceLoading />
-  }
-
-  if (isNotFound || !workspace) return <Navigate to="/" replace />
   return (
-    <CourseSettingsPage
-      key={workspace.id}
-      workspace={workspace}
-      onSave={onSave}
-      onDelete={onDelete}
+    <CourseRoute
+      workspaces={workspaces}
+      onSelect={onSelect}
+      toWorkspace={toWorkspace}
+      render={(workspace) => (
+        <CourseSettingsPage
+          key={workspace.id}
+          workspace={workspace}
+          onSave={onSave}
+          onDelete={onDelete}
+        />
+      )}
     />
   )
 }
@@ -440,7 +364,6 @@ function App() {
           element={
             <WorkspaceRoute
               workspaces={workspaces}
-              isLoading={!haveWorkspacesArrived}
               onSelect={selectWorkspace}
               onUpdateProgress={updateWorkspaceProgress}
             />
@@ -451,7 +374,6 @@ function App() {
           element={
             <CourseSettingsRoute
               workspaces={workspaces}
-              isLoading={!haveWorkspacesArrived}
               onSelect={selectWorkspace}
               onSave={updateWorkspace}
               onDelete={deleteWorkspace}
@@ -461,10 +383,55 @@ function App() {
         <Route
           path="/courses/:courseId/progress"
           element={
-            <ProgressRoute
+            <CourseScopedRoute
               workspaces={workspaces}
-              isLoading={!haveWorkspacesArrived}
               onSelect={selectWorkspace}
+              render={(workspace) => <ProgressPage key={workspace.id} workspace={workspace} />}
+            />
+          }
+        />
+        {/*
+          Exam Mode is course-scoped and every persistent identity is in the
+          URL, so a saved plan, a comparison, and a topic all open cold.
+          Most specific first: a plan's own path must not swallow its children.
+        */}
+        <Route
+          path="/courses/:courseId/exam-mode"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              render={(workspace) => <ExamModePage key={workspace.id} workspace={workspace} />}
+            />
+          }
+        />
+        <Route
+          path="/courses/:courseId/exam-mode/plans/:planId/compare/:otherPlanId"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              render={(workspace) => <ExamModeComparePage workspace={workspace} />}
+            />
+          }
+        />
+        <Route
+          path="/courses/:courseId/exam-mode/plans/:planId/topics/:topicKey"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              render={(workspace) => <ExamModeTopicPage workspace={workspace} />}
+            />
+          }
+        />
+        <Route
+          path="/courses/:courseId/exam-mode/plans/:planId"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              render={(workspace) => <ExamModePlanPage workspace={workspace} />}
             />
           }
         />
@@ -472,12 +439,25 @@ function App() {
           path="/courses/:courseId/guides/:outputId"
           element={<LegacyGuideRedirect />}
         />
+        {/*
+          A timed sitting has its own address, so a reload rejoins the same one
+          with the answers already saved rather than starting a second.
+        */}
+        <Route
+          path="/courses/:courseId/practice/:quizId/sessions/:sessionId"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              render={(workspace) => <QuizSessionPage workspace={workspace} />}
+            />
+          }
+        />
         <Route
           path="/courses/:courseId/practice/:quizId/attempts/:attemptId"
           element={
             <CourseScopedRoute
               workspaces={workspaces}
-              isLoading={!haveWorkspacesArrived}
               onSelect={selectWorkspace}
               render={(workspace) => <QuizResultsPage workspace={workspace} />}
             />
@@ -488,7 +468,6 @@ function App() {
           element={
             <CourseScopedRoute
               workspaces={workspaces}
-              isLoading={!haveWorkspacesArrived}
               onSelect={selectWorkspace}
               render={(workspace) => <QuizAttemptPage workspace={workspace} />}
             />

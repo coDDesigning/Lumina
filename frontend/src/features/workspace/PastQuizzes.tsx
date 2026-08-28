@@ -2,6 +2,7 @@ import { queryKeys } from '@/api/queryKeys';
 import { quizAPI } from '@/api/quiz';
 import type { QuizSummary } from '@/api/types';
 import { useQuery } from '@/lib/query/useQuery';
+import { purposeLabel } from '@/features/study/quiz/quizPurpose';
 import { relativeDay } from '@/lib/relativeDay';
 import { ErrorState } from '@/ui/ErrorState';
 import { LinkButton } from '@/ui/LinkButton';
@@ -87,9 +88,19 @@ export function PastQuizzes({ courseId, workspaceId }: PastQuizzesProps) {
           <li key={quiz.quiz_id} className={styles.row}>
             <span className={styles.title}>{quiz.title}</span>
             <span className={styles.meta}>
+              {/* The purpose is the backend's, never guessed from the title. */}
+              {purposeLabel(quiz.quiz_purpose)} ·{' '}
               <span className="tabular">{quiz.question_count}</span>{' '}
-              {quiz.question_count === 1 ? 'question' : 'questions'} ·{' '}
-              {relativeDay(quiz.created_at)}
+              {quiz.question_count === 1 ? 'question' : 'questions'}
+              {quiz.timed && quiz.time_limit_seconds ? (
+                <>
+                  {' '}· <span className="tabular">
+                    {Math.round(quiz.time_limit_seconds / 60)}
+                  </span>{' '}
+                  minutes
+                </>
+              ) : null}{' '}
+              · {relativeDay(quiz.created_at)}
               {quiz.best_score != null && quiz.last_score != null ? (
                 <>
                   {' '}· Best: <span className="tabular">{Math.round(quiz.best_score * 100)}%</span> · Last: <span className="tabular">{Math.round(quiz.last_score * 100)}%</span>
@@ -99,7 +110,7 @@ export function PastQuizzes({ courseId, workspaceId }: PastQuizzesProps) {
               )}
             </span>
             <LinkButton size="sm" to={`/courses/${workspaceId}/practice/${quiz.quiz_id}`}>
-              Take it again
+              {quiz.timed ? 'Sit it again' : 'Take it again'}
             </LinkButton>
           </li>
         ))}

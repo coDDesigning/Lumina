@@ -135,3 +135,45 @@
     height: var(--size-touch-min);
   }
 }
+
+/*
+  What a timed paper involves, read before the clock starts. Generating the
+  paper and sitting it are separate acts, and the countdown belongs to the
+  second one.
+*/
+.instructions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: flex-start;
+  background: var(--surface-raised);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-5);
+  max-width: var(--width-prose);
+}
+
+.instructionsTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-display);
+  line-height: var(--leading-tight);
+}
+
+.instructionsLede {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.instructionsList {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  line-height: var(--leading-normal);
+}

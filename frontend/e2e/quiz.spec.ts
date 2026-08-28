@@ -50,16 +50,14 @@ test.describe('taking a practice quiz', () => {
     await expect(page.getByText('A reference answer')).toBeVisible()
   })
 
-  test('counts down against the clock while the quiz is being answered', async ({ page }) => {
+  test('is not sat against a clock the browser made up', async ({ page }) => {
+    // The quiz came back with no time limit, so there is no deadline to show.
+    // A countdown here would be one the browser invented, and the student would
+    // be timed on a paper nobody timed.
     await generateQuiz(page)
 
-    await expect(page.getByRole('timer')).toBeVisible()
-    const started = await page.getByRole('timer').getAttribute('aria-label')
-
-    await page.getByText('Breadth-first search', { exact: true }).click()
-    await page.waitForTimeout(2500)
-
-    await expect(page.getByRole('timer')).not.toHaveAttribute('aria-label', started ?? '')
+    await expect(page.getByText('Breadth-first search', { exact: true })).toBeVisible()
+    await expect(page.getByRole('timer')).toHaveCount(0)
   })
 
   test('asks before handing in a quiz that is still unanswered', async ({ page }) => {

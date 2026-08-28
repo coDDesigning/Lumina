@@ -46,7 +46,9 @@ def get_ad_config() -> BaseResponse[AdConfigResponse]:
     response_model=BaseResponse[AdTelemetryResponse],
     status_code=status.HTTP_200_OK,
 )
-def record_ad_telemetry(payload: AdTelemetryRequest) -> BaseResponse[AdTelemetryResponse]:
+def record_ad_telemetry(
+    payload: AdTelemetryRequest,
+) -> BaseResponse[AdTelemetryResponse]:
     """Record aggregate, privacy-safe impression and render status telemetry.
 
     Never accepts or records study content, user identifiers, or course context.

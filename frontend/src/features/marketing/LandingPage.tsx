@@ -53,6 +53,10 @@ const CAPABILITIES = [
     title: 'Progress you can act on',
     body: 'Per-topic mastery built from real attempts, and the topics you keep missing — so the next session has an obvious starting point.',
   },
+  {
+    title: 'Exam Mode',
+    body: 'Reads your syllabus, lectures and past papers, then ranks what to study and says why. Day-by-day plan, questions in the style of your own papers, timed mock exams, and a last-minute sheet. Every plan is kept and reopens exactly as it was.',
+  },
 ];
 
 export default function LandingPage() {
@@ -201,8 +205,8 @@ export default function LandingPage() {
           <article className={`${styles.capability} ${styles.capabilityMuted}`}>
             <h3 className={styles.capabilityTitle}>Not built yet</h3>
             <p className={styles.capabilityBody}>
-              Audio and video, spaced repetition, editing a generated guide, and Exam Mode. They are
-              on the roadmap and they are not in the product.
+              Audio and video, spaced repetition, and editing a generated guide. They are on the
+              roadmap and they are not in the product.
             </p>
           </article>
         </div>

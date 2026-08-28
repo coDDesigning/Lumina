@@ -36,6 +36,10 @@ const ROUTES = [
   { name: 'account background', path: '/account/background' },
   { name: 'account AI preferences', path: '/account/ai' },
   { name: 'the admin screen', path: '/admin' },
+  { name: 'Exam Mode', path: '/courses/1/exam-mode' },
+  { name: 'an exam plan', path: '/courses/1/exam-mode/plans/601' },
+  { name: 'an exam topic', path: '/courses/1/exam-mode/plans/601/topics/graph-traversal-algorithms' },
+  { name: 'a timed sitting', path: '/courses/1/practice/9/sessions/55' },
 ]
 
 function isKnownGap(node: { any: { message?: string }[] }): boolean {

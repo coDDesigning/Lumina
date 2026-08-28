@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Clock, Send } from 'lucide-react';
+import { Send } from 'lucide-react';
 import { describeError } from '@/api/errors';
 import { quizAPI } from '@/api/quiz';
 import { queryKeys } from '@/api/queryKeys';
@@ -11,7 +10,6 @@ import type { QuizQuestionView, QuizView } from '@/api/types';
 import { isOptionBased } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import type { Workspace } from '@/data/workspaces';
-import { cx } from '@/lib/cx';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
@@ -21,16 +19,14 @@ import { Skeleton } from '@/ui/Skeleton';
 import { EMPTY_DRAFT } from './answerDraft';
 import type { AnswerDraft } from './answerDraft';
 import { QuizAnswerField } from './QuizAnswerField';
-import { formatDuration } from './quizScoring';
+import { QuizNavigator } from './QuizNavigator';
+import { isTimed, purposeLabel, quizReturn } from './quizPurpose';
 import styles from './QuizAttemptPage.module.css';
 
 export interface QuizAttemptPageProps {
   workspace: Workspace;
   onAttemptRecorded?: () => void;
 }
-
-const SECONDS_PER_QUESTION = 60;
-const LOW_TIME_SECONDS = 60;
 
 const QUESTION_TYPE_LABELS: Record<string, string> = {
   multiple_choice: 'Multiple choice',
@@ -55,43 +51,8 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
   const [loadError, setLoadError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, AnswerDraft>>({});
-  const [timeLeft, setTimeLeft] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const navigatorRef = useRef<HTMLElement>(null);
-  const indexRef = useRef(0);
-  const questionsRef = useRef(0);
-
-  const focusPip = useCallback((position: number) => {
-    const pips = navigatorRef.current?.querySelectorAll<HTMLButtonElement>('button');
-    pips?.[position]?.focus();
-  }, []);
-
-  const handleNavigatorKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLElement>) => {
-      const total = questionsRef.current;
-      if (total === 0) {
-        return;
-      }
-      let next: number | null = null;
-      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-        next = (indexRef.current + 1) % total;
-      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-        next = (indexRef.current - 1 + total) % total;
-      } else if (event.key === 'Home') {
-        next = 0;
-      } else if (event.key === 'End') {
-        next = total - 1;
-      }
-      if (next === null) {
-        return;
-      }
-      event.preventDefault();
-      setIndex(next);
-      focusPip(next);
-    },
-    [focusPip],
-  );
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
 
@@ -123,7 +84,6 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
     }
     setLoadError(null);
     setQuiz(loaded);
-    setTimeLeft(loaded.questions.length * SECONDS_PER_QUESTION);
     startedAtRef.current = Date.now();
   }, [isValidQuizAddress, quizQuery.status, quizQuery.data, quizQuery.error]);
 
@@ -167,25 +127,30 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
     }
   }, [answers, courseId, isSubmitting, navigate, onAttemptRecorded, quiz, workspace.id]);
 
-  const submitRef = useRef(submit);
-  useEffect(() => {
-    submitRef.current = submit;
-  }, [submit]);
+  const [isStarting, setIsStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!quiz || isSubmitting) {
-      return;
+  /**
+   * Open the sitting, then go to it.
+   *
+   * The clock is the server's and starts here -- not when the paper was
+   * written, and not while the candidate is still reading what it involves.
+   */
+  const begin = useCallback(async () => {
+    if (!quiz) return;
+    setIsStarting(true);
+    setStartError(null);
+    try {
+      const started = await quizAPI.startSession(courseId, quiz.quiz_id);
+      navigate(
+        `/courses/${workspace.id}/practice/${quiz.quiz_id}/sessions/${started.session.session_id}`,
+        { replace: true },
+      );
+    } catch (caught) {
+      setStartError(describeError(caught, 'That sitting could not be started.').message);
+      setIsStarting(false);
     }
-    if (timeLeft <= 0) {
-      void submitRef.current();
-      return;
-    }
-    const timer = setTimeout(() => setTimeLeft((seconds) => seconds - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [quiz, isSubmitting, timeLeft]);
-
-  indexRef.current = index;
-  questionsRef.current = questions.length;
+  }, [courseId, navigate, quiz, workspace.id]);
 
   const question = questions[index];
   const answeredCount = questions.filter((row) => isAnswered(answers[row.question_id])).length;
@@ -199,20 +164,8 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
         crumbs={[
           { label: 'Courses', to: '/dashboard' },
           { label: workspace.name, to: `/courses/${workspace.id}` },
-          { label: 'Quiz' },
+          { label: quiz ? purposeLabel(quiz.quiz_purpose) : 'Quiz' },
         ]}
-        actions={
-          quiz ? (
-            <p
-              className={cx(styles.timer, timeLeft <= LOW_TIME_SECONDS && styles.timerLow)}
-              role="timer"
-              aria-label={`Time remaining: ${formatDuration(timeLeft)}`}
-            >
-              <Clock aria-hidden="true" />
-              <span className="tabular">{formatDuration(timeLeft)}</span>
-            </p>
-          ) : null
-        }
       />
 
       <div className={styles.body}>
@@ -236,7 +189,55 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
           </div>
         ) : null}
 
-        {quiz && question ? (
+        {quiz && isTimed(quiz) ? (
+          <div className={styles.instructions}>
+            <h1 className={styles.instructionsTitle}>{quiz.title}</h1>
+            <p className={styles.instructionsLede}>
+              {purposeLabel(quiz.quiz_purpose)} · <span className="tabular">
+                {questions.length}
+              </span>{' '}
+              {questions.length === 1 ? 'question' : 'questions'}
+              {quiz.time_limit_seconds ? (
+                <>
+                  {' '}
+                  · <span className="tabular">{Math.round(quiz.time_limit_seconds / 60)}</span>{' '}
+                  minutes
+                </>
+              ) : null}
+            </p>
+            <ul className={styles.instructionsList}>
+              <li>The clock starts when you begin, and it is kept by the server.</li>
+              <li>Answers are saved as you give them, so a reload picks up where you left off.</li>
+              <li>
+                When time runs out you cannot answer any more, but everything already saved is
+                still marked.
+              </li>
+            </ul>
+            {startError ? (
+              <Alert tone="destructive" live="alert">
+                {startError}
+              </Alert>
+            ) : null}
+            <div className={styles.controls}>
+              <Button
+                variant="primary"
+                isLoading={isStarting}
+                loadingLabel="Opening your paper"
+                onClick={() => void begin()}
+              >
+                Begin the timed paper
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => navigate(quizReturn(courseId, quiz).to)}
+              >
+                Not yet
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {quiz && !isTimed(quiz) && question ? (
           <>
             <div className={styles.head}>
               <p className={styles.position}>
@@ -248,32 +249,12 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
               </p>
             </div>
 
-            <nav
-              ref={navigatorRef}
-              className={styles.navigator}
-              aria-label="Questions"
-              onKeyDown={handleNavigatorKeyDown}
-            >
-              {questions.map((row, position) => (
-                <button
-                  key={row.question_id}
-                  type="button"
-                  className={cx(
-                    styles.pip,
-                    position === index && styles.pipCurrent,
-                    isAnswered(answers[row.question_id]) && styles.pipAnswered,
-                  )}
-                  aria-current={position === index ? 'true' : undefined}
-                  tabIndex={position === index ? 0 : -1}
-                  aria-label={`Question ${position + 1}${
-                    isAnswered(answers[row.question_id]) ? ', answered' : ', not answered'
-                  }`}
-                  onClick={() => setIndex(position)}
-                >
-                  <span aria-hidden="true">{position + 1}</span>
-                </button>
-              ))}
-            </nav>
+            <QuizNavigator
+              questions={questions}
+              index={index}
+              onIndex={setIndex}
+              isAnswered={(questionId) => isAnswered(answers[questionId])}
+            />
 
             <div className={styles.card}>
               <div className={styles.meta}>

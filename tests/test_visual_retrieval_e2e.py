@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 from io import BytesIO
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pymupdf
 import pytest
@@ -48,9 +48,6 @@ from services.processing_jobs import (
 from services.semantic_retrieval import retrieve_course_chunks
 from services.vector_store import (
     ChromaVectorStore,
-    PgVectorStore,
-    VectorRecord,
-    VectorStore,
 )
 from storage.local import LocalStorage
 
@@ -257,9 +254,15 @@ def test_end_to_end_visual_detection_description_and_retrieval(
     assert len(extraction_result.pages) == 1
     extracted_page = extraction_result.pages[0]
     assert extracted_page.has_visual_content is True
-    assert extracted_page.visual_analysis_status == PageVisualAnalysisStatus.COMPLETED.value
+    assert (
+        extracted_page.visual_analysis_status
+        == PageVisualAnalysisStatus.COMPLETED.value
+    )
     assert len(extracted_page.visuals) >= 1
-    assert extracted_page.visuals[0].analysis_status == VisualAnalysisStatus.SUCCEEDED.value
+    assert (
+        extracted_page.visuals[0].analysis_status
+        == VisualAnalysisStatus.SUCCEEDED.value
+    )
     assert extracted_page.visuals[0].description == CANARY_TOPOLOGY_DESCRIPTION
     assert CANARY_TOPOLOGY_DESCRIPTION in extracted_page.text
 
@@ -306,14 +309,22 @@ def test_end_to_end_visual_detection_description_and_retrieval(
         assert doc.status == "ready"
         assert doc.visual_analysis_status == "completed"
 
-        pages = list(session.scalars(select(DocumentPage).where(DocumentPage.document_id == doc_id)))
+        pages = list(
+            session.scalars(
+                select(DocumentPage).where(DocumentPage.document_id == doc_id)
+            )
+        )
         assert len(pages) == 1
         page = pages[0]
         assert page.has_visual_content is True
         assert page.visual_analysis_status == "completed"
         assert CANARY_TOPOLOGY_DESCRIPTION in page.text
 
-        visuals = list(session.scalars(select(DocumentVisual).where(DocumentVisual.page_id == page.id)))
+        visuals = list(
+            session.scalars(
+                select(DocumentVisual).where(DocumentVisual.page_id == page.id)
+            )
+        )
         assert len(visuals) >= 1
         assert visuals[0].analysis_status == "succeeded"
         assert visuals[0].description == CANARY_TOPOLOGY_DESCRIPTION

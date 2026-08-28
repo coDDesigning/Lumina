@@ -20,6 +20,11 @@ function quiz(overrides: Partial<QuizSummary> = {}): QuizSummary {
     model_used: 'gemini-3.6-flash',
     generation_settings: null,
     generation_context: null,
+    quiz_purpose: null,
+    exam_plan_output_id: null,
+    exam_topic_key: null,
+    timed: false,
+    time_limit_seconds: null,
     ...overrides,
   };
 }

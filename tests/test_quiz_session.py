@@ -219,6 +219,170 @@ def test_saving_an_answer_twice_replaces_it_rather_than_appending(
         assert draft.selected_option_index == 0
 
 
+def test_a_reread_returns_the_answers_the_student_already_saved(
+    upload_api, timed_quiz
+) -> None:
+    """A reload has to put the student's own work back on the screen.
+
+    ``answered_count`` alone leaves a sitting that survived a refresh looking
+    blank while the server still holds exactly the answers it will grade.
+    """
+    session_id = start(upload_api, timed_quiz["quiz_id"]).json()["data"]["session"][
+        "session_id"
+    ]
+    first, second = timed_quiz["question_ids"]
+
+    save_answer(
+        upload_api,
+        timed_quiz["quiz_id"],
+        session_id,
+        second,
+        {"question_id": second, "selected_option_index": 2},
+    )
+    save_answer(
+        upload_api,
+        timed_quiz["quiz_id"],
+        session_id,
+        first,
+        {"question_id": first, "selected_option_index": 0, "time_spent_seconds": 12},
+    )
+
+    response = upload_api.client.get(
+        f"{base_url(upload_api, timed_quiz['quiz_id'])}/sessions/{session_id}",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    view = response.json()["data"]
+    assert view["answered_count"] == 2
+    assert view["answers"] == [
+        {
+            "question_id": first,
+            "selected_option_index": 0,
+            "text_response": None,
+            "time_spent_seconds": 12,
+        },
+        {
+            "question_id": second,
+            "selected_option_index": 2,
+            "text_response": None,
+            "time_spent_seconds": None,
+        },
+    ]
+
+
+def test_a_sitting_that_has_been_answered_nowhere_returns_no_answers(
+    upload_api, timed_quiz
+) -> None:
+    started = start(upload_api, timed_quiz["quiz_id"])
+
+    session = started.json()["data"]["session"]
+    assert session["answered_count"] == 0
+    assert session["answers"] == []
+
+
+def test_saving_an_answer_returns_the_whole_saved_set(upload_api, timed_quiz) -> None:
+    """The write response is a read, so a client never has to guess what stuck."""
+    session_id = start(upload_api, timed_quiz["quiz_id"]).json()["data"]["session"][
+        "session_id"
+    ]
+    question_id = timed_quiz["question_ids"][0]
+
+    saved = save_answer(
+        upload_api,
+        timed_quiz["quiz_id"],
+        session_id,
+        question_id,
+        {"question_id": question_id, "selected_option_index": 3},
+    )
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["data"]["answers"] == [
+        {
+            "question_id": question_id,
+            "selected_option_index": 3,
+            "text_response": None,
+            "time_spent_seconds": None,
+        }
+    ]
+
+
+def test_answers_saved_before_the_deadline_are_still_readable_after_it(
+    upload_api, timed_quiz
+) -> None:
+    """Expiry stops new writes; it must not hide the writes that already landed."""
+    session_id = start(upload_api, timed_quiz["quiz_id"]).json()["data"]["session"][
+        "session_id"
+    ]
+    question_id = timed_quiz["question_ids"][0]
+    save_answer(
+        upload_api,
+        timed_quiz["quiz_id"],
+        session_id,
+        question_id,
+        {"question_id": question_id, "selected_option_index": 0},
+    )
+    wind_clock_back(upload_api.session_factory, session_id, TIME_LIMIT_SECONDS + 60)
+
+    response = upload_api.client.get(
+        f"{base_url(upload_api, timed_quiz['quiz_id'])}/sessions/{session_id}",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    view = response.json()["data"]
+    assert view["status"] == "expired"
+    assert [answer["question_id"] for answer in view["answers"]] == [question_id]
+
+
+def test_another_student_s_drafts_are_missing_rather_than_readable(
+    upload_api, timed_quiz
+) -> None:
+    """Reading drafts must not open a hole the count never could.
+
+    The session read is scoped by user in the query, so a stranger's sitting is
+    a 404 whether or not it holds work -- otherwise a well-formed identifier
+    would hand over another candidate's answers.
+    """
+    with upload_api.session_factory() as session:
+        other = User(
+            name="Draft Owner",
+            email="draft-owner@example.com",
+            password_hash="x",
+            role_id=session.scalars(select(Role).where(Role.name == "user")).one().id,
+        )
+        session.add(other)
+        session.flush()
+        foreign = QuizSession(
+            quiz_id=timed_quiz["quiz_id"],
+            user_id=other.id,
+            status="active",
+            time_limit_seconds=TIME_LIMIT_SECONDS,
+            started_at=datetime.now(timezone.utc),
+            expires_at=datetime.now(timezone.utc)
+            + timedelta(seconds=TIME_LIMIT_SECONDS),
+        )
+        session.add(foreign)
+        session.flush()
+        session.add(
+            QuizSessionAnswer(
+                session_id=foreign.id,
+                quiz_question_id=timed_quiz["question_ids"][0],
+                selected_option_index=0,
+            )
+        )
+        session.commit()
+        foreign_id = foreign.id
+
+    response = upload_api.client.get(
+        f"{base_url(upload_api, timed_quiz['quiz_id'])}/sessions/{foreign_id}",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 404
+    assert "answers" not in response.text
+
+
 def test_an_answer_to_a_question_from_another_quiz_is_refused(
     upload_api, timed_quiz
 ) -> None:

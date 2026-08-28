@@ -31,7 +31,9 @@ class TestLiveGeminiProvider:
 
     def test_live_gemini_text_generation(self):
         provider = GeminiTextGenerationProvider()
-        text, meta = provider.generate_text_with_metadata("Respond with the exact word: QUALIFIED")
+        text, meta = provider.generate_text_with_metadata(
+            "Respond with the exact word: QUALIFIED"
+        )
         assert "QUALIFIED" in text.upper()
         assert meta.provider == "gemini"
         assert meta.model is not None
@@ -57,7 +59,9 @@ class TestLiveOpenAIProvider:
 
     def test_live_openai_text_generation(self):
         provider = OpenAITextGenerationProvider()
-        text, meta = provider.generate_text_with_metadata("Respond with the exact word: QUALIFIED")
+        text, meta = provider.generate_text_with_metadata(
+            "Respond with the exact word: QUALIFIED"
+        )
         assert "QUALIFIED" in text.upper()
         assert meta.provider == "openai"
         assert meta.model is not None
@@ -83,7 +87,9 @@ class TestLiveClaudeProvider:
 
     def test_live_claude_text_generation(self):
         provider = ClaudeTextGenerationProvider()
-        text, meta = provider.generate_text_with_metadata("Respond with the exact word: QUALIFIED")
+        text, meta = provider.generate_text_with_metadata(
+            "Respond with the exact word: QUALIFIED"
+        )
         assert "QUALIFIED" in text.upper()
         assert meta.provider == "claude"
         assert meta.model is not None

@@ -901,14 +901,20 @@ def load_settings() -> Settings:
             )
         gemini_entries = ai_model_catalog.get(AI_PROVIDER_GEMINI, [])
         for entry in gemini_entries:
-            if entry.get("model") == gemini_image_model and entry.get("vision") is False:
+            if (
+                entry.get("model") == gemini_image_model
+                and entry.get("vision") is False
+            ):
                 raise ValueError(
                     f"GEMINI_IMAGE_MODEL '{gemini_image_model}' is declared with vision=False in AI_MODEL_CATALOG."
                 )
     elif image_provider == IMAGE_PROVIDER_OLLAMA:
         ollama_entries = ai_model_catalog.get(AI_PROVIDER_OLLAMA, [])
         for entry in ollama_entries:
-            if entry.get("model") == ollama_image_model and entry.get("vision") is False:
+            if (
+                entry.get("model") == ollama_image_model
+                and entry.get("vision") is False
+            ):
                 raise ValueError(
                     f"OLLAMA_IMAGE_MODEL '{ollama_image_model}' is declared with vision=False in AI_MODEL_CATALOG."
                 )

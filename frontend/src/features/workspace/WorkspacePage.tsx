@@ -627,6 +627,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
               options={THREAD_TABS}
               value={threadType}
               onChange={setThreadType}
+              link={{ to: `/courses/${courseId}/exam-mode`, label: 'Exam Mode' }}
             />
             <span className={styles.threadActions}>
               {!isSupportView ? (

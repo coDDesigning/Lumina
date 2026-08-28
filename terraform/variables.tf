@@ -239,7 +239,7 @@ variable "email_verification_required" {
 variable "email_from_address" {
   description = "Envelope sender for verification mail. The relay must be authorized to send as this address."
   type        = string
-  default     = ""
+  default     = "info@study-lumina.com"
 }
 
 variable "smtp_host" {

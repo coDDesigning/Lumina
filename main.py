@@ -142,6 +142,7 @@ async def observe_request(request: Request, call_next):
                 "http_method": request.method,
                 "http_path": request.url.path,
                 "http_status": response.status_code,
+                "error_code": response.headers.get("X-Error-Code"),
                 "duration_ms": round((time.perf_counter() - started) * 1000, 3),
             },
         )
@@ -184,5 +185,5 @@ if settings.cors_allowed_origins:
         allow_credentials=False,
         allow_methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
         allow_headers=("Authorization", "Content-Type"),
-        expose_headers=("X-Error-Code",),
+        expose_headers=("Retry-After", "X-Error-Code", "X-Request-ID"),
     )

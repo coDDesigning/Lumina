@@ -12,6 +12,9 @@ export interface User {
   email: string;
   role: string;
   is_banned: boolean;
+  /** Whether the address was proven reachable. False accounts hold no credits
+   * where the deployment verifies; see docs/authentication.md. */
+  is_email_verified: boolean;
   credits: number | null;
   preferred_model: string;
   education_level: EducationLevel;
@@ -98,6 +101,10 @@ export interface CreditStatus {
   /** null means this account is not metered, so no credit UI applies. */
   credits: number | null;
   metering_enabled: boolean;
+  /** Together these tell a zero balance that was spent apart from one that was
+   * never granted, which is the difference between no next action and one. */
+  email_verification_required: boolean;
+  is_email_verified: boolean;
   monthly_grant: number | null;
   balance_cap: number | null;
   next_grant_at: string | null;
@@ -107,6 +114,30 @@ export interface CreditStatus {
 export interface AuthResponse {
   access_token: string;
   token_type: string;
+}
+
+/**
+ * What registration answers with. The account exists either way; where the
+ * deployment verifies, it holds no introductory credits until the emailed link
+ * is redeemed, so the screen after this one is a prompt rather than a workspace.
+ */
+export interface RegistrationResult {
+  message: string;
+  user_email: string;
+  role: string;
+  email_verification_required: boolean;
+  is_email_verified: boolean;
+}
+
+/**
+ * The outcome of redeeming or re-requesting a verification link.
+ * `credits_granted` is null when this redemption granted nothing — the account
+ * was already verified, is unmetered, or had its opening balance before.
+ */
+export interface EmailVerificationResult {
+  message: string;
+  is_email_verified: boolean;
+  credits_granted: number | null;
 }
 
 export type EducationLevel =

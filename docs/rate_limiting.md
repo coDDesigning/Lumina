@@ -12,7 +12,7 @@ code is the bug.
 
 One `rate_limit_buckets` row per key. A key is a colon-joined dimension string:
 `login:ip:{ip}`, `login:account:{email}`, `register:ip:{ip}`,
-`generation:user:{user_id}:{feature}`. Each request atomically bumps its key's
+`verification:ip:{ip}`, `generation:user:{user_id}:{feature}`. Each request atomically bumps its key's
 counter (`SELECT ... FOR UPDATE`, matching `UserService.update_user`'s locking
 pattern rather than a database-specific upsert, so behavior is identical on
 SQLite and PostgreSQL) and compares it to the configured limit for the current
@@ -26,8 +26,9 @@ generation request never reaches `CreditService.charge` and a throttled login
 never reaches `verify_password`.
 
 A rejection is always `429` with a `Retry-After` header and an `X-Error-Code`
-of `login_rate_limited`, `registration_rate_limited`, or
-`generation_rate_limited` — distinct from `provider_rate_limited`, which is the
+of `login_rate_limited`, `registration_rate_limited`,
+`verification_rate_limited`, or `generation_rate_limited` — distinct from
+`provider_rate_limited`, which is the
 AI provider's own limit surfaced through `utils/ai_errors.py`. Neither the
 status code nor the body reveals whether the rate-limited account exists.
 
@@ -51,12 +52,23 @@ This is deliberately a login-only mechanism: registration has no notion of "the
 account" to lock (an email either isn't registered yet or already exists), and
 generation abuse is already bounded by the credit balance itself.
 
+## Email verification
+
+`verification:ip:{ip}` covers both `POST /api/auth/verify-email` and
+`POST /api/auth/verify-email/resend` with one key, because they are two halves
+of the same abuse: resends are outbound mail somebody else pays for, and
+redemptions are guesses at a token. The key is the IP rather than the account on
+purpose — the address in a resend request is unauthenticated and an attacker
+picks it freely, so an account key would let them lock a victim out of verifying
+their own address. See [authentication hardening](authentication.md).
+
 ## Configuration
 
-All eight settings live in `backend/app/config.py` and are documented with
+All ten settings live in `backend/app/config.py` and are documented with
 their defaults in `.env.example`: `RATE_LIMIT_LOGIN_MAX_ATTEMPTS`,
 `RATE_LIMIT_LOGIN_WINDOW_SECONDS`, `RATE_LIMIT_REGISTER_MAX_ATTEMPTS`,
-`RATE_LIMIT_REGISTER_WINDOW_SECONDS`, `RATE_LIMIT_GENERATION_MAX_ATTEMPTS`,
+`RATE_LIMIT_REGISTER_WINDOW_SECONDS`, `RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS`,
+`RATE_LIMIT_VERIFICATION_WINDOW_SECONDS`, `RATE_LIMIT_GENERATION_MAX_ATTEMPTS`,
 `RATE_LIMIT_GENERATION_WINDOW_SECONDS`, `RATE_LIMIT_LOCKOUT_BASE_SECONDS`,
 `RATE_LIMIT_LOCKOUT_MAX_SECONDS`. There is no deployment-mode gating: both
 hosted and self-hosted instances are throttled identically, since a self-hosted

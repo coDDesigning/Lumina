@@ -68,6 +68,7 @@ describe('ProtectedRoute', () => {
         email: 'student@example.com',
         role: 'student',
         is_banned: false,
+        is_email_verified: true,
         credits: null,
         preferred_model: 'gemini-1.5-flash',
         education_level: 'unspecified',

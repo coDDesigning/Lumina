@@ -34,6 +34,13 @@ browser origin. The development server preserves that contract with its `/api`
 proxy. Changing an API container environment after the frontend is built does
 not alter the bundle.
 
+The self-hosted Compose stack reaches the same contract without CloudFront: the
+`frontend` service builds this application with `Dockerfile.frontend` and serves
+it behind the Nginx configuration in `ops/nginx/`, which proxies `/api` to the
+API container under one origin. `VITE_API_BASE_URL` is a build argument there,
+so changing it means `docker compose build frontend` rather than a restart. The
+routing contract is documented in `docs/deployment.md`.
+
 For a deliberately cross-origin build, use an absolute prefix such as
 `https://api.example.com/api`. The API must then set
 `CORS_ALLOWED_ORIGINS=https://app.example.com`. Origins are exact, wildcards

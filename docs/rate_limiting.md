@@ -87,3 +87,12 @@ attackers and, in the worst case, could let one client's traffic push a shared
 IP bucket into rejecting everyone else's. Per-account login lockout is
 unaffected, since it does not depend on IP. Configuring trusted proxy headers
 for the hosted ALB is tracked as follow-up work, not part of this change.
+
+The self-hosted Compose stack has the same shape. A browser reaches the API
+through the `frontend` service, so `request.client.host` is that container's
+address on the Compose network and all users share one per-IP bucket for login,
+registration, and verification. The proxy does set `X-Forwarded-For`, so
+trusting it is a one-setting change once the hosted work above lands. On a small
+single-household deployment the practical effect is that one person repeatedly
+mistyping a password can throttle sign-in for everyone; the per-account lockout
+still isolates the account itself.

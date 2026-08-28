@@ -36,7 +36,7 @@ docker compose run --rm --no-deps migrate python -c "import sqlite3; c=sqlite3.c
 
 ```bash
 docker compose up -d --wait --wait-timeout 180 api worker
-curl --fail --show-error http://127.0.0.1:8000/health/ready
+curl --fail --show-error http://127.0.0.1:8000/health/ready   # or http://127.0.0.1:8080/api/health/ready through the frontend
 ```
 
 Verify each erased profile-knowledge or course identifier returns `404`, the

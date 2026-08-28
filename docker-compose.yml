@@ -160,6 +160,52 @@ services:
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-345s}
     restart: unless-stopped
 
+  # Written out rather than merged from *lumina-service: that anchor carries the
+  # lumina-data volume and every AI provider key, and neither belongs in a
+  # public-facing static server. It also builds a different image entirely.
+  frontend:
+    image: ${LUMINA_FRONTEND_IMAGE:-lumina-frontend:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        # Baked into the bundle at build time. Changing it requires
+        # `docker compose build frontend`, not a restart.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    # The base image's own user. Stated explicitly for auditability; it is not
+    # 10001 because nothing in this image is owned by the backend's user.
+    user: "101:101"
+    # Waiting for a healthy API keeps first-run startup ordered. The trade-off
+    # is that a permanently unhealthy API means no interface at all, rather than
+    # an interface that loads and then fails every request.
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-8080}:8080"
+    read_only: true
+    tmpfs:
+      # The base image puts the pid file and all five *_temp_path directories
+      # here. Nothing is spooled to disk in either direction, so this stays small.
+      - /tmp:rw,noexec,nosuid,nodev,mode=1777,size=${LUMINA_FRONTEND_TMPFS_SIZE_BYTES:-67108864}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    init: true
+    healthcheck:
+      # Answered by nginx itself. Probing the API here would report this
+      # service unhealthy for the whole of every ops/self_hosted_backup.sh run,
+      # which stops api and worker by design.
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    stop_grace_period: 30s
+    restart: unless-stopped
+
   backup:
     <<: *lumina-service
     profiles: ["maintenance"]

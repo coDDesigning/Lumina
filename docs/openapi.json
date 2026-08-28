@@ -3407,6 +3407,11 @@
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "visual_analysis_status": {
+            "default": "not_applicable",
+            "title": "Visual Analysis Status",
+            "type": "string"
           }
         },
         "required": [

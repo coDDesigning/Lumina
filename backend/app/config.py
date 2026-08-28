@@ -7,6 +7,7 @@ this file is the single source of truth for "what the environment says".
 """
 
 import json
+import logging
 import math
 import os
 import re
@@ -29,6 +30,8 @@ from .database_config import (
     load_database_url,
     load_deployment_mode,
 )
+
+logger = logging.getLogger(__name__)
 
 STORAGE_BACKEND_LOCAL = "local"
 STORAGE_BACKEND_S3 = "s3"
@@ -783,10 +786,38 @@ def load_settings() -> Settings:
         maximum=300,
     )
 
-    image_provider = (
-        os.getenv("IMAGE_PROVIDER", DEFAULT_IMAGE_PROVIDER).strip().lower()
-        or DEFAULT_IMAGE_PROVIDER
-    )
+    raw_image_provider = os.getenv("IMAGE_PROVIDER")
+    if raw_image_provider is not None and raw_image_provider.strip():
+        image_provider = raw_image_provider.strip().lower()
+    else:
+        if mode == MODE_HOSTED:
+            if ai_provider == AI_PROVIDER_GEMINI:
+                gemini_entries = ai_model_catalog.get(AI_PROVIDER_GEMINI, [])
+                if any(bool(entry.get("vision")) for entry in gemini_entries):
+                    image_provider = IMAGE_PROVIDER_GEMINI
+                else:
+                    image_provider = IMAGE_PROVIDER_NONE
+            else:
+                image_provider = IMAGE_PROVIDER_NONE
+        else:
+            ollama_entries = ai_model_catalog.get(AI_PROVIDER_OLLAMA, [])
+            configured_ollama_image_model = os.getenv(
+                "OLLAMA_IMAGE_MODEL",
+                DEFAULT_OLLAMA_IMAGE_MODEL,
+            ).strip()
+            has_advertised_vision = any(
+                entry.get("model") == configured_ollama_image_model
+                and bool(entry.get("vision"))
+                for entry in ollama_entries
+            )
+            if has_advertised_vision:
+                image_provider = IMAGE_PROVIDER_OLLAMA
+            else:
+                image_provider = IMAGE_PROVIDER_NONE
+                logger.info(
+                    "Visual analysis is disabled (IMAGE_PROVIDER='none'); visual content in uploaded documents will not be described or indexed for retrieval."
+                )
+
     if image_provider not in RECOGNIZED_IMAGE_PROVIDERS:
         raise ValueError(
             f"IMAGE_PROVIDER must be one of: {', '.join(RECOGNIZED_IMAGE_PROVIDERS)}."
@@ -813,6 +844,25 @@ def load_settings() -> Settings:
     ).strip()
     if not gemini_image_model or len(gemini_image_model) > 128:
         raise ValueError("GEMINI_IMAGE_MODEL must contain 1-128 non-blank characters.")
+
+    if image_provider == IMAGE_PROVIDER_GEMINI:
+        if not gemini_api_key:
+            raise ValueError(
+                "GEMINI_API_KEY is required when gemini is configured as IMAGE_PROVIDER."
+            )
+        gemini_entries = ai_model_catalog.get(AI_PROVIDER_GEMINI, [])
+        for entry in gemini_entries:
+            if entry.get("model") == gemini_image_model and entry.get("vision") is False:
+                raise ValueError(
+                    f"GEMINI_IMAGE_MODEL '{gemini_image_model}' is declared with vision=False in AI_MODEL_CATALOG."
+                )
+    elif image_provider == IMAGE_PROVIDER_OLLAMA:
+        ollama_entries = ai_model_catalog.get(AI_PROVIDER_OLLAMA, [])
+        for entry in ollama_entries:
+            if entry.get("model") == ollama_image_model and entry.get("vision") is False:
+                raise ValueError(
+                    f"OLLAMA_IMAGE_MODEL '{ollama_image_model}' is declared with vision=False in AI_MODEL_CATALOG."
+                )
 
     image_understanding_timeout_seconds = _bounded_positive_integer_setting(
         "IMAGE_UNDERSTANDING_TIMEOUT_SECONDS",

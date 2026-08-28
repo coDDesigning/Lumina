@@ -1,0 +1,173 @@
+/*
+  The ranked list is what Exam Mode is for, and rank is the one thing on this
+  screen that is genuinely ordinal -- every other list in this product is
+  chronological. So the rank numeral carries the structure: it is set in the
+  display face at figure size, and everything around it stays quiet.
+
+  Priority band is drawn as a rule beside the numeral *and* written as a word in
+  the meta line. The rule is reinforcement; the word is the signal.
+*/
+.panel {
+  background: var(--surface-raised);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 3.25rem minmax(0, 1fr);
+  gap: 0 var(--space-4);
+  align-items: start;
+  padding: var(--space-4);
+  border-top: var(--border-width) solid var(--border);
+  min-width: 0;
+}
+
+.row:first-child {
+  border-top: none;
+}
+
+.rank {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-display);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.band {
+  width: var(--border-width-strong);
+  align-self: stretch;
+  border-radius: var(--radius-full);
+  background: var(--border-strong);
+}
+
+.bandCritical {
+  background: var(--destructive);
+}
+
+.bandHigh {
+  background: var(--warning);
+}
+
+.bandMedium {
+  background: var(--accent);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-display);
+  color: var(--text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.title:hover {
+  color: var(--accent);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.explanation {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: var(--leading-normal);
+  max-width: var(--measure-prose);
+}
+
+.audit > summary {
+  cursor: pointer;
+  color: var(--text-subtle);
+  font-size: var(--text-sm);
+  list-style: none;
+}
+
+.audit > summary::-webkit-details-marker {
+  display: none;
+}
+
+.audit > summary::before {
+  content: '+ ';
+  font-variant-numeric: tabular-nums;
+}
+
+.audit[open] > summary::before {
+  content: '– ';
+}
+
+.signals {
+  margin: var(--space-3) 0 0;
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+
+.signal {
+  display: grid;
+  grid-template-columns: minmax(8rem, 12rem) minmax(0, 1fr);
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.signal dt {
+  color: var(--text-subtle);
+}
+
+.signal dd {
+  margin: 0;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 30rem) {
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .rank {
+    justify-content: flex-start;
+  }
+
+  .band {
+    width: 1.5rem;
+    height: var(--border-width-strong);
+    align-self: center;
+  }
+
+  .signal {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}

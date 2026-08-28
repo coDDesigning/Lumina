@@ -1,6 +1,7 @@
 import type {
   DocumentMaterialKind,
   DocumentStatus,
+  DocumentVisualAnalysisStatus,
   ProcessingJobResponse,
   ProcessingStage,
 } from '../../api/types';
@@ -8,6 +9,24 @@ import type {
 import type { BadgeTone } from '@/ui/Badge';
 
 export type { BadgeTone };
+
+export const VISUAL_STATUS_LABELS: Record<DocumentVisualAnalysisStatus, string> = {
+  not_applicable: '',
+  pending: 'Analyzing visuals',
+  not_configured: 'Visual analysis disabled',
+  completed: 'Visuals indexed',
+  partial: 'Partial visuals',
+  failed: 'Visual analysis failed',
+};
+
+export function visualAnalysisStatusLabel(
+  status: string | null | undefined,
+): string | null {
+  if (!status || status === 'not_applicable') {
+    return null;
+  }
+  return VISUAL_STATUS_LABELS[status as DocumentVisualAnalysisStatus] ?? humanizeToken(status);
+}
 
 const STATUS_LABELS: Record<DocumentStatus, string> = {
   uploaded: 'Queued',

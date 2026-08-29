@@ -22,16 +22,16 @@ describe('ProtectedRoute', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={['/dashboard']}>
+      <MemoryRouter initialEntries={['/admin']}>
         <Routes>
-          <Route element={<ProtectedRoute />}>
-            <Route path="/dashboard" element={<div>Protected Content</div>} />
+          <Route element={<ProtectedRoute requiredRole="admin" />}>
+            <Route path="/admin" element={<div>Administrative Content</div>} />
           </Route>
         </Routes>
       </MemoryRouter>,
     );
 
-    expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();
+    expect(screen.queryByText('Administrative Content')).not.toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Checking your session');
   });
 

@@ -113,6 +113,19 @@ locals {
       treat_missing_data  = "breaching"
       dimensions          = { DBInstanceIdentifier = var.rds_instance_identifier }
     }
+    proxy_pinned = {
+      namespace           = "AWS/RDS"
+      metric_name         = "DatabaseConnectionsCurrentlySessionPinned"
+      statistic           = "Maximum"
+      extended_statistic  = null
+      period              = 300
+      evaluation_periods  = 2
+      datapoints_to_alarm = 2
+      threshold           = 10
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      treat_missing_data  = "notBreaching"
+      dimensions          = { DBProxyName = var.rds_proxy_name }
+    }
     queue_age = {
       namespace           = "Lumina/Worker"
       metric_name         = "OldestQueuedAgeSeconds"
@@ -229,6 +242,7 @@ resource "aws_cloudwatch_dashboard" "this" {
           metrics = [
             ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", var.rds_instance_identifier],
             [".", "DatabaseConnections", ".", "."],
+            [".", "DatabaseConnectionsCurrentlySessionPinned", "DBProxyName", var.rds_proxy_name],
           ]
         }
       },

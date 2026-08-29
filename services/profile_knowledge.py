@@ -152,17 +152,6 @@ class ProfileKnowledgeService:
         return True
 
     @staticmethod
-    def delete_all(
-        db: Session,
-        user_id: int,
-    ) -> int:
-        result = db.execute(
-            delete(ProfileKnowledge).where(ProfileKnowledge.user_id == user_id)
-        )
-        db.commit()
-        return result.rowcount
-
-    @staticmethod
     def bulk_import(
         db: Session,
         user_id: int,

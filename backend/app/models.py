@@ -1077,10 +1077,6 @@ class Quiz(Base):
 
     title: Mapped[str] = mapped_column(String(200))
 
-    quiz_type: Mapped[str] = mapped_column(
-        String(50), default="standard", server_default="standard"
-    )
-
     model_used: Mapped[str | None] = mapped_column(String(150), nullable=True)
 
     generation_settings: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1267,12 +1263,6 @@ class QuizAttemptAnswer(Base):
 
     topic: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
-    grading_status: Mapped[str] = mapped_column(
-        String(20), default="not_required", server_default="not_required"
-    )
-    
-    grading_model: Mapped[str | None] = mapped_column(String(150), nullable=True)
-
     attempt: Mapped["QuizAttempt"] = relationship(back_populates="answers")
     question: Mapped["QuizQuestion"] = relationship(back_populates="answers")
 
@@ -1385,48 +1375,6 @@ class ProfileKnowledge(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="knowledge_items")
-
-    embedding_record: Mapped["ProfileKnowledgeEmbedding | None"] = relationship(
-        back_populates="knowledge",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        uselist=False,
-    )
-
-
-class ProfileKnowledgeEmbedding(Base):
-    __tablename__ = "profile_knowledge_embeddings"
-    __table_args__ = (
-        UniqueConstraint("knowledge_id", name="uq_profile_knowledge_embeddings_knowledge_id"),
-        CheckConstraint(
-            f"dimensions = {EMBEDDING_DIMENSIONS}",
-            name="dimensions_supported",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-
-    knowledge_id: Mapped[int] = mapped_column(
-        ForeignKey("profile_knowledge.id", ondelete="CASCADE"), index=True
-    )
-
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-
-    embedding: Mapped[list[float]] = mapped_column(EmbeddingVector())
-    embedding_provider: Mapped[str] = mapped_column(String(50))
-    embedding_model: Mapped[str] = mapped_column(String(128))
-    dimensions: Mapped[int] = mapped_column(Integer)
-
-    created_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), server_default=func.now(), onupdate=func.now()
-    )
-
-    knowledge: Mapped["ProfileKnowledge"] = relationship(back_populates="embedding_record")
 
 
 class AiUsageLog(Base):
@@ -1552,72 +1500,3 @@ class RateLimitBucket(Base):
         Integer, default=0, server_default="0"
     )
     locked_until: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-
-
-class FlashcardSet(Base):
-    __tablename__ = "flashcard_sets"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    course_id: Mapped[int] = mapped_column(
-        ForeignKey("courses.id", ondelete="CASCADE"), index=True
-    )
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    title: Mapped[str] = mapped_column(String(200))
-    created_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), server_default=func.now()
-    )
-
-
-class Flashcard(Base):
-    __tablename__ = "flashcards"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    set_id: Mapped[int] = mapped_column(
-        ForeignKey("flashcard_sets.id", ondelete="CASCADE"), index=True
-    )
-    front_text: Mapped[str] = mapped_column(Text)
-    back_text: Mapped[str] = mapped_column(Text)
-    topic: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), server_default=func.now()
-    )
-
-
-class SpacedRepetitionState(Base):
-    __tablename__ = "spaced_repetition_states"
-    __table_args__ = (
-        UniqueConstraint("user_id", "flashcard_id", name="uq_srs_user_flashcard"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    flashcard_id: Mapped[int] = mapped_column(
-        ForeignKey("flashcards.id", ondelete="CASCADE"), index=True
-    )
-    interval_days: Mapped[float] = mapped_column(Float, default=0.0)
-    ease_factor: Mapped[float] = mapped_column(Float, default=2.5)
-    review_count: Mapped[int] = mapped_column(Integer, default=0)
-    next_review_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-    last_reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
-
-
-class ExamPlan(Base):
-    __tablename__ = "exam_plans"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    course_id: Mapped[int] = mapped_column(
-        ForeignKey("courses.id", ondelete="CASCADE"), index=True
-    )
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    target_exam_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    plan_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), server_default=func.now()
-    )

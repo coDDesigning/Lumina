@@ -637,7 +637,7 @@ def test_quiz_grading_template_regression() -> None:
     assert "{{SUBMISSION_COUNT}}" not in rendered
     assert "{{SUBMISSIONS}}" not in rendered
     assert "Why sorted?" in rendered
-    assert "2 open-ended submission(s)" in rendered
+    assert "2 open-ended question(s)" in rendered
 
     template = PromptLoader.load_template("quiz_grading")
     assert template.output_schema_ref == "OpenEndedGradingResponse"

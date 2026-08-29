@@ -117,4 +117,31 @@ describe('AdSlot component & privacy boundaries', () => {
     // Container is collapsed cleanly (removed or rendered null)
     expect(document.getElementById('lumina-ad-slot-footer')).toBeNull();
   });
+
+  it('renders Google AdSense ad slot and ins tag when provider is adsense', async () => {
+    localStorage.setItem(AD_CONSENT_STORAGE_KEY, 'granted');
+    mockGetConfig.mockResolvedValue({
+      enabled: true,
+      provider: 'adsense',
+      publisher_id: 'ca-pub-3125212202463432',
+    });
+    mockRecordTelemetry.mockResolvedValue({ recorded: true });
+
+    render(<AdSlot placement="dashboard" slotId="1234567890" />);
+
+    const slot = await screen.findByText('Ad');
+    expect(slot).toBeInTheDocument();
+
+    const ins = document.querySelector('ins.adsbygoogle');
+    expect(ins).not.toBeNull();
+    expect(ins).toHaveAttribute('data-ad-client', 'ca-pub-3125212202463432');
+    expect(ins).toHaveAttribute('data-ad-slot', '1234567890');
+
+    expect(mockRecordTelemetry).toHaveBeenCalledWith({
+      placement: 'dashboard',
+      provider: 'adsense',
+      status: 'rendered',
+    });
+  });
 });
+

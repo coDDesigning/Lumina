@@ -13,6 +13,7 @@ import type {
   WorkspaceProgressStatus,
 } from '@/data/workspaces';
 import { RecentActivity } from '@/features/activity/RecentActivity';
+import { AdSlot } from '@/features/ads/AdSlot';
 import { cx } from '@/lib/cx';
 import { formatStudyTime } from '@/lib/formatStudyTime';
 import { relativeDay } from '@/lib/relativeDay';
@@ -474,6 +475,8 @@ export default function CoursesPage({
             }
           />
         )}
+
+        <AdSlot placement="dashboard" className={styles.adSlot} />
 
         <RecentActivity
           limit={5}

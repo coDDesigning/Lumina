@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import type { RenderOptions } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +9,11 @@ import { THEME_STORAGE_KEY } from './themeContext';
 
 const logout = vi.fn();
 const authState = { role: 'user' as 'user' | 'admin' };
+const routeError = new Error('Route render failed');
+
+function ThrowingRoute(): never {
+  throw routeError;
+}
 
 vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({
@@ -30,7 +36,7 @@ vi.mock('@/context/AuthContext', () => ({
   }),
 }));
 
-function renderShell(initialPath = '/dashboard') {
+function renderShell(initialPath = '/dashboard', options?: RenderOptions) {
   return render(
     <ThemeProvider>
       <MemoryRouter initialEntries={[initialPath]}>
@@ -38,11 +44,13 @@ function renderShell(initialPath = '/dashboard') {
           <Route element={<AppShell />}>
             <Route path="/dashboard" element={<h1>Courses</h1>} />
             <Route path="/account" element={<h1>Account</h1>} />
+            <Route path="/broken" element={<ThrowingRoute />} />
           </Route>
           <Route path="/login" element={<h1>Sign in</h1>} />
         </Routes>
       </MemoryRouter>
     </ThemeProvider>,
+    options,
   );
 }
 
@@ -61,6 +69,37 @@ describe('AppShell', () => {
   it('renders the routed page inside a main landmark', () => {
     renderShell();
     expect(within(screen.getByRole('main')).getByRole('heading', { name: 'Courses' })).toBeInTheDocument();
+  });
+
+  it('contains route render failures and resets the boundary on navigation', async () => {
+    const user = userEvent.setup();
+    const onCaughtError = vi.fn();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    renderShell('/broken', { onCaughtError });
+
+    const main = screen.getByRole('main');
+    expect(within(main).getByRole('heading', { name: 'Something in the page broke.' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+
+    expect(onCaughtError).toHaveBeenCalledOnce();
+    expect(onCaughtError).toHaveBeenCalledWith(
+      routeError,
+      expect.objectContaining({ componentStack: expect.any(String) }),
+    );
+    expect(consoleError).toHaveBeenCalledOnce();
+    expect(consoleError).toHaveBeenCalledWith(
+      'Unhandled interface error',
+      routeError,
+      expect.stringContaining('ThrowingRoute'),
+    );
+
+    const nav = within(screen.getByRole('navigation', { name: 'Main' }));
+    await user.click(nav.getByRole('link', { name: 'Courses' }));
+
+    expect(await within(main).findByRole('heading', { name: 'Courses' })).toBeInTheDocument();
+    expect(within(main).queryByRole('heading', { name: 'Something in the page broke.' })).not.toBeInTheDocument();
+    consoleError.mockRestore();
   });
 
   it('exposes navigation as a labelled landmark with accessible names', () => {

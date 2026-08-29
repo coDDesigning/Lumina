@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '@/api/client';
 import { examModeAPI } from '@/api/examMode';
+import type { ExamAnalysisResult } from '@/api/types';
 import type { Workspace } from '@/data/workspaces';
 import { queryCache } from '@/lib/query/cache';
 import ExamModePage from './ExamModePage';
@@ -122,6 +123,16 @@ const ANALYSIS = {
   confidence_notes: '',
 };
 
+const ANALYSIS_RESULT = {
+  analysis: ANALYSIS,
+  context_truncated: false,
+  chunks_used: 8,
+  chunks_available: 24,
+  retrieval_narrowed: true,
+  lowest_similarity: 0.42,
+  highest_similarity: 0.91,
+} satisfies ExamAnalysisResult;
+
 async function tickFirstSource(user: ReturnType<typeof userEvent.setup>) {
   const boxes = screen.getAllByRole('checkbox');
   await user.click(boxes[0]);
@@ -218,7 +229,7 @@ describe('ExamModePage', () => {
   });
 
   it('runs an analysis and keeps the returned topic selection', async () => {
-    analyse.mockResolvedValue({ analysis: ANALYSIS } as never);
+    analyse.mockResolvedValue(ANALYSIS_RESULT);
     const user = userEvent.setup();
 
     renderPage();

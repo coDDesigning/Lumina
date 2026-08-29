@@ -53,9 +53,8 @@ something new fails loudly instead of hanging.
   `include: ['src/**/*.test.{ts,tsx}']`. Browser specs are `e2e/*.spec.ts`, so the two runners
   never collect each other's files.
 - `frontend/src/setupTests.ts` loads `@testing-library/jest-dom/vitest`, runs `cleanup()` and
-  `resetQueryCache()` after each test, polyfills `matchMedia` and `scrollTo`, and **promotes React
-  warnings to failures** — duplicate keys, invalid DOM nesting, missing `act`, bad ARIA. A green
-  run therefore means the render was clean.
+  `resetQueryCache()` after each test, polyfills `matchMedia` and `scrollTo`, and promotes every
+  unconsumed `console.error` to a failure. A green run therefore means the render was clean.
 - The query cache is a module singleton reset once in `setupTests.ts`. No test needs a provider.
 - `Dialog` renders through `createPortal` to `document.body`, so scope queries to `screen`, never
   to the container `render()` returns.
@@ -93,6 +92,11 @@ mockGenerate.mockRejectedValue(new APIError(503, { detail: 'down' }, 'provider_u
 A dropped connection is a `TypeError`, which the client reports as "You are offline". See
 `src/features/study/quiz/QuizModal.failures.test.tsx` for one case per mapped code.
 
+Tests for an expected error must locally intercept `console.error`, assert the complete expected
+call, and restore the spy. Error-boundary fixtures should also pass React 19's `onCaughtError` to
+`render` and assert it; this suppresses React's default report while the boundary's explicit
+`Unhandled interface error` log remains part of the fixture contract.
+
 ### Testing timers
 
 ```ts
@@ -121,7 +125,7 @@ anything. They are cheap and they have all caught something real.
 
 | Guard | What it refuses |
 |---|---|
-| `setupTests.ts` | A React warning during any test |
+| `setupTests.ts` | Any unconsumed `console.error` during a test |
 | `styles/tokenUsage.test.ts` | A `var(--x)` that nothing defines |
 | `styles/rawValues.test.ts` | A colour literal outside `tokens.css`, and a theme branch in a component |
 | `styles/contrast.test.ts` | A token pair below its WCAG ratio |

@@ -4,6 +4,8 @@ import type {
   DocumentResponse,
   DocumentStatusResponse,
   DocumentUploadResponse,
+  QuizGenerationResult,
+  QuizView,
   User,
 } from '../../api/types';
 
@@ -36,6 +38,43 @@ export function createMockCourse(overrides: Partial<Course> = {}): Course {
     exam_date: '2026-12-15',
     syllabus: 'Topics include processes, threads, virtual memory, and caching.',
     topics: ['Architecture', 'Process Scheduling', 'Memory Hierarchy'],
+    ...overrides,
+  };
+}
+
+export function createMockQuiz(overrides: Partial<QuizView> = {}): QuizView {
+  return {
+    quiz_id: 7,
+    course_id: 1,
+    title: 'Practice quiz',
+    created_at: '2026-08-19T10:00:00Z',
+    user_id: 1,
+    model_used: 'gemini:gemini-1.5-flash',
+    generation_settings: null,
+    generation_context: null,
+    quiz_purpose: 'practice',
+    exam_plan_output_id: null,
+    exam_topic_key: null,
+    timed: false,
+    time_limit_seconds: null,
+    answers_hidden: false,
+    questions: [],
+    ...overrides,
+  };
+}
+
+export function createMockQuizGenerationResult(
+  overrides: Partial<QuizGenerationResult> = {},
+): QuizGenerationResult {
+  return {
+    quiz: createMockQuiz(),
+    generated_output_id: 1,
+    context_truncated: false,
+    chunks_used: 1,
+    chunks_available: 1,
+    retrieval_narrowed: false,
+    lowest_similarity: null,
+    highest_similarity: null,
     ...overrides,
   };
 }

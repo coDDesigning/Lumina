@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryKeys } from '@/api/queryKeys';
 import { queryCache } from '@/lib/query/cache';
+import { createMockUser } from '@/test/mocks/api';
 import { AuthProvider, useAuth } from './AuthContext';
 
 vi.mock('@/api/auth', () => ({
@@ -53,7 +54,7 @@ describe('cached data and identity', () => {
 
   it('drops every cached course read when the user signs out', async () => {
     localStorage.setItem('token', 'first-token');
-    mockMe.mockResolvedValue({ id: 1, email: 'first@example.com' } as never);
+    mockMe.mockResolvedValue(createMockUser({ email: 'first@example.com' }));
     render(
       <AuthProvider>
         <Controls />
@@ -75,7 +76,7 @@ describe('cached data and identity', () => {
 
   it('drops cached reads when the API reports the session is gone', async () => {
     localStorage.setItem('token', 'first-token');
-    mockMe.mockResolvedValue({ id: 1, email: 'first@example.com' } as never);
+    mockMe.mockResolvedValue(createMockUser({ email: 'first@example.com' }));
     render(
       <AuthProvider>
         <Controls />

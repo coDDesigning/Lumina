@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Citation } from '@/api/types';
+import type { Citation, MaybeCited } from '@/api/types';
 import { citationLabel, citationsByKey, citedCitations, citedText } from './citations';
 import { isRenderableStudyGuide } from './storedOutput';
 
@@ -36,7 +36,11 @@ describe('citedCitations', () => {
   });
 
   it('reports no citations when the field is missing', () => {
-    expect(citedCitations({ text: 'Trees are acyclic' } as never)).toEqual([]);
+    // Intentionally bypass the type to cover malformed stored citation data.
+    const malformed = { text: 'Trees are acyclic' } as unknown as MaybeCited;
+
+    expect(citedText(malformed)).toBe('Trees are acyclic');
+    expect(citedCitations(malformed)).toEqual([]);
   });
 });
 

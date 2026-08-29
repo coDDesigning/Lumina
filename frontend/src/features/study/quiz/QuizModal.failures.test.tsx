@@ -6,6 +6,7 @@ import { quizAPI } from '@/api/quiz';
 import { userAPI } from '@/api/user';
 import type { CreditStatus, QuizAttemptResponse, QuizQuestionView } from '@/api/types';
 import { CreditProvider } from '@/context/CreditContext';
+import { createMockQuiz, createMockQuizGenerationResult } from '@/test/mocks/api';
 import { QuizModal } from './QuizModal';
 
 vi.mock('@/api/quiz', () => ({
@@ -52,7 +53,9 @@ const MULTIPLE_CHOICE: QuizQuestionView = {
   explanation: 'Merge sort preserves the order of equal keys.',
 };
 
-const QUIZ = { quiz: { quiz_id: 7, course_id: 1, questions: [MULTIPLE_CHOICE] } };
+const QUIZ = createMockQuizGenerationResult({
+  quiz: createMockQuiz({ questions: [MULTIPLE_CHOICE] }),
+});
 
 const ATTEMPT: QuizAttemptResponse = {
   attempt_id: 1,
@@ -100,7 +103,7 @@ async function solveThenSubmit() {
 
 beforeEach(() => {
   mockGetCredits.mockResolvedValue(UNMETERED);
-  mockGenerate.mockResolvedValue(QUIZ as never);
+  mockGenerate.mockResolvedValue(QUIZ);
   mockSubmit.mockResolvedValue(ATTEMPT);
 });
 

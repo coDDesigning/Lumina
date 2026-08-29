@@ -73,23 +73,50 @@ Send = Callable[[Message], Awaitable[None]]
 def build_csp_header(settings: Settings | None = None) -> str:
     """Build the Content-Security-Policy header value based on deployment and ad settings."""
     if settings and settings.enable_hosted_ads and settings.is_hosted:
-        script_sources = " ".join(["'self'", "https://media.ethicalads.io"])
-        connect_sources = " ".join(["'self'", "https://server.ethicalads.io"])
+        script_sources = " ".join(
+            [
+                "'self'",
+                "https://media.ethicalads.io",
+                "https://server.ethicalads.io",
+                "https://pagead2.googlesyndication.com",
+                "https://adservice.google.com",
+                "https://www.googletagservices.com",
+                "https://tpc.googlesyndication.com",
+            ]
+        )
+        connect_sources = " ".join(
+            [
+                "'self'",
+                "https://server.ethicalads.io",
+                "https://pagead2.googlesyndication.com",
+                "https://googleads.g.doubleclick.net",
+            ]
+        )
         img_sources = " ".join(
             [
                 "'self'",
                 "data:",
+                "blob:",
                 "https://media.ethicalads.io",
                 "https://server.ethicalads.io",
+                "https://pagead2.googlesyndication.com",
+                "https://tpc.googlesyndication.com",
+            ]
+        )
+        frame_sources = " ".join(
+            [
+                "'self'",
+                "https://googleads.g.doubleclick.net",
+                "https://tpc.googlesyndication.com",
             ]
         )
         return (
             f"default-src 'self'; "
-            f"script-src {script_sources}; "
+            f"script-src {script_sources} 'unsafe-inline'; "
             f"style-src 'self' 'unsafe-inline'; "
             f"img-src {img_sources}; "
             f"connect-src {connect_sources}; "
-            f"frame-src 'none'; "
+            f"frame-src {frame_sources}; "
             f"object-src 'none';"
         )
     return (

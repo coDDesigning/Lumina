@@ -2,6 +2,7 @@
 
 import logging
 from fastapi import APIRouter, status
+from fastapi.responses import PlainTextResponse
 
 from backend.app.config import settings
 from backend.app.observability import emit_emf_metrics
@@ -10,6 +11,23 @@ from schemas.response import BaseResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ads", tags=["Advertising"])
+
+
+@router.get("/ads.txt", response_class=PlainTextResponse)
+def get_ads_txt() -> PlainTextResponse:
+    """Return ads.txt verification file."""
+    publisher_id = (
+        settings.hosted_ads_publisher_id
+        if settings.hosted_ads_publisher_id
+        else "ca-pub-3125212202463432"
+    )
+    raw_pub = (
+        publisher_id.replace("ca-", "")
+        if publisher_id.startswith("ca-")
+        else publisher_id
+    )
+    content = f"google.com, {raw_pub}, DIRECT, f08c47fec0942fa0\n"
+    return PlainTextResponse(content=content, media_type="text/plain")
 
 
 @router.get("/config", response_model=BaseResponse[AdConfigResponse])
@@ -75,7 +93,7 @@ def record_ad_telemetry(
 
     emit_emf_metrics(
         {"AdImpressions": 1},
-        {"Placement": payload.placement, "Status": payload.status},
+        dimensions={"Placement": payload.placement, "Status": payload.status},
     )
 
     return BaseResponse(

@@ -3,8 +3,10 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { activityAPI } from '@/api/activity';
+import { adsAPI } from '@/api/ads';
 import { APIError } from '@/api/client';
 import type { Workspace } from '@/data/workspaces';
+import { AD_CONSENT_STORAGE_KEY } from '@/features/ads/useAdConsent';
 import CoursesPage from './CoursesPage';
 
 vi.mock('@/api/activity', () => ({
@@ -664,5 +666,29 @@ describe('CoursesPage archive filtering', () => {
 
     expect(screen.queryByText('Active Biology')).not.toBeInTheDocument();
     expect(screen.getByText('Archived Chemistry')).toBeInTheDocument();
+  });
+
+  it('renders ad slot on dashboard when ads are enabled and consent is granted', async () => {
+    localStorage.setItem(AD_CONSENT_STORAGE_KEY, 'granted');
+    vi.spyOn(adsAPI, 'getConfig').mockResolvedValue({
+      enabled: true,
+      provider: 'ethicalads',
+      publisher_id: 'lumina-test',
+    });
+
+    render(
+      <MemoryRouter>
+        <CoursesPage
+          workspaces={mockWorkspaces}
+          onCreate={vi.fn()}
+          onSelect={vi.fn()}
+          onDelete={vi.fn().mockResolvedValue(undefined)}
+        />
+      </MemoryRouter>,
+    );
+
+    const slot = await screen.findByText('Ad');
+    expect(slot).toBeInTheDocument();
+    expect(document.getElementById('lumina-ad-slot-dashboard')).toBeInTheDocument();
   });
 });

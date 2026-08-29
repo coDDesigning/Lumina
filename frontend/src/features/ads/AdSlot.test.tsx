@@ -144,4 +144,3 @@ describe('AdSlot component & privacy boundaries', () => {
     });
   });
 });
-

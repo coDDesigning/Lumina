@@ -1,7 +1,10 @@
 """Tests for optional hosted advertising configuration, security headers, and privacy telemetry."""
 
+from dataclasses import replace
+
 import pytest
 from fastapi.testclient import TestClient
+import routes.ads
 
 from backend.app.config import (
     MODE_HOSTED,
@@ -129,10 +132,6 @@ def test_telemetry_rejects_extra_study_content_payloads():
     assert res_leaked.status_code == 422
 
 
-from dataclasses import replace
-import routes.ads
-
-
 def test_telemetry_records_successfully_when_enabled(monkeypatch):
     """When hosted ads are enabled, telemetry records and emits metrics without 500."""
     fake_settings = replace(
@@ -162,5 +161,3 @@ def test_ads_txt_endpoints():
     api_res = client.get("/api/ads/ads.txt")
     assert api_res.status_code == 200
     assert api_res.text == res.text
-
-

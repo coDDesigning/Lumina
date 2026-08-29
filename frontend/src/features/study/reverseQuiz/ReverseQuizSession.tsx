@@ -3,7 +3,7 @@ import { generateReverseQuiz } from '@/api/reverseQuiz';
 import type { ReverseQuizResponse } from '@/api/types';
 import { Button } from '@/ui/Button';
 import { ErrorState } from '@/ui/ErrorState';
-
+import { Provenance } from '@/features/study/Provenance';
 import styles from './ReverseQuizSession.module.css';
 import { describeError } from '@/api/errors';
 

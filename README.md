@@ -349,4 +349,5 @@ contract, and production configuration.
 | AI usage telemetry | [`docs/ai_usage_telemetry.md`](docs/ai_usage_telemetry.md) |
 | Dependencies | [`docs/dependencies.md`](docs/dependencies.md) |
 | Operational runbooks | [`docs/runbooks/`](docs/runbooks/) |
+| Branch protection and status checks | [`docs/branch_protection.md`](docs/branch_protection.md) |
 | PR-Agent | [`docs/pr-agent.md`](docs/pr-agent.md) |

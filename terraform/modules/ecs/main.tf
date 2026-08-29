@@ -31,7 +31,7 @@ locals {
     { name = "S3_REGION", value = var.region },
     { name = "VECTOR_BACKEND", value = "pgvector" },
     { name = "EMBEDDING_PROVIDER", value = "gemini" },
-    { name = "GEMINI_EMBEDDING_MODEL", value = "text-embedding-004" },
+    { name = "GEMINI_EMBEDDING_MODEL", value = "gemini-embedding-001" },
     { name = "AI_PROVIDER", value = "gemini" },
     { name = "AI_MODEL_COST_RATES", value = var.ai_model_cost_rates },
     { name = "EMBEDDING_BATCH_SIZE", value = "32" },

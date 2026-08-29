@@ -2,9 +2,9 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { APIError } from '@/api/client';
+import { APIError, MalformedResponseError } from '@/api/client';
 import { examModeAPI } from '@/api/examMode';
-import type { ExamPlanView } from '@/api/types';
+import type { ExamPlanView, ExamTopicGuideDocument, ExamTopicGuideResult } from '@/api/types';
 import type { Workspace } from '@/data/workspaces';
 import { queryCache } from '@/lib/query/cache';
 import ExamModeTopicPage from './ExamModeTopicPage';
@@ -101,6 +101,57 @@ function planFixture(overrides: Partial<ExamPlanView> = {}): ExamPlanView {
   } as ExamPlanView;
 }
 
+function topicGuideFixture(
+  overrides: Partial<ExamTopicGuideDocument> = {},
+): ExamTopicGuideDocument {
+  return {
+    version: 1,
+    output_type: 'exam_topic_guide',
+    topic_key: 'photosynthesis',
+    display_label: 'Photosynthesis',
+    plan_output_id: 7,
+    rank: 1,
+    priority_band: 'high',
+    title: 'Photosynthesis study guide',
+    overview: 'Photosynthesis converts light energy into chemical energy.',
+    sections: [
+      {
+        heading: 'Light-dependent reactions',
+        body: 'These reactions occur in the thylakoid membrane.',
+        key_points: ['Light excites electrons in chlorophyll.'],
+      },
+    ],
+    key_terms: [
+      {
+        term: 'Chlorophyll',
+        definition: 'The pigment that absorbs light energy.',
+        citations: [],
+      },
+    ],
+    common_pitfalls: [],
+    what_to_be_able_to_do: ['Explain how light energy drives ATP production.'],
+    coverage: { status: 'Complete', estimated_completeness: 100 },
+    confidence_notes: '',
+    ...overrides,
+  };
+}
+
+function topicGuideResultFixture(): ExamTopicGuideResult {
+  return {
+    guide: topicGuideFixture(),
+    generated_output_id: 31,
+    created_at: '2026-08-21T09:00:00Z',
+    model_used: 'ollama:llama3.1',
+    credits_charged: 0,
+    context_truncated: false,
+    chunks_used: 2,
+    chunks_available: 2,
+    retrieval_narrowed: false,
+    lowest_similarity: 0.7,
+    highest_similarity: 0.9,
+  };
+}
+
 const workspace = {
   id: '1',
   name: 'Biology',
@@ -181,7 +232,7 @@ describe('ExamModeTopicPage', () => {
   });
 
   it('generates the guide when asked', async () => {
-    generateTopicGuide.mockResolvedValue({} as never);
+    generateTopicGuide.mockResolvedValue(topicGuideResultFixture());
     const user = userEvent.setup();
 
     renderPage();
@@ -210,19 +261,26 @@ describe('ExamModeTopicPage', () => {
   });
 
   it('shows the guide once one exists', async () => {
-    getTopicGuide.mockResolvedValue({
-      generated_output_id: 31,
-      topic_key: 'photosynthesis',
-      content: '## Photosynthesis\n\nLight-dependent reactions occur in the thylakoid.',
-      citations: [],
-      created_at: '2026-08-21T09:00:00Z',
-      model_used: 'ollama:llama3.1',
-    } as never);
+    getTopicGuide.mockResolvedValue(topicGuideFixture());
 
     renderPage();
 
-    await waitFor(() =>
-      expect(screen.queryByText(/no guide for this topic yet/i)).not.toBeInTheDocument(),
+    expect(await screen.findByRole('heading', { name: 'Light-dependent reactions' })).toBeInTheDocument();
+    expect(screen.getByText('Chlorophyll')).toBeInTheDocument();
+  });
+
+  it('offers to regenerate a saved guide whose document is invalid', async () => {
+    getTopicGuide.mockRejectedValue(
+      new MalformedResponseError('Exam topic guide', 'invalid_data'),
     );
+    generateTopicGuide.mockResolvedValue(topicGuideResultFixture());
+    const user = userEvent.setup();
+
+    renderPage();
+
+    expect(await screen.findByText(/this guide could not be displayed/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /regenerate guide/i }));
+
+    await waitFor(() => expect(generateTopicGuide).toHaveBeenCalledTimes(1));
   });
 });

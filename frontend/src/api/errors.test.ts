@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { APIError } from './client';
+import { APIError, MalformedResponseError } from './client';
 import {
   describeDocumentError,
   describeError,
   describeGenerationError,
   describeUploadError,
+  INVALID_RESPONSE_DATA_CODE,
   isAbortError,
   isInsufficientCredits,
 } from './errors';
@@ -96,6 +97,20 @@ describe('error description helpers', () => {
         'Network error. Check your connection and try again.',
       );
       expect(described.retryable).toBe(true);
+    });
+
+    it('preserves an invalid response as a typed client failure', () => {
+      const described = describeError(
+        new MalformedResponseError('Exam topic guide', 'invalid_data'),
+        'Fallback',
+      );
+
+      expect(described).toEqual({
+        message: 'Exam topic guide returned invalid data.',
+        status: null,
+        code: INVALID_RESPONSE_DATA_CODE,
+        retryable: false,
+      });
     });
 
     it('falls back for unknown errors', () => {

@@ -1,10 +1,41 @@
 import type { ExamTopicGuideDocument, MaybeCited } from '@/api/types';
+import { isExamTopicGuideDocument } from '@/api/examTopicGuideDocument';
 import { citedCitations, citedText } from '@/features/study/citations';
+import { Button } from '@/ui/Button';
 import { CitationList } from '@/ui/CitationChip';
+import { ErrorState } from '@/ui/ErrorState';
 import styles from './ExamTopicGuide.module.css';
 
 export interface ExamTopicGuideProps {
   guide: ExamTopicGuideDocument;
+  onRegenerate?: () => void;
+  onRetry?: () => void;
+}
+
+interface ExamTopicGuideUnavailableProps {
+  onRegenerate?: () => void;
+  onRetry?: () => void;
+}
+
+export function ExamTopicGuideUnavailable({
+  onRegenerate,
+  onRetry,
+}: ExamTopicGuideUnavailableProps) {
+  return (
+    <ErrorState
+      title="This guide could not be displayed"
+      onRetry={onRetry}
+      actions={
+        onRegenerate ? (
+          <Button variant="secondary" size="sm" onClick={onRegenerate}>
+            Regenerate guide
+          </Button>
+        ) : undefined
+      }
+    >
+      The saved guide is incomplete or uses a format this version of Lumina cannot read.
+    </ErrorState>
+  );
 }
 
 function Cited({ item }: { item: MaybeCited }) {
@@ -23,7 +54,11 @@ function Cited({ item }: { item: MaybeCited }) {
  * same sources with no provider call — and a citation survives the deletion of
  * the document it names, which is why it is a label rather than a link.
  */
-export function ExamTopicGuide({ guide }: ExamTopicGuideProps) {
+export function ExamTopicGuide({ guide, onRegenerate, onRetry }: ExamTopicGuideProps) {
+  if (!isExamTopicGuideDocument(guide)) {
+    return <ExamTopicGuideUnavailable onRegenerate={onRegenerate} onRetry={onRetry} />;
+  }
+
   return (
     <article className={styles.guide}>
       <h3 className={styles.title}>{guide.title}</h3>

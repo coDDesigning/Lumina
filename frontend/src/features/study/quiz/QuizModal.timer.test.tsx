@@ -5,6 +5,7 @@ import { quizAPI } from '@/api/quiz';
 import { userAPI } from '@/api/user';
 import type { CreditStatus, QuizQuestionView } from '@/api/types';
 import { CreditProvider } from '@/context/CreditContext';
+import { createMockQuiz, createMockQuizGenerationResult } from '@/test/mocks/api';
 import { QuizModal } from './QuizModal';
 
 vi.mock('@/api/quiz', () => ({
@@ -47,11 +48,13 @@ const MULTIPLE_CHOICE: QuizQuestionView = {
   explanation: 'Merge sort preserves the order of equal keys.',
 };
 
-const QUIZ = { quiz: { quiz_id: 7, course_id: 1, questions: [MULTIPLE_CHOICE] } };
+const QUIZ = createMockQuizGenerationResult({
+  quiz: createMockQuiz({ questions: [MULTIPLE_CHOICE] }),
+});
 
 beforeEach(() => {
   vi.mocked(userAPI.getCredits).mockResolvedValue(STATUS);
-  vi.mocked(quizAPI.generate).mockResolvedValue(QUIZ as never);
+  vi.mocked(quizAPI.generate).mockResolvedValue(QUIZ);
 });
 
 /**

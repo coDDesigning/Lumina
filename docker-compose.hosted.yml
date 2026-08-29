@@ -97,6 +97,10 @@ x-lumina-environment: &lumina-environment
   RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS: ${RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS:-3600}
   # Proxy trust for client IP resolution (hosted ALB is the only trusted proxy)
   FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-10.0.0.0/8}
+  # Hosted advertising configuration
+  ENABLE_HOSTED_ADS: ${ENABLE_HOSTED_ADS:-false}
+  HOSTED_ADS_PROVIDER: ${HOSTED_ADS_PROVIDER:-adsense}
+  HOSTED_ADS_PUBLISHER_ID: ${HOSTED_ADS_PUBLISHER_ID:-ca-pub-3125212202463432}
 
 x-lumina-service: &lumina-service
   image: ${LUMINA_IMAGE:-lumina:local}

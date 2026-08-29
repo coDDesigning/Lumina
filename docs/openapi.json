@@ -9292,6 +9292,24 @@
         "summary": "Read Root"
       }
     },
+    "/ads.txt": {
+      "get": {
+        "operationId": "ads_txt_ads_txt_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ads Txt"
+      }
+    },
     "/api/activity": {
       "get": {
         "operationId": "list_recent_activity_api_activity_get",
@@ -9741,6 +9759,28 @@
         "summary": "Change User Role",
         "tags": [
           "Admin"
+        ]
+      }
+    },
+    "/api/ads/ads.txt": {
+      "get": {
+        "description": "Return ads.txt verification file.",
+        "operationId": "get_ads_txt_api_ads_ads_txt_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ads Txt",
+        "tags": [
+          "Advertising"
         ]
       }
     },

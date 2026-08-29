@@ -529,6 +529,15 @@ def test_admin_can_manage_email_with_encoded_path_separator(api_context) -> None
     assert "foo/bar@example.com" in emails
 
 
+def test_user_listing_requires_an_administrator(authz_api) -> None:
+    response = authz_api.client.get(
+        "/api/admin/users",
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 403
+
+
 def test_losing_initial_admin_race_retries_as_normal_user(
     session_factory,
     monkeypatch: pytest.MonkeyPatch,

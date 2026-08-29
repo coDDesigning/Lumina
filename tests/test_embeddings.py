@@ -29,7 +29,7 @@ OLLAMA_SETTINGS = SimpleNamespace(
     gemini_api_key=None,
     ollama_base_url="http://ollama.test:11434",
     ollama_embedding_model="nomic-embed-text",
-    gemini_embedding_model="text-embedding-004",
+    gemini_embedding_model="gemini-embedding-001",
     embedding_batch_size=2,
     embedding_timeout_seconds=42,
 )
@@ -39,7 +39,7 @@ GEMINI_SETTINGS = SimpleNamespace(
     gemini_api_key="test-key",
     ollama_base_url="http://ollama.test:11434",
     ollama_embedding_model="nomic-embed-text",
-    gemini_embedding_model="text-embedding-004",
+    gemini_embedding_model="gemini-embedding-001",
     embedding_batch_size=2,
     embedding_timeout_seconds=42,
 )
@@ -293,8 +293,8 @@ def test_gemini_uses_the_configured_model_and_preserves_order(monkeypatch) -> No
     result = provider.embed_documents(["a", "b", "c"])
 
     assert [model for model, _ in recorder] == [
-        "text-embedding-004",
-        "text-embedding-004",
+        "gemini-embedding-001",
+        "gemini-embedding-001",
     ]
     assert [texts for _, texts in recorder] == [["a", "b"], ["c"]]
     assert result == [_vector(1.0), _vector(2.0), _vector(3.0)]
@@ -415,4 +415,4 @@ def test_configured_identity_reports_provider_and_model(monkeypatch) -> None:
     assert configured_embedding_identity() == ("ollama", "nomic-embed-text")
 
     monkeypatch.setattr(embeddings, "settings", GEMINI_SETTINGS)
-    assert configured_embedding_identity() == ("gemini", "text-embedding-004")
+    assert configured_embedding_identity() == ("gemini", "gemini-embedding-001")

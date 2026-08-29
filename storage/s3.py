@@ -56,22 +56,42 @@ class S3Storage(Storage):
 
         self._bucket = bucket
         self._namespace = namespace
+        self._endpoint_url = endpoint_url
+        self._region = region
+        self._access_key_id = access_key_id
+        self._secret_access_key = secret_access_key
+        self._force_path_style = force_path_style
+        self._injected_client = client is not None
         if client is not None:
             self._client = client
         else:
-            import boto3
-
-            self._client = boto3.client(
-                "s3",
-                endpoint_url=endpoint_url,
-                region_name=region,
-                aws_access_key_id=access_key_id,
-                aws_secret_access_key=secret_access_key,
-                config=Config(
-                    s3={"addressing_style": ("path" if force_path_style else "auto")}
-                ),
-            )
+            self._client = self._create_boto_client()
         self.provider = f"s3:{namespace}"
+
+    def _create_boto_client(self) -> Any:
+        import boto3
+
+        return boto3.client(
+            "s3",
+            endpoint_url=self._endpoint_url,
+            region_name=self._region,
+            aws_access_key_id=self._access_key_id,
+            aws_secret_access_key=self._secret_access_key,
+            config=Config(
+                s3={"addressing_style": ("path" if self._force_path_style else "auto")}
+            ),
+        )
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = self.__dict__.copy()
+        if not self._injected_client:
+            state["_client"] = None
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        if self._client is None:
+            self._client = self._create_boto_client()
 
     def check_ready(self) -> None:
         """Verify that the bucket supports durable writes."""

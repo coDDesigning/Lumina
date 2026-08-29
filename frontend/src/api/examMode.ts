@@ -1,4 +1,5 @@
 import { apiClient, unwrapData } from './client';
+import { parseExamTopicGuideDocument } from './examTopicGuideDocument';
 import type {
   BaseResponse,
   ExamAnalysisRequest,
@@ -187,11 +188,11 @@ export const examModeAPI = {
     topicKey: string,
     options?: RequestInit,
   ): Promise<ExamTopicGuideDocument> => {
-    const res = await apiClient.get<BaseResponse<ExamTopicGuideDocument>>(
+    const res = await apiClient.get<BaseResponse<unknown>>(
       topicPath(courseId, topicKey, 'guide'),
       options,
     );
-    return unwrapData(res, 'Exam topic guide');
+    return parseExamTopicGuideDocument(unwrapData(res, 'Exam topic guide'));
   },
 
   generateTopicSummary: async (

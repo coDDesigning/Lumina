@@ -15,6 +15,7 @@ import { profileDocumentsAPI } from '@/api/profileDocuments'
 import { profileKnowledgeAPI } from '@/api/profileKnowledge'
 import { userAPI } from '@/api/user'
 import { adsAPI } from '@/api/ads'
+import { createMockUser } from '@/test/mocks/api'
 
 const creditState: { status: CreditStatus | null } = { status: null }
 
@@ -498,7 +499,9 @@ describe('when the account cannot be saved', () => {
 
   it('says the level was saved only once the request came back', async () => {
     const person = userEvent.setup()
-    mockUpdateEducationLevel.mockResolvedValue(undefined as never)
+    mockUpdateEducationLevel.mockResolvedValue(
+      createMockUser({ education_level: 'graduate' }),
+    )
     renderAccountPage()
 
     await person.selectOptions(

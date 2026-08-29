@@ -81,6 +81,13 @@ describe('unwrapData', () => {
       unwrapData({ success: true, message: 'ok' }, 'Course'),
     ).toThrow(MalformedResponseError);
   });
+
+  it('distinguishes invalid data from a missing payload', () => {
+    const error = new MalformedResponseError('Stored guide', 'invalid_data');
+
+    expect(error.reason).toBe('invalid_data');
+    expect(error.message).toBe('Stored guide returned invalid data.');
+  });
 });
 
 describe('API base URL', () => {

@@ -1,9 +1,10 @@
 import { History, LayoutGrid, LogOut, Moon, Shield, Sun, UserRound } from 'lucide-react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { cx } from '@/lib/cx';
 import { Brandmark } from '@/ui/Brandmark';
 import { AdConsentBanner } from '@/features/ads/AdConsentBanner';
+import { ErrorBoundary } from './ErrorBoundary';
 import { useTheme } from './themeContext';
 import styles from './AppShell.module.css';
 
@@ -17,6 +18,7 @@ interface RailLink {
 export function AppShell() {
   const { user, logout } = useAuth();
   const { resolved, setPreference } = useTheme();
+  const { pathname } = useLocation();
   const navigate = useNavigate();
 
   const links: RailLink[] = [
@@ -83,11 +85,12 @@ export function AppShell() {
       </nav>
 
       <main id="main" className={styles.main} tabIndex={-1}>
-        <Outlet />
+        <ErrorBoundary key={pathname}>
+          <Outlet />
+        </ErrorBoundary>
       </main>
 
       <AdConsentBanner />
     </div>
   );
 }
-

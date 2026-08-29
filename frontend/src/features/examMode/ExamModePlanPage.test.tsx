@@ -244,7 +244,7 @@ describe('ExamModePlanPage', () => {
 
   it('regenerates the plan when asked', async () => {
     const createPlan = vi.mocked(examModeAPI.createPlan);
-    createPlan.mockResolvedValue({ generated_output_id: 9 } as never);
+    createPlan.mockResolvedValue(planFixture({ generated_output_id: 9 }));
     const user = userEvent.setup();
 
     renderPage();

@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
@@ -154,6 +155,11 @@ async def observe_request(request: Request, call_next):
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "Lumina API Core is running!"}
+
+
+@app.get("/ads.txt", response_class=PlainTextResponse)
+def ads_txt() -> PlainTextResponse:
+    return ads.get_ads_txt()
 
 
 @app.get("/health/live")

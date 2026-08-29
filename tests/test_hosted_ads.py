@@ -127,3 +127,40 @@ def test_telemetry_rejects_extra_study_content_payloads():
     }
     res_leaked = client.post("/api/ads/telemetry/impression", json=leaked_payload)
     assert res_leaked.status_code == 422
+
+
+from dataclasses import replace
+import routes.ads
+
+
+def test_telemetry_records_successfully_when_enabled(monkeypatch):
+    """When hosted ads are enabled, telemetry records and emits metrics without 500."""
+    fake_settings = replace(
+        routes.ads.settings,
+        deployment_mode=MODE_HOSTED,
+        enable_hosted_ads=True,
+    )
+    monkeypatch.setattr("routes.ads.settings", fake_settings)
+    client = TestClient(app)
+
+    res = client.post(
+        "/api/ads/telemetry/impression",
+        json={"placement": "dashboard", "provider": "ethicalads", "status": "rendered"},
+    )
+    assert res.status_code == 200
+    assert res.json()["data"]["recorded"] is True
+
+
+def test_ads_txt_endpoints():
+    """Both /ads.txt and /api/ads/ads.txt serve plain text verification."""
+    client = TestClient(app)
+    res = client.get("/ads.txt")
+    assert res.status_code == 200
+    assert "google.com" in res.text
+    assert "f08c47fec0942fa0" in res.text
+
+    api_res = client.get("/api/ads/ads.txt")
+    assert api_res.status_code == 200
+    assert api_res.text == res.text
+
+

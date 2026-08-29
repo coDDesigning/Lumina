@@ -9,7 +9,12 @@ import { generatedOutputsAPI } from './api/generatedOutputs';
 import { progressAPI } from './api/progress';
 import { quizAPI } from './api/quiz';
 import { studyGuideAPI } from './api/studyGuide';
-import { createMockCourse, createMockDocument } from './test/mocks/api';
+import {
+  createMockCourse,
+  createMockDocument,
+  createMockQuiz,
+  createMockQuizGenerationResult,
+} from './test/mocks/api';
 
 vi.mock('./api/generatedOutputs', () => ({
   generatedOutputsAPI: { list: vi.fn(), get: vi.fn() },
@@ -259,9 +264,9 @@ describe('making something from the course', () => {
   });
 
   it('takes the student to the quiz once it has been written', async () => {
-    mockQuizGenerate.mockResolvedValue({
-      quiz: { quiz_id: 42, course_id: 1, questions: [] },
-    } as never);
+    mockQuizGenerate.mockResolvedValue(
+      createMockQuizGenerationResult({ quiz: createMockQuiz({ quiz_id: 42 }) }),
+    );
     const person = renderWorkspace();
 
     await person.click(await screen.findByRole('button', { name: 'Practice quiz' }));

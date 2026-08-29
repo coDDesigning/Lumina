@@ -4,8 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { quizAPI } from '@/api/quiz';
 import { settingsAPI } from '@/api/settings';
 import { userAPI } from '@/api/user';
-import type { CreditStatus, QuizQuestionView } from '@/api/types';
+import type { CourseSettings, CreditStatus, QuizQuestionView } from '@/api/types';
 import { CreditProvider } from '@/context/CreditContext';
+import { createMockQuiz, createMockQuizGenerationResult } from '@/test/mocks/api';
 import { MAX_ANSWER_TEXT_CHARS, OPEN_ENDED_ROWS, SHORT_ANSWER_ROWS } from './answerDraft';
 import { QuizModal } from './QuizModal';
 
@@ -51,6 +52,14 @@ const METERED: CreditStatus = {
   generation_costs: { quiz: 1, quiz_open_ended: 2, flashcard: 1, study_guide: 1 },
 };
 
+const SETTINGS = {
+  study_mode: 'practice',
+  difficulty: 'medium',
+  question_count: 5,
+  summary_length: 'medium',
+  detail_level: 'standard',
+} satisfies CourseSettings;
+
 function question(overrides: Partial<QuizQuestionView>): QuizQuestionView {
   return {
     question_id: 1,
@@ -68,7 +77,7 @@ function question(overrides: Partial<QuizQuestionView>): QuizQuestionView {
 }
 
 function quizOf(...questions: QuizQuestionView[]) {
-  return { quiz: { quiz_id: 7, course_id: 1, questions } };
+  return createMockQuizGenerationResult({ quiz: createMockQuiz({ questions }) });
 }
 
 function renderQuiz(props: Partial<{ onQuizReady: (quizId: number) => void }> = {}) {
@@ -89,8 +98,8 @@ function renderQuiz(props: Partial<{ onQuizReady: (quizId: number) => void }> = 
 
 beforeEach(() => {
   mockGetCredits.mockResolvedValue(UNMETERED);
-  mockSettings.mockResolvedValue({ difficulty: 'medium', question_count: 5 } as never);
-  mockGenerate.mockResolvedValue(quizOf(question({})) as never);
+  mockSettings.mockResolvedValue(SETTINGS);
+  mockGenerate.mockResolvedValue(quizOf(question({})));
 });
 
 describe('choosing what to be asked', () => {
@@ -149,7 +158,7 @@ describe('choosing what to be asked', () => {
 
 describe('the defaults the course already saved', () => {
   it('opens on the difficulty the course settings recorded', async () => {
-    mockSettings.mockResolvedValue({ difficulty: 'hard', question_count: 10 } as never);
+    mockSettings.mockResolvedValue({ ...SETTINGS, difficulty: 'hard', question_count: 10 });
     renderQuiz();
 
     await waitFor(() => expect(screen.getByLabelText(/How hard/)).toHaveValue('hard'));
@@ -157,14 +166,14 @@ describe('the defaults the course already saved', () => {
   });
 
   it('rounds a stored count up to one the quiz actually offers', async () => {
-    mockSettings.mockResolvedValue({ difficulty: 'easy', question_count: 12 } as never);
+    mockSettings.mockResolvedValue({ ...SETTINGS, difficulty: 'easy', question_count: 12 });
     renderQuiz();
 
     await waitFor(() => expect(screen.getByLabelText(/How many questions/)).toHaveValue('15'));
   });
 
   it('falls back to the largest count rather than an option that does not exist', async () => {
-    mockSettings.mockResolvedValue({ difficulty: 'medium', question_count: 500 } as never);
+    mockSettings.mockResolvedValue({ ...SETTINGS, question_count: 500 });
     renderQuiz();
 
     await waitFor(() => expect(screen.getByLabelText(/How many questions/)).toHaveValue('20'));
@@ -212,7 +221,7 @@ describe('answering in writing', () => {
           correct_option_index: null,
           correct_answer: { type: 'open_ended', reference_answer: 'It buffers.' },
         }),
-      ) as never,
+      ),
     );
     const person = renderQuiz();
 
@@ -241,7 +250,7 @@ describe('answering in writing', () => {
           correct_option_index: null,
           correct_answer: { type: 'short_answer', text: 'Merge sort', accepted_answers: ['Merge sort'] },
         }),
-      ) as never,
+      ),
     );
     const person = renderQuiz();
 

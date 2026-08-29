@@ -134,9 +134,18 @@ export class APIError extends Error {
   }
 }
 
+export type MalformedResponseReason = 'missing_data' | 'invalid_data';
+
 export class MalformedResponseError extends Error {
-  constructor(context: string) {
-    super(`${context} returned no data.`);
+  constructor(
+    context: string,
+    public readonly reason: MalformedResponseReason = 'missing_data',
+  ) {
+    super(
+      reason === 'missing_data'
+        ? `${context} returned no data.`
+        : `${context} returned invalid data.`,
+    );
     this.name = 'MalformedResponseError';
   }
 }

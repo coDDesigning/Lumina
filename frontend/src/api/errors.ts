@@ -1,4 +1,4 @@
-import { APIError } from './client';
+import { APIError, MalformedResponseError } from './client';
 
 export interface DescribedError {
   message: string;
@@ -8,6 +8,9 @@ export interface DescribedError {
 }
 
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+export const MALFORMED_RESPONSE_CODE = 'malformed_response';
+export const INVALID_RESPONSE_DATA_CODE = 'invalid_response_data';
 
 export function isAbortError(error: unknown): boolean {
   if (error instanceof DOMException) {
@@ -23,6 +26,18 @@ export function describeError(error: unknown, fallback: string): DescribedError 
       status: error.status,
       code: error.code,
       retryable: RETRYABLE_STATUSES.has(error.status),
+    };
+  }
+
+  if (error instanceof MalformedResponseError) {
+    return {
+      message: error.message,
+      status: null,
+      code:
+        error.reason === 'invalid_data'
+          ? INVALID_RESPONSE_DATA_CODE
+          : MALFORMED_RESPONSE_CODE,
+      retryable: false,
     };
   }
 

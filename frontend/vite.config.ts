@@ -18,6 +18,7 @@ export default defineConfig({
     },
   },
   test: {
+    dangerouslyIgnoreUnhandledErrors: false,
     environment: 'jsdom',
     setupFiles: ['./src/setupTests.ts'],
     include: ['src/**/*.test.{ts,tsx}'],

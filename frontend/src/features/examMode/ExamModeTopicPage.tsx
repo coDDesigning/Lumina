@@ -2,7 +2,11 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { BookOpen, FileQuestion, Target } from 'lucide-react';
 import { examModeAPI } from '@/api/examMode';
-import { describeGenerationError, isInsufficientCredits } from '@/api/errors';
+import {
+  describeGenerationError,
+  INVALID_RESPONSE_DATA_CODE,
+  isInsufficientCredits,
+} from '@/api/errors';
 import type { GenerationFailure } from '@/api/errors';
 import { afterExamTopicArtifact, afterExamTopicQuiz } from '@/api/invalidations';
 import { queryKeys } from '@/api/queryKeys';
@@ -21,7 +25,7 @@ import { ErrorState } from '@/ui/ErrorState';
 import { LinkButton } from '@/ui/LinkButton';
 import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
-import { ExamTopicGuide } from './ExamTopicGuide';
+import { ExamTopicGuide, ExamTopicGuideUnavailable } from './ExamTopicGuide';
 import { SimilarQuestionBuilder } from './SimilarQuestionBuilder';
 import { useElapsed } from './useElapsed';
 import styles from './ExamModeTopicPage.module.css';
@@ -220,9 +224,23 @@ export default function ExamModeTopicPage({ workspace }: ExamModeTopicPageProps)
               detail="Reading only the sources this plan was built from."
               elapsed={elapsed}
             />
+          ) : guide.status === 'pending' || guide.status === 'idle' ? (
+            <div className={styles.loading} role="status" aria-label="Loading study guide">
+              <Skeleton variant="heading" width="14rem" />
+              <Skeleton variant="block" height="10rem" />
+            </div>
           ) : guide.data ? (
-            <ExamTopicGuide guide={guide.data} />
-          ) : (
+            <ExamTopicGuide
+              guide={guide.data}
+              onRegenerate={isSupportView ? undefined : () => void generate('guide')}
+              onRetry={isSupportView ? () => void guide.refetch() : undefined}
+            />
+          ) : guide.error?.code === INVALID_RESPONSE_DATA_CODE ? (
+            <ExamTopicGuideUnavailable
+              onRegenerate={isSupportView ? undefined : () => void generate('guide')}
+              onRetry={isSupportView ? () => void guide.refetch() : undefined}
+            />
+          ) : guide.error?.status === 404 ? (
             <EmptyState
               icon={<BookOpen aria-hidden="true" />}
               title="No guide for this topic yet"
@@ -233,6 +251,20 @@ export default function ExamModeTopicPage({ workspace }: ExamModeTopicPageProps)
                 )
               }
             />
+          ) : (
+            <ErrorState
+              title="The study guide could not be loaded"
+              onRetry={() => void guide.refetch()}
+              actions={
+                isSupportView ? undefined : (
+                  <Button variant="secondary" size="sm" onClick={() => void generate('guide')}>
+                    Regenerate guide
+                  </Button>
+                )
+              }
+            >
+              {guide.error?.message}
+            </ErrorState>
           )}
         </section>
 

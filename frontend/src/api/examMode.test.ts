@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MalformedResponseError } from './client';
 import { examModeAPI } from './examMode';
+import type { ExamTopicGuideDocument } from './types';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -22,6 +23,35 @@ function stubFetch(data: unknown, status = 200) {
 
 function calledUrl(fetchMock: ReturnType<typeof stubFetch>): string {
   return fetchMock.mock.calls[0][0] as string;
+}
+
+function topicGuideFixture(
+  overrides: Partial<ExamTopicGuideDocument> = {},
+): ExamTopicGuideDocument {
+  return {
+    version: 1,
+    output_type: 'exam_topic_guide',
+    topic_key: 'hashing',
+    display_label: 'Hashing',
+    plan_output_id: 9,
+    rank: 1,
+    priority_band: 'high',
+    title: 'Hashing study guide',
+    overview: 'Hash tables map keys to buckets.',
+    sections: [
+      {
+        heading: 'Collision handling',
+        body: 'Collisions occur when keys map to the same bucket.',
+        key_points: ['Chaining stores colliding entries together.'],
+      },
+    ],
+    key_terms: [{ term: 'Load factor', definition: 'Entries divided by buckets.', citations: [] }],
+    common_pitfalls: [],
+    what_to_be_able_to_do: ['Compare collision strategies.'],
+    coverage: { status: 'Complete', estimated_completeness: 100 },
+    confidence_notes: '',
+    ...overrides,
+  };
 }
 
 describe('examModeAPI', () => {
@@ -99,6 +129,37 @@ describe('examModeAPI', () => {
       expect(calledUrl(fetchMock)).toBe('/api/courses/10/exam-mode/plans/9');
     });
 
+    it('validates a saved topic guide before returning it', async () => {
+      const stored = topicGuideFixture();
+      stubFetch(stored);
+
+      await expect(examModeAPI.getTopicGuide(10, 'hashing')).resolves.toEqual(stored);
+    });
+
+    it.each([
+      'sections',
+      'key_terms',
+      'common_pitfalls',
+      'what_to_be_able_to_do',
+    ] as const)('rejects a saved topic guide without %s', async (field) => {
+      stubFetch({ ...topicGuideFixture(), [field]: undefined });
+
+      await expect(examModeAPI.getTopicGuide(10, 'hashing')).rejects.toMatchObject({
+        reason: 'invalid_data',
+      });
+    });
+
+    it('rejects malformed fields nested inside a saved topic guide', async () => {
+      stubFetch({
+        ...topicGuideFixture(),
+        sections: [{ heading: 'Collision handling', body: null, key_points: [] }],
+      });
+
+      await expect(examModeAPI.getTopicGuide(10, 'hashing')).rejects.toBeInstanceOf(
+        MalformedResponseError,
+      );
+    });
+
     it('lists saved plans', async () => {
       const fetchMock = stubFetch({ plans: [] });
 
@@ -128,7 +189,7 @@ describe('examModeAPI', () => {
       ['a/b testing', 'a%2Fb%20testing'],
       ['naïve bayes', 'na%C3%AFve%20bayes'],
     ])('encodes %s into the path', async (topicKey, encoded) => {
-      const fetchMock = stubFetch({ topic_key: topicKey });
+      const fetchMock = stubFetch(topicGuideFixture({ topic_key: topicKey }));
 
       await examModeAPI.getTopicGuide(10, topicKey);
 

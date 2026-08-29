@@ -305,7 +305,6 @@ variable "runtime_secrets" {
   description = "Runtime secrets as SSM SecureString parameters under /<project>-<environment>/. Keys must match the ECS task definition references: jwt-secret-key, bootstrap-admin-token, gemini-api-key, openai-api-key, anthropic-api-key, and smtp-password when smtp_username is set. Supply values through terraform.tfvars; never commit them."
   type        = map(string)
   default     = {}
-  sensitive   = true
 }
 
 variable "course_purge_interval_seconds" {

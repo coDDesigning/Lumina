@@ -19,6 +19,7 @@ class DocumentResponse(BaseModel):
     file_size: int
     course_id: int
     status: str
+    visual_analysis_status: str = "not_applicable"
     created_at: datetime
     updated_at: datetime
 

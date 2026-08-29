@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import type { Workspace } from '@/data/workspaces';
 import { PageHeader } from '@/ui/PageHeader';
 import { Button } from '@/ui/Button';
@@ -12,7 +12,6 @@ export interface ReverseQuizPageProps {
 
 export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
   const { courseId } = useParams();
-  const navigate = useNavigate();
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [customTopic, setCustomTopic] = useState('');
 

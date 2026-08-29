@@ -5,6 +5,7 @@ import type {
   QuizAttemptResponse,
   QuizGenerationResult,
   QuizHistoryItem,
+  QuizSessionView,
   QuizSummary,
   QuizView,
 } from './types';
@@ -18,6 +19,12 @@ const QUIZ_VIEW: QuizView = {
   model_used: 'ollama:qwen3:8b',
   generation_settings: null,
   generation_context: null,
+  quiz_purpose: null,
+  exam_plan_output_id: null,
+  exam_topic_key: null,
+  timed: false,
+  time_limit_seconds: null,
+  answers_hidden: false,
   questions: [
     {
       question_id: 101,
@@ -47,6 +54,11 @@ const QUIZ_SUMMARY: QuizSummary = {
   model_used: 'ollama:qwen3:8b',
   generation_settings: null,
   generation_context: null,
+  quiz_purpose: null,
+  exam_plan_output_id: null,
+  exam_topic_key: null,
+  timed: false,
+  time_limit_seconds: null,
 };
 
 const QUIZ_GEN_RESULT: QuizGenerationResult = {
@@ -69,6 +81,9 @@ const QUIZ_ATTEMPT_RESPONSE: QuizAttemptResponse = {
   total_questions: 1,
   time_spent_seconds: 30,
   created_at: '2026-08-23T12:05:00Z',
+  quiz_purpose: null,
+  timed: false,
+  expired: false,
   answers: [
     {
       question_id: 101,
@@ -94,6 +109,23 @@ const QUIZ_HISTORY_ITEM: QuizHistoryItem = {
   total_questions: 1,
   time_spent_seconds: 30,
   created_at: '2026-08-23T12:05:00Z',
+  quiz_purpose: null,
+  timed: false,
+  expired: false,
+};
+
+const QUIZ_SESSION: QuizSessionView = {
+  session_id: 55,
+  quiz_id: 1,
+  status: 'active',
+  started_at: '2026-08-23T12:00:00Z',
+  expires_at: '2026-08-23T13:00:00Z',
+  time_limit_seconds: 3600,
+  seconds_remaining: 3400,
+  elapsed_seconds: 200,
+  answered_count: 1,
+  answers: [{ question_id: 101, selected_option_index: 1, text_response: null }],
+  attempt_id: null,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -233,6 +265,119 @@ describe('quizAPI', () => {
       await expect(quizAPI.getAttempt(10, 1, 201)).rejects.toBeInstanceOf(
         MalformedResponseError,
       );
+    });
+  });
+
+  describe('timed sittings', () => {
+    it('opens a sitting without sending a clock of its own', async () => {
+      // started_at and expires_at belong to the server. A body here would be a
+      // deadline the candidate proposed.
+      const fetchMock = vi.fn<typeof fetch>(async () =>
+        jsonResponse({
+          success: true,
+          message: 'ok',
+          data: { session: QUIZ_SESSION, quiz: QUIZ_VIEW },
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const result = await quizAPI.startSession(10, 1);
+
+      expect(result).toEqual({ session: QUIZ_SESSION, quiz: QUIZ_VIEW });
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/courses/10/quizzes/1/sessions',
+        expect.objectContaining({ method: 'POST', body: undefined }),
+      );
+    });
+
+    it('reads a sitting back with the drafts already saved', async () => {
+      const fetchMock = vi.fn<typeof fetch>(async () =>
+        jsonResponse({ success: true, message: 'ok', data: QUIZ_SESSION }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const result = await quizAPI.getSession(10, 1, 55);
+
+      expect(result.answers).toEqual(QUIZ_SESSION.answers);
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/courses/10/quizzes/1/sessions/55',
+        expect.anything(),
+      );
+    });
+
+    it('saves one answer against the question it belongs to', async () => {
+      const fetchMock = vi.fn<typeof fetch>(async () =>
+        jsonResponse({ success: true, message: 'ok', data: QUIZ_SESSION }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      await quizAPI.saveSessionAnswer(10, 1, 55, 101, {
+        question_id: 101,
+        selected_option_index: 1,
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/courses/10/quizzes/1/sessions/55/answers/101',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ question_id: 101, selected_option_index: 1 }),
+        }),
+      );
+    });
+
+    it('finalises a sitting into an ordinary attempt', async () => {
+      const fetchMock = vi.fn<typeof fetch>(async () =>
+        jsonResponse({ success: true, message: 'ok', data: QUIZ_ATTEMPT_RESPONSE }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const result = await quizAPI.submitSession(10, 1, 55);
+
+      expect(result).toEqual(QUIZ_ATTEMPT_RESPONSE);
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/courses/10/quizzes/1/sessions/55/submit',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('forwards an abort signal to every session read', async () => {
+      const fetchMock = vi.fn<typeof fetch>(async () =>
+        jsonResponse({ success: true, message: 'ok', data: QUIZ_SESSION }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      const controller = new AbortController();
+
+      await quizAPI.getSession(10, 1, 55, { signal: controller.signal });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/courses/10/quizzes/1/sessions/55',
+        expect.objectContaining({ signal: controller.signal }),
+      );
+    });
+
+    it('refuses a session response carrying no data', async () => {
+      const fetchMock = vi.fn<typeof fetch>(async () =>
+        jsonResponse({ success: true, message: 'ok', data: null }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(quizAPI.getSession(10, 1, 55)).rejects.toBeInstanceOf(
+        MalformedResponseError,
+      );
+    });
+
+    it('keeps the error code a refused sitting was refused with', async () => {
+      // 409 covers four distinct session refusals, so the header is the
+      // contract and the status alone would merge them.
+      const fetchMock = vi.fn<typeof fetch>(async () => ({
+        ...jsonResponse({ detail: 'This quiz is sat against a clock.' }, 409),
+        headers: new Headers({ 'X-Error-Code': 'timed_session_required' }),
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(
+        quizAPI.submitAttempt(10, 1, { answers: [{ question_id: 101 }] }),
+      ).rejects.toMatchObject({ status: 409, code: 'timed_session_required' });
     });
   });
 });

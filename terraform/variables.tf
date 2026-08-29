@@ -219,6 +219,53 @@ variable "frontend_dns_cutover" {
   default     = false
 }
 
+variable "frontend_additional_connect_src" {
+  description = "Exact extra https origins the SPA may call, beyond the CloudFront origin that serves both it and the API. Leave empty unless a browser call genuinely leaves the distribution."
+  type        = list(string)
+  default     = []
+}
+
+variable "email_verification_required" {
+  description = "Whether hosted accounts must prove their address before receiving credits. See docs/authentication.md. Requires email_from_address and smtp_host."
+  type        = bool
+  default     = true
+
+  validation {
+    condition     = !var.email_verification_required || (trimspace(var.email_from_address) != "" && trimspace(var.smtp_host) != "")
+    error_message = "email_verification_required needs email_from_address and smtp_host; otherwise new accounts could never be granted credits."
+  }
+}
+
+variable "email_from_address" {
+  description = "Envelope sender for verification mail. The relay must be authorized to send as this address."
+  type        = string
+  default     = "info@lumina-study.com"
+}
+
+variable "smtp_host" {
+  description = "SMTP relay hostname used to deliver verification mail."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_port" {
+  description = "SMTP relay port."
+  type        = number
+  default     = 587
+}
+
+variable "smtp_username" {
+  description = "SMTP login. Empty means the relay authenticates by network identity; otherwise supply the password as the smtp-password entry of runtime_secrets."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_use_tls" {
+  description = "Issue STARTTLS after connecting to the relay."
+  type        = bool
+  default     = true
+}
+
 variable "s3_bucket_name" {
   description = "Name of the document storage bucket. Must be globally unique."
   type        = string
@@ -255,10 +302,9 @@ variable "cors_allowed_origins" {
 }
 
 variable "runtime_secrets" {
-  description = "Runtime secrets as SSM SecureString parameters under /<project>-<environment>/. Keys must match the ECS task definition references: jwt-secret-key, bootstrap-admin-token, gemini-api-key. Supply values through terraform.tfvars; never commit them."
+  description = "Runtime secrets as SSM SecureString parameters under /<project>-<environment>/. Keys must match the ECS task definition references: jwt-secret-key, bootstrap-admin-token, gemini-api-key, openai-api-key, anthropic-api-key, and smtp-password when smtp_username is set. Supply values through terraform.tfvars; never commit them."
   type        = map(string)
   default     = {}
-  sensitive   = true
 }
 
 variable "course_purge_interval_seconds" {

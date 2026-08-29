@@ -7,6 +7,7 @@ this file is the single source of truth for "what the environment says".
 """
 
 import json
+import logging
 import math
 import os
 import re
@@ -30,14 +31,23 @@ from .database_config import (
     load_deployment_mode,
 )
 
+logger = logging.getLogger(__name__)
+
 STORAGE_BACKEND_LOCAL = "local"
 STORAGE_BACKEND_S3 = "s3"
 STORAGE_BACKENDS = (STORAGE_BACKEND_LOCAL, STORAGE_BACKEND_S3)
 
 AI_PROVIDER_GEMINI = "gemini"
 AI_PROVIDER_OLLAMA = "ollama"
+AI_PROVIDER_OPENAI = "openai"
+AI_PROVIDER_CLAUDE = "claude"
 RECOGNIZED_AI_PROVIDERS = ("ollama", "openai", "gemini", "claude")
-IMPLEMENTED_AI_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
+IMPLEMENTED_AI_PROVIDERS = (
+    AI_PROVIDER_GEMINI,
+    AI_PROVIDER_OLLAMA,
+    AI_PROVIDER_OPENAI,
+    AI_PROVIDER_CLAUDE,
+)
 DEFAULT_AI_PROVIDER = AI_PROVIDER_OLLAMA
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1"
@@ -47,6 +57,8 @@ DEFAULT_OLLAMA_NUM_CTX = 8192
 DEFAULT_OLLAMA_NUM_PREDICT = 4096
 DEFAULT_OLLAMA_REPEAT_PENALTY = 1.1
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-5"
 OLLAMA_MODEL_PATTERN = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
 
 IMPLEMENTED_EMBEDDING_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
@@ -60,6 +72,8 @@ DEFAULT_COURSE_PURGE_INTERVAL_SECONDS = 3600.0
 DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS = 3600.0
 DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE = 64
 DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS = False
+DEFAULT_AI_USAGE_RETENTION_DAYS = 90
+DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE = 1000
 
 IMAGE_PROVIDER_NONE = "none"
 IMAGE_PROVIDER_GEMINI = "gemini"
@@ -114,6 +128,8 @@ DEFAULT_AI_GENERATION_MAX_ATTEMPTS = 3
 DEFAULT_AI_GENERATION_BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS = 10.0
 DEFAULT_AI_GENERATION_MAX_CONCURRENCY = 10
+DEFAULT_AI_GENERATION_OVERALL_TIMEOUT_SECONDS = 110
+DEFAULT_AI_GRADING_OVERALL_TIMEOUT_SECONDS = 45
 MAX_AI_MODEL_COST_RATE_USD_PER_MILLION = 1_000_000.0
 MAX_AI_EVENT_ESTIMATED_COST_USD = 1_000_000.0
 DEFAULT_DATABASE_POOL_SIZE = 5
@@ -133,6 +149,29 @@ DEFAULT_RATE_LIMIT_GENERATION_MAX_ATTEMPTS = 30
 DEFAULT_RATE_LIMIT_GENERATION_WINDOW_SECONDS = 3600
 DEFAULT_RATE_LIMIT_LOCKOUT_BASE_SECONDS = 30
 DEFAULT_RATE_LIMIT_LOCKOUT_MAX_SECONDS = 1800
+DEFAULT_RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS = 5
+DEFAULT_RATE_LIMIT_VERIFICATION_WINDOW_SECONDS = 3600
+DEFAULT_RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS = 5
+DEFAULT_RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS = 3600
+
+# Authentication hardening. See docs/authentication.md.
+DEFAULT_PASSWORD_MIN_LENGTH = 12
+# bcrypt truncates at 72 bytes, so a longer minimum could not be enforced.
+MAX_PASSWORD_MIN_LENGTH = 64
+DEFAULT_EMAIL_VERIFICATION_TOKEN_TTL_HOURS = 24
+DEFAULT_ACCESS_TOKEN_EXPIRE_MINUTES = 60
+DEFAULT_PASSWORD_RESET_TOKEN_TTL_MINUTES = 60
+DEFAULT_SMTP_PORT = 587
+DEFAULT_SMTP_TIMEOUT_SECONDS = 10
+DEFAULT_HSTS_MAX_AGE_SECONDS = 31536000
+
+DEFAULT_ENABLE_HOSTED_ADS = False
+DEFAULT_HOSTED_ADS_PROVIDER = "ethicalads"
+DEFAULT_HOSTED_ADS_PUBLISHER_ID = "lumina"
+DEFAULT_HOSTED_ADS_CSP_ALLOWLIST = (
+    "https://media.ethicalads.io",
+    "https://server.ethicalads.io",
+)
 
 
 @dataclass(frozen=True)
@@ -179,6 +218,8 @@ class Settings:
     ai_pricing_version: str | None
     ai_model_cost_rates: dict[str, dict[str, float]]
     gemini_api_key: str | None
+    openai_api_key: str | None
+    anthropic_api_key: str | None
     ollama_base_url: str
     ollama_model: str
     ollama_temperature: float
@@ -192,6 +233,8 @@ class Settings:
     ai_generation_backoff_base_seconds: float
     ai_generation_backoff_max_seconds: float
     ai_generation_max_concurrency: int
+    ai_generation_overall_timeout_seconds: int
+    ai_grading_overall_timeout_seconds: int
 
     # Embedding provider and durable vector storage configuration
     embedding_provider: str
@@ -238,6 +281,16 @@ class Settings:
     flashcard_material_max_chars: int
     ai_tutor_material_max_chars: int
     course_qa_material_max_chars: int
+    exam_analysis_material_max_chars: int
+    exam_past_paper_max_chars: int
+    exam_topic_guide_material_max_chars: int
+    exam_topic_summary_material_max_chars: int
+    exam_topic_quiz_material_max_chars: int
+    exam_similar_questions_material_max_chars: int
+    exam_mock_exam_material_max_chars: int
+    exam_review_sheet_material_max_chars: int
+    exam_mock_exam_question_count: int
+    exam_quiz_default_question_count: int
 
     # Credit lifecycle. See docs/credits.md.
     credit_metering_enabled: bool
@@ -254,12 +307,41 @@ class Settings:
     rate_limit_generation_window_seconds: int
     rate_limit_lockout_base_seconds: int
     rate_limit_lockout_max_seconds: int
+    rate_limit_verification_max_attempts: int
+    rate_limit_verification_window_seconds: int
+    rate_limit_password_reset_max_attempts: int
+    rate_limit_password_reset_window_seconds: int
+
+    # Authentication hardening. See docs/authentication.md.
+    password_min_length: int
+    email_verification_required: bool
+    email_verification_token_ttl_hours: int
+    access_token_expire_minutes: int
+    password_reset_token_ttl_minutes: int
+    app_public_base_url: str | None
+    email_from_address: str | None
+    smtp_host: str | None
+    smtp_port: int
+    smtp_username: str | None
+    smtp_password: str | None
+    smtp_use_tls: bool
+    smtp_timeout_seconds: int
+    security_headers_enabled: bool
+    hsts_enabled: bool
+    hsts_max_age_seconds: int
 
     # Periodic maintenance configuration
     course_purge_interval_seconds: float
     embedding_backfill_interval_seconds: float
     embedding_backfill_batch_size: int
     embedding_backfill_prune_orphans: bool
+    ai_usage_retention_days: int
+    ai_usage_cleanup_batch_size: int
+
+    # Optional hosted advertising configuration
+    enable_hosted_ads: bool
+    hosted_ads_provider: str | None
+    hosted_ads_publisher_id: str | None
 
     @property
     def is_hosted(self) -> bool:
@@ -272,6 +354,13 @@ class Settings:
     @property
     def requires_protected_admin_bootstrap(self) -> bool:
         return self.is_hosted or self.app_env == APP_ENV_PRODUCTION
+
+    @property
+    def email_delivery_configured(self) -> bool:
+        """Whether outbound mail has somewhere to go and a return address."""
+        return bool(
+            self.smtp_host and self.email_from_address and self.app_public_base_url
+        )
 
 
 def load_settings() -> Settings:
@@ -425,6 +514,43 @@ def load_settings() -> Settings:
             f"Implemented providers: {', '.join(IMPLEMENTED_AI_PROVIDERS)}."
         )
     gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip() or None
+    openai_api_key = os.getenv("OPENAI_API_KEY", "").strip() or None
+    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip() or None
+
+    ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
+    if ai_fallback_providers_raw:
+        for fallback_token in (
+            item.strip().lower()
+            for item in ai_fallback_providers_raw.split(",")
+            if item.strip()
+        ):
+            if fallback_token not in RECOGNIZED_AI_PROVIDERS:
+                raise ValueError(
+                    "AI_FALLBACK_PROVIDERS tokens must be one of: "
+                    f"{', '.join(RECOGNIZED_AI_PROVIDERS)}."
+                )
+            if fallback_token not in IMPLEMENTED_AI_PROVIDERS:
+                raise ValueError(
+                    f"AI_FALLBACK_PROVIDERS token '{fallback_token}' is recognized but "
+                    f"not implemented yet. Implemented providers: "
+                    f"{', '.join(IMPLEMENTED_AI_PROVIDERS)}."
+                )
+
+    ai_fallback_providers = ai_fallback_providers_raw
+
+    def _require_key(provider: str, key: str | None, env_name: str) -> None:
+        if ai_provider == provider or (
+            ai_fallback_providers_raw and provider in ai_fallback_providers_raw
+        ):
+            if not key:
+                raise ValueError(
+                    f"{env_name} is required when {provider} is used as primary or fallback provider."
+                )
+
+    _require_key(AI_PROVIDER_GEMINI, gemini_api_key, "GEMINI_API_KEY")
+    _require_key(AI_PROVIDER_OPENAI, openai_api_key, "OPENAI_API_KEY")
+    _require_key(AI_PROVIDER_CLAUDE, anthropic_api_key, "ANTHROPIC_API_KEY")
+
     ollama_base_url = _http_url_setting("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
     ollama_model = os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip()
     if not OLLAMA_MODEL_PATTERN.fullmatch(ollama_model):
@@ -469,25 +595,6 @@ def load_settings() -> Settings:
         )
     ai_model_catalog = _ai_model_catalog_setting(ollama_model, ollama_num_ctx)
     ai_pricing_version, ai_model_cost_rates = _ai_model_cost_rates_setting()
-    ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
-    if ai_fallback_providers_raw:
-        for fallback_token in (
-            item.strip().lower()
-            for item in ai_fallback_providers_raw.split(",")
-            if item.strip()
-        ):
-            if fallback_token not in RECOGNIZED_AI_PROVIDERS:
-                raise ValueError(
-                    "AI_FALLBACK_PROVIDERS tokens must be one of: "
-                    f"{', '.join(RECOGNIZED_AI_PROVIDERS)}."
-                )
-            if fallback_token not in IMPLEMENTED_AI_PROVIDERS:
-                raise ValueError(
-                    f"AI_FALLBACK_PROVIDERS token '{fallback_token}' is recognized but "
-                    f"not implemented yet. Implemented providers: "
-                    f"{', '.join(IMPLEMENTED_AI_PROVIDERS)}."
-                )
-    ai_fallback_providers = ai_fallback_providers_raw
 
     max_upload_size_bytes = _positive_integer_setting(
         "MAX_UPLOAD_SIZE_BYTES",
@@ -612,6 +719,26 @@ def load_settings() -> Settings:
         ("FLASHCARD_MATERIAL_MAX_CHARS", DEFAULT_MATERIAL_MAX_CHARACTERS),
         ("AI_TUTOR_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
         ("COURSE_QA_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_ANALYSIS_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
+        ("EXAM_PAST_PAPER_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        ("EXAM_TOPIC_GUIDE_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_TOPIC_SUMMARY_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
+        ("EXAM_TOPIC_QUIZ_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_SIMILAR_QUESTIONS_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
+        ("EXAM_MOCK_EXAM_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
+        (
+            "EXAM_REVIEW_SHEET_MATERIAL_MAX_CHARS",
+            DEFAULT_CITED_MATERIAL_MAX_CHARACTERS,
+        ),
     ):
         budget = _positive_integer_setting(name, default)
         if budget < document_chunk_size_characters:
@@ -652,6 +779,22 @@ def load_settings() -> Settings:
         DEFAULT_AI_GENERATION_MAX_CONCURRENCY,
         minimum=1,
         maximum=100,
+    )
+    ai_generation_overall_timeout_seconds = _bounded_positive_integer_setting(
+        "AI_GENERATION_OVERALL_TIMEOUT_SECONDS",
+        DEFAULT_AI_GENERATION_OVERALL_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=300,
+    )
+    # Grading runs inside the transaction that writes the attempt, and a
+    # hosted database closes a transaction left idle for sixty seconds.
+    # Bounded below that, so a slow grader costs a student their marks
+    # rather than the answers they wrote.
+    ai_grading_overall_timeout_seconds = _bounded_positive_integer_setting(
+        "AI_GRADING_OVERALL_TIMEOUT_SECONDS",
+        DEFAULT_AI_GRADING_OVERALL_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=55,
     )
 
     embedding_provider = (
@@ -700,10 +843,38 @@ def load_settings() -> Settings:
         maximum=300,
     )
 
-    image_provider = (
-        os.getenv("IMAGE_PROVIDER", DEFAULT_IMAGE_PROVIDER).strip().lower()
-        or DEFAULT_IMAGE_PROVIDER
-    )
+    raw_image_provider = os.getenv("IMAGE_PROVIDER")
+    if raw_image_provider is not None and raw_image_provider.strip():
+        image_provider = raw_image_provider.strip().lower()
+    else:
+        if mode == MODE_HOSTED:
+            if ai_provider == AI_PROVIDER_GEMINI:
+                gemini_entries = ai_model_catalog.get(AI_PROVIDER_GEMINI, [])
+                if any(bool(entry.get("vision")) for entry in gemini_entries):
+                    image_provider = IMAGE_PROVIDER_GEMINI
+                else:
+                    image_provider = IMAGE_PROVIDER_NONE
+            else:
+                image_provider = IMAGE_PROVIDER_NONE
+        else:
+            ollama_entries = ai_model_catalog.get(AI_PROVIDER_OLLAMA, [])
+            configured_ollama_image_model = os.getenv(
+                "OLLAMA_IMAGE_MODEL",
+                DEFAULT_OLLAMA_IMAGE_MODEL,
+            ).strip()
+            has_advertised_vision = any(
+                entry.get("model") == configured_ollama_image_model
+                and bool(entry.get("vision"))
+                for entry in ollama_entries
+            )
+            if has_advertised_vision:
+                image_provider = IMAGE_PROVIDER_OLLAMA
+            else:
+                image_provider = IMAGE_PROVIDER_NONE
+                logger.info(
+                    "Visual analysis is disabled (IMAGE_PROVIDER='none'); visual content in uploaded documents will not be described or indexed for retrieval."
+                )
+
     if image_provider not in RECOGNIZED_IMAGE_PROVIDERS:
         raise ValueError(
             f"IMAGE_PROVIDER must be one of: {', '.join(RECOGNIZED_IMAGE_PROVIDERS)}."
@@ -730,6 +901,31 @@ def load_settings() -> Settings:
     ).strip()
     if not gemini_image_model or len(gemini_image_model) > 128:
         raise ValueError("GEMINI_IMAGE_MODEL must contain 1-128 non-blank characters.")
+
+    if image_provider == IMAGE_PROVIDER_GEMINI:
+        if not gemini_api_key:
+            raise ValueError(
+                "GEMINI_API_KEY is required when gemini is configured as IMAGE_PROVIDER."
+            )
+        gemini_entries = ai_model_catalog.get(AI_PROVIDER_GEMINI, [])
+        for entry in gemini_entries:
+            if (
+                entry.get("model") == gemini_image_model
+                and entry.get("vision") is False
+            ):
+                raise ValueError(
+                    f"GEMINI_IMAGE_MODEL '{gemini_image_model}' is declared with vision=False in AI_MODEL_CATALOG."
+                )
+    elif image_provider == IMAGE_PROVIDER_OLLAMA:
+        ollama_entries = ai_model_catalog.get(AI_PROVIDER_OLLAMA, [])
+        for entry in ollama_entries:
+            if (
+                entry.get("model") == ollama_image_model
+                and entry.get("vision") is False
+            ):
+                raise ValueError(
+                    f"OLLAMA_IMAGE_MODEL '{ollama_image_model}' is declared with vision=False in AI_MODEL_CATALOG."
+                )
 
     image_understanding_timeout_seconds = _bounded_positive_integer_setting(
         "IMAGE_UNDERSTANDING_TIMEOUT_SECONDS",
@@ -775,6 +971,13 @@ def load_settings() -> Settings:
             raise ValueError(
                 "Production CHROMA_PERSIST_DIRECTORY must use an absolute path."
             )
+
+    exam_quiz_default_question_count = _bounded_positive_integer_setting(
+        "EXAM_QUIZ_DEFAULT_QUESTION_COUNT", 10, minimum=1, maximum=20
+    )
+    exam_mock_exam_question_count = _bounded_positive_integer_setting(
+        "EXAM_MOCK_EXAM_QUESTION_COUNT", 20, minimum=1, maximum=20
+    )
 
     credit_metering_enabled = _boolean_setting(
         "CREDIT_METERING_ENABLED",
@@ -831,6 +1034,113 @@ def load_settings() -> Settings:
             "RATE_LIMIT_LOCKOUT_MAX_SECONDS must be at least "
             "RATE_LIMIT_LOCKOUT_BASE_SECONDS."
         )
+    rate_limit_verification_max_attempts = _positive_integer_setting(
+        "RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS",
+        DEFAULT_RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS,
+    )
+    rate_limit_verification_window_seconds = _positive_integer_setting(
+        "RATE_LIMIT_VERIFICATION_WINDOW_SECONDS",
+        DEFAULT_RATE_LIMIT_VERIFICATION_WINDOW_SECONDS,
+    )
+    rate_limit_password_reset_max_attempts = _positive_integer_setting(
+        "RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS",
+        DEFAULT_RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS,
+    )
+    rate_limit_password_reset_window_seconds = _positive_integer_setting(
+        "RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS",
+        DEFAULT_RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS,
+    )
+
+    password_min_length = _bounded_positive_integer_setting(
+        "PASSWORD_MIN_LENGTH",
+        DEFAULT_PASSWORD_MIN_LENGTH,
+        minimum=DEFAULT_PASSWORD_MIN_LENGTH,
+        maximum=MAX_PASSWORD_MIN_LENGTH,
+    )
+
+    # Verification gates the introductory credits, so it defaults on exactly
+    # where those credits are worth farming: a deployment whose inference the
+    # operator pays for.
+    email_verification_required = _boolean_setting(
+        "EMAIL_VERIFICATION_REQUIRED",
+        default=mode == MODE_HOSTED,
+    )
+    email_verification_token_ttl_hours = _bounded_positive_integer_setting(
+        "EMAIL_VERIFICATION_TOKEN_TTL_HOURS",
+        DEFAULT_EMAIL_VERIFICATION_TOKEN_TTL_HOURS,
+        minimum=1,
+        maximum=168,
+    )
+    access_token_expire_minutes = _bounded_positive_integer_setting(
+        "ACCESS_TOKEN_EXPIRE_MINUTES",
+        DEFAULT_ACCESS_TOKEN_EXPIRE_MINUTES,
+        minimum=1,
+        maximum=60 * 24 * 365,
+    )
+    password_reset_token_ttl_minutes = _bounded_positive_integer_setting(
+        "PASSWORD_RESET_TOKEN_TTL_MINUTES",
+        DEFAULT_PASSWORD_RESET_TOKEN_TTL_MINUTES,
+        minimum=1,
+        maximum=60 * 24 * 7,
+    )
+    app_public_base_url = os.getenv("APP_PUBLIC_BASE_URL", "").strip() or None
+    if app_public_base_url is not None:
+        app_public_base_url = _http_url_setting("APP_PUBLIC_BASE_URL", "")
+    email_from_address = os.getenv("EMAIL_FROM_ADDRESS", "").strip() or None
+    if email_from_address is not None:
+        try:
+            email_from_address = validate_email(
+                email_from_address,
+                check_deliverability=False,
+            ).normalized
+        except EmailNotValidError as exc:
+            raise ValueError(
+                "EMAIL_FROM_ADDRESS must be a valid email address."
+            ) from exc
+    smtp_host = os.getenv("SMTP_HOST", "").strip() or None
+    smtp_port = _bounded_positive_integer_setting(
+        "SMTP_PORT", DEFAULT_SMTP_PORT, minimum=1, maximum=65535
+    )
+    smtp_username = os.getenv("SMTP_USERNAME", "").strip() or None
+    smtp_password = os.getenv("SMTP_PASSWORD") or None
+    smtp_use_tls = _boolean_setting("SMTP_USE_TLS", default=True)
+    smtp_timeout_seconds = _bounded_positive_integer_setting(
+        "SMTP_TIMEOUT_SECONDS", DEFAULT_SMTP_TIMEOUT_SECONDS, minimum=1, maximum=120
+    )
+    if (smtp_username is None) != (smtp_password is None):
+        raise ValueError("SMTP_USERNAME and SMTP_PASSWORD must be set together.")
+    if email_verification_required:
+        # A deployment that gates credits on a link it cannot send would hand
+        # every new account a balance of zero and no way out of it.
+        missing = [
+            name
+            for name, value in (
+                ("APP_PUBLIC_BASE_URL", app_public_base_url),
+                ("EMAIL_FROM_ADDRESS", email_from_address),
+                ("SMTP_HOST", smtp_host),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "EMAIL_VERIFICATION_REQUIRED needs a way to deliver the "
+                f"verification link; set {', '.join(missing)}."
+            )
+
+    security_headers_enabled = _boolean_setting(
+        "SECURITY_HEADERS_ENABLED", default=True
+    )
+    # HSTS is a promise the browser remembers for a year, so it is only made by
+    # default where TLS is known to terminate in front of the API. A self-hosted
+    # operator serving over plain HTTP on a LAN would otherwise lock themselves
+    # out of their own deployment; behind a TLS proxy they turn it on.
+    hsts_enabled = _boolean_setting(
+        "SECURITY_HSTS_ENABLED",
+        default=mode == MODE_HOSTED,
+    )
+    hsts_max_age_seconds = _nonnegative_integer_setting(
+        "SECURITY_HSTS_MAX_AGE_SECONDS", DEFAULT_HSTS_MAX_AGE_SECONDS
+    )
 
     course_purge_interval_seconds = _nonnegative_float_setting(
         "COURSE_PURGE_INTERVAL_SECONDS",
@@ -848,6 +1158,44 @@ def load_settings() -> Settings:
         "EMBEDDING_BACKFILL_PRUNE_ORPHANS",
         default=DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS,
     )
+    ai_usage_retention_days = _positive_integer_setting(
+        "AI_USAGE_RETENTION_DAYS",
+        DEFAULT_AI_USAGE_RETENTION_DAYS,
+    )
+    ai_usage_cleanup_batch_size = _positive_integer_setting(
+        "AI_USAGE_CLEANUP_BATCH_SIZE",
+        DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE,
+    )
+
+    if mode == MODE_SELF_HOSTED:
+        raw_ads = os.getenv("ENABLE_HOSTED_ADS")
+        if raw_ads is not None and _boolean_setting("ENABLE_HOSTED_ADS", default=False):
+            raise ValueError(
+                "Self-hosted deployment mode does not permit ENABLE_HOSTED_ADS=true. "
+                "Advertising is strictly isolated to hosted deployments."
+            )
+        enable_hosted_ads = False
+        hosted_ads_provider = None
+        hosted_ads_publisher_id = None
+    else:
+        enable_hosted_ads = _boolean_setting(
+            "ENABLE_HOSTED_ADS",
+            default=DEFAULT_ENABLE_HOSTED_ADS,
+        )
+        if enable_hosted_ads:
+            hosted_ads_provider = (
+                os.getenv("HOSTED_ADS_PROVIDER", DEFAULT_HOSTED_ADS_PROVIDER).strip()
+                or DEFAULT_HOSTED_ADS_PROVIDER
+            )
+            hosted_ads_publisher_id = (
+                os.getenv(
+                    "HOSTED_ADS_PUBLISHER_ID", DEFAULT_HOSTED_ADS_PUBLISHER_ID
+                ).strip()
+                or DEFAULT_HOSTED_ADS_PUBLISHER_ID
+            )
+        else:
+            hosted_ads_provider = None
+            hosted_ads_publisher_id = None
 
     return Settings(
         app_env=app_env,
@@ -876,6 +1224,8 @@ def load_settings() -> Settings:
         ai_pricing_version=ai_pricing_version,
         ai_model_cost_rates=ai_model_cost_rates,
         gemini_api_key=gemini_api_key,
+        openai_api_key=openai_api_key,
+        anthropic_api_key=anthropic_api_key,
         ollama_base_url=ollama_base_url,
         ollama_model=ollama_model,
         ollama_temperature=ollama_temperature,
@@ -889,6 +1239,8 @@ def load_settings() -> Settings:
         ai_generation_backoff_base_seconds=ai_generation_backoff_base_seconds,
         ai_generation_backoff_max_seconds=ai_generation_backoff_max_seconds,
         ai_generation_max_concurrency=ai_generation_max_concurrency,
+        ai_generation_overall_timeout_seconds=ai_generation_overall_timeout_seconds,
+        ai_grading_overall_timeout_seconds=ai_grading_overall_timeout_seconds,
         embedding_provider=embedding_provider,
         ollama_embedding_model=ollama_embedding_model,
         gemini_embedding_model=gemini_embedding_model,
@@ -931,6 +1283,30 @@ def load_settings() -> Settings:
         flashcard_material_max_chars=material_budgets["FLASHCARD_MATERIAL_MAX_CHARS"],
         ai_tutor_material_max_chars=material_budgets["AI_TUTOR_MATERIAL_MAX_CHARS"],
         course_qa_material_max_chars=material_budgets["COURSE_QA_MATERIAL_MAX_CHARS"],
+        exam_analysis_material_max_chars=material_budgets[
+            "EXAM_ANALYSIS_MATERIAL_MAX_CHARS"
+        ],
+        exam_past_paper_max_chars=material_budgets["EXAM_PAST_PAPER_MAX_CHARS"],
+        exam_topic_guide_material_max_chars=material_budgets[
+            "EXAM_TOPIC_GUIDE_MATERIAL_MAX_CHARS"
+        ],
+        exam_topic_summary_material_max_chars=material_budgets[
+            "EXAM_TOPIC_SUMMARY_MATERIAL_MAX_CHARS"
+        ],
+        exam_topic_quiz_material_max_chars=material_budgets[
+            "EXAM_TOPIC_QUIZ_MATERIAL_MAX_CHARS"
+        ],
+        exam_similar_questions_material_max_chars=material_budgets[
+            "EXAM_SIMILAR_QUESTIONS_MATERIAL_MAX_CHARS"
+        ],
+        exam_mock_exam_material_max_chars=material_budgets[
+            "EXAM_MOCK_EXAM_MATERIAL_MAX_CHARS"
+        ],
+        exam_review_sheet_material_max_chars=material_budgets[
+            "EXAM_REVIEW_SHEET_MATERIAL_MAX_CHARS"
+        ],
+        exam_mock_exam_question_count=exam_mock_exam_question_count,
+        exam_quiz_default_question_count=exam_quiz_default_question_count,
         credit_metering_enabled=credit_metering_enabled,
         credit_initial_grant=credit_initial_grant,
         credit_periodic_grant=credit_periodic_grant,
@@ -943,10 +1319,35 @@ def load_settings() -> Settings:
         rate_limit_generation_window_seconds=rate_limit_generation_window_seconds,
         rate_limit_lockout_base_seconds=rate_limit_lockout_base_seconds,
         rate_limit_lockout_max_seconds=rate_limit_lockout_max_seconds,
+        rate_limit_verification_max_attempts=rate_limit_verification_max_attempts,
+        rate_limit_verification_window_seconds=rate_limit_verification_window_seconds,
+        rate_limit_password_reset_max_attempts=rate_limit_password_reset_max_attempts,
+        rate_limit_password_reset_window_seconds=rate_limit_password_reset_window_seconds,
+        password_min_length=password_min_length,
+        email_verification_required=email_verification_required,
+        email_verification_token_ttl_hours=email_verification_token_ttl_hours,
+        access_token_expire_minutes=access_token_expire_minutes,
+        password_reset_token_ttl_minutes=password_reset_token_ttl_minutes,
+        app_public_base_url=app_public_base_url,
+        email_from_address=email_from_address,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        smtp_username=smtp_username,
+        smtp_password=smtp_password,
+        smtp_use_tls=smtp_use_tls,
+        smtp_timeout_seconds=smtp_timeout_seconds,
+        security_headers_enabled=security_headers_enabled,
+        hsts_enabled=hsts_enabled,
+        hsts_max_age_seconds=hsts_max_age_seconds,
         course_purge_interval_seconds=course_purge_interval_seconds,
         embedding_backfill_interval_seconds=embedding_backfill_interval_seconds,
         embedding_backfill_batch_size=embedding_backfill_batch_size,
         embedding_backfill_prune_orphans=embedding_backfill_prune_orphans,
+        ai_usage_retention_days=ai_usage_retention_days,
+        ai_usage_cleanup_batch_size=ai_usage_cleanup_batch_size,
+        enable_hosted_ads=enable_hosted_ads,
+        hosted_ads_provider=hosted_ads_provider,
+        hosted_ads_publisher_id=hosted_ads_publisher_id,
     )
 
 
@@ -1114,6 +1515,22 @@ def _ai_model_catalog_setting(
             AI_PROVIDER_GEMINI: [
                 {
                     "model": DEFAULT_GEMINI_MODEL,
+                    "json_mode": True,
+                    "context_window": 1_048_576,
+                    "vision": True,
+                }
+            ],
+            AI_PROVIDER_OPENAI: [
+                {
+                    "model": DEFAULT_OPENAI_MODEL,
+                    "json_mode": True,
+                    "context_window": 1_048_576,
+                    "vision": True,
+                }
+            ],
+            AI_PROVIDER_CLAUDE: [
+                {
+                    "model": DEFAULT_CLAUDE_MODEL,
                     "json_mode": True,
                     "context_window": 1_048_576,
                     "vision": True,

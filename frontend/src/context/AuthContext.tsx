@@ -7,7 +7,7 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (token: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
 }
@@ -74,8 +74,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await fetchUser();
   };
 
-  const logout = () => {
+  const logout = async () => {
     requestGeneration.current += 1;
+    try {
+      if (localStorage.getItem('token')) {
+        await authAPI.logout();
+      }
+    } catch {
+      // Ignore network errors during logout
+    }
     localStorage.removeItem('token');
     queryCache.clear();
     setUser(null);

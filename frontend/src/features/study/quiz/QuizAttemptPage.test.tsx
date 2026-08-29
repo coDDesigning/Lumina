@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { quizAPI } from '@/api/quiz';
-import type { QuizView } from '@/api/types';
+import type { QuizAttemptResponse, QuizView } from '@/api/types';
 import type { Workspace } from '@/data/workspaces';
 import QuizAttemptPage from './QuizAttemptPage';
 
@@ -150,17 +150,26 @@ function multipleChoiceQuiz(count: number): QuizView {
   } as unknown as QuizView;
 }
 
+const ATTEMPT: QuizAttemptResponse = {
+  attempt_id: 88,
+  quiz_id: 3,
+  score: 1,
+  correct_count: 2,
+  graded_count: 2,
+  total_questions: 2,
+  time_spent_seconds: 30,
+  created_at: '2026-08-23T10:00:00Z',
+  quiz_purpose: 'practice',
+  timed: false,
+  expired: false,
+  answers: [],
+};
+
 describe('QuizAttemptPage keyboard-only completion', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGet.mockResolvedValue(multipleChoiceQuiz(2));
-    vi.mocked(quizAPI.submitAttempt).mockResolvedValue({
-      attempt_id: 88,
-      score: 1,
-      correct_count: 2,
-      graded_count: 2,
-      total_questions: 2,
-    } as never);
+    vi.mocked(quizAPI.submitAttempt).mockResolvedValue(ATTEMPT);
   });
 
   it('answers and hands in the whole quiz without a single pointer event', async () => {

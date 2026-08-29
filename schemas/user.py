@@ -10,6 +10,7 @@ from pydantic import (
 )
 
 from schemas.prompt_context import EducationLevel
+from utils.password_policy import validate_password
 
 
 class Role(str, Enum):
@@ -29,7 +30,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Schema for user registration payload."""
 
-    password: str = Field(min_length=8)
+    password: str
 
     @field_validator("name")
     @classmethod
@@ -38,12 +39,26 @@ class UserCreate(UserBase):
             raise ValueError("Text fields cannot contain NUL characters")
         return value
 
-    @field_validator("password")
-    @classmethod
-    def validate_bcrypt_length(cls, password: str) -> str:
-        if len(password.encode("utf-8")) > 72:
-            raise ValueError("Password must be at most 72 UTF-8 bytes")
-        return password
+    @model_validator(mode="after")
+    def enforce_password_policy(self) -> "UserCreate":
+        # Validated here rather than on the field so the policy can see the
+        # name and address the password must not be built out of.
+        validate_password(self.password, identifiers=(self.name, self.email))
+        return self
+
+
+class PasswordChangeRequest(BaseModel):
+    """An authenticated password change: prove the old one, then set a new one.
+
+    The current password is required even though the caller already holds a
+    valid token, because a token that leaked is exactly the case this stops
+    from becoming a permanent takeover. The new password is bounded here only
+    to reject empty and absurd input cheaply; ``UserService.change_password``
+    applies the real policy through ``utils/password_policy.py``.
+    """
+
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=1, max_length=255)
 
 
 class UserResponse(UserBase):
@@ -52,6 +67,7 @@ class UserResponse(UserBase):
     id: int
     role: Role
     is_banned: bool
+    is_email_verified: bool
     credits: float | None
     preferred_model: str
     education_level: EducationLevel = EducationLevel.UNSPECIFIED
@@ -62,9 +78,10 @@ class UserResponse(UserBase):
 class UserUpdate(BaseModel):
     """Schema for updating user profile or admin actions."""
 
+    name: str | None = Field(None, max_length=255)
     role: Role | None = None
     is_banned: bool | None = None
-    preferred_model: str | None = Field(default=None, min_length=1, max_length=100)
+    preferred_model: str | None = Field(None, min_length=1, max_length=100)
     education_level: EducationLevel | None = None
 
     @field_validator("preferred_model")

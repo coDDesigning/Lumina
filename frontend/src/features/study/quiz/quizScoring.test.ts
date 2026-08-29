@@ -12,6 +12,9 @@ function attempt(overrides: Partial<QuizAttemptResponse>): QuizAttemptResponse {
     total_questions: 0,
     time_spent_seconds: null,
     created_at: '2026-08-23T10:00:00Z',
+    quiz_purpose: null,
+    timed: false,
+    expired: false,
     answers: [],
     ...overrides,
   };

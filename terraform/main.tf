@@ -63,6 +63,7 @@ module "frontend" {
   frontend_dns_record_name   = var.dns_record_name == "" ? var.frontend_domain_name : var.dns_record_name
   api_origin_domain_name     = module.alb.api_origin_domain_name
   frontend_dns_cutover       = var.frontend_dns_cutover
+  additional_connect_src     = var.frontend_additional_connect_src
   alb_dns_name               = module.alb.dns_name
   alb_zone_id                = module.alb.zone_id
   route53_zone_id            = var.route53_zone_id
@@ -93,21 +94,6 @@ module "rds" {
   tags                     = local.tags
 }
 
-module "rds_proxy" {
-  source                       = "./modules/rds-proxy"
-  name_prefix                  = local.name_prefix
-  subnet_ids                   = module.vpc.private_subnet_ids
-  security_group_ids           = [module.security.security_group_id]
-  credentials_secret_arn       = module.rds.credentials_secret_arn
-  db_instance_identifier       = module.rds.instance_identifier
-  database_name                = module.rds.database_name
-  username                     = module.rds.username
-  password                     = module.rds.password
-  max_connections_percent      = var.rds_proxy_max_connections_percent
-  max_idle_connections_percent = var.rds_proxy_max_idle_connections_percent
-  tags                         = local.tags
-}
-
 module "ecs" {
   source                              = "./modules/ecs"
   name_prefix                         = local.name_prefix
@@ -120,7 +106,7 @@ module "ecs" {
   alb_target_group_arn                = module.alb.target_group_arn
   s3_bucket                           = module.s3.bucket
   s3_bucket_arn                       = module.s3.arn
-  runtime_database_url_secret_arn     = module.rds_proxy.runtime_database_url_secret_arn
+  runtime_database_url_secret_arn     = module.rds.database_url_secret_arn
   migration_database_url_secret_arn   = module.rds.database_url_secret_arn
   bootstrap_admin_email               = var.bootstrap_admin_email
   ai_model_cost_rates                 = var.ai_model_cost_rates
@@ -139,6 +125,14 @@ module "ecs" {
   tmpfs_size_bytes                    = var.tmpfs_size_bytes
   course_purge_interval_seconds       = var.course_purge_interval_seconds
   embedding_backfill_interval_seconds = var.embedding_backfill_interval_seconds
+  frontend_domain_name                = var.frontend_domain_name
+  email_verification_required         = var.email_verification_required
+  email_from_address                  = var.email_from_address
+  smtp_host                           = var.smtp_host
+  smtp_port                           = var.smtp_port
+  smtp_username                       = var.smtp_username
+  smtp_use_tls                        = var.smtp_use_tls
+  vpc_cidr_block                      = var.vpc_cidr
   tags                                = local.tags
 }
 
@@ -191,7 +185,6 @@ module "observability" {
   api_service_name        = module.ecs.api_service_name
   worker_service_name     = module.ecs.worker_service_name
   rds_instance_identifier = module.rds.instance_identifier
-  rds_proxy_name          = module.rds_proxy.name
   tags                    = local.tags
 }
 

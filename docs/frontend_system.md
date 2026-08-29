@@ -34,6 +34,13 @@ browser origin. The development server preserves that contract with its `/api`
 proxy. Changing an API container environment after the frontend is built does
 not alter the bundle.
 
+The self-hosted Compose stack reaches the same contract without CloudFront: the
+`frontend` service builds this application with `Dockerfile.frontend` and serves
+it behind the Nginx configuration in `ops/nginx/`, which proxies `/api` to the
+API container under one origin. `VITE_API_BASE_URL` is a build argument there,
+so changing it means `docker compose build frontend` rather than a restart. The
+routing contract is documented in `docs/deployment.md`.
+
 For a deliberately cross-origin build, use an absolute prefix such as
 `https://api.example.com/api`. The API must then set
 `CORS_ALLOWED_ORIGINS=https://app.example.com`. Origins are exact, wildcards
@@ -167,7 +174,12 @@ Rules that are not negotiable:
 /activity                          what you generated and attempted, every course
 /courses/:id                       course workspace (chat-first)
 /courses/:id/guides/:outputId      one study guide, its own page
+/courses/:id/exam-mode             exam sources, discovered topics, saved plans
+/courses/:id/exam-mode/plans/:planId                one ranked plan, day by day
+/courses/:id/exam-mode/plans/:planId/topics/:topicKey   one topic's study workspace
+/courses/:id/exam-mode/plans/:planId/compare/:otherPlanId   two saved versions
 /courses/:id/practice/:quizId      taking a quiz
+/courses/:id/practice/:quizId/sessions/:sessionId   sitting a timed paper
 /courses/:id/practice/:quizId/attempts/:attemptId   what you scored
 /courses/:id/progress              progress, topic mastery, quizzes to retake
 /courses/:id/settings              course details, generation defaults, danger zone
@@ -270,8 +282,16 @@ Three rules the UI enforces so nobody discovers them through an error:
 
 ## Quiz
 
-- Quiz reads **always include the correct answer**. There is no server-side take mode, so
-  hiding it during an attempt is entirely the frontend's job.
+- Quiz reads **always include the correct answer** for an ordinary quiz. There is no
+  server-side take mode, so hiding it during an attempt is entirely the frontend's job. An
+  Exam Mode topic exam, similar-question set or mock exam is the exception: the server
+  redacts those itself and says so with `answers_hidden`.
+- **A quiz is timed only if the server says so.** `timed` and `time_limit_seconds` come from
+  the backend; the frontend never invents a deadline. A timed paper refuses the ordinary
+  attempt endpoint (`timed_session_required`) and is sat through `quiz_sessions`: the clock
+  is derived from `expires_at`, answers are written as they are given, and expiry stops new
+  writes without discarding the ones that landed. Read `quiz_purpose` for labels and return
+  navigation rather than parsing a title.
 - `score` is a **0.0–1.0 fraction**; `mastery_percentage` is 0–100.
 - An answer the model could not grade returns `is_correct: null` and `score: null`. It is
   excluded from the denominator and must read as **"not scored"**, never as wrong.

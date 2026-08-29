@@ -11,8 +11,8 @@ never on a specific vendor.
 |---|---|---|
 | `ollama` | Implemented (default) | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` — both defaulted |
 | `gemini` | Implemented | `GEMINI_API_KEY` |
-| `openai` | Recognized, not implemented | — |
-| `claude` | Recognized, not implemented | — |
+| `openai` | Implemented | `OPENAI_API_KEY` |
+| `claude` | Implemented | `ANTHROPIC_API_KEY` |
 
 `IMPLEMENTED_AI_PROVIDERS` in `backend/app/config.py` is the authoritative list.
 The provider factory reads it rather than restating provider names, so the two
@@ -22,16 +22,48 @@ The same rule covers `AI_FALLBACK_PROVIDERS`: a fallback naming an
 unimplemented provider is rejected at startup rather than failing the first time
 the primary provider errors and the fallback is actually reached.
 
-Selecting `openai` or `claude` fails at startup, not on the first generation
-request:
-
-```
-ValueError: AI_PROVIDER 'openai' is recognized but not implemented yet.
-Implemented providers: gemini, ollama.
-```
-
 An unrecognized spelling fails with the list of accepted names, which keeps a
-typo (`gemeni`) distinguishable from a genuine roadmap provider (`openai`).
+typo (`gemeni`) distinguishable from a genuine provider name.
+
+## Hosted OpenAI Setup
+
+1. Obtain an API key from <https://platform.openai.com>.
+2. Configure the environment:
+
+   ```bash
+   AI_PROVIDER=openai
+   OPENAI_API_KEY=sk-...
+   ```
+
+   The default model is `gpt-5.6-terra`. The model catalog supports 1M-token context windows,
+   vision input, and structured JSON output via OpenAI's JSON schema generation.
+
+## Hosted Claude (Anthropic) Setup
+
+1. Obtain an API key from <https://console.anthropic.com>.
+2. Configure the environment:
+
+   ```bash
+   AI_PROVIDER=claude
+   ANTHROPIC_API_KEY=sk-ant-...
+   ```
+
+   The default model is `claude-sonnet-5`. The model catalog supports 1M-token context windows,
+   vision input, and structured JSON output via Anthropic's structured output format schema.
+
+## Multi-Provider Fallback & Resilience
+
+Hosted production deployments can configure multiple providers in priority order to eliminate
+single-vendor concentration risk:
+
+```bash
+AI_PROVIDER=gemini
+AI_FALLBACK_PROVIDERS=openai,claude
+```
+
+During transient network drops, rate limits, or upstream 5xx outages, `ReliableTextGenerationProvider`
+will automatically retry with exponential backoff and transparently fail over to the next configured
+provider. Output attribution truthfully records the provider and model that generated each artifact.
 
 ## Self-Hosted Ollama Setup
 
@@ -176,6 +208,7 @@ OLLAMA_NUM_CTX=8192
 OLLAMA_NUM_PREDICT=4096
 
 AI_GENERATION_TIMEOUT_SECONDS=180
+AI_GENERATION_OVERALL_TIMEOUT_SECONDS=300
 
 STUDY_GUIDE_MATERIAL_MAX_CHARS=16000
 QUIZ_MATERIAL_MAX_CHARS=16000
@@ -191,6 +224,16 @@ from whatever survived. `16000` characters is roughly 4k tokens, which leaves
 room for the prompt template and the response inside the same window. Nothing
 cross-validates the two settings, because a Gemini deployment has a 1M-token
 window and needs no such reduction.
+
+`AI_GENERATION_OVERALL_TIMEOUT_SECONDS` bounds the whole request including
+retries and fallbacks, and its `110` default is below one attempt at this
+profile's `180`. The deadline is checked between attempts rather than during
+one, so a first attempt still runs to completion, but every retry after a slow
+attempt is refused. Raise it alongside the per-attempt timeout. Both are capped
+at `300`. A reverse proxy in front of the API needs a read timeout above
+whichever value is configured, or it will return its own gateway error before
+the application can produce its `X-Error-Code` contract; the `frontend` service
+in this repository already uses 330 seconds.
 
 `AI_GENERATION_TIMEOUT_SECONDS` must be raised from its `60` default. A
 twenty-question quiz emits roughly 2,700 tokens, which at this profile's
@@ -574,34 +617,60 @@ headers (e.g. `[Diagram]\n...`) and indexed into chunks/embeddings downstream.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `IMAGE_PROVIDER` | `none` | Implemented: `none` (disabled), `ollama`, `gemini`. `openai` and `claude` are recognized and fail at startup. |
+| `IMAGE_PROVIDER` | `none` | Implemented: `none` (disabled), `ollama`, `gemini`. Unset resolves based on `DEPLOYMENT_MODE`. `openai` and `claude` are recognized and fail at startup. |
 | `OLLAMA_IMAGE_MODEL` | `llama3.2-vision` | Multimodal model used with the shared `OLLAMA_BASE_URL`. |
 | `GEMINI_IMAGE_MODEL` | `gemini-2.5-flash` | Multimodal model used with `GEMINI_API_KEY`. |
 | `IMAGE_UNDERSTANDING_TIMEOUT_SECONDS` | `30` | Per-visual deadline, 1-300 seconds. |
 | `IMAGE_UNDERSTANDING_MAX_BYTES` | `10485760` | Maximum accepted rendered image size (10 MB). |
 
-### Error Semantics and Failure Isolation
+### Deployment Mode Defaults and Startup Validation
 
-Image understanding distinguishes between temporary infrastructure failures and
-per-visual content failures:
+Visual understanding configuration is verified at application and worker startup:
 
-- **Temporary provider failures** (`TemporaryVisualServiceError` for rate limits,
-  timeouts, network loss, and 5xx server errors): treated as retryable processing
-  errors (`IMAGE_UNDERSTANDING_FAILED`, retryable=True). The worker halts extraction
-  and safely requeues the job with backoff.
-- **Per-visual non-fatal failures** (`VisualAnalysisError` for unsupported images,
-  safety blocks, or provider rejection): recorded per-visual as `FAILED` with
-  `error_code="VISUAL_ANALYSIS_FAILED"`. The document extraction continues so that
-  other pages and valid text/visuals remain fully processable.
-- **Disabled/Not-Configured**: when `IMAGE_PROVIDER=none`, visual regions are marked
-  explicitly as `NOT_CONFIGURED` without entering the `understanding_images` pipeline
-  stage or pretending visuals were analyzed.
+- **Hosted Mode (`DEPLOYMENT_MODE=hosted`)**:
+  - When `IMAGE_PROVIDER` is unset or empty, it auto-resolves to `gemini` only if the primary `AI_PROVIDER` is `gemini` and the configured model advertises vision capability in `AI_MODEL_CATALOG` (`vision: true`).
+  - If `AI_PROVIDER` is configured for any other provider (e.g. `openai` or `claude`), `IMAGE_PROVIDER` defaults to `none` rather than cross-routing visual crops to Gemini.
+  - An explicit or defaulted `IMAGE_PROVIDER=gemini` requires a non-blank `GEMINI_API_KEY`, failing fast at startup if missing.
+- **Self-Hosted Mode (`DEPLOYMENT_MODE=self_hosted`)**:
+  - When `IMAGE_PROVIDER` is unset or empty, it checks whether the configured `OLLAMA_IMAGE_MODEL` advertises vision capability in `AI_MODEL_CATALOG` (`vision: true`). If vision capability is present, it defaults to `ollama`. If the model does not support vision or is unadvertised, it defaults safely to `none` with an explicit non-fatal startup log.
+  - An explicit `IMAGE_PROVIDER=ollama` validates that the configured image model is not a known text-only model (e.g. `llama3.1` or `nomic-embed-text`), failing fast if a text-only model is configured for visual understanding.
+- **Text-Only and Disabled Deployments**:
+  - `IMAGE_PROVIDER=none` is always a valid non-fatal configuration across all deployment modes. When disabled, the visual understanding stage is bypassed: detected visual regions and document pages are recorded truthfully as `not_configured`, and standard text extraction, OCR, chunking, and embedding proceed normally.
 
-### Privacy Implications and Deployment Modes
+### Supported Formats and Extraction Pipeline
 
-- **Self-Hosted (`ollama`)**: Visual regions are rendered and sent to the local
-  Ollama instance over the internal network (`OLLAMA_BASE_URL`). No image bytes or
-  document contents leave the host.
-- **Cloud (`gemini`)**: Visual crops are sent to Google Gemini via the Google GenAI
-  SDK. Only the rendered bounding boxes of detected visual regions (not entire PDF
-  pages or unrelated documents) are transmitted.
+- **Document Formats**: Visual extraction applies strictly to PDF documents (`.pdf`). Plain text documents (`.txt`, `.md`) do not contain visual elements and are marked `not_applicable`.
+- **Detected Visual Elements**: PyMuPDF detects vector drawings, diagrams, embedded raster images, flowcharts, and structured figures.
+- **Image Crops**: Bounding boxes of detected visual elements are cropped and rendered as standard PNG images (`image/png`), bounded by `IMAGE_UNDERSTANDING_MAX_BYTES` (default 10 MB).
+- **Enrichment and Retrieval**: Generated visual descriptions are merged into the canonical page text and chunk text with section identifiers (e.g., `[Diagram]\n<description>`). Chunks containing visual descriptions are embedded and indexed into the vector store, allowing semantic queries to retrieve diagram and visual content.
+
+### Error Semantics, Partial Success, and Rollup
+
+Image understanding distinguishes between temporary infrastructure failures and per-visual content failures:
+
+- **Temporary Provider Failures** (`TemporaryVisualServiceError` for rate limits, timeouts, network loss, or 5xx server errors):
+  Treated as retryable processing errors (`IMAGE_UNDERSTANDING_FAILED`, retryable=True). The worker halts extraction and safely requeues the job with backoff.
+- **Per-Visual Failures** (`VisualAnalysisError` for unsupported images, safety filter blocks, or provider-specific rejections):
+  Recorded per-visual as `analysis_status="failed"` with `error_code="VISUAL_ANALYSIS_FAILED"`. The document extraction continues so other pages and valid text/visuals remain fully processable.
+- **Partial-Success Behavior**:
+  When a document contains multiple visual pages or visual regions where some succeed and some fail, the document status rolls up truthfully to `partial`. Successful visual descriptions are indexed and retrievable, while failed visuals are isolated without failing the whole document.
+- **Document-Level Visual Status Rollup**:
+  Exposed via API as `UploadedDocument.visual_analysis_status`:
+  - `not_applicable`: Non-PDF documents or PDFs with no detected visual elements.
+  - `pending`: Document is actively processing or pending extraction.
+  - `not_configured`: Visual elements exist, but `IMAGE_PROVIDER=none` or visual analysis was unconfigured.
+  - `completed`: All detected visual elements were successfully analyzed and indexed.
+  - `partial`: Mixed outcomes (e.g., some succeeded and some failed, or some succeeded and some not configured).
+  - `failed`: All relevant visual elements failed analysis.
+
+### Operational Considerations: Latency, Costs, Hardware, and Privacy
+
+- **Latency**:
+  Documents containing multiple diagrams or figures incur sequential or batched visual analysis round trips bounded by `IMAGE_UNDERSTANDING_TIMEOUT_SECONDS` (default 30s) per visual. For visual-heavy documents, this increases total document ingestion time compared to text-only processing.
+- **Metered API Costs**:
+  In hosted deployments using Gemini, each visual crop sent for analysis consumes multimodal API tokens / requests according to Google Gemini pricing. Self-hosted deployments using Ollama run on local compute with zero external API costs.
+- **Self-Hosted Hardware Requirements**:
+  Running local multimodal vision models with Ollama requires sufficient GPU VRAM to keep both the vision encoder and LLM resident in GPU memory concurrently. Running under memory pressure, falling back to CPU execution, or frequent model eviction significantly increases document processing latency.
+- **Privacy**:
+  - **Self-Hosted (`IMAGE_PROVIDER=ollama`)**: Visual crops remain entirely within the local host/network (`OLLAMA_BASE_URL`). No image bytes leave the local infrastructure.
+  - **Hosted (`IMAGE_PROVIDER=gemini`)**: Only cropped bounding-box PNGs of detected visual regions are transmitted over TLS to Google's Gemini API; entire PDF files or unrelated document text are not transmitted during the visual stage.

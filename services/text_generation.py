@@ -17,9 +17,13 @@ from tenacity import (
 )
 
 from backend.app.config import (
+    AI_PROVIDER_CLAUDE,
     AI_PROVIDER_GEMINI,
+    AI_PROVIDER_OPENAI,
     AI_PROVIDER_OLLAMA,
+    DEFAULT_CLAUDE_MODEL,
     DEFAULT_GEMINI_MODEL,
+    DEFAULT_OPENAI_MODEL,
     settings,
 )
 from schemas.ai_usage import ErrorCategory
@@ -63,6 +67,71 @@ class TextGenerationProvider(Protocol):
     def generate_json_with_metadata(
         self, prompt: str
     ) -> tuple[dict[str, object], GenerationMetadata]: ...
+
+
+class ProviderRegistry:
+    """Central registry for text generation provider metadata and construction."""
+
+    _registry: dict[str, dict] = {}
+
+    @classmethod
+    def register(
+        cls,
+        name: str,
+        *,
+        constructor: type,
+        default_model: str,
+        requires_key: bool,
+        vendor: str,
+        description: str,
+        is_local: bool,
+    ) -> None:
+        cls._registry[name] = {
+            "constructor": constructor,
+            "default_model": default_model,
+            "requires_key": requires_key,
+            "vendor": vendor,
+            "description": description,
+            "is_local": is_local,
+        }
+
+    @classmethod
+    def get(cls, name: str) -> dict | None:
+        return cls._registry.get(name.lower())
+
+    @classmethod
+    def all_implemented(cls) -> list[str]:
+        return list(cls._registry.keys())
+
+    @classmethod
+    def get_constructor(cls, name: str) -> type | None:
+        entry = cls.get(name)
+        return entry["constructor"] if entry else None
+
+    @classmethod
+    def get_default_model(cls, name: str) -> str | None:
+        entry = cls.get(name)
+        return entry["default_model"] if entry else None
+
+    @classmethod
+    def requires_key(cls, name: str) -> bool:
+        entry = cls.get(name)
+        return entry["requires_key"] if entry else False
+
+    @classmethod
+    def get_vendor(cls, name: str) -> str | None:
+        entry = cls.get(name)
+        return entry["vendor"] if entry else None
+
+    @classmethod
+    def get_description(cls, name: str) -> str | None:
+        entry = cls.get(name)
+        return entry["description"] if entry else None
+
+    @classmethod
+    def is_local(cls, name: str) -> bool:
+        entry = cls.get(name)
+        return entry["is_local"] if entry else False
 
 
 def _model_catalog_entry(model_id: str) -> dict[str, object] | None:
@@ -146,6 +215,9 @@ class TextGenerationProviderError(TextGenerationError):
 
 def is_transient_generation_error(exc: Exception) -> bool:
     """Classify whether an exception is transient and safe to retry."""
+    if isinstance(exc, TextGenerationConnectionError):
+        return True
+
     if isinstance(
         exc,
         (
@@ -165,6 +237,44 @@ def is_transient_generation_error(exc: Exception) -> bool:
 
     if isinstance(exc, genai_errors.ServerError):
         return True
+
+    try:
+        import openai
+
+        if isinstance(
+            exc,
+            (
+                openai.APIConnectionError,
+                openai.APITimeoutError,
+                openai.RateLimitError,
+                openai.InternalServerError,
+            ),
+        ):
+            return True
+        if isinstance(exc, openai.APIStatusError):
+            code = getattr(exc, "status_code", None)
+            return code in {429, 500, 502, 503, 504}
+    except ImportError:
+        pass
+
+    try:
+        import anthropic
+
+        if isinstance(
+            exc,
+            (
+                anthropic.APIConnectionError,
+                anthropic.APITimeoutError,
+                anthropic.RateLimitError,
+                anthropic.InternalServerError,
+            ),
+        ):
+            return True
+        if isinstance(exc, anthropic.APIStatusError):
+            code = getattr(exc, "status_code", None)
+            return code in {429, 500, 502, 503, 504}
+    except ImportError:
+        pass
 
     if isinstance(exc, TextGenerationRateLimitError) and not isinstance(
         exc, GenerationConcurrencyError
@@ -492,12 +602,365 @@ class OllamaTextGenerationProvider:
         return result
 
 
+class OpenAITextGenerationProvider:
+    MODEL = DEFAULT_OPENAI_MODEL
+    PROVIDER_NAME = "openai"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        timeout_seconds: int | None = None,
+        model: str | None = None,
+        client: object | None = None,
+    ) -> None:
+        key = api_key or settings.openai_api_key
+        if not key and client is None:
+            raise TextGenerationAuthError("OPENAI_API_KEY is not configured.")
+
+        self._model = model or self.MODEL
+        self._timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else settings.ai_generation_timeout_seconds
+        )
+        if client is not None:
+            self._client = client
+        else:
+            from openai import OpenAI
+
+            self._client = OpenAI(api_key=key, timeout=self._timeout_seconds)
+
+    def _extract_metadata(
+        self, response: object, latency_ms: int
+    ) -> GenerationMetadata:
+        prompt_tokens = None
+        completion_tokens = None
+        total_tokens = None
+
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            prompt_tokens = getattr(usage, "input_tokens", None)
+            completion_tokens = getattr(usage, "output_tokens", None)
+            total_tokens = getattr(usage, "total_tokens", None)
+
+        return GenerationMetadata(
+            provider=self.PROVIDER_NAME,
+            model=self._model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            latency_ms=latency_ms,
+        )
+
+    def _handle_client_error(self, exc: Exception) -> None:
+        if isinstance(exc, TextGenerationError):
+            raise exc
+        # Import here to avoid hard dependency at module load
+        from openai import (
+            APITimeoutError,
+            RateLimitError as OpenAIRateLimitError,
+            APIStatusError,
+            APIConnectionError,
+        )
+
+        if isinstance(exc, APITimeoutError):
+            raise TextGenerationTimeoutError("OpenAI request timed out.") from exc
+        if isinstance(exc, OpenAIRateLimitError):
+            raise TextGenerationRateLimitError("OpenAI rate limit exceeded.") from exc
+        if isinstance(exc, APIStatusError):
+            if exc.status_code in {401, 403}:
+                raise TextGenerationAuthError("OpenAI authentication failed.") from exc
+            if exc.status_code in {429}:
+                raise TextGenerationRateLimitError(
+                    "OpenAI rate limit exceeded."
+                ) from exc
+            if exc.status_code in {500, 502, 503, 504}:
+                raise TextGenerationProviderError(
+                    "OpenAI service unavailable."
+                ) from exc
+            raise TextGenerationProviderError("OpenAI text generation failed.") from exc
+        if isinstance(exc, APIConnectionError):
+            raise TextGenerationConnectionError("OpenAI could not be reached.") from exc
+        raise TextGenerationProviderError("OpenAI text generation failed.") from exc
+
+    def generate_text_with_metadata(
+        self, prompt: str
+    ) -> tuple[str, GenerationMetadata]:
+        start_time = time.perf_counter()
+        try:
+            response = self._client.responses.create(
+                model=self._model,
+                input=prompt,
+            )
+        except Exception as exc:
+            self._handle_client_error(exc)
+
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+
+        if not response or not response.output_text:
+            raise TextGenerationEmptyResponseError("OpenAI returned an empty response.")
+
+        metadata = self._extract_metadata(response, latency_ms)
+        return response.output_text, metadata
+
+    def generate_text(self, prompt: str) -> str:
+        text, _ = self.generate_text_with_metadata(prompt)
+        return text
+
+    def generate_json_with_metadata(
+        self, prompt: str
+    ) -> tuple[dict[str, object], GenerationMetadata]:
+        start_time = time.perf_counter()
+        # Use a permissive generic object schema for structured output
+        schema = {
+            "type": "object",
+            "additionalProperties": True,
+        }
+        try:
+            response = self._client.responses.create(
+                model=self._model,
+                input=prompt,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "response",
+                        "schema": schema,
+                        "strict": False,
+                    }
+                },
+            )
+        except Exception as exc:
+            self._handle_client_error(exc)
+
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+
+        if not response or not response.output_text:
+            raise TextGenerationEmptyResponseError("OpenAI returned an empty response.")
+
+        result = _parse_json_object(response.output_text, "OpenAI")
+        metadata = self._extract_metadata(response, latency_ms)
+        return result, metadata
+
+    def generate_json(self, prompt: str) -> dict[str, object]:
+        result, _ = self.generate_json_with_metadata(prompt)
+        return result
+
+
+class ClaudeTextGenerationProvider:
+    MODEL = DEFAULT_CLAUDE_MODEL
+    PROVIDER_NAME = "claude"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        timeout_seconds: int | None = None,
+        model: str | None = None,
+        client: object | None = None,
+    ) -> None:
+        key = api_key or settings.anthropic_api_key
+        if not key and client is None:
+            raise TextGenerationAuthError("ANTHROPIC_API_KEY is not configured.")
+
+        self._model = model or self.MODEL
+        self._timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else settings.ai_generation_timeout_seconds
+        )
+        if client is not None:
+            self._client = client
+        else:
+            from anthropic import Anthropic
+
+            self._client = Anthropic(api_key=key, timeout=self._timeout_seconds)
+
+    def _extract_metadata(
+        self, response: object, latency_ms: int
+    ) -> GenerationMetadata:
+        prompt_tokens = None
+        completion_tokens = None
+        total_tokens = None
+
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            prompt_tokens = getattr(usage, "input_tokens", None)
+            completion_tokens = getattr(usage, "output_tokens", None)
+            total_tokens = (
+                prompt_tokens + completion_tokens
+                if prompt_tokens is not None and completion_tokens is not None
+                else None
+            )
+
+        return GenerationMetadata(
+            provider=self.PROVIDER_NAME,
+            model=self._model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            latency_ms=latency_ms,
+        )
+
+    def _handle_client_error(self, exc: Exception) -> None:
+        if isinstance(exc, TextGenerationError):
+            raise exc
+        from anthropic import (
+            APITimeoutError,
+            RateLimitError as AnthropicRateLimitError,
+            APIStatusError,
+            APIConnectionError,
+        )
+
+        if isinstance(exc, APITimeoutError):
+            raise TextGenerationTimeoutError("Claude request timed out.") from exc
+        if isinstance(exc, AnthropicRateLimitError):
+            raise TextGenerationRateLimitError("Claude rate limit exceeded.") from exc
+        if isinstance(exc, APIStatusError):
+            if exc.status_code in {401, 403}:
+                raise TextGenerationAuthError("Claude authentication failed.") from exc
+            if exc.status_code in {429}:
+                raise TextGenerationRateLimitError(
+                    "Claude rate limit exceeded."
+                ) from exc
+            if exc.status_code in {500, 502, 503, 504}:
+                raise TextGenerationProviderError(
+                    "Claude service unavailable."
+                ) from exc
+            raise TextGenerationProviderError("Claude text generation failed.") from exc
+        if isinstance(exc, APIConnectionError):
+            raise TextGenerationConnectionError("Claude could not be reached.") from exc
+        raise TextGenerationProviderError("Claude text generation failed.") from exc
+
+    def generate_text_with_metadata(
+        self, prompt: str
+    ) -> tuple[str, GenerationMetadata]:
+        start_time = time.perf_counter()
+        try:
+            response = self._client.messages.create(
+                model=self._model,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except Exception as exc:
+            self._handle_client_error(exc)
+
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+
+        if not response or not response.content:
+            raise TextGenerationEmptyResponseError("Claude returned an empty response.")
+
+        # Extract text from content blocks
+        text_parts = [block.text for block in response.content if block.type == "text"]
+        if not text_parts:
+            raise TextGenerationEmptyResponseError("Claude returned an empty response.")
+        text = "\n".join(text_parts)
+
+        metadata = self._extract_metadata(response, latency_ms)
+        return text, metadata
+
+    def generate_text(self, prompt: str) -> str:
+        text, _ = self.generate_text_with_metadata(prompt)
+        return text
+
+    def generate_json_with_metadata(
+        self, prompt: str
+    ) -> tuple[dict[str, object], GenerationMetadata]:
+        start_time = time.perf_counter()
+        # Use a permissive generic object schema for structured output
+        schema = {
+            "type": "object",
+            "additionalProperties": True,
+        }
+        try:
+            response = self._client.messages.create(
+                model=self._model,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+                output_config={
+                    "format": {
+                        "type": "json_schema",
+                        "schema": schema,
+                    }
+                },
+            )
+        except Exception as exc:
+            self._handle_client_error(exc)
+
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+
+        if not response or not response.content:
+            raise TextGenerationEmptyResponseError("Claude returned an empty response.")
+
+        text_parts = [block.text for block in response.content if block.type == "text"]
+        if not text_parts:
+            raise TextGenerationEmptyResponseError("Claude returned an empty response.")
+        text = "\n".join(text_parts)
+
+        result = _parse_json_object(text, "Claude")
+        metadata = self._extract_metadata(response, latency_ms)
+        return result, metadata
+
+    def generate_json(self, prompt: str) -> dict[str, object]:
+        result, _ = self.generate_json_with_metadata(prompt)
+        return result
+
+
+# Register all providers
+ProviderRegistry.register(
+    AI_PROVIDER_GEMINI,
+    constructor=GeminiTextGenerationProvider,
+    default_model=DEFAULT_GEMINI_MODEL,
+    requires_key=True,
+    vendor="Google",
+    description="Google Gemini · Fast, high-context instruction & JSON generation",
+    is_local=False,
+)
+ProviderRegistry.register(
+    AI_PROVIDER_OLLAMA,
+    constructor=OllamaTextGenerationProvider,
+    default_model=settings.ollama_model,
+    requires_key=False,
+    vendor="Ollama",
+    description="Self-hosted local model via Ollama · Private execution",
+    is_local=True,
+)
+ProviderRegistry.register(
+    AI_PROVIDER_OPENAI,
+    constructor=OpenAITextGenerationProvider,
+    default_model=DEFAULT_OPENAI_MODEL,
+    requires_key=True,
+    vendor="OpenAI",
+    description="OpenAI · High-quality instruction following & structured output",
+    is_local=False,
+)
+ProviderRegistry.register(
+    AI_PROVIDER_CLAUDE,
+    constructor=ClaudeTextGenerationProvider,
+    default_model=DEFAULT_CLAUDE_MODEL,
+    requires_key=True,
+    vendor="Anthropic",
+    description="Anthropic Claude · Strong reasoning & reliable JSON generation",
+    is_local=False,
+)
+
+
 def configured_provider_identity() -> tuple[str, str]:
     """Report the provider name and model the application is configured to use."""
-    if settings.ai_provider == AI_PROVIDER_OLLAMA:
-        return AI_PROVIDER_OLLAMA, settings.ollama_model
+    provider_name = settings.ai_provider
+    default_model = ProviderRegistry.get_default_model(provider_name)
+    if default_model:
+        return provider_name, default_model
 
-    return AI_PROVIDER_GEMINI, GeminiTextGenerationProvider.MODEL
+    # Fallback to old logic for backward compatibility
+    if provider_name == AI_PROVIDER_OLLAMA:
+        return AI_PROVIDER_OLLAMA, settings.ollama_model
+    if provider_name == AI_PROVIDER_GEMINI:
+        return AI_PROVIDER_GEMINI, GeminiTextGenerationProvider.MODEL
+    if provider_name == AI_PROVIDER_OPENAI:
+        return AI_PROVIDER_OPENAI, DEFAULT_OPENAI_MODEL
+    if provider_name == AI_PROVIDER_CLAUDE:
+        return AI_PROVIDER_CLAUDE, DEFAULT_CLAUDE_MODEL
+
+    return provider_name, "unknown"
 
 
 def model_identifier(metadata: GenerationMetadata | None) -> str:
@@ -553,6 +1016,7 @@ class ReliableTextGenerationProvider:
         backoff_max_seconds: float | None = None,
         max_concurrency: int | None = None,
         semaphore: threading.BoundedSemaphore | None = None,
+        overall_timeout_seconds: int | None = None,
     ) -> None:
         if not providers:
             raise TextGenerationError(
@@ -574,6 +1038,11 @@ class ReliableTextGenerationProvider:
             if backoff_max_seconds is not None
             else settings.ai_generation_backoff_max_seconds
         )
+        self.overall_timeout_seconds = (
+            overall_timeout_seconds
+            if overall_timeout_seconds is not None
+            else settings.ai_generation_overall_timeout_seconds
+        )
         if semaphore is not None:
             self._semaphore = semaphore
         elif max_concurrency is not None:
@@ -590,10 +1059,18 @@ class ReliableTextGenerationProvider:
         if not acquired:
             raise GenerationConcurrencyError()
 
+        overall_deadline = time.monotonic() + self.overall_timeout_seconds
         try:
             last_exception: Exception | None = None
+            attempt_count = 0
+            provider_attempts = 0
 
-            for provider in self.providers:
+            for provider_idx, provider in enumerate(self.providers):
+                provider_name = getattr(
+                    provider, "PROVIDER_NAME", type(provider).__name__
+                )
+                provider_attempts = 0
+
                 retryer = Retrying(
                     stop=stop_after_attempt(self.max_attempts),
                     wait=wait_exponential(
@@ -606,43 +1083,71 @@ class ReliableTextGenerationProvider:
 
                 try:
                     for attempt in retryer:
+                        # Check overall deadline before each attempt
+                        if time.monotonic() >= overall_deadline:
+                            raise TextGenerationTimeoutError(
+                                "Overall generation deadline exceeded."
+                            )
+
                         with attempt:
                             if hasattr(provider, method_name):
-                                return getattr(provider, method_name)(prompt)
+                                result = getattr(provider, method_name)(prompt)
+                                # Log attempt metrics (structured, no raw exception)
+                                logger.info(
+                                    "Provider attempt completed",
+                                    extra={
+                                        "event": "provider_attempt",
+                                        "provider": provider_name,
+                                        "attempt_number": provider_attempts + 1,
+                                        "total_attempts": attempt_count
+                                        + provider_attempts
+                                        + 1,
+                                        "fallback_index": provider_idx,
+                                    },
+                                )
+                                return result
                             if method_name == "generate_text_with_metadata":
                                 text = provider.generate_text(prompt)
                                 meta = GenerationMetadata(
-                                    provider=getattr(
-                                        provider, "PROVIDER_NAME", "unknown"
-                                    ),
+                                    provider=provider_name,
                                     model=getattr(provider, "MODEL", "unknown"),
                                 )
                                 return text, meta
                             if method_name == "generate_json_with_metadata":
                                 data = provider.generate_json(prompt)
                                 meta = GenerationMetadata(
-                                    provider=getattr(
-                                        provider, "PROVIDER_NAME", "unknown"
-                                    ),
+                                    provider=provider_name,
                                     model=getattr(provider, "MODEL", "unknown"),
                                 )
                                 return data, meta
                             return getattr(provider, method_name)(prompt)
+                        provider_attempts += 1
+                        attempt_count += 1
                 except RetryError as exc:
                     last_exception = exc.last_attempt.exception() or exc
                     logger.warning(
-                        "Provider %s exhausted %d attempts: %s",
-                        getattr(provider, "PROVIDER_NAME", type(provider).__name__),
-                        self.max_attempts,
-                        last_exception,
+                        "Provider exhausted attempts",
+                        extra={
+                            "event": "provider_exhausted",
+                            "provider": provider_name,
+                            "attempts": provider_attempts,
+                            "exception_type": type(last_exception).__name__,
+                            "error_category": getattr(
+                                last_exception, "error_category", "unknown"
+                            ),
+                        },
                     )
                 except Exception as exc:
                     last_exception = exc
                     logger.warning(
-                        "Provider %s failed with %s: %s",
-                        getattr(provider, "PROVIDER_NAME", type(provider).__name__),
-                        type(exc).__name__,
-                        exc,
+                        "Provider failed",
+                        extra={
+                            "event": "provider_failed",
+                            "provider": provider_name,
+                            "attempts": provider_attempts,
+                            "exception_type": type(exc).__name__,
+                            "error_category": getattr(exc, "error_category", "unknown"),
+                        },
                     )
 
             if isinstance(last_exception, TextGenerationError):
@@ -710,23 +1215,26 @@ def get_available_models() -> list[dict[str, object]]:
 
     models: list[dict[str, object]] = []
 
+    catalog_dict = getattr(settings, "ai_model_catalog", None) or {}
     for provider in provider_names:
-        provider_models = settings.ai_model_catalog.get(provider, [])
+        provider_models = catalog_dict.get(provider, [])
+        vendor = ProviderRegistry.get_vendor(provider) or provider.title()
+        description_template = ProviderRegistry.get_description(provider)
+        is_local = ProviderRegistry.is_local(provider)
 
         for index, entry in enumerate(provider_models):
             model_name = str(entry["model"])
             is_json = bool(entry.get("json_mode", True))
             context_win = int(entry.get("context_window", 8192))
             has_vision = bool(entry.get("vision", False))
-            is_local = provider == AI_PROVIDER_OLLAMA
 
             cost_hint = (
                 "Local execution · Unmetered" if is_local else "Metered (1-2 credits)"
             )
             description = (
-                f"Self-hosted local model via Ollama ({model_name}) · Private execution"
-                if is_local
-                else f"Google Gemini ({model_name}) · Fast, high-context instruction & JSON generation"
+                description_template.format(model_name=model_name)
+                if description_template and "{" in description_template
+                else (description_template or f"{vendor} ({model_name})")
             )
 
             models.append(
@@ -734,7 +1242,7 @@ def get_available_models() -> list[dict[str, object]]:
                     "id": f"{provider}:{model_name}",
                     "provider": provider,
                     "model": model_name,
-                    "display_name": f"{provider.title()} ({model_name})",
+                    "display_name": f"{vendor} ({model_name})",
                     "is_default": provider == primary_name and index == 0,
                     "cost_hint": cost_hint,
                     "capabilities": list(standard_capabilities),
@@ -818,27 +1326,23 @@ def _instantiate_provider(
     model_name: str | None = None,
 ) -> TextGenerationProvider:
     clean_name = provider_name.strip().lower()
+    constructor = ProviderRegistry.get_constructor(clean_name)
+    if constructor is None:
+        raise TextGenerationError(
+            f"Text generation provider '{clean_name}' is not implemented.",
+            error_category=ErrorCategory.PROVIDER_ERROR,
+        )
 
-    if clean_name == AI_PROVIDER_GEMINI:
-        if model_name is None:
-            return GeminiTextGenerationProvider()
-        return GeminiTextGenerationProvider(model=model_name)
-
-    if clean_name == AI_PROVIDER_OLLAMA:
-        if model_name is None:
-            return OllamaTextGenerationProvider()
-        return OllamaTextGenerationProvider(model=model_name)
-
-    raise TextGenerationError(
-        f"Text generation provider '{clean_name}' is not implemented.",
-        error_category=ErrorCategory.PROVIDER_ERROR,
-    )
+    default_model = ProviderRegistry.get_default_model(clean_name)
+    model = model_name or default_model
+    return constructor(model=model)
 
 
 def get_text_generation_provider(
     effective_model: str | None = None,
     *,
     require_json_mode: bool = False,
+    overall_timeout_seconds: int | None = None,
 ) -> TextGenerationProvider:
     primary_name = settings.ai_provider
     provider_names = [primary_name]
@@ -852,6 +1356,7 @@ def get_text_generation_provider(
             if fallback_token not in provider_names:
                 provider_names.append(fallback_token)
 
+    # Validate effective model's JSON mode requirement
     if effective_model and require_json_mode:
         model_entry = _model_catalog_entry(effective_model)
 
@@ -862,6 +1367,26 @@ def get_text_generation_provider(
             raise IncompatibleModelError(
                 "Requested AI model does not support JSON mode."
             )
+
+    # Validate fallback models also support required capabilities
+    if require_json_mode:
+        catalog = get_available_models()
+        # Determine selected_provider early for validation
+        selected_provider_for_validation: str | None = None
+        if effective_model:
+            selected_provider_for_validation, _ = effective_model.split(":", 1)
+            selected_provider_for_validation = (
+                selected_provider_for_validation.strip().lower()
+            )
+
+        for name in provider_names:
+            # Check if this provider has at least one JSON-capable model in catalog
+            provider_models = [m for m in catalog if m["provider"] == name]
+            json_capable = any(m.get("json_mode", True) for m in provider_models)
+            if not json_capable and name != selected_provider_for_validation:
+                raise IncompatibleModelError(
+                    f"Fallback provider '{name}' has no JSON-capable models in catalog."
+                )
 
     selected_provider: str | None = None
     selected_model: str | None = None
@@ -883,4 +1408,6 @@ def get_text_generation_provider(
     return ReliableTextGenerationProvider(
         providers,
         semaphore=get_shared_generation_semaphore(),
+        max_concurrency=settings.ai_generation_max_concurrency,
+        overall_timeout_seconds=overall_timeout_seconds,
     )

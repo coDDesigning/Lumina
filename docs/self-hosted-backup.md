@@ -44,6 +44,10 @@ referenced by the database snapshot and checks each against its recorded byte
 size and SHA-256 digest. Chroma is a raw snapshot and therefore requires the API
 and worker to be stopped.
 
+`frontend` holds no durable state, is not part of the backup set, and is never
+stopped by the wrapper. While `api` is stopped the interface still loads and its
+API calls fail; it recovers by itself when `api` returns.
+
 ## Complete backup
 
 Set `LUMINA_BACKUP_DIRECTORY` to a host directory outside the repository and
@@ -116,10 +120,16 @@ docker compose --profile maintenance run --rm restore
 COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose run --rm migrate
 COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose run --rm worker \
   python -m workers.embedding_backfill --prune-orphans
-COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose up -d \
-  --wait --wait-timeout 180 api worker
+COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" LUMINA_PORT=8081 docker compose up -d \
+  --wait --wait-timeout 180 api worker frontend
 curl --fail --show-error http://127.0.0.1:8000/health/ready
 ```
+
+The restored project starts `frontend` too, because a project serving no
+interface has not been shown usable. It is given its own `LUMINA_PORT` so it
+cannot collide with the original project's entrypoint, which stays published
+even while `api` is stopped. Verify the restored copy at
+`http://127.0.0.1:8081` before cutting over.
 
 The restore rejects an existing database, nonempty upload/Chroma directories,
 unsafe archive paths, links, checksum mismatches, foreign-key violations, and an
@@ -144,10 +154,10 @@ original project:
 
 ```bash
 set -euo pipefail
-COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose stop api worker
-test -z "$(COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose ps --status running --services api worker)"
+COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose stop api worker frontend
+test -z "$(COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose ps --status running --services api worker frontend)"
 COMPOSE_PROJECT_NAME="${ORIGINAL_PROJECT_NAME}" docker compose up -d \
-  --wait --wait-timeout 180 api worker
+  --wait --wait-timeout 180 api worker frontend
 curl --fail --show-error http://127.0.0.1:8000/health/ready
 ```
 

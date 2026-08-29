@@ -11,13 +11,23 @@ export interface QuizAnswerFieldProps {
   question: QuizQuestionView;
   draft: AnswerDraft;
   onChange: (draft: AnswerDraft) => void;
+  /** A timed sitting past its deadline keeps every answer but takes no more. */
+  disabled?: boolean;
+  /** Leaving a written answer is a moment worth persisting it. */
+  onBlur?: () => void;
 }
 
 function optionLetter(index: number): string {
   return String.fromCharCode(65 + index);
 }
 
-export function QuizAnswerField({ question, draft, onChange }: QuizAnswerFieldProps) {
+export function QuizAnswerField({
+  question,
+  draft,
+  onChange,
+  disabled,
+  onBlur,
+}: QuizAnswerFieldProps) {
   const groupName = useId();
 
   if (question.question_type === 'true_false') {
@@ -37,6 +47,7 @@ export function QuizAnswerField({ question, draft, onChange }: QuizAnswerFieldPr
                 name={groupName}
                 className={styles.control}
                 checked={draft.optionIndex === index}
+                disabled={disabled}
                 onChange={() => onChange({ optionIndex: index, text: '' })}
               />
               <span className={styles.binaryMark} aria-hidden="true">
@@ -65,6 +76,7 @@ export function QuizAnswerField({ question, draft, onChange }: QuizAnswerFieldPr
                 name={groupName}
                 className={styles.control}
                 checked={draft.optionIndex === index}
+                disabled={disabled}
                 onChange={() => onChange({ optionIndex: index, text: '' })}
               />
               <span className={styles.letter} aria-hidden="true">
@@ -93,7 +105,9 @@ export function QuizAnswerField({ question, draft, onChange }: QuizAnswerFieldPr
         maxLength={MAX_ANSWER_TEXT_CHARS}
         placeholder={isOpenEnded ? 'Explain your reasoning' : 'Type your answer'}
         value={draft.text}
+        disabled={disabled}
         onChange={(event) => onChange({ optionIndex: null, text: event.target.value })}
+        onBlur={onBlur}
       />
       {isOpenEnded ? (
         <p className={styles.counter}>

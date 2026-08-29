@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
@@ -42,9 +42,11 @@ from schemas.exam_roadmap import (
     RoadmapMaterial,
     RoadmapTopic,
     TopicMaterialStatus,
+    TopicSource,
 )
 from services.citations import resolve_citations
 from services.course_material import count_available_chunks
+from services.exam_plan import ExamPlanService
 from services.exam_schedule import (
     REVIEW_TOPICS_PER_DAY,
     Schedule,
@@ -67,6 +69,7 @@ from utils.ai_errors import (
     EXAM_DATE_REQUIRED_MESSAGE,
     EXAM_TOPICS_REQUIRED_MESSAGE,
 )
+from utils.json_documents import parse_json_object
 
 OUTPUT_TYPE = "exam_roadmap"
 
@@ -91,6 +94,25 @@ class ExamRoadmapGeneration:
     roadmap: ExamRoadmap
     applied_settings: ExamRoadmapGenerationSettings
     applied_context: ExamRoadmapGenerationContext
+
+
+def _settings_plan_output_id(stored: str | None, row_id: int) -> int | None:
+    """Which plan a stored roadmap was built from, or None for a course-wide one.
+
+    Read permissively, like every other stored generation document: a row whose
+    JSON no longer parses loses its place in a version chain rather than failing
+    the generation that was counting it.
+    """
+    document = parse_json_object(
+        stored,
+        field="generation_settings",
+        table="generated_outputs",
+        row_id=row_id,
+    )
+    if not document:
+        return None
+    value = document.get("plan_output_id")
+    return value if isinstance(value, int) else None
 
 
 def _documents_from(citations: Sequence[Citation]) -> tuple[RoadmapMaterial, ...]:
@@ -146,6 +168,51 @@ class ExamRoadmapService:
         if not ranked:
             raise ExamTopicsRequiredError(EXAM_TOPICS_REQUIRED_MESSAGE)
         return ranked, len(measured), attempts
+
+    @classmethod
+    def rank_from_plan(
+        cls, db: Session, course: Course, plan_output_id: int, *, user_id: int
+    ) -> tuple[list[RankedTopic], int, int]:
+        """Take the order an exam plan already decided, without recomputing it.
+
+        The plan's ranking is deterministic, explainable, and was reviewed by
+        the student who prioritised its topics. Re-ranking here would give one
+        course two disagreeing answers to the same question, so this maps rather
+        than scores: ``priority`` is the plan's own score and the sequence key is
+        the plan's own rank, which is what makes the schedule follow the plan.
+
+        ``questions_answered`` is left unknown rather than reported as zero,
+        because the plan records mastery but not how many questions produced it,
+        and zero is a measurement this path never made.
+        """
+        output = ExamPlanService.get_plan(db, course.id, plan_output_id)
+        readout = ExamPlanService.readout(
+            db, course.id, output, include_staleness=False
+        )
+        entries = [
+            topic
+            for topic in readout.content.get("topics", [])
+            if isinstance(topic, dict) and str(topic.get("topic_key") or "").strip()
+        ]
+        if not entries:
+            raise ExamTopicsRequiredError(EXAM_TOPICS_REQUIRED_MESSAGE)
+
+        _, attempts = cls._mastery(db, course.id, user_id=user_id)
+        ranked = [
+            RankedTopic(
+                topic=str(entry.get("display_label") or entry["topic_key"]),
+                topic_key=str(entry["topic_key"]),
+                source=TopicSource.EXAM_PLAN,
+                syllabus_position=int(entry.get("rank") or index + 1),
+                importance=round(float(entry.get("priority_score") or 0) / 100, 4),
+                mastery_percentage=entry.get("mastery_percentage"),
+                questions_answered=None,
+                weakness=0.0,
+                priority=round(float(entry.get("priority_score") or 0) / 100, 4),
+            )
+            for index, entry in enumerate(entries)
+        ]
+        return ranked, len(ranked), attempts
 
     @staticmethod
     def resolve_topic_material(
@@ -214,34 +281,34 @@ class ExamRoadmapService:
 
     @staticmethod
     def _previous_roadmap_ids(
-        db: Session, course_id: int, *, user_id: int
+        db: Session, course_id: int, *, user_id: int, plan_output_id: int | None = None
     ) -> tuple[int, int | None]:
         """How many roadmaps this student already has, and the latest one's id.
 
         A regeneration never edits an earlier plan: it counts them, points at the
         one it supersedes, and is written as a new row.
+
+        A plan-scoped roadmap counts only the roadmaps of that same plan, so two
+        plans of one course keep separate histories and ``adapted_from_output_id``
+        never points at a schedule built from different topics.
         """
-        count = (
-            db.scalar(
-                select(func.count(GeneratedOutput.id)).where(
-                    GeneratedOutput.course_id == course_id,
-                    GeneratedOutput.user_id == user_id,
-                    GeneratedOutput.output_type == OUTPUT_TYPE,
-                )
-            )
-            or 0
-        )
-        latest = db.scalar(
-            select(GeneratedOutput.id)
+        rows = db.execute(
+            select(GeneratedOutput.id, GeneratedOutput.generation_settings)
             .where(
                 GeneratedOutput.course_id == course_id,
                 GeneratedOutput.user_id == user_id,
                 GeneratedOutput.output_type == OUTPUT_TYPE,
             )
             .order_by(GeneratedOutput.created_at.desc(), GeneratedOutput.id.desc())
-            .limit(1)
-        )
-        return count, latest
+        ).all()
+
+        same_chain = [
+            row.id
+            for row in rows
+            if _settings_plan_output_id(row.generation_settings, row.id)
+            == plan_output_id
+        ]
+        return len(same_chain), (same_chain[0] if same_chain else None)
 
     @staticmethod
     def _topic_view(
@@ -250,6 +317,7 @@ class ExamRoadmapService:
         topic = scheduled.topic
         return RoadmapTopic(
             topic=topic.topic,
+            topic_key=topic.topic_key,
             goal=scheduled.goal,
             pass_number=scheduled.pass_number,
             source=topic.source,
@@ -286,7 +354,12 @@ class ExamRoadmapService:
         if course.exam_date < current_day:
             raise ExamDatePassedError(EXAM_DATE_PASSED_MESSAGE)
 
-        ranked, mastery_topics, attempts = cls.rank(db, course, user_id=user_id)
+        if request.plan_output_id is not None:
+            ranked, mastery_topics, attempts = cls.rank_from_plan(
+                db, course, request.plan_output_id, user_id=user_id
+            )
+        else:
+            ranked, mastery_topics, attempts = cls.rank(db, course, user_id=user_id)
         schedule: Schedule = build_schedule(
             ranked,
             today=current_day,
@@ -332,7 +405,7 @@ class ExamRoadmapService:
             notes.insert(0, NO_MATERIAL_NOTE)
 
         previous_count, previous_id = cls._previous_roadmap_ids(
-            db, course_id, user_id=user_id
+            db, course_id, user_id=user_id, plan_output_id=request.plan_output_id
         )
 
         roadmap = ExamRoadmap(
@@ -348,9 +421,11 @@ class ExamRoadmapService:
             attempts_considered=attempts,
             roadmap_version=previous_count + 1,
             adapted_from_output_id=previous_id,
+            plan_output_id=request.plan_output_id,
             ranked_topics=[
                 RankedTopicView(
                     topic=topic.topic,
+                    topic_key=topic.topic_key,
                     source=topic.source,
                     syllabus_position=topic.syllabus_position,
                     importance=topic.importance,
@@ -387,6 +462,7 @@ class ExamRoadmapService:
                 retrieval_min_similarity=settings.retrieval_min_similarity,
                 roadmap_version=roadmap.roadmap_version,
                 adapted_from_output_id=previous_id,
+                plan_output_id=request.plan_output_id,
             ),
             applied_context=ExamRoadmapGenerationContext(
                 topics_ranked=len(ranked),

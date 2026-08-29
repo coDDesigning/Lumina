@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { APIError } from './client';
+import { APIError, MalformedResponseError } from './client';
 import {
   describeDocumentError,
   describeError,
   describeGenerationError,
   describeUploadError,
+  INVALID_RESPONSE_DATA_CODE,
   isAbortError,
   isInsufficientCredits,
 } from './errors';
@@ -96,6 +97,20 @@ describe('error description helpers', () => {
         'Network error. Check your connection and try again.',
       );
       expect(described.retryable).toBe(true);
+    });
+
+    it('preserves an invalid response as a typed client failure', () => {
+      const described = describeError(
+        new MalformedResponseError('Exam topic guide', 'invalid_data'),
+        'Fallback',
+      );
+
+      expect(described).toEqual({
+        message: 'Exam topic guide returned invalid data.',
+        status: null,
+        code: INVALID_RESPONSE_DATA_CODE,
+        retryable: false,
+      });
     });
 
     it('falls back for unknown errors', () => {
@@ -229,6 +244,41 @@ describe('error description helpers', () => {
 
       expect(described.message).toMatch(/nothing was charged/i);
       expect(described.retryable).toBe(true);
+    });
+
+    it('describes the public generation throttle separately from provider throttling', () => {
+      const generationThrottle = describeGenerationError(
+        new APIError(
+          429,
+          { detail: 'Too many generation requests.' },
+          'generation_rate_limited',
+          '45',
+        ),
+        'Generation failed',
+      );
+      const providerThrottle = describeGenerationError(
+        new APIError(429, { detail: 'Provider throttled.' }, 'provider_rate_limited'),
+        'Generation failed',
+      );
+
+      expect(generationThrottle.title).not.toBe(providerThrottle.title);
+      expect(generationThrottle.message).toBe(
+        'Too many generation requests were made. Try again in 45 seconds. No credit was charged.',
+      );
+      expect(generationThrottle.message).toMatch(/no credit was charged/i);
+      expect(generationThrottle.retryable).toBe(true);
+      expect(providerThrottle.message).toMatch(/model is busy/i);
+    });
+
+    it('uses truthful fallback copy when the generation retry delay is unavailable', () => {
+      const described = describeGenerationError(
+        new APIError(429, { detail: 'Throttled.' }, 'generation_rate_limited', 'invalid'),
+        'Generation failed',
+      );
+
+      expect(described.message).toBe(
+        'Too many generation requests were made. Try again shortly. No credit was charged.',
+      );
     });
 
     it('keeps whatever the server said for a code it has never seen', () => {

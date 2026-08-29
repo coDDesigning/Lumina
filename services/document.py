@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from fastapi import UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from backend.app.config import settings
 from backend.app.database import begin_serialized_write
@@ -253,6 +253,7 @@ class DocumentService:
         """
         return db.scalars(
             select(UploadedDocument)
+            .options(selectinload(UploadedDocument.pages))
             .where(
                 UploadedDocument.course_id == course_id,
                 UploadedDocument.status != "deleting",
@@ -268,6 +269,7 @@ class DocumentService:
     ) -> tuple[UploadedDocument, ProcessingJob]:
         row = db.execute(
             select(UploadedDocument, ProcessingJob)
+            .options(selectinload(UploadedDocument.pages))
             .join(
                 ProcessingJob,
                 (ProcessingJob.document_id == UploadedDocument.id)

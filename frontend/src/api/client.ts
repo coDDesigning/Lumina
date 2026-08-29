@@ -104,25 +104,48 @@ function parseApiErrorBody(data: unknown): ParsedApiError {
 }
 
 export const ERROR_CODE_HEADER = 'X-Error-Code';
+const RETRY_AFTER_HEADER = 'Retry-After';
+
+function parseRetryAfterSeconds(value: string | null): number | null {
+  const normalized = value?.trim();
+  if (!normalized || !/^\d+$/.test(normalized)) {
+    return null;
+  }
+
+  const seconds = Number(normalized);
+  return Number.isSafeInteger(seconds) ? seconds : null;
+}
 
 export class APIError extends Error {
   public code: string | null;
+  public retryAfterSeconds: number | null;
 
   constructor(
     public status: number,
     public data: unknown,
     headerCode: string | null = null,
+    retryAfter: string | null = null,
   ) {
     const parsed = parseApiErrorBody(data);
     super(parsed.message);
     this.name = 'APIError';
     this.code = parsed.code ?? headerCode;
+    this.retryAfterSeconds = parseRetryAfterSeconds(retryAfter);
   }
 }
 
+export type MalformedResponseReason = 'missing_data' | 'invalid_data';
+
 export class MalformedResponseError extends Error {
-  constructor(context: string) {
-    super(`${context} returned no data.`);
+  constructor(
+    context: string,
+    public readonly reason: MalformedResponseReason = 'missing_data',
+  ) {
+    super(
+      reason === 'missing_data'
+        ? `${context} returned no data.`
+        : `${context} returned invalid data.`,
+    );
     this.name = 'MalformedResponseError';
   }
 }
@@ -170,6 +193,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       response.status,
       errorData,
       response.headers?.get(ERROR_CODE_HEADER) ?? null,
+      response.headers?.get(RETRY_AFTER_HEADER) ?? null,
     );
   }
 

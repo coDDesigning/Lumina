@@ -120,6 +120,52 @@ variable "embedding_backfill_interval_seconds" {
   default     = 3600
 }
 
+variable "frontend_domain_name" {
+  description = "Public hostname the SPA is served from. Verification links point here, because the link is opened by a browser rather than by an API client."
+  type        = string
+}
+
+variable "email_verification_required" {
+  description = "Whether an address must be verified before the account receives its introductory and monthly credits. Turning this off in a hosted deployment reopens credit farming; see docs/authentication.md."
+  type        = bool
+  default     = true
+}
+
+variable "email_from_address" {
+  description = "Envelope sender for verification mail. The relay must be authorized to send as this address."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_host" {
+  description = "SMTP relay hostname used to deliver verification mail."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_port" {
+  description = "SMTP relay port. 587 is the submission port STARTTLS expects."
+  type        = number
+  default     = 587
+}
+
+variable "smtp_username" {
+  description = "SMTP login. Empty means the relay authenticates by network identity instead, and no SMTP_PASSWORD parameter is referenced."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_use_tls" {
+  description = "Issue STARTTLS after connecting to the relay."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   type = map(string)
+}
+
+variable "vpc_cidr_block" {
+  description = "VPC CIDR block used as trusted proxy range for X-Forwarded-For headers."
+  type        = string
 }

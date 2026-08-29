@@ -6,6 +6,7 @@ import { quizAPI } from '@/api/quiz';
 import { userAPI } from '@/api/user';
 import type { CreditStatus, QuizAttemptResponse, QuizQuestionView } from '@/api/types';
 import { CreditProvider } from '@/context/CreditContext';
+import { createMockQuiz, createMockQuizGenerationResult } from '@/test/mocks/api';
 import { QuizModal } from './QuizModal';
 
 vi.mock('@/api/quiz', () => ({
@@ -31,6 +32,8 @@ const mockGetCredits = vi.mocked(userAPI.getCredits);
 const UNMETERED: CreditStatus = {
   credits: null,
   metering_enabled: false,
+  email_verification_required: false,
+  is_email_verified: true,
   monthly_grant: null,
   balance_cap: null,
   next_grant_at: null,
@@ -50,7 +53,9 @@ const MULTIPLE_CHOICE: QuizQuestionView = {
   explanation: 'Merge sort preserves the order of equal keys.',
 };
 
-const QUIZ = { quiz: { quiz_id: 7, course_id: 1, questions: [MULTIPLE_CHOICE] } };
+const QUIZ = createMockQuizGenerationResult({
+  quiz: createMockQuiz({ questions: [MULTIPLE_CHOICE] }),
+});
 
 const ATTEMPT: QuizAttemptResponse = {
   attempt_id: 1,
@@ -61,6 +66,9 @@ const ATTEMPT: QuizAttemptResponse = {
   total_questions: 1,
   time_spent_seconds: 30,
   created_at: '2026-08-23T10:00:00Z',
+  quiz_purpose: null,
+  timed: false,
+  expired: false,
   answers: [],
 };
 
@@ -95,7 +103,7 @@ async function solveThenSubmit() {
 
 beforeEach(() => {
   mockGetCredits.mockResolvedValue(UNMETERED);
-  mockGenerate.mockResolvedValue(QUIZ as never);
+  mockGenerate.mockResolvedValue(QUIZ);
   mockSubmit.mockResolvedValue(ATTEMPT);
 });
 

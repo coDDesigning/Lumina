@@ -5,6 +5,7 @@ import { quizAPI } from '@/api/quiz';
 import { userAPI } from '@/api/user';
 import type { CreditStatus, QuizAttemptResponse, QuizQuestionView } from '@/api/types';
 import { CreditProvider } from '@/context/CreditContext';
+import { createMockQuiz, createMockQuizGenerationResult } from '@/test/mocks/api';
 import { QuizModal } from './QuizModal';
 
 vi.mock('@/api/quiz', () => ({
@@ -30,6 +31,8 @@ const mockGetCredits = vi.mocked(userAPI.getCredits);
 const STATUS: CreditStatus = {
   credits: null,
   metering_enabled: false,
+  email_verification_required: false,
+  is_email_verified: true,
   monthly_grant: null,
   balance_cap: null,
   next_grant_at: null,
@@ -75,13 +78,9 @@ const OPEN_ENDED: QuizQuestionView = {
   explanation: 'The merge step cannot be done in place efficiently.',
 };
 
-const QUIZ = {
-  quiz: {
-    quiz_id: 7,
-    course_id: 1,
-    questions: [MULTIPLE_CHOICE, TRUE_FALSE, OPEN_ENDED],
-  },
-};
+const QUIZ = createMockQuizGenerationResult({
+  quiz: createMockQuiz({ questions: [MULTIPLE_CHOICE, TRUE_FALSE, OPEN_ENDED] }),
+});
 
 function renderQuiz() {
   return render(
@@ -100,7 +99,7 @@ async function startQuiz() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetCredits.mockResolvedValue(STATUS);
-  mockGenerate.mockResolvedValue(QUIZ as never);
+  mockGenerate.mockResolvedValue(QUIZ);
 });
 
 function duplicateControlNames(): string[] {
@@ -265,6 +264,9 @@ describe('taking a quiz', () => {
       total_questions: 3,
       time_spent_seconds: 30,
       created_at: '2026-08-23T10:00:00Z',
+      quiz_purpose: null,
+      timed: false,
+      expired: false,
       answers: [],
     });
 
@@ -296,6 +298,9 @@ describe('quiz results', () => {
     total_questions: 3,
     time_spent_seconds: 95,
     created_at: '2026-08-23T10:00:00Z',
+    quiz_purpose: null,
+    timed: false,
+    expired: false,
     answers: [
       {
         question_id: 1,

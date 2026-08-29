@@ -19,6 +19,7 @@ def _user(role: Role) -> UserResponse:
         email="policy-probe@example.com",
         role=role,
         is_banned=False,
+        is_email_verified=True,
         credits=None,
         preferred_model="gpt-4o-mini",
     )

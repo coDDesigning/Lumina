@@ -30,6 +30,8 @@ const mockGetCredits = vi.mocked(userAPI.getCredits);
 const UNMETERED: CreditStatus = {
   credits: null,
   metering_enabled: false,
+  email_verification_required: false,
+  is_email_verified: true,
   monthly_grant: null,
   balance_cap: null,
   next_grant_at: null,
@@ -195,6 +197,7 @@ describe('once the guide arrives', () => {
 
   it('offers the guide as a file named for the course', async () => {
     const createObjectURL = vi.fn().mockReturnValue('blob:guide');
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     URL.createObjectURL = createObjectURL;
     URL.revokeObjectURL = vi.fn();
     const { person } = await writeGuide();
@@ -202,6 +205,8 @@ describe('once the guide arrives', () => {
     await person.click(await screen.findByRole('button', { name: /download/i }));
 
     expect(createObjectURL).toHaveBeenCalled();
+    expect(anchorClick).toHaveBeenCalledOnce();
+    anchorClick.mockRestore();
   });
 
   it('goes back to the setup to write another', async () => {

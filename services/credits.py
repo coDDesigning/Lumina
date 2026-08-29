@@ -47,6 +47,11 @@ GENERATION_CREDIT_COSTS: dict[str, float] = {
     "ai_tutor": 1.0,
     "course_qa": 1.0,
     "prompt_generator": 1.0,
+    "exam_topic_analysis": 1.0,
+    "exam_topic_analysis_rescan": 0.5,
+    "exam_topic_unlock": 2.0,
+    "exam_mock_exam": 2.0,
+    "exam_review_sheet": 1.0,
 }
 
 
@@ -261,6 +266,9 @@ class CreditService:
         if CreditService._period_grant_id(db, user_id, period) is not None:
             return
 
+        if not CreditService.may_receive_automatic_grants(db, user_id):
+            return
+
         # This no-op update obtains the user-row write lock on PostgreSQL and
         # SQLite. Headroom and period uniqueness are rechecked while that lock
         # is held, so every outcome is equivalent to one serial ordering.
@@ -378,6 +386,73 @@ class CreditService:
         db.commit()
         db.refresh(transaction)
         return transaction
+
+    @staticmethod
+    def may_receive_automatic_grants(db: Session, user_id: int) -> bool:
+        """Whether an account has earned the right to be granted credit at all.
+
+        Where verification is required, an unverified account is exactly the
+        account a farmer creates in bulk, so it collects nothing automatically:
+        not the introductory grant at registration, and not the monthly grant
+        that would otherwise hand it the same credits a month later and make the
+        whole gate pointless. See docs/authentication.md.
+        """
+        if not settings.email_verification_required:
+            return True
+        verified_at = db.scalar(
+            select(User.email_verified_at).where(User.id == user_id)
+        )
+        return verified_at is not None
+
+    @staticmethod
+    def grant_initial_credits(db: Session, user: User) -> float | None:
+        """Grant the introductory credits an account has just become eligible for.
+
+        Deliberately does not commit: the caller redeeming a verification token
+        holds a transaction that must either consume the token and grant the
+        credits or do neither, since a consumed token with no grant would leave
+        the account permanently empty.
+
+        Idempotent twice over. The ``INITIAL_GRANT`` lookup makes a second call
+        a no-op, and the unique ``(user_id, grant_period)`` index is the backstop
+        for two calls racing, so "granted once" holds however many verification
+        requests arrive.
+        """
+        if not settings.credit_metering_enabled or user.credits is None:
+            return None
+        # A metering reset counts as having been started already: an account
+        # demoted out of administration and back is given its opening balance
+        # there, and must not collect a second one by verifying afterwards.
+        already_granted = db.scalar(
+            select(CreditTransaction.id).where(
+                CreditTransaction.user_id == user.id,
+                CreditTransaction.reason.in_(
+                    (
+                        CreditReason.INITIAL_GRANT.value,
+                        CreditReason.METERING_RESET.value,
+                    )
+                ),
+            )
+        )
+        if already_granted is not None:
+            return None
+
+        headroom = settings.credit_max_balance - user.credits
+        delta = min(settings.credit_initial_grant, headroom)
+        if delta <= 0:
+            return None
+
+        user.credits += delta
+        CreditService._record(
+            db,
+            user_id=user.id,
+            delta=delta,
+            reason=CreditReason.INITIAL_GRANT,
+            actor=CreditActor.system(),
+            grant_period=current_grant_period(),
+            balance_after=user.credits,
+        )
+        return delta
 
     @staticmethod
     def build_initial_grant(user: User) -> CreditTransaction | None:

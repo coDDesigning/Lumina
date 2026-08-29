@@ -94,6 +94,97 @@
         "title": "ActivityItem",
         "type": "object"
       },
+      "AdConfigResponse": {
+        "additionalProperties": false,
+        "description": "Public discovery payload for client ad initialization.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "publisher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher Id"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "AdConfigResponse",
+        "type": "object"
+      },
+      "AdTelemetryRequest": {
+        "additionalProperties": false,
+        "description": "Privacy-safe aggregate impression and status telemetry request.",
+        "properties": {
+          "placement": {
+            "description": "Abstract UI slot identifier.",
+            "enum": [
+              "sidebar",
+              "footer",
+              "dashboard",
+              "landing"
+            ],
+            "title": "Placement",
+            "type": "string"
+          },
+          "provider": {
+            "description": "Ad provider network name.",
+            "maxLength": 64,
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "description": "Client render or failure status.",
+            "enum": [
+              "rendered",
+              "blocked",
+              "no_fill",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "placement",
+          "provider",
+          "status"
+        ],
+        "title": "AdTelemetryRequest",
+        "type": "object"
+      },
+      "AdTelemetryResponse": {
+        "additionalProperties": false,
+        "description": "Confirmation of recorded telemetry.",
+        "properties": {
+          "recorded": {
+            "default": true,
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "title": "AdTelemetryResponse",
+        "type": "object"
+      },
       "AiCostDailyRow": {
         "properties": {
           "completion_tokens": {
@@ -423,6 +514,62 @@
         "title": "AiTutorRequest",
         "type": "object"
       },
+      "BaseResponse_AdConfigResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdConfigResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[AdConfigResponse]",
+        "type": "object"
+      },
+      "BaseResponse_AdTelemetryResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdTelemetryResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[AdTelemetryResponse]",
+        "type": "object"
+      },
       "BaseResponse_AiCostReport_": {
         "properties": {
           "data": {
@@ -675,6 +822,258 @@
         "title": "BaseResponse[CreditStatusResponse]",
         "type": "object"
       },
+      "BaseResponse_ExamAnalysisResult_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamAnalysisResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamAnalysisResult]",
+        "type": "object"
+      },
+      "BaseResponse_ExamAnalysisView_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamAnalysisView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamAnalysisView]",
+        "type": "object"
+      },
+      "BaseResponse_ExamEntitlementView_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamEntitlementView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamEntitlementView]",
+        "type": "object"
+      },
+      "BaseResponse_ExamMockExamResult_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamMockExamResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamMockExamResult]",
+        "type": "object"
+      },
+      "BaseResponse_ExamPlanList_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamPlanList"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamPlanList]",
+        "type": "object"
+      },
+      "BaseResponse_ExamPlanView_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamPlanView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamPlanView]",
+        "type": "object"
+      },
+      "BaseResponse_ExamQuestionPage_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamQuestionPage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamQuestionPage]",
+        "type": "object"
+      },
+      "BaseResponse_ExamReviewSheetDocument_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamReviewSheetDocument"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamReviewSheetDocument]",
+        "type": "object"
+      },
+      "BaseResponse_ExamReviewSheetResult_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamReviewSheetResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamReviewSheetResult]",
+        "type": "object"
+      },
       "BaseResponse_ExamRoadmapResult_": {
         "properties": {
           "data": {
@@ -701,6 +1100,202 @@
           "message"
         ],
         "title": "BaseResponse[ExamRoadmapResult]",
+        "type": "object"
+      },
+      "BaseResponse_ExamSimilarQuestionsResult_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamSimilarQuestionsResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamSimilarQuestionsResult]",
+        "type": "object"
+      },
+      "BaseResponse_ExamSourceInventory_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamSourceInventory"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamSourceInventory]",
+        "type": "object"
+      },
+      "BaseResponse_ExamTopicGuideDocument_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamTopicGuideDocument"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamTopicGuideDocument]",
+        "type": "object"
+      },
+      "BaseResponse_ExamTopicGuideResult_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamTopicGuideResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamTopicGuideResult]",
+        "type": "object"
+      },
+      "BaseResponse_ExamTopicQuizResult_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamTopicQuizResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamTopicQuizResult]",
+        "type": "object"
+      },
+      "BaseResponse_ExamTopicSummaryDocument_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamTopicSummaryDocument"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamTopicSummaryDocument]",
+        "type": "object"
+      },
+      "BaseResponse_ExamTopicSummaryResult_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamTopicSummaryResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ExamTopicSummaryResult]",
         "type": "object"
       },
       "BaseResponse_FlashcardGenerationResult_": {
@@ -757,6 +1352,84 @@
           "message"
         ],
         "title": "BaseResponse[GeneratedOutputDetail]",
+        "type": "object"
+      },
+      "BaseResponse_NoneType_": {
+        "properties": {
+          "data": {
+            "title": "Data",
+            "type": "null"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[NoneType]",
+        "type": "object"
+      },
+      "BaseResponse_ProfileDocumentStatusResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileDocumentStatusResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ProfileDocumentStatusResponse]",
+        "type": "object"
+      },
+      "BaseResponse_ProfileDocumentUploadResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileDocumentUploadResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ProfileDocumentUploadResponse]",
         "type": "object"
       },
       "BaseResponse_ProfileKnowledgeResponse_": {
@@ -871,6 +1544,62 @@
         "title": "BaseResponse[QuizGenerationResult]",
         "type": "object"
       },
+      "BaseResponse_QuizSessionStartResult_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuizSessionStartResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[QuizSessionStartResult]",
+        "type": "object"
+      },
+      "BaseResponse_QuizSessionView_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuizSessionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[QuizSessionView]",
+        "type": "object"
+      },
       "BaseResponse_QuizView_": {
         "properties": {
           "data": {
@@ -897,6 +1626,34 @@
           "message"
         ],
         "title": "BaseResponse[QuizView]",
+        "type": "object"
+      },
+      "BaseResponse_ReverseQuizResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReverseQuizResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ReverseQuizResponse]",
         "type": "object"
       },
       "BaseResponse_StudyGuideGenerationResult_": {
@@ -1011,6 +1768,38 @@
           "message"
         ],
         "title": "BaseResponse[dict]",
+        "type": "object"
+      },
+      "BaseResponse_dict_str__str__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[dict[str, str]]",
         "type": "object"
       },
       "BaseResponse_list_ActivityItem__": {
@@ -1269,6 +2058,38 @@
         "title": "BaseResponse[list[GeneratedOutputSummary]]",
         "type": "object"
       },
+      "BaseResponse_list_ProfileDocumentResponse__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ProfileDocumentResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[list[ProfileDocumentResponse]]",
+        "type": "object"
+      },
       "BaseResponse_list_ProfileKnowledgeResponse__": {
         "properties": {
           "data": {
@@ -1363,6 +2184,38 @@
           "message"
         ],
         "title": "BaseResponse[list[QuizSummary]]",
+        "type": "object"
+      },
+      "BaseResponse_list_ReverseQuizResponse__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ReverseQuizResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[list[ReverseQuizResponse]]",
         "type": "object"
       },
       "BaseResponse_list_UserResponse__": {
@@ -1474,6 +2327,20 @@
         "title": "Body_upload_document_api_courses__course_id__documents_post",
         "type": "object"
       },
+      "Body_upload_profile_document_api_profile_documents_post": {
+        "properties": {
+          "document": {
+            "contentMediaType": "application/octet-stream",
+            "title": "Document",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document"
+        ],
+        "title": "Body_upload_profile_document_api_profile_documents_post",
+        "type": "object"
+      },
       "Citation": {
         "properties": {
           "document_id": {
@@ -1571,6 +2438,16 @@
         ],
         "title": "CommonMistake",
         "type": "object"
+      },
+      "ConceptStatus": {
+        "enum": [
+          "unsupported",
+          "absent",
+          "partially_correct",
+          "contradicted"
+        ],
+        "title": "ConceptStatus",
+        "type": "string"
       },
       "ConversationDetail": {
         "properties": {
@@ -2560,7 +3437,7 @@
         "type": "string"
       },
       "CreditStatusResponse": {
-        "description": "The balance plus the policy a client needs to explain and recover it.",
+        "description": "The balance plus the policy a client needs to explain and recover it.\n\n``email_verification_required`` and ``is_email_verified`` travel with the\nbalance for the same reason the grant policy does: without them a client\ncannot tell an account that has spent its credits from one that has not\nbeen given any yet, and only the second has a next action.",
         "properties": {
           "balance_cap": {
             "anyOf": [
@@ -2584,12 +3461,22 @@
             ],
             "title": "Credits"
           },
+          "email_verification_required": {
+            "default": false,
+            "title": "Email Verification Required",
+            "type": "boolean"
+          },
           "generation_costs": {
             "additionalProperties": {
               "type": "number"
             },
             "title": "Generation Costs",
             "type": "object"
+          },
+          "is_email_verified": {
+            "default": true,
+            "title": "Is Email Verified",
+            "type": "boolean"
           },
           "metering_enabled": {
             "title": "Metering Enabled",
@@ -2861,6 +3748,11 @@
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "visual_analysis_status": {
+            "default": "not_applicable",
+            "title": "Visual Analysis Status",
+            "type": "string"
           }
         },
         "required": [
@@ -2920,6 +3812,1302 @@
         ],
         "title": "EducationLevel",
         "type": "string"
+      },
+      "EmailVerificationRequest": {
+        "description": "One verification token, as it arrived in the emailed link.",
+        "properties": {
+          "token": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "EmailVerificationRequest",
+        "type": "object"
+      },
+      "EmailVerificationResendRequest": {
+        "description": "A request for a fresh verification link for one address.",
+        "properties": {
+          "email": {
+            "format": "email",
+            "maxLength": 255,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "EmailVerificationResendRequest",
+        "type": "object"
+      },
+      "EmailVerificationResponse": {
+        "description": "The outcome of redeeming a verification token.",
+        "properties": {
+          "credits_granted": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credits Granted"
+          },
+          "is_email_verified": {
+            "title": "Is Email Verified",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "is_email_verified"
+        ],
+        "title": "EmailVerificationResponse",
+        "type": "object"
+      },
+      "ExamAnalysisRequest": {
+        "properties": {
+          "document_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The course documents to analyse, or omit to analyse every ready document in the course",
+            "title": "Document Ids"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit model override, or omit to use the preferred model",
+            "title": "Model"
+          },
+          "topic_focus": {
+            "default": "All Topics",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Topic Focus",
+            "type": "string"
+          }
+        },
+        "title": "ExamAnalysisRequest",
+        "type": "object"
+      },
+      "ExamAnalysisResult": {
+        "properties": {
+          "analysis": {
+            "$ref": "#/components/schemas/ExamAnalysisView"
+          },
+          "chunks_available": {
+            "title": "Chunks Available",
+            "type": "integer"
+          },
+          "chunks_used": {
+            "title": "Chunks Used",
+            "type": "integer"
+          },
+          "context_truncated": {
+            "title": "Context Truncated",
+            "type": "boolean"
+          },
+          "highest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Highest Similarity"
+          },
+          "lowest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lowest Similarity"
+          },
+          "profile_knowledge_items_used": {
+            "default": 0,
+            "title": "Profile Knowledge Items Used",
+            "type": "integer"
+          },
+          "profile_knowledge_used": {
+            "default": false,
+            "title": "Profile Knowledge Used",
+            "type": "boolean"
+          },
+          "retrieval_narrowed": {
+            "title": "Retrieval Narrowed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "context_truncated",
+          "chunks_used",
+          "chunks_available",
+          "retrieval_narrowed",
+          "analysis"
+        ],
+        "title": "ExamAnalysisResult",
+        "type": "object"
+      },
+      "ExamAnalysisView": {
+        "properties": {
+          "candidate_count": {
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "confidence_notes": {
+            "default": "",
+            "title": "Confidence Notes",
+            "type": "string"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "documents_analysed": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Documents Analysed",
+            "type": "array"
+          },
+          "generated_output_id": {
+            "title": "Generated Output Id",
+            "type": "integer"
+          },
+          "manual_review_recommended": {
+            "default": true,
+            "title": "Manual Review Recommended",
+            "type": "boolean"
+          },
+          "model_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Used"
+          },
+          "past_exam_question_count": {
+            "title": "Past Exam Question Count",
+            "type": "integer"
+          },
+          "selection_carry_over": {
+            "$ref": "#/components/schemas/ExamSelectionCarryOver",
+            "default": {
+              "high_priority_topic_keys": [],
+              "new_topic_keys": [],
+              "preselected_topic_keys": [],
+              "unsupported_topic_keys": []
+            }
+          },
+          "topics": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExamTopicCandidateView"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "generated_output_id",
+          "created_at",
+          "candidate_count",
+          "past_exam_question_count"
+        ],
+        "title": "ExamAnalysisView",
+        "type": "object"
+      },
+      "ExamEntitlementView": {
+        "description": "Which of this course's topics the reader has already unlocked.\n\nA topic is bought once and covers every artifact of that topic, so a client\nthat only knew the price would disable a topic the student has already paid\nfor whenever their balance fell below it. The price itself is deliberately\nabsent: it belongs to ``GET /api/users/me/credits``, which is the single\nplace a client reads what generation costs.",
+        "properties": {
+          "unlocked_topic_keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Unlocked Topic Keys",
+            "type": "array"
+          }
+        },
+        "title": "ExamEntitlementView",
+        "type": "object"
+      },
+      "ExamMockExamRequest": {
+        "description": "What a student may configure about a mock examination.\n\nDuration is in minutes on the wire and seconds in the database: minutes are\nwhat a student sets and seconds are what a clock compares, and converting\nonce at the boundary keeps the two from disagreeing.",
+        "properties": {
+          "duration_minutes": {
+            "default": 60,
+            "description": "How long a sitting of this paper may last",
+            "maximum": 360.0,
+            "minimum": 5.0,
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit model override, or omit to use the preferred model",
+            "title": "Model"
+          },
+          "plan_output_id": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The plan to work from, or omit to use the current one",
+            "title": "Plan Output Id"
+          },
+          "question_count": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many questions the paper should hold, or omit for the default",
+            "title": "Question Count"
+          },
+          "question_mix": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MockExamQuestionMixEntry"
+                },
+                "maxItems": 4,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exactly how many questions of each type, or omit for the default shape",
+            "title": "Question Mix"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A client-generated identifier that makes a retry return the first result instead of generating and charging a second time",
+            "title": "Request Id"
+          },
+          "topic_keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 60,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which of the plan's topics the paper should cover, or omit for all of them",
+            "title": "Topic Keys"
+          }
+        },
+        "title": "ExamMockExamRequest",
+        "type": "object"
+      },
+      "ExamMockExamResult": {
+        "properties": {
+          "answers_hidden": {
+            "default": true,
+            "title": "Answers Hidden",
+            "type": "boolean"
+          },
+          "chunks_available": {
+            "title": "Chunks Available",
+            "type": "integer"
+          },
+          "chunks_used": {
+            "title": "Chunks Used",
+            "type": "integer"
+          },
+          "context_truncated": {
+            "title": "Context Truncated",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credits_charged": {
+            "default": 0.0,
+            "title": "Credits Charged",
+            "type": "number"
+          },
+          "duration_minutes": {
+            "default": 0,
+            "title": "Duration Minutes",
+            "type": "integer"
+          },
+          "generated_output_id": {
+            "title": "Generated Output Id",
+            "type": "integer"
+          },
+          "highest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Highest Similarity"
+          },
+          "lowest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lowest Similarity"
+          },
+          "model_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Used"
+          },
+          "profile_knowledge_items_used": {
+            "default": 0,
+            "title": "Profile Knowledge Items Used",
+            "type": "integer"
+          },
+          "profile_knowledge_used": {
+            "default": false,
+            "title": "Profile Knowledge Used",
+            "type": "boolean"
+          },
+          "quiz": {
+            "$ref": "#/components/schemas/QuizView"
+          },
+          "retrieval_narrowed": {
+            "title": "Retrieval Narrowed",
+            "type": "boolean"
+          },
+          "time_limit_seconds": {
+            "default": 0,
+            "title": "Time Limit Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "context_truncated",
+          "chunks_used",
+          "chunks_available",
+          "retrieval_narrowed",
+          "quiz",
+          "generated_output_id",
+          "created_at"
+        ],
+        "title": "ExamMockExamResult",
+        "type": "object"
+      },
+      "ExamPlanArtifactRequest": {
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit model override, or omit to use the preferred model",
+            "title": "Model"
+          },
+          "plan_output_id": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The plan to work from, or omit to use the current one",
+            "title": "Plan Output Id"
+          }
+        },
+        "title": "ExamPlanArtifactRequest",
+        "type": "object"
+      },
+      "ExamPlanList": {
+        "properties": {
+          "current_plan_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Plan Output Id"
+          },
+          "plans": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExamPlanSummary"
+            },
+            "title": "Plans",
+            "type": "array"
+          }
+        },
+        "title": "ExamPlanList",
+        "type": "object"
+      },
+      "ExamPlanRequest": {
+        "properties": {
+          "analysis_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The analysis to plan from, or omit to use the latest one",
+            "title": "Analysis Output Id"
+          },
+          "high_priority_topic_keys": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 60,
+            "title": "High Priority Topic Keys",
+            "type": "array"
+          },
+          "selected_topic_keys": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 60,
+            "title": "Selected Topic Keys",
+            "type": "array"
+          },
+          "selection_mode": {
+            "default": "manual",
+            "enum": [
+              "manual",
+              "all_discovered"
+            ],
+            "title": "Selection Mode",
+            "type": "string"
+          }
+        },
+        "title": "ExamPlanRequest",
+        "type": "object"
+      },
+      "ExamPlanStaleness": {
+        "properties": {
+          "is_stale": {
+            "default": false,
+            "title": "Is Stale",
+            "type": "boolean"
+          },
+          "requires_rescan": {
+            "default": false,
+            "title": "Requires Rescan",
+            "type": "boolean"
+          },
+          "stale_reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Stale Reasons",
+            "type": "array"
+          }
+        },
+        "title": "ExamPlanStaleness",
+        "type": "object"
+      },
+      "ExamPlanSummary": {
+        "properties": {
+          "analysis_output_id": {
+            "title": "Analysis Output Id",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "exam_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Date"
+          },
+          "generated_output_id": {
+            "title": "Generated Output Id",
+            "type": "integer"
+          },
+          "is_current": {
+            "default": false,
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "plan_version": {
+            "title": "Plan Version",
+            "type": "integer"
+          },
+          "selection_mode": {
+            "default": "manual",
+            "title": "Selection Mode",
+            "type": "string"
+          },
+          "supersedes_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Output Id"
+          },
+          "topic_count": {
+            "title": "Topic Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generated_output_id",
+          "analysis_output_id",
+          "plan_version",
+          "created_at",
+          "topic_count"
+        ],
+        "title": "ExamPlanSummary",
+        "type": "object"
+      },
+      "ExamPlanTopicView": {
+        "properties": {
+          "display_label": {
+            "title": "Display Label",
+            "type": "string"
+          },
+          "explanation": {
+            "default": "",
+            "title": "Explanation",
+            "type": "string"
+          },
+          "has_any_evidence": {
+            "default": true,
+            "title": "Has Any Evidence",
+            "type": "boolean"
+          },
+          "is_high_priority": {
+            "default": false,
+            "title": "Is High Priority",
+            "type": "boolean"
+          },
+          "is_unattempted": {
+            "default": false,
+            "title": "Is Unattempted",
+            "type": "boolean"
+          },
+          "mastery_percentage": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mastery Percentage"
+          },
+          "priority_band": {
+            "title": "Priority Band",
+            "type": "string"
+          },
+          "priority_score": {
+            "title": "Priority Score",
+            "type": "integer"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "reason_codes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reason Codes",
+            "type": "array"
+          },
+          "signals": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Signals",
+            "type": "object"
+          },
+          "topic_key": {
+            "title": "Topic Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic_key",
+          "display_label",
+          "rank",
+          "priority_score",
+          "priority_band"
+        ],
+        "title": "ExamPlanTopicView",
+        "type": "object"
+      },
+      "ExamPlanView": {
+        "properties": {
+          "analysis_output_id": {
+            "title": "Analysis Output Id",
+            "type": "integer"
+          },
+          "configured_weights": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": {},
+            "title": "Configured Weights",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "days_until_exam": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Until Exam"
+          },
+          "effective_weights": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": {},
+            "title": "Effective Weights",
+            "type": "object"
+          },
+          "exam_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Date"
+          },
+          "generated_output_id": {
+            "title": "Generated Output Id",
+            "type": "integer"
+          },
+          "manual_review_recommended": {
+            "default": true,
+            "title": "Manual Review Recommended",
+            "type": "boolean"
+          },
+          "plan_version": {
+            "title": "Plan Version",
+            "type": "integer"
+          },
+          "ranking_engine": {
+            "default": "deterministic",
+            "title": "Ranking Engine",
+            "type": "string"
+          },
+          "ranking_policy_version": {
+            "default": 1,
+            "title": "Ranking Policy Version",
+            "type": "integer"
+          },
+          "selection_mode": {
+            "default": "manual",
+            "title": "Selection Mode",
+            "type": "string"
+          },
+          "signal_bases": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Signal Bases",
+            "type": "object"
+          },
+          "signals_available": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "default": {},
+            "title": "Signals Available",
+            "type": "object"
+          },
+          "staleness": {
+            "$ref": "#/components/schemas/ExamPlanStaleness",
+            "default": {
+              "is_stale": false,
+              "requires_rescan": false,
+              "stale_reasons": []
+            }
+          },
+          "supersedes_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Output Id"
+          },
+          "topics": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExamPlanTopicView"
+            },
+            "title": "Topics",
+            "type": "array"
+          },
+          "unmapped_mastery_labels": {
+            "default": 0,
+            "title": "Unmapped Mastery Labels",
+            "type": "integer"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "generated_output_id",
+          "analysis_output_id",
+          "plan_version",
+          "created_at"
+        ],
+        "title": "ExamPlanView",
+        "type": "object"
+      },
+      "ExamQuestionPage": {
+        "properties": {
+          "analysis_output_id": {
+            "title": "Analysis Output Id",
+            "type": "integer"
+          },
+          "document_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Document Ids",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/ExamQuestionView"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "analysis_output_id",
+          "total",
+          "limit",
+          "offset",
+          "questions"
+        ],
+        "title": "ExamQuestionPage",
+        "type": "object"
+      },
+      "ExamQuestionView": {
+        "properties": {
+          "answer_guidance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer Guidance"
+          },
+          "citations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "difficulty": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "marking_points": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Marking Points",
+            "type": "array"
+          },
+          "marks": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marks"
+          },
+          "page_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "page_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Start"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "question_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question Label"
+          },
+          "question_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question Number"
+          },
+          "question_text": {
+            "title": "Question Text",
+            "type": "string"
+          },
+          "question_type": {
+            "title": "Question Type",
+            "type": "string"
+          },
+          "subparts": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Subparts",
+            "type": "array"
+          },
+          "topic_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Key"
+          },
+          "topic_mappings": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Topic Mappings",
+            "type": "array"
+          },
+          "visual_refs": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Visual Refs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "position",
+          "document_id",
+          "question_text",
+          "question_type"
+        ],
+        "title": "ExamQuestionView",
+        "type": "object"
+      },
+      "ExamReviewSheetDocument": {
+        "description": "The ``generated_outputs.content`` payload of one review sheet.",
+        "properties": {
+          "confidence_notes": {
+            "default": "",
+            "title": "Confidence Notes",
+            "type": "string"
+          },
+          "days_until_exam": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Until Exam"
+          },
+          "exam_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Date"
+          },
+          "final_checks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CitedText"
+            },
+            "title": "Final Checks",
+            "type": "array"
+          },
+          "output_type": {
+            "const": "exam_review_sheet",
+            "default": "exam_review_sheet",
+            "title": "Output Type",
+            "type": "string"
+          },
+          "plan_output_id": {
+            "title": "Plan Output Id",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topics": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExamReviewTopic"
+            },
+            "title": "Topics",
+            "type": "array"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "plan_output_id",
+          "title"
+        ],
+        "title": "ExamReviewSheetDocument",
+        "type": "object"
+      },
+      "ExamReviewSheetResult": {
+        "properties": {
+          "chunks_available": {
+            "title": "Chunks Available",
+            "type": "integer"
+          },
+          "chunks_used": {
+            "title": "Chunks Used",
+            "type": "integer"
+          },
+          "context_truncated": {
+            "title": "Context Truncated",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credits_charged": {
+            "default": 0.0,
+            "title": "Credits Charged",
+            "type": "number"
+          },
+          "generated_output_id": {
+            "title": "Generated Output Id",
+            "type": "integer"
+          },
+          "highest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Highest Similarity"
+          },
+          "lowest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lowest Similarity"
+          },
+          "model_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Used"
+          },
+          "profile_knowledge_items_used": {
+            "default": 0,
+            "title": "Profile Knowledge Items Used",
+            "type": "integer"
+          },
+          "profile_knowledge_used": {
+            "default": false,
+            "title": "Profile Knowledge Used",
+            "type": "boolean"
+          },
+          "retrieval_narrowed": {
+            "title": "Retrieval Narrowed",
+            "type": "boolean"
+          },
+          "review_sheet": {
+            "$ref": "#/components/schemas/ExamReviewSheetDocument"
+          }
+        },
+        "required": [
+          "context_truncated",
+          "chunks_used",
+          "chunks_available",
+          "retrieval_narrowed",
+          "review_sheet",
+          "generated_output_id",
+          "created_at"
+        ],
+        "title": "ExamReviewSheetResult",
+        "type": "object"
+      },
+      "ExamReviewTopic": {
+        "properties": {
+          "must_remember": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CitedText"
+            },
+            "title": "Must Remember",
+            "type": "array"
+          },
+          "topic_key": {
+            "default": "",
+            "title": "Topic Key",
+            "type": "string"
+          },
+          "topic_label": {
+            "title": "Topic Label",
+            "type": "string"
+          },
+          "traps": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CitedText"
+            },
+            "title": "Traps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "topic_label"
+        ],
+        "title": "ExamReviewTopic",
+        "type": "object"
       },
       "ExamRoadmap": {
         "description": "One persisted roadmap version, self-describing on the way back out.",
@@ -2997,6 +5185,17 @@
             "title": "Output Type",
             "type": "string"
           },
+          "plan_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Output Id"
+          },
           "ranked_topics": {
             "items": {
               "$ref": "#/components/schemas/RankedTopicView"
@@ -3040,7 +5239,7 @@
         "type": "object"
       },
       "ExamRoadmapRequest": {
-        "description": "Options for one roadmap generation.\n\nThe exam date is deliberately not a request field: the course owns it, and a\nplan a student can act on is the one their course date produces.",
+        "description": "Options for one roadmap generation.\n\nThe exam date is deliberately not a request field: the course owns it, and a\nplan a student can act on is the one their course date produces.\n\n``plan_output_id`` names an Exam Mode plan to schedule instead of the\ncourse's declared topics. The plan's own ranking is preserved rather than\nrecomputed, because a student who reviewed and prioritised those topics has\nalready decided what matters and a second engine disagreeing with the first\nwould be two answers to one question.",
         "properties": {
           "include_materials": {
             "default": true,
@@ -3054,6 +5253,19 @@
             "minimum": 1.0,
             "title": "Max Topics Per Day",
             "type": "integer"
+          },
+          "plan_output_id": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The exam plan whose ranked topics to schedule, or omit to schedule the course's own declared topics",
+            "title": "Plan Output Id"
           }
         },
         "title": "ExamRoadmapRequest",
@@ -3074,6 +5286,249 @@
           "generated_output_id"
         ],
         "title": "ExamRoadmapResult",
+        "type": "object"
+      },
+      "ExamSelectionCarryOver": {
+        "description": "What a previous plan's choices mean against a newer analysis.\n\nRead-only. A rescan never re-selects anything on the student's behalf; it\nreports what still matches so the student can confirm.",
+        "properties": {
+          "high_priority_topic_keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "High Priority Topic Keys",
+            "type": "array"
+          },
+          "new_topic_keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "New Topic Keys",
+            "type": "array"
+          },
+          "preselected_topic_keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Preselected Topic Keys",
+            "type": "array"
+          },
+          "previous_plan_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Plan Output Id"
+          },
+          "unsupported_topic_keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Unsupported Topic Keys",
+            "type": "array"
+          }
+        },
+        "title": "ExamSelectionCarryOver",
+        "type": "object"
+      },
+      "ExamSimilarQuestionsResult": {
+        "properties": {
+          "answers_hidden": {
+            "default": true,
+            "title": "Answers Hidden",
+            "type": "boolean"
+          },
+          "chunks_available": {
+            "title": "Chunks Available",
+            "type": "integer"
+          },
+          "chunks_used": {
+            "title": "Chunks Used",
+            "type": "integer"
+          },
+          "context_truncated": {
+            "title": "Context Truncated",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credits_charged": {
+            "default": 0.0,
+            "title": "Credits Charged",
+            "type": "number"
+          },
+          "generated_output_id": {
+            "title": "Generated Output Id",
+            "type": "integer"
+          },
+          "highest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Highest Similarity"
+          },
+          "lowest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lowest Similarity"
+          },
+          "model_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Used"
+          },
+          "profile_knowledge_items_used": {
+            "default": 0,
+            "title": "Profile Knowledge Items Used",
+            "type": "integer"
+          },
+          "profile_knowledge_used": {
+            "default": false,
+            "title": "Profile Knowledge Used",
+            "type": "boolean"
+          },
+          "quiz": {
+            "$ref": "#/components/schemas/QuizView"
+          },
+          "retrieval_narrowed": {
+            "title": "Retrieval Narrowed",
+            "type": "boolean"
+          },
+          "source_question_ids": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Source Question Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "context_truncated",
+          "chunks_used",
+          "chunks_available",
+          "retrieval_narrowed",
+          "quiz",
+          "generated_output_id",
+          "created_at"
+        ],
+        "title": "ExamSimilarQuestionsResult",
+        "type": "object"
+      },
+      "ExamSourceDocument": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_past_exam": {
+            "title": "Is Past Exam",
+            "type": "boolean"
+          },
+          "is_syllabus": {
+            "title": "Is Syllabus",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "material_kind": {
+            "title": "Material Kind",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "material_kind",
+          "status",
+          "is_past_exam",
+          "is_syllabus"
+        ],
+        "title": "ExamSourceDocument",
+        "type": "object"
+      },
+      "ExamSourceInventory": {
+        "description": "What this course could supply to an analysis, before one is run.",
+        "properties": {
+          "chunks_available": {
+            "title": "Chunks Available",
+            "type": "integer"
+          },
+          "course_topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Course Topics",
+            "type": "array"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/ExamSourceDocument"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "past_exam_document_count": {
+            "title": "Past Exam Document Count",
+            "type": "integer"
+          },
+          "ready_document_count": {
+            "title": "Ready Document Count",
+            "type": "integer"
+          },
+          "syllabus_characters": {
+            "title": "Syllabus Characters",
+            "type": "integer"
+          },
+          "syllabus_present": {
+            "title": "Syllabus Present",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "syllabus_present",
+          "syllabus_characters",
+          "course_topics",
+          "documents",
+          "ready_document_count",
+          "past_exam_document_count",
+          "chunks_available"
+        ],
+        "title": "ExamSourceInventory",
         "type": "object"
       },
       "ExamTips": {
@@ -3098,6 +5553,702 @@
           "ai_suggestions"
         ],
         "title": "ExamTips",
+        "type": "object"
+      },
+      "ExamTopicArtifactRequest": {
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit model override, or omit to use the preferred model",
+            "title": "Model"
+          },
+          "plan_output_id": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The plan to study from, or omit to use the current one",
+            "title": "Plan Output Id"
+          }
+        },
+        "title": "ExamTopicArtifactRequest",
+        "type": "object"
+      },
+      "ExamTopicCandidateView": {
+        "properties": {
+          "aliases": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "citations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "discovery_confidence": {
+            "default": 0.5,
+            "title": "Discovery Confidence",
+            "type": "number"
+          },
+          "display_label": {
+            "title": "Display Label",
+            "type": "string"
+          },
+          "in_course_topics": {
+            "default": false,
+            "title": "In Course Topics",
+            "type": "boolean"
+          },
+          "in_material": {
+            "default": false,
+            "title": "In Material",
+            "type": "boolean"
+          },
+          "in_past_exams": {
+            "default": false,
+            "title": "In Past Exams",
+            "type": "boolean"
+          },
+          "in_syllabus": {
+            "default": false,
+            "title": "In Syllabus",
+            "type": "boolean"
+          },
+          "material_chunk_count": {
+            "default": 0,
+            "title": "Material Chunk Count",
+            "type": "integer"
+          },
+          "past_exam_question_count": {
+            "default": 0,
+            "title": "Past Exam Question Count",
+            "type": "integer"
+          },
+          "syllabus_mention_count": {
+            "default": 0,
+            "title": "Syllabus Mention Count",
+            "type": "integer"
+          },
+          "syllabus_weight_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Syllabus Weight Percent"
+          },
+          "topic_key": {
+            "title": "Topic Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic_key",
+          "display_label"
+        ],
+        "title": "ExamTopicCandidateView",
+        "type": "object"
+      },
+      "ExamTopicGuideDocument": {
+        "description": "The ``generated_outputs.content`` payload of one per-topic guide.",
+        "properties": {
+          "common_pitfalls": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExamTopicPitfall"
+            },
+            "title": "Common Pitfalls",
+            "type": "array"
+          },
+          "confidence_notes": {
+            "default": "",
+            "title": "Confidence Notes",
+            "type": "string"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Coverage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "display_label": {
+            "title": "Display Label",
+            "type": "string"
+          },
+          "key_terms": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExamTopicTerm"
+            },
+            "title": "Key Terms",
+            "type": "array"
+          },
+          "output_type": {
+            "const": "exam_topic_guide",
+            "default": "exam_topic_guide",
+            "title": "Output Type",
+            "type": "string"
+          },
+          "overview": {
+            "$ref": "#/components/schemas/CitedText"
+          },
+          "plan_output_id": {
+            "title": "Plan Output Id",
+            "type": "integer"
+          },
+          "priority_band": {
+            "default": "",
+            "title": "Priority Band",
+            "type": "string"
+          },
+          "rank": {
+            "default": 0,
+            "title": "Rank",
+            "type": "integer"
+          },
+          "sections": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExamTopicSection"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topic_key": {
+            "title": "Topic Key",
+            "type": "string"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          },
+          "what_to_be_able_to_do": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CitedText"
+            },
+            "title": "What To Be Able To Do",
+            "type": "array"
+          }
+        },
+        "required": [
+          "topic_key",
+          "display_label",
+          "plan_output_id",
+          "title",
+          "overview"
+        ],
+        "title": "ExamTopicGuideDocument",
+        "type": "object"
+      },
+      "ExamTopicGuideResult": {
+        "properties": {
+          "chunks_available": {
+            "title": "Chunks Available",
+            "type": "integer"
+          },
+          "chunks_used": {
+            "title": "Chunks Used",
+            "type": "integer"
+          },
+          "context_truncated": {
+            "title": "Context Truncated",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credits_charged": {
+            "default": 0.0,
+            "title": "Credits Charged",
+            "type": "number"
+          },
+          "generated_output_id": {
+            "title": "Generated Output Id",
+            "type": "integer"
+          },
+          "guide": {
+            "$ref": "#/components/schemas/ExamTopicGuideDocument"
+          },
+          "highest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Highest Similarity"
+          },
+          "lowest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lowest Similarity"
+          },
+          "model_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Used"
+          },
+          "profile_knowledge_items_used": {
+            "default": 0,
+            "title": "Profile Knowledge Items Used",
+            "type": "integer"
+          },
+          "profile_knowledge_used": {
+            "default": false,
+            "title": "Profile Knowledge Used",
+            "type": "boolean"
+          },
+          "retrieval_narrowed": {
+            "title": "Retrieval Narrowed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "context_truncated",
+          "chunks_used",
+          "chunks_available",
+          "retrieval_narrowed",
+          "guide",
+          "generated_output_id",
+          "created_at"
+        ],
+        "title": "ExamTopicGuideResult",
+        "type": "object"
+      },
+      "ExamTopicPitfall": {
+        "properties": {
+          "citations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "correction": {
+            "title": "Correction",
+            "type": "string"
+          },
+          "mistake": {
+            "title": "Mistake",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mistake",
+          "correction"
+        ],
+        "title": "ExamTopicPitfall",
+        "type": "object"
+      },
+      "ExamTopicQuizRequest": {
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit model override, or omit to use the preferred model",
+            "title": "Model"
+          },
+          "plan_output_id": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The plan to study from, or omit to use the current one",
+            "title": "Plan Output Id"
+          },
+          "question_count": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many questions to write, or omit to use the default",
+            "title": "Question Count"
+          }
+        },
+        "title": "ExamTopicQuizRequest",
+        "type": "object"
+      },
+      "ExamTopicQuizResult": {
+        "properties": {
+          "answers_hidden": {
+            "default": false,
+            "title": "Answers Hidden",
+            "type": "boolean"
+          },
+          "chunks_available": {
+            "title": "Chunks Available",
+            "type": "integer"
+          },
+          "chunks_used": {
+            "title": "Chunks Used",
+            "type": "integer"
+          },
+          "context_truncated": {
+            "title": "Context Truncated",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credits_charged": {
+            "default": 0.0,
+            "title": "Credits Charged",
+            "type": "number"
+          },
+          "generated_output_id": {
+            "title": "Generated Output Id",
+            "type": "integer"
+          },
+          "highest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Highest Similarity"
+          },
+          "lowest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lowest Similarity"
+          },
+          "model_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Used"
+          },
+          "profile_knowledge_items_used": {
+            "default": 0,
+            "title": "Profile Knowledge Items Used",
+            "type": "integer"
+          },
+          "profile_knowledge_used": {
+            "default": false,
+            "title": "Profile Knowledge Used",
+            "type": "boolean"
+          },
+          "quiz": {
+            "$ref": "#/components/schemas/QuizView"
+          },
+          "retrieval_narrowed": {
+            "title": "Retrieval Narrowed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "context_truncated",
+          "chunks_used",
+          "chunks_available",
+          "retrieval_narrowed",
+          "quiz",
+          "generated_output_id",
+          "created_at"
+        ],
+        "title": "ExamTopicQuizResult",
+        "type": "object"
+      },
+      "ExamTopicSection": {
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/CitedText"
+          },
+          "heading": {
+            "title": "Heading",
+            "type": "string"
+          },
+          "key_points": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CitedText"
+            },
+            "title": "Key Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "heading",
+          "body"
+        ],
+        "title": "ExamTopicSection",
+        "type": "object"
+      },
+      "ExamTopicSummaryDocument": {
+        "description": "The ``generated_outputs.content`` payload of one per-topic summary.",
+        "properties": {
+          "confidence_notes": {
+            "default": "",
+            "title": "Confidence Notes",
+            "type": "string"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Coverage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "display_label": {
+            "title": "Display Label",
+            "type": "string"
+          },
+          "key_points": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CitedText"
+            },
+            "title": "Key Points",
+            "type": "array"
+          },
+          "output_type": {
+            "const": "exam_topic_summary",
+            "default": "exam_topic_summary",
+            "title": "Output Type",
+            "type": "string"
+          },
+          "plan_output_id": {
+            "title": "Plan Output Id",
+            "type": "integer"
+          },
+          "priority_band": {
+            "default": "",
+            "title": "Priority Band",
+            "type": "string"
+          },
+          "rank": {
+            "default": 0,
+            "title": "Rank",
+            "type": "integer"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/CitedText"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topic_key": {
+            "title": "Topic Key",
+            "type": "string"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "topic_key",
+          "display_label",
+          "plan_output_id",
+          "title",
+          "summary"
+        ],
+        "title": "ExamTopicSummaryDocument",
+        "type": "object"
+      },
+      "ExamTopicSummaryResult": {
+        "properties": {
+          "chunks_available": {
+            "title": "Chunks Available",
+            "type": "integer"
+          },
+          "chunks_used": {
+            "title": "Chunks Used",
+            "type": "integer"
+          },
+          "context_truncated": {
+            "title": "Context Truncated",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credits_charged": {
+            "default": 0.0,
+            "title": "Credits Charged",
+            "type": "number"
+          },
+          "generated_output_id": {
+            "title": "Generated Output Id",
+            "type": "integer"
+          },
+          "highest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Highest Similarity"
+          },
+          "lowest_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lowest Similarity"
+          },
+          "model_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Used"
+          },
+          "profile_knowledge_items_used": {
+            "default": 0,
+            "title": "Profile Knowledge Items Used",
+            "type": "integer"
+          },
+          "profile_knowledge_used": {
+            "default": false,
+            "title": "Profile Knowledge Used",
+            "type": "boolean"
+          },
+          "retrieval_narrowed": {
+            "title": "Retrieval Narrowed",
+            "type": "boolean"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ExamTopicSummaryDocument"
+          }
+        },
+        "required": [
+          "context_truncated",
+          "chunks_used",
+          "chunks_available",
+          "retrieval_narrowed",
+          "summary",
+          "generated_output_id",
+          "created_at"
+        ],
+        "title": "ExamTopicSummaryResult",
+        "type": "object"
+      },
+      "ExamTopicTerm": {
+        "properties": {
+          "citations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "definition": {
+            "title": "Definition",
+            "type": "string"
+          },
+          "term": {
+            "title": "Term",
+            "type": "string"
+          }
+        },
+        "required": [
+          "term",
+          "definition"
+        ],
+        "title": "ExamTopicTerm",
         "type": "object"
       },
       "FlashcardGenerationResponse": {
@@ -3485,6 +6636,49 @@
         "title": "MasteryStatus",
         "type": "string"
       },
+      "Misconception": {
+        "properties": {
+          "concept": {
+            "title": "Concept",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConceptStatus"
+          }
+        },
+        "required": [
+          "concept",
+          "status",
+          "detail"
+        ],
+        "title": "Misconception",
+        "type": "object"
+      },
+      "MockExamQuestionMixEntry": {
+        "additionalProperties": false,
+        "description": "Exactly how many questions of one type the paper must hold.",
+        "properties": {
+          "count": {
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "question_type": {
+            "$ref": "#/components/schemas/QuizQuestionType"
+          }
+        },
+        "required": [
+          "question_type",
+          "count"
+        ],
+        "title": "MockExamQuestionMixEntry",
+        "type": "object"
+      },
       "MultipleChoiceAnswer": {
         "properties": {
           "option_index": {
@@ -3523,6 +6717,67 @@
           "reference_answer"
         ],
         "title": "OpenEndedAnswer",
+        "type": "object"
+      },
+      "PasswordChangeRequest": {
+        "description": "An authenticated password change: prove the old one, then set a new one.\n\nThe current password is required even though the caller already holds a\nvalid token, because a token that leaked is exactly the case this stops\nfrom becoming a permanent takeover. The new password is bounded here only\nto reject empty and absurd input cheaply; ``UserService.change_password``\napplies the real policy through ``utils/password_policy.py``.",
+        "properties": {
+          "current_password": {
+            "minLength": 1,
+            "title": "Current Password",
+            "type": "string"
+          },
+          "new_password": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "New Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "title": "PasswordChangeRequest",
+        "type": "object"
+      },
+      "PasswordResetConfirm": {
+        "description": "Redeems a password reset link to set a new password.",
+        "properties": {
+          "new_password": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "New Password",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "new_password"
+        ],
+        "title": "PasswordResetConfirm",
+        "type": "object"
+      },
+      "PasswordResetRequest": {
+        "description": "A request to issue a password reset link.",
+        "properties": {
+          "email": {
+            "format": "email",
+            "maxLength": 255,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "PasswordResetRequest",
         "type": "object"
       },
       "ProcessingJobResponse": {
@@ -3631,6 +6886,113 @@
           "failed_stage"
         ],
         "title": "ProcessingJobResponse",
+        "type": "object"
+      },
+      "ProfileDocumentResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "file_size": {
+            "title": "File Size",
+            "type": "integer"
+          },
+          "file_type": {
+            "title": "File Type",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "mime_type": {
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "original_file_name": {
+            "title": "Original File Name",
+            "type": "string"
+          },
+          "processing_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing Error"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "original_file_name",
+          "file_type",
+          "mime_type",
+          "file_size",
+          "user_id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ProfileDocumentResponse",
+        "type": "object"
+      },
+      "ProfileDocumentStatusResponse": {
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/ProfileDocumentResponse"
+          },
+          "processing_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileProcessingJobResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "document",
+          "processing_job"
+        ],
+        "title": "ProfileDocumentStatusResponse",
+        "type": "object"
+      },
+      "ProfileDocumentUploadResponse": {
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/ProfileDocumentResponse"
+          },
+          "duplicate": {
+            "title": "Duplicate",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "document",
+          "duplicate"
+        ],
+        "title": "ProfileDocumentUploadResponse",
         "type": "object"
       },
       "ProfileKnowledgeCreate": {
@@ -3745,6 +7107,114 @@
           }
         },
         "title": "ProfileKnowledgeUpdate",
+        "type": "object"
+      },
+      "ProfileProcessingJobResponse": {
+        "properties": {
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "failed_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Stage"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "last_error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Message"
+          },
+          "max_attempts": {
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "processing_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing Stage"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "attempt_count",
+          "max_attempts",
+          "available_at",
+          "started_at",
+          "finished_at",
+          "last_error_code",
+          "last_error_message",
+          "processing_stage",
+          "failed_stage"
+        ],
+        "title": "ProfileProcessingJobResponse",
         "type": "object"
       },
       "PromptGenerationRequest": {
@@ -4027,6 +7497,11 @@
             "title": "Created At",
             "type": "string"
           },
+          "expired": {
+            "default": false,
+            "title": "Expired",
+            "type": "boolean"
+          },
           "graded_count": {
             "title": "Graded Count",
             "type": "integer"
@@ -4034,6 +7509,17 @@
           "quiz_id": {
             "title": "Quiz Id",
             "type": "integer"
+          },
+          "quiz_purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiz Purpose"
           },
           "score": {
             "title": "Score",
@@ -4049,6 +7535,11 @@
               }
             ],
             "title": "Time Spent Seconds"
+          },
+          "timed": {
+            "default": false,
+            "title": "Timed",
+            "type": "boolean"
           },
           "total_questions": {
             "title": "Total Questions",
@@ -4161,9 +7652,25 @@
             "title": "Created At",
             "type": "string"
           },
+          "expired": {
+            "default": false,
+            "title": "Expired",
+            "type": "boolean"
+          },
           "quiz_id": {
             "title": "Quiz Id",
             "type": "integer"
+          },
+          "quiz_purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiz Purpose"
           },
           "score": {
             "title": "Score",
@@ -4179,6 +7686,11 @@
               }
             ],
             "title": "Time Spent Seconds"
+          },
+          "timed": {
+            "default": false,
+            "title": "Timed",
+            "type": "boolean"
           },
           "total_questions": {
             "title": "Total Questions",
@@ -4374,6 +7886,105 @@
         "title": "QuizRequest",
         "type": "object"
       },
+      "QuizSessionStartResult": {
+        "description": "A sitting and the paper to sit, with its answers withheld.",
+        "properties": {
+          "quiz": {
+            "$ref": "#/components/schemas/QuizView"
+          },
+          "session": {
+            "$ref": "#/components/schemas/QuizSessionView"
+          }
+        },
+        "required": [
+          "session",
+          "quiz"
+        ],
+        "title": "QuizSessionStartResult",
+        "type": "object"
+      },
+      "QuizSessionStatus": {
+        "enum": [
+          "active",
+          "submitted",
+          "expired"
+        ],
+        "title": "QuizSessionStatus",
+        "type": "string"
+      },
+      "QuizSessionView": {
+        "description": "One timed sitting as the client is allowed to see it.\n\n``expires_at`` is the server's deadline and the only thing a countdown\nshould be built from. ``seconds_remaining`` is a convenience derived from\nthe same reading, never a second source of truth.\n\n``answers`` carries every draft saved so far, because a reload has to put\nthe student's own work back on the screen. A count alone would leave a\nsitting that survived a refresh looking blank while the server still held\nthe answers it would grade.",
+        "properties": {
+          "answered_count": {
+            "default": 0,
+            "title": "Answered Count",
+            "type": "integer"
+          },
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/QuizAnswerSubmission"
+            },
+            "title": "Answers",
+            "type": "array"
+          },
+          "attempt_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt Id"
+          },
+          "elapsed_seconds": {
+            "title": "Elapsed Seconds",
+            "type": "integer"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "quiz_id": {
+            "title": "Quiz Id",
+            "type": "integer"
+          },
+          "seconds_remaining": {
+            "title": "Seconds Remaining",
+            "type": "integer"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/QuizSessionStatus"
+          },
+          "time_limit_seconds": {
+            "title": "Time Limit Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session_id",
+          "quiz_id",
+          "status",
+          "started_at",
+          "expires_at",
+          "time_limit_seconds",
+          "seconds_remaining",
+          "elapsed_seconds"
+        ],
+        "title": "QuizSessionView",
+        "type": "object"
+      },
       "QuizSummary": {
         "description": "One stored quiz without its questions, for history listings.",
         "properties": {
@@ -4401,6 +8012,28 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "exam_plan_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Plan Output Id"
+          },
+          "exam_topic_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Topic Key"
           },
           "generation_context": {
             "anyOf": [
@@ -4456,6 +8089,33 @@
             "title": "Quiz Id",
             "type": "integer"
           },
+          "quiz_purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiz Purpose"
+          },
+          "time_limit_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Limit Seconds"
+          },
+          "timed": {
+            "default": false,
+            "title": "Timed",
+            "type": "boolean"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -4483,7 +8143,13 @@
         "type": "object"
       },
       "QuizView": {
+        "description": "One quiz as the client sees it.\n\n``quiz_purpose`` and the two exam-mode identifiers are surfaced so a client\ncan tell a mock exam from an ordinary quiz without parsing generation\nsettings JSON, which would make a private document part of the contract.",
         "properties": {
+          "answers_hidden": {
+            "default": false,
+            "title": "Answers Hidden",
+            "type": "boolean"
+          },
           "course_id": {
             "title": "Course Id",
             "type": "integer"
@@ -4492,6 +8158,28 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "exam_plan_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Plan Output Id"
+          },
+          "exam_topic_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Topic Key"
           },
           "generation_context": {
             "anyOf": [
@@ -4538,6 +8226,33 @@
           "quiz_id": {
             "title": "Quiz Id",
             "type": "integer"
+          },
+          "quiz_purpose": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiz Purpose"
+          },
+          "time_limit_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Limit Seconds"
+          },
+          "timed": {
+            "default": false,
+            "title": "Timed",
+            "type": "boolean"
           },
           "title": {
             "title": "Title",
@@ -4588,9 +8303,16 @@
             "type": "number"
           },
           "questions_answered": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "default": 0,
-            "title": "Questions Answered",
-            "type": "integer"
+            "title": "Questions Answered"
           },
           "source": {
             "$ref": "#/components/schemas/TopicSource"
@@ -4609,6 +8331,17 @@
           "topic": {
             "title": "Topic",
             "type": "string"
+          },
+          "topic_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Key"
           }
         },
         "required": [
@@ -4618,6 +8351,103 @@
           "priority"
         ],
         "title": "RankedTopicView",
+        "type": "object"
+      },
+      "RegistrationResponse": {
+        "description": "What registration tells the client to do next.\n\n``email_verification_required`` is what a hosted client branches on: the\naccount exists and can sign in, but it holds no introductory credits until\nthe address is verified, so the screen after registration is a prompt to\ncheck the inbox rather than a workspace.",
+        "properties": {
+          "email_verification_required": {
+            "title": "Email Verification Required",
+            "type": "boolean"
+          },
+          "is_email_verified": {
+            "title": "Is Email Verified",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "user_email": {
+            "format": "email",
+            "title": "User Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "user_email",
+          "role",
+          "email_verification_required",
+          "is_email_verified"
+        ],
+        "title": "RegistrationResponse",
+        "type": "object"
+      },
+      "ReverseQuizRequest": {
+        "properties": {
+          "explanation": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Explanation",
+            "type": "string"
+          },
+          "topic": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "explanation"
+        ],
+        "title": "ReverseQuizRequest",
+        "type": "object"
+      },
+      "ReverseQuizResponse": {
+        "properties": {
+          "course_id": {
+            "title": "Course Id",
+            "type": "integer"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "feedback": {
+            "title": "Feedback",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "misconceptions": {
+            "items": {
+              "$ref": "#/components/schemas/Misconception"
+            },
+            "title": "Misconceptions",
+            "type": "array"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "course_id",
+          "topic",
+          "explanation",
+          "feedback"
+        ],
+        "title": "ReverseQuizResponse",
         "type": "object"
       },
       "RoadmapDay": {
@@ -4774,9 +8604,16 @@
             "type": "number"
           },
           "questions_answered": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "default": 0,
-            "title": "Questions Answered",
-            "type": "integer"
+            "title": "Questions Answered"
           },
           "source": {
             "$ref": "#/components/schemas/TopicSource"
@@ -4795,6 +8632,17 @@
           "topic": {
             "title": "Topic",
             "type": "string"
+          },
+          "topic_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Key"
           }
         },
         "required": [
@@ -4845,6 +8693,108 @@
           "text"
         ],
         "title": "ShortAnswerAnswer",
+        "type": "object"
+      },
+      "SimilarQuestionDifficultyPolicy": {
+        "description": "How hard the new questions should be relative to the ones they mirror.",
+        "enum": [
+          "match_source",
+          "easy",
+          "medium",
+          "hard"
+        ],
+        "title": "SimilarQuestionDifficultyPolicy",
+        "type": "string"
+      },
+      "SimilarQuestionRequest": {
+        "description": "What a student may ask for when requesting similar questions.\n\nDeliberately narrow. The topic is the canonical key in the route, and the\noriginals are named by the identifiers of rows this course already owns --\nnever by text, never by a document, and never by a course the caller does\nnot hold. Anything wider would let a request describe its own grounding,\nwhich is the one thing the server has to decide for itself.",
+        "properties": {
+          "difficulty_policy": {
+            "$ref": "#/components/schemas/SimilarQuestionDifficultyPolicy",
+            "default": "match_source",
+            "description": "Match each source's difficulty, or pin every question to one level"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit model override, or omit to use the preferred model",
+            "title": "Model"
+          },
+          "plan_output_id": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The plan to study from, or omit to use the current one",
+            "title": "Plan Output Id"
+          },
+          "question_count": {
+            "default": 5,
+            "description": "How many questions to write",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Question Count",
+            "type": "integer"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A client-generated identifier that makes a retry return the first result instead of generating and charging a second time",
+            "title": "Request Id"
+          },
+          "requested_question_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/QuizQuestionType"
+                },
+                "maxItems": 4,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Restrict the set to these question types, or omit to allow all",
+            "title": "Requested Question Types"
+          },
+          "source_question_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which of this topic's extracted past questions to mirror, or omit to use the ones the plan already found relevant",
+            "title": "Source Question Ids"
+          }
+        },
+        "title": "SimilarQuestionRequest",
         "type": "object"
       },
       "StudyGuideGenerationResult": {
@@ -5137,7 +9087,8 @@
       "TopicSource": {
         "enum": [
           "syllabus",
-          "quiz"
+          "quiz",
+          "exam_plan"
         ],
         "title": "TopicSource",
         "type": "string"
@@ -5190,7 +9141,6 @@
             "type": "string"
           },
           "password": {
-            "minLength": 8,
             "title": "Password",
             "type": "string"
           }
@@ -5235,6 +9185,10 @@
             "title": "Is Banned",
             "type": "boolean"
           },
+          "is_email_verified": {
+            "title": "Is Email Verified",
+            "type": "boolean"
+          },
           "name": {
             "maxLength": 255,
             "minLength": 1,
@@ -5255,6 +9209,7 @@
           "id",
           "role",
           "is_banned",
+          "is_email_verified",
           "credits",
           "preferred_model"
         ],
@@ -5789,6 +9744,70 @@
         ]
       }
     },
+    "/api/ads/config": {
+      "get": {
+        "description": "Return public advertising configuration.\n\nIn self-hosted mode or when ads are disabled, strictly returns enabled=False\nwith no provider metadata.",
+        "operationId": "get_ad_config_api_ads_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_AdConfigResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ad Config",
+        "tags": [
+          "Advertising"
+        ]
+      }
+    },
+    "/api/ads/telemetry/impression": {
+      "post": {
+        "description": "Record aggregate, privacy-safe impression and render status telemetry.\n\nNever accepts or records study content, user identifiers, or course context.",
+        "operationId": "record_ad_telemetry_api_ads_telemetry_impression_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdTelemetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_AdTelemetryResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Ad Telemetry",
+        "tags": [
+          "Advertising"
+        ]
+      }
+    },
     "/api/auth/login": {
       "post": {
         "description": "Handles user login and returns a JWT Access Token.\nNote: OAuth2 standard expects 'username'. We use email as the username.",
@@ -5831,6 +9850,31 @@
         ]
       }
     },
+    "/api/auth/logout": {
+      "post": {
+        "description": "Handles user logout by adding the token's JTI to the denylist.",
+        "operationId": "logout_user_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Logout User",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
     "/api/auth/me": {
       "get": {
         "description": "Protected endpoint to test token verification.\nRequires a valid JWT Bearer token to access.",
@@ -5860,7 +9904,7 @@
     },
     "/api/auth/register": {
       "post": {
-        "description": "Handles user registration. Hashes password and prepares it for the database service.",
+        "description": "Handles user registration. Hashes password and prepares it for the database service.\n\nWhere verification is required the account is created unverified and holds\nno spendable introductory credits; redeeming the emailed link is what grants\nthem. A relay failure does not undo the registration -- the account exists\nand the resend endpoint is the way back to a working link.",
         "operationId": "register_user_api_auth_register_post",
         "parameters": [
           {
@@ -5894,7 +9938,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -5911,6 +9957,170 @@
           }
         },
         "summary": "Register User",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/reset-password": {
+      "post": {
+        "description": "Issue a password reset link to the given address, if it exists.",
+        "operationId": "request_password_reset_api_auth_reset_password_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Password Reset",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/reset-password/confirm": {
+      "post": {
+        "description": "Redeem a password reset link and set a new password.",
+        "operationId": "confirm_password_reset_api_auth_reset_password_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Password Reset",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/verify-email": {
+      "post": {
+        "description": "Redeem one verification link.\n\nUnauthenticated on purpose: the link is clicked from a mail client that may\nnot carry the session, and the token itself is the proof.",
+        "operationId": "verify_email_api_auth_verify_email_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Email",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/verify-email/resend": {
+      "post": {
+        "description": "Issue a fresh verification link, replacing any outstanding one.\n\nAnswers identically for an unknown address, an already verified one, and a\ngenuine resend, so it cannot be used to enumerate accounts. The only\ndistinguishable answer is the one that says this deployment does not verify\naddresses at all, which is a property of the server rather than of anyone's\naccount.",
+        "operationId": "resend_verification_email_api_auth_verify_email_resend_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailVerificationResendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resend Verification Email",
         "tags": [
           "Authentication"
         ]
@@ -6797,9 +11007,1469 @@
         ]
       }
     },
+    "/api/courses/{course_id}/exam-mode/analysis": {
+      "get": {
+        "operationId": "get_exam_analysis_api_courses__course_id__exam_mode_analysis_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "output_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Output Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamAnalysisView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or exam topic analysis not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Exam Analysis",
+        "tags": [
+          "Exam Mode"
+        ]
+      },
+      "post": {
+        "operationId": "analyse_exam_sources_api_courses__course_id__exam_mode_analysis_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamAnalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamAnalysisResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No processed course material is available"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course or document not found"
+          },
+          "409": {
+            "description": "No course material matched the request, the course material is not searchable yet, or a selected document is still being processed"
+          },
+          "422": {
+            "description": "Invalid exam analysis request"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider or course search unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Analyse Exam Sources",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/analysis/rescan": {
+      "post": {
+        "description": "Analyse the selected sources again, leaving every existing plan alone.\n\nA rescan is its own route rather than a flag because it is priced\ndifferently, and a price a client must not hardcode has to be readable from\nthe credit policy by its own name. It also keeps its own rate-limit bucket,\nso a cheap rescan cannot drain the expensive first analysis.",
+        "operationId": "rescan_exam_sources_api_courses__course_id__exam_mode_analysis_rescan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamAnalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamAnalysisResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No processed course material is available"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course or document not found"
+          },
+          "409": {
+            "description": "No course material matched the request, the course material is not searchable yet, or a selected document is still being processed"
+          },
+          "422": {
+            "description": "Invalid exam analysis request"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider or course search unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Rescan Exam Sources",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/analysis/{output_id}/questions": {
+      "get": {
+        "operationId": "list_past_exam_questions_api_courses__course_id__exam_mode_analysis__output_id__questions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "output_id",
+            "required": true,
+            "schema": {
+              "title": "Output Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topic_key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 120,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic Key"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamQuestionPage_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or exam topic analysis not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Past Exam Questions",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/entitlements": {
+      "get": {
+        "description": "Name the topics this student has already unlocked in this course.\n\nOwner-scoped rather than reader-scoped on purpose: what somebody has bought\nis theirs, so the administrator read-any override deliberately stops here.\nAn unlock is keyed by (course, student, topic) with no plan identifier, so\nthe set answers for every plan version at once.",
+        "operationId": "list_exam_entitlements_api_courses__course_id__exam_mode_entitlements_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamEntitlementView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Exam Entitlements",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/mock-exam": {
+      "get": {
+        "description": "Reopen this course's most recent mock exam, answers hidden.\n\nServed from the quiz rows, because the quiz is the paper. A paper is still\nan examination when it is reopened, so the answers stay behind the attempt.",
+        "operationId": "get_mock_exam_api_courses__course_id__exam_mode_mock_exam_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_QuizView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or mock exam not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Mock Exam",
+        "tags": [
+          "Exam Mode"
+        ]
+      },
+      "post": {
+        "description": "Write one paper across the whole plan, weighted by its own ranking.\n\nPriced on its own rather than under a topic's unlock: a student who paid for\none topic has not paid for a paper covering twelve. Served with its answers\nhidden, because a paper you can read the answers to is not a mock exam.",
+        "operationId": "generate_mock_exam_api_courses__course_id__exam_mode_mock_exam_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamMockExamRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamMockExamResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No processed course material is available"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course or document not found"
+          },
+          "409": {
+            "description": "This course has no exam plan yet, the topic is not one the plan ranked, no course material matched the request, or the course material is not searchable yet"
+          },
+          "422": {
+            "description": "Invalid exam analysis request"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider or course search unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Generate Mock Exam",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/plans": {
+      "get": {
+        "operationId": "list_exam_plans_api_courses__course_id__exam_mode_plans_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamPlanList_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Exam Plans",
+        "tags": [
+          "Exam Mode"
+        ]
+      },
+      "post": {
+        "description": "Rank the selected topics into a new immutable plan version.\n\nDeterministic, so no provider is reached, no credit is spent, and it does\nnot consume the shared provider-generation budget.",
+        "operationId": "create_exam_plan_api_courses__course_id__exam_mode_plans_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamPlanView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The course has no usable exam date"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or exam topic analysis not found"
+          },
+          "409": {
+            "description": "No topic analysis exists, no topic was selected, or a selected topic is not part of that analysis"
+          },
+          "422": {
+            "description": "Invalid exam plan request"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Exam Plan",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/plans/{output_id}": {
+      "get": {
+        "description": "Return one stored plan exactly as it was written.\n\nA database read and nothing else: no provider, no retrieval, no embedding,\nno charge, and no write. A plan whose exam date has long passed still\nopens, because it is a study resource rather than a countdown.",
+        "operationId": "get_exam_plan_api_courses__course_id__exam_mode_plans__output_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "output_id",
+            "required": true,
+            "schema": {
+              "title": "Output Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamPlanView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or exam plan not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Exam Plan",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/review-sheet": {
+      "get": {
+        "operationId": "get_review_sheet_api_courses__course_id__exam_mode_review_sheet_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamReviewSheetDocument_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or review sheet not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Review Sheet",
+        "tags": [
+          "Exam Mode"
+        ]
+      },
+      "post": {
+        "operationId": "generate_review_sheet_api_courses__course_id__exam_mode_review_sheet_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamPlanArtifactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamReviewSheetResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No processed course material is available"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course or document not found"
+          },
+          "409": {
+            "description": "This course has no exam plan yet, the topic is not one the plan ranked, no course material matched the request, or the course material is not searchable yet"
+          },
+          "422": {
+            "description": "Invalid exam analysis request"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider or course search unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Generate Review Sheet",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/sources": {
+      "get": {
+        "operationId": "list_exam_sources_api_courses__course_id__exam_mode_sources_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamSourceInventory_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Exam Sources",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/topics/{topic_key}/exam": {
+      "post": {
+        "operationId": "generate_topic_exam_api_courses__course_id__exam_mode_topics__topic_key__exam_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_key",
+            "required": true,
+            "schema": {
+              "maxLength": 120,
+              "title": "Topic Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamTopicQuizRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamTopicQuizResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No processed course material is available"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course or document not found"
+          },
+          "409": {
+            "description": "This course has no exam plan yet, the topic is not one the plan ranked, no course material matched the request, or the course material is not searchable yet"
+          },
+          "422": {
+            "description": "Invalid exam analysis request"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider or course search unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Generate Topic Exam",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/topics/{topic_key}/guide": {
+      "get": {
+        "operationId": "get_topic_guide_api_courses__course_id__exam_mode_topics__topic_key__guide_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_key",
+            "required": true,
+            "schema": {
+              "maxLength": 120,
+              "title": "Topic Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamTopicGuideDocument_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or topic study guide not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Topic Guide",
+        "tags": [
+          "Exam Mode"
+        ]
+      },
+      "post": {
+        "operationId": "generate_topic_guide_api_courses__course_id__exam_mode_topics__topic_key__guide_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_key",
+            "required": true,
+            "schema": {
+              "maxLength": 120,
+              "title": "Topic Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamTopicArtifactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamTopicGuideResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No processed course material is available"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course or document not found"
+          },
+          "409": {
+            "description": "This course has no exam plan yet, the topic is not one the plan ranked, no course material matched the request, or the course material is not searchable yet"
+          },
+          "422": {
+            "description": "Invalid exam analysis request"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider or course search unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Generate Topic Guide",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/topics/{topic_key}/practice": {
+      "post": {
+        "operationId": "generate_topic_practice_api_courses__course_id__exam_mode_topics__topic_key__practice_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_key",
+            "required": true,
+            "schema": {
+              "maxLength": 120,
+              "title": "Topic Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamTopicQuizRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamTopicQuizResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No processed course material is available"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course or document not found"
+          },
+          "409": {
+            "description": "This course has no exam plan yet, the topic is not one the plan ranked, no course material matched the request, or the course material is not searchable yet"
+          },
+          "422": {
+            "description": "Invalid exam analysis request"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider or course search unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Generate Topic Practice",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/topics/{topic_key}/similar-questions": {
+      "get": {
+        "description": "Reopen this topic's most recent similar-question set, answers hidden.\n\nServed from the quiz rows rather than the history document, because the\nquiz is the assessment. A set generated before these were quizzes has no\nrow to serve and is answered as missing rather than half-read from an\nolder shape; it remains readable in the course's generated-output history.",
+        "operationId": "get_similar_questions_api_courses__course_id__exam_mode_topics__topic_key__similar_questions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_key",
+            "required": true,
+            "schema": {
+              "maxLength": 120,
+              "title": "Topic Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_QuizView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or similar questions not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Similar Questions",
+        "tags": [
+          "Exam Mode"
+        ]
+      },
+      "post": {
+        "description": "Write fresh questions in the mould of this topic's past ones.\n\nThe originals are resolved and checked before the topic is unlocked, so a\ntopic this course has never examined is a conflict naming what to do about\nit rather than a charge for an empty page, and an identifier belonging to\nanother course is answered as a missing one.\n\nThe result is served with its answers hidden. This is an assessment a\nstudent is meant to sit, and the answers arrive through the attempt they\nsubmit rather than through the page that sets it.",
+        "operationId": "generate_similar_questions_api_courses__course_id__exam_mode_topics__topic_key__similar_questions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_key",
+            "required": true,
+            "schema": {
+              "maxLength": 120,
+              "title": "Topic Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimilarQuestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamSimilarQuestionsResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No processed course material is available"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course or document not found"
+          },
+          "409": {
+            "description": "This course has no exam plan yet, the topic is not one the plan ranked, no course material matched the request, or the course material is not searchable yet"
+          },
+          "422": {
+            "description": "Invalid exam analysis request"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider or course search unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Generate Similar Questions",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/exam-mode/topics/{topic_key}/summary": {
+      "get": {
+        "operationId": "get_topic_summary_api_courses__course_id__exam_mode_topics__topic_key__summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_key",
+            "required": true,
+            "schema": {
+              "maxLength": 120,
+              "title": "Topic Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamTopicSummaryDocument_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or topic summary not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Topic Summary",
+        "tags": [
+          "Exam Mode"
+        ]
+      },
+      "post": {
+        "operationId": "generate_topic_summary_api_courses__course_id__exam_mode_topics__topic_key__summary_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_key",
+            "required": true,
+            "schema": {
+              "maxLength": 120,
+              "title": "Topic Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamTopicArtifactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ExamTopicSummaryResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No processed course material is available"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course or document not found"
+          },
+          "409": {
+            "description": "This course has no exam plan yet, the topic is not one the plan ranked, no course material matched the request, or the course material is not searchable yet"
+          },
+          "422": {
+            "description": "Invalid exam analysis request"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider or course search unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Generate Topic Summary",
+        "tags": [
+          "Exam Mode"
+        ]
+      }
+    },
     "/api/courses/{course_id}/exam-roadmap": {
       "post": {
-        "description": "Plan every day from today to the exam date, and store the plan.\n\nNo text-generation provider is called and no credit is charged: the schedule\nis derived from the course's own topics, exam date, and quiz history.\nRegenerating writes a new version and leaves earlier ones untouched.",
+        "description": "Plan every day from today to the exam date, and store the plan.\n\nNo text-generation provider is called and no credit is charged: the schedule\nis derived from the course's own topics, exam date, and quiz history.\nRegenerating writes a new version and leaves earlier ones untouched.\n\nWith ``plan_output_id`` the schedule follows an Exam Mode plan's own ranked\ntopics instead, and each plan keeps its own version chain, so refreshing one\nplan's roadmap never supersedes another's.",
         "operationId": "generate_exam_roadmap_api_courses__course_id__exam_roadmap_post",
         "parameters": [
           {
@@ -6844,7 +12514,7 @@
             "description": "Authentication required"
           },
           "404": {
-            "description": "Course not found"
+            "description": "Course or exam plan not found"
           },
           "409": {
             "description": "The course has no exam date, its exam date has passed, or it has no topics to plan"
@@ -7348,7 +13018,7 @@
     },
     "/api/courses/{course_id}/quizzes/{quiz_id}": {
       "get": {
-        "description": "Return one stored quiz, questions in stable order, without regenerating.",
+        "description": "Return one stored quiz, questions in stable order, without regenerating.\n\nAn assessment is served with its answers withheld. Exam Mode redacts its own\nresponses, but this endpoint reads the same rows, so without the same rule\nhere a candidate could simply ask for the quiz and read the answers off it.\nPractice keeps its answers, because immediate feedback is its whole point.",
         "operationId": "get_quiz_api_courses__course_id__quizzes__quiz_id__get",
         "parameters": [
           {
@@ -7472,6 +13142,7 @@
         ]
       },
       "post": {
+        "description": "Record one attempt at an untimed quiz.\n\nA quiz with a time limit is refused here. Its elapsed time has to be\nmeasured by the server, and this endpoint would take the client's word for\nit, which is the whole thing a timed sitting exists to prevent.",
         "operationId": "submit_quiz_attempt_api_courses__course_id__quizzes__quiz_id__attempts_post",
         "parameters": [
           {
@@ -7607,6 +13278,443 @@
         "summary": "Get Quiz Attempt",
         "tags": [
           "Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/quizzes/{quiz_id}/sessions": {
+      "post": {
+        "description": "Open a timed sitting, or rejoin the one already running.\n\nThe deadline in the response is the server's own and the only one that\ncounts. A reloaded page rejoins its sitting rather than starting a second\nclock, so the drafts stay together.",
+        "operationId": "start_quiz_session_api_courses__course_id__quizzes__quiz_id__sessions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "quiz_id",
+            "required": true,
+            "schema": {
+              "title": "Quiz Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_QuizSessionStartResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course, quiz, or session not found"
+          },
+          "409": {
+            "description": "The session cannot be used in its current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Start Quiz Session",
+        "tags": [
+          "Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/quizzes/{quiz_id}/sessions/{session_id}": {
+      "get": {
+        "description": "Report a sitting, including one whose deadline has quietly passed.",
+        "operationId": "read_quiz_session_api_courses__course_id__quizzes__quiz_id__sessions__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "quiz_id",
+            "required": true,
+            "schema": {
+              "title": "Quiz Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_QuizSessionView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course, quiz, or session not found"
+          },
+          "409": {
+            "description": "The session cannot be used in its current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Read Quiz Session",
+        "tags": [
+          "Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/quizzes/{quiz_id}/sessions/{session_id}/answers/{question_id}": {
+      "put": {
+        "description": "Save one answer as it stands, so the deadline cannot cost the student it.",
+        "operationId": "save_quiz_session_answer_api_courses__course_id__quizzes__quiz_id__sessions__session_id__answers__question_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "quiz_id",
+            "required": true,
+            "schema": {
+              "title": "Quiz Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "title": "Question Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuizAnswerSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_QuizSessionView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The answer is not valid for this question"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course, quiz, or session not found"
+          },
+          "409": {
+            "description": "The session cannot be used in its current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Save Quiz Session Answer",
+        "tags": [
+          "Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/quizzes/{quiz_id}/sessions/{session_id}/submit": {
+      "post": {
+        "description": "Finalise a sitting into an ordinary attempt, exactly once.\n\nWhat is graded is the answers saved before the deadline. Submitting twice\nreturns the same attempt rather than grading the paper again.",
+        "operationId": "submit_quiz_session_api_courses__course_id__quizzes__quiz_id__sessions__session_id__submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "quiz_id",
+            "required": true,
+            "schema": {
+              "title": "Quiz Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_QuizAttemptResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course, quiz, or session not found"
+          },
+          "409": {
+            "description": "The session cannot be used in its current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Submit Quiz Session",
+        "tags": [
+          "Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/reverse-quiz": {
+      "post": {
+        "operationId": "generate_reverse_quiz_api_courses__course_id__reverse_quiz_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReverseQuizRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ReverseQuizResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "No processed course material is available"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Generate Reverse Quiz",
+        "tags": [
+          "Reverse Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/reverse-quizzes": {
+      "get": {
+        "operationId": "list_reverse_quizzes_api_courses__course_id__reverse_quizzes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_list_ReverseQuizResponse__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Reverse Quizzes",
+        "tags": [
+          "Reverse Quiz"
         ]
       }
     },
@@ -7827,7 +13935,252 @@
         ]
       }
     },
+    "/api/profile-documents": {
+      "get": {
+        "description": "List all profile documents owned by the current user.",
+        "operationId": "list_profile_documents_api_profile_documents_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_list_ProfileDocumentResponse__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Profile Documents",
+        "tags": [
+          "Profile Documents"
+        ]
+      },
+      "post": {
+        "description": "Upload and enqueue a user profile background document.",
+        "operationId": "upload_profile_document_api_profile_documents_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_profile_document_api_profile_documents_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ProfileDocumentUploadResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Upload Profile Document",
+        "tags": [
+          "Profile Documents"
+        ]
+      }
+    },
+    "/api/profile-documents/{document_id}": {
+      "delete": {
+        "description": "Permanently delete a profile document, its chunks, and stored embeddings.",
+        "operationId": "delete_profile_document_api_profile_documents__document_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_dict_str__str__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Profile Document",
+        "tags": [
+          "Profile Documents"
+        ]
+      },
+      "get": {
+        "description": "Get the detail and processing status for one profile document.",
+        "operationId": "get_profile_document_status_api_profile_documents__document_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ProfileDocumentStatusResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Profile Document Status",
+        "tags": [
+          "Profile Documents"
+        ]
+      }
+    },
+    "/api/profile-documents/{document_id}/retry": {
+      "post": {
+        "description": "Retry extraction for a failed profile document.",
+        "operationId": "retry_profile_document_api_profile_documents__document_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ProfileDocumentStatusResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Retry Profile Document",
+        "tags": [
+          "Profile Documents"
+        ]
+      }
+    },
     "/api/profile-knowledge/": {
+      "delete": {
+        "description": "Deletes all profile knowledge entries owned by the authenticated user.",
+        "operationId": "delete_all_profile_knowledge_api_profile_knowledge__delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_dict_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete All Profile Knowledge",
+        "tags": [
+          "Profile Knowledge"
+        ]
+      },
       "get": {
         "description": "Lists all profile knowledge entries owned by the authenticated user.",
         "operationId": "list_profile_knowledge_api_profile_knowledge__get",
@@ -8392,6 +14745,53 @@
           }
         ],
         "summary": "Update Preferred Model",
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/api/users/me/password": {
+      "put": {
+        "description": "Changes the account password after proving the current one.\n\nThe new password is checked by ``utils/password_policy.py``, which is also\nwhat registration uses, so a password this endpoint accepts is one\nregistration would have accepted too.",
+        "operationId": "change_my_password_api_users_me_password_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_NoneType_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Change My Password",
         "tags": [
           "Users"
         ]

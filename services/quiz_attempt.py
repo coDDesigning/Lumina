@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.models import (
+    QuizSession,
     Progress,
     Quiz,
     QuizAttempt,
@@ -15,6 +16,7 @@ from schemas.quiz import OPTION_BASED_QUESTION_TYPES, QuizQuestionType
 from schemas.reverse_quiz import ReverseQuizResponse, ConceptStatus
 from schemas.quiz_attempt import (
     MASTERED_THRESHOLD,
+    MAX_TIME_SPENT_SECONDS,
     NEEDS_REVIEW_THRESHOLD,
     CourseProgressResponse,
     MasteryStatus,
@@ -65,6 +67,55 @@ class _ProgressAggregate:
         return self.correct_count + self.incorrect_count
 
 
+def validate_answer_form(answer: QuizAnswerSubmission, question: QuizQuestion) -> None:
+    """Reject an answer given in the wrong form for its question's type.
+
+    Module level and shared, because a timed session saves drafts long before
+    it submits them. If the draft endpoint accepted a shape the attempt
+    endpoint later refused, a student would lose a whole sitting to the
+    server's own inconsistency.
+    """
+    question_type = QuizQuestionType(question.question_type)
+    selected = answer.selected_option_index
+    written = answer.text_response
+
+    if question_type in OPTION_BASED_QUESTION_TYPES:
+        if written is not None:
+            raise BadRequestException(
+                "A multiple choice or true/false question is answered by "
+                "selecting an option, not by writing text."
+            )
+        options = question.options or []
+        if selected is not None and selected >= len(options):
+            raise BadRequestException(
+                "One of the submitted answers selects an option that does not exist."
+            )
+    elif selected is not None:
+        raise BadRequestException(
+            "A short answer or open ended question is answered by writing "
+            "text, not by selecting an option."
+        )
+
+
+def expired_attempt_ids(db: Session, attempt_ids: list[int]) -> set[int]:
+    """Which of these attempts came from a sitting whose deadline had passed.
+
+    Read from the sitting rather than stored on the attempt, because it is a
+    fact about the clock the attempt was taken under, and only one row owns
+    that. An attempt with no sitting was never timed, so it is never expired.
+    """
+    if not attempt_ids:
+        return set()
+    return set(
+        db.scalars(
+            select(QuizSession.attempt_id).where(
+                QuizSession.attempt_id.in_(attempt_ids),
+                QuizSession.expired_at.is_not(None),
+            )
+        ).all()
+    )
+
+
 class QuizAttemptService:
     @staticmethod
     def _validate_submissions(
@@ -89,28 +140,7 @@ class QuizAttemptService:
                     "Each question may only be answered once per attempt."
                 )
 
-            question_type = QuizQuestionType(question.question_type)
-            selected = answer.selected_option_index
-            written = answer.text_response
-
-            if question_type in OPTION_BASED_QUESTION_TYPES:
-                if written is not None:
-                    raise BadRequestException(
-                        "A multiple choice or true/false question is answered by "
-                        "selecting an option, not by writing text."
-                    )
-                options = question.options or []
-                if selected is not None and selected >= len(options):
-                    raise BadRequestException(
-                        "One of the submitted answers selects an option that does "
-                        "not exist."
-                    )
-            elif selected is not None:
-                raise BadRequestException(
-                    "A short answer or open ended question is answered by writing "
-                    "text, not by selecting an option."
-                )
-
+            validate_answer_form(answer, question)
             submitted[answer.question_id] = answer
 
         return submitted
@@ -125,7 +155,24 @@ class QuizAttemptService:
         *,
         user_id: int,
         provider_factory: ProviderFactory | None = None,
+        time_spent_seconds_override: int | None = None,
+        commit: bool = True,
     ) -> QuizAttemptResponse:
+        """Grade one submission and record it, with progress, in one transaction.
+
+        ``commit=False`` hands that transaction to the caller, the same way
+        ``QuizService.save_generated_quiz`` does. A timed session needs it so the
+        attempt and the session's own finalisation land together: an attempt
+        without its session marked submitted would be gradeable twice.
+
+        ``time_spent_seconds_override`` replaces the client's figure with one
+        the server measured. A candidate controls their own clock, so on a timed
+        sitting theirs is a claim rather than a measurement; an untimed attempt
+        has nothing to measure and keeps what it was told.
+        """
+        if time_spent_seconds_override is not None and time_spent_seconds_override < 0:
+            raise ValueError("time_spent_seconds_override must not be negative")
+
         quiz = QuizService.get_course_quiz(db, course_id, quiz_id)
         questions = {question.id: question for question in quiz.questions}
 
@@ -148,11 +195,17 @@ class QuizAttemptService:
         correct_count = sum(1 for answer in graded if answer.is_correct)
         score = sum(answer.score for answer in scored) / len(scored) if scored else 0.0
 
+        recorded_time_spent = (
+            min(time_spent_seconds_override, MAX_TIME_SPENT_SECONDS)
+            if time_spent_seconds_override is not None
+            else request.time_spent_seconds
+        )
+
         attempt = QuizAttempt(
             user_id=user_id,
             quiz_id=quiz.id,
             score=min(max(score, 0.0), 1.0),
-            time_spent_seconds=request.time_spent_seconds,
+            time_spent_seconds=recorded_time_spent,
         )
 
         by_question = {question.id: question for question in ordered}
@@ -186,12 +239,15 @@ class QuizAttemptService:
             cls._update_course_progress_transactional(
                 db, course_id=course_id, user_id=user_id
             )
-            db.commit()
+            db.refresh(attempt)
+            if commit:
+                db.commit()
         except Exception:
-            db.rollback()
+            # Only unwind a transaction this call opened. When the caller owns
+            # it, its own writes are in here and only it can decide their fate.
+            if commit:
+                db.rollback()
             raise
-
-        db.refresh(attempt)
 
         return QuizAttemptResponse(
             attempt_id=attempt.id,
@@ -202,6 +258,8 @@ class QuizAttemptService:
             total_questions=len(ordered),
             time_spent_seconds=attempt.time_spent_seconds,
             created_at=attempt.created_at,
+            quiz_purpose=quiz.purpose,
+            timed=bool(quiz.time_limit_seconds),
             answers=[
                 QuizAnswerResult(
                     question_id=answer.question_id,
@@ -295,16 +353,17 @@ class QuizAttemptService:
             .where(
                 GeneratedOutput.course_id == course_id,
                 GeneratedOutput.user_id == user_id,
-                GeneratedOutput.output_type == "reverse_quiz"
+                GeneratedOutput.output_type == "reverse_quiz",
             )
             .order_by(GeneratedOutput.created_at.desc())
         ).all()
-        
-        import json
+
         for output in reverse_quizzes:
             try:
                 rq = ReverseQuizResponse.model_validate_json(output.content)
-                has_misconception = any(m.status == ConceptStatus.CONTRADICTED for m in rq.misconceptions)
+                has_misconception = any(
+                    m.status == ConceptStatus.CONTRADICTED for m in rq.misconceptions
+                )
                 if has_misconception:
                     rq_label = f"{rq.topic} (Reverse Quiz)"
                     if rq_label not in weak_topics:
@@ -427,7 +486,7 @@ class QuizAttemptService:
         user_id: int,
     ) -> list[QuizHistoryItem]:
         """List past attempts for one quiz belonging to a course, in chronological order."""
-        QuizService.get_course_quiz(db, course_id, quiz_id)
+        quiz = QuizService.get_course_quiz(db, course_id, quiz_id)
 
         attempts = db.scalars(
             select(QuizAttempt)
@@ -435,6 +494,8 @@ class QuizAttemptService:
             .options(selectinload(QuizAttempt.answers))
             .order_by(QuizAttempt.created_at.asc(), QuizAttempt.id.asc())
         ).all()
+
+        expired = expired_attempt_ids(db, [attempt.id for attempt in attempts])
 
         return [
             QuizHistoryItem(
@@ -447,6 +508,9 @@ class QuizAttemptService:
                 total_questions=len(attempt.answers),
                 time_spent_seconds=attempt.time_spent_seconds,
                 created_at=attempt.created_at,
+                quiz_purpose=quiz.purpose,
+                timed=bool(quiz.time_limit_seconds),
+                expired=attempt.id in expired,
             )
             for attempt in attempts
         ]
@@ -514,6 +578,9 @@ class QuizAttemptService:
             graded_count=len(scored),
             total_questions=len(ordered),
             time_spent_seconds=attempt.time_spent_seconds,
+            quiz_purpose=quiz.purpose,
+            timed=bool(quiz.time_limit_seconds),
+            expired=bool(expired_attempt_ids(db, [attempt.id])),
             created_at=attempt.created_at,
             answers=answer_results,
         )

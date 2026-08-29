@@ -124,7 +124,7 @@ immutable `pgvector/pgvector` image digest; the pgvector extension is required
 because the schema declares a `vector` column and an HNSW index. The live job
 verifies the complete Alembic upgrade/downgrade/re-upgrade cycle, schema drift,
 role seeds, readiness, UUID and timezone round trips, unloaded database cascades
-across all 23 tables, pgvector provisioning and cosine ranking, and
+across all 42 tables, pgvector provisioning and cosine ranking, and
 `SKIP LOCKED` worker claims. Tests marked `database_contract` run unchanged
 against copies of an Alembic-migrated SQLite database and the disposable
 PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other
@@ -563,6 +563,212 @@ recorded ungraded rather than wrong, is excluded from the attempt score's
 denominator, and is skipped by topic mastery. Losing a student's written work
 because a grading model timed out would be a much worse outcome than an unscored
 answer, so a grading failure never fails the attempt.
+
+## Exam Mode
+
+Exam Mode turns a course's existing sources into two durable records: the
+evidence one analysis found, and the plan a student built from it. Both live
+under `generated_outputs`, and both are immutable.
+
+An analysis writes one `generated_outputs` row with `output_type =
+'exam_topic_analysis'`, carrying the model attribution and a summary, plus the
+`exam_topic_candidates` rows hanging off it. Those are a real table rather than
+JSON because they are genuinely queried: a plan validates a topic selection
+against the candidates in the same statement that scopes them to the course.
+
+A plan writes one `generated_outputs` row with `output_type = 'exam_plan'` whose
+`content` is a versioned JSON document. A plan is read whole, reopened whole and
+never queried by its parts, so it needs no table of its own. Its `model_used` is
+**null**, and that is a truth claim rather than a gap: Python produced the row,
+and the model that produced the evidence is credited on the analysis the plan
+names.
+
+### Questions belong to the paper, not to the analysis
+
+`past_exam_questions` hangs off `uploaded_documents` instead. A question is a
+property of the paper it was printed in, so it is read once, in the upload
+worker, and every later analysis counts the same rows. Owning them by analysis
+would re-read an unchanged paper on every rescan and would let two analyses of
+one paper disagree about what it asks.
+
+`document_id` is therefore `NOT NULL` and `(document_id, position)` is the
+unique key: a question nobody can attribute to a paper is not a question this
+system records. A composite foreign key `(document_id, course_id)` into
+`uploaded_documents` carries the course with it, so a question can never be
+attributed to another course's paper.
+
+`topic_key` is computed by `services/exam_topics.canonical_topic_key` from the
+label the extractor gave the question, which is why extraction needs to know
+nothing about any analysis. An analysis resolves those keys against its own
+candidates later, exactly as it already does for mastery labels.
+
+Extraction is best-effort and free, and it never fails an upload. How it went is
+recorded on the document itself: `uploaded_documents.exam_extraction_status` is
+one of `not_applicable`, `pending`, `succeeded`, `failed`, `not_configured`, or
+`skipped`, with `exam_extraction_error_code` holding the stable category of a
+failure. Neither column carries a `CHECK`: constraining a column on an existing
+table would force a `batch_alter_table` rebuild on SQLite, and
+`generated_outputs.output_type` is the standing precedent for a discriminator
+the application owns. A paper that is still `pending` or `failed` is given one
+more attempt the first time Exam Mode selects it, which is also how papers
+uploaded before extraction existed reach the ranking.
+
+### Course-scoped denormalization
+
+`exam_topic_candidates` carries `course_id` alongside `analysis_output_id`, so
+every read after the authorization boundary is a plain `WHERE course_id = ?`
+with no join. The pair is held true by a composite foreign key into
+`generated_outputs`, which is why migration `a6d3f81c9b47` adds a unique index
+on `(id, course_id)` there. Without it a bug could write a candidate whose
+`course_id` disagreed with its analysis, and a course-scoped read would surface
+another course's row after the boundary had already passed. It is a unique
+**index** rather than a constraint because SQLite has no `ALTER TABLE ... ADD
+CONSTRAINT`, and rebuilding a table holding every generation a deployment has
+produced is not worth a spelling.
+
+Deleting a past exam retracts the questions extracted from it, while the
+candidate aggregates keep their counts. That is deliberate: keeping verbatim
+exam text alive after the student deleted the source is a retention claim this
+system does not make. The disagreement is reported rather than hidden, because
+the plan's staleness fingerprint records which past exams it used.
+
+### Per-topic unlocks
+
+`exam_topic_unlocks` records what a student has paid for. Exam Mode charges per
+topic rather than per artifact, so unlocking a topic buys its guide, its
+summary, its practice questions, its topic exam, and its similar questions
+together, and the charge lands the first time any of them is asked for.
+
+The unique key is `(course_id, user_id, topic_key)` and nothing else. There is
+deliberately no plan identifier on the row: a topic is the same topic whichever
+plan surfaced it, `canonical_topic_key` is what makes that claim checkable, and
+regenerating a plan over the same topics therefore costs nothing.
+
+`credit_transaction_id` is nullable because an unmetered account pays nothing
+and has no ledger row to point at. A null there means "no credit moved", which
+is the same distinction `ChargeReceipt.is_exempt` draws one layer up.
+
+### Quiz provenance
+
+Exam Mode's practice questions, topic exams, and mock exams are real rows in
+`quizzes`, because anything else would need parallel implementations of
+attempts, grading, mastery, and course progress. `quizzes.purpose` tells them
+apart, `exam_plan_output_id` names the plan a quiz was generated for, and
+`exam_topic_key` names the topic, so "the exams belonging to this plan" is plain
+SQL rather than a scan through generation settings JSON.
+
+None of the three carries a `CHECK` or a foreign key, for the same reason
+`exam_extraction_status` does not: constraining a column on an existing table
+would force a `batch_alter_table` rebuild. A null `purpose` is a quiz that
+predates Exam Mode, and nothing back-fills it — writing `practice` would assert
+something about rows nobody classified.
+
+Similar-question sets join the same list under `purpose = 'exam_similar_questions'`,
+and each of their questions carries `quiz_questions.source_past_exam_question_id`,
+the past question it was written in the mould of. That column has no foreign key
+either, and deliberately so: extraction replaces a paper's questions wholesale on
+every re-run, so the pointer is expected to stop resolving, and a cascade would
+delete a quiz a student had already sat. A pointer that resolves to nothing means
+the original is gone; the generated question keeps its own denormalized citations
+regardless, exactly as a citation outlives the document it came from.
+
+`quizzes.generation_request_id` is the client's own identifier for the request
+that produced a quiz, unique per `(course_id, user_id, generation_request_id)` so
+a retry after a timeout returns the quiz already paid for instead of generating a
+second one. It is a unique index rather than a constraint, so SQLite adds it
+without rebuilding `quizzes`, and NULL is distinct on both engines, so every
+existing row and every generation made without an identifier is unaffected.
+
+### Timed sittings
+
+`quizzes.time_limit_seconds` is what makes a quiz timed. A positive value means
+the ordinary attempt endpoint refuses it: elapsed time has to be measured by the
+server, and that endpoint would take the client's word for it.
+
+`quiz_sessions` is one student's sitting of one paper. The server writes
+`started_at` and `expires_at` and never accepts either from a client, because a
+deadline the candidate sets is not a deadline. Expiry is a comparison against
+`expires_at` in whatever statement reads the row, the way
+`processing_jobs.lease_expires_at` works, so nothing is scheduled and a read can
+report a sitting as over before any write has said so. A read never writes; only
+a write reconciles the stored `status` first.
+
+`quiz_session_answers` holds the answers as they are given, one row per
+`(session, question)` so a save is an upsert rather than an append. They are
+never deleted when a sitting expires. That is what makes a deadline cost a
+student the right to keep answering and nothing else: a submission arriving after
+it finalises exactly the answers saved before it, and a slow final request is not
+mistaken for a blank paper.
+
+Two constraints carry the anti-double-submit rule. `attempt_id` is unique, and
+`submitted_state_valid` forbids a submitted row without one, so a sitting that
+produced two attempts is not a state this schema can hold. The race between two
+simultaneous submissions is resolved by a guarded `UPDATE` whose `rowcount` names
+the winner — the idiom job claiming uses, and the one that behaves the same on
+both engines, unlike `SELECT ... FOR UPDATE`, which SQLite silently ignores.
+
+`uq_quiz_sessions_active_quiz_user` is partial on `status = 'active'`. One live
+sitting per student per paper means a reloaded page rejoins its own clock instead
+of opening a second and splitting the drafts; finished sittings stay out of the
+index, so retakes are free.
+
+An expired sitting is still submittable. The student already spent the time and
+the answers were already saved, so `expired` is a statement about the deadline
+rather than a terminal state, and `expired_at` survives the move to `submitted`.
+
+Exam-mode quizzes are **not** hidden from the course's quiz list, and their
+attempts count toward progress and mastery like any other. That is the point:
+mastery measured on an exam-mode quiz flows straight back into the next plan's
+ranking. A per-topic quiz carries `exam_topic_key` and has every question tagged
+with the plan's own `display_label`; a mock exam carries no topic key and keeps
+each question's own label, because a paper spanning twelve topics has no single
+label to override with.
+
+### The generated output types
+
+Exam Mode writes ten kinds of row into `generated_outputs`:
+`exam_topic_analysis`, `exam_plan`, `exam_roadmap`, `exam_topic_guide`,
+`exam_topic_summary`, `exam_topic_practice`, `exam_topic_exam`,
+`exam_similar_questions`, `exam_mock_exam`, and `exam_review_sheet`. The
+quiz-backed three (`exam_topic_practice`, `exam_topic_exam`, `exam_mock_exam`)
+carry a rendered `QuizView` as their content and their real rows live in
+`quizzes`; the rest carry a versioned JSON document.
+
+`exam_plan` and `exam_roadmap` both store a **null** `model_used`, and that is a
+truth claim rather than a gap: Python produced both, and the model that produced
+the evidence is credited on the analysis the plan names.
+
+A per-topic artifact records its `topic_key` inside its stored
+`generation_settings` rather than in a column, so `generated_outputs` stays a
+table of generations rather than a table of Exam Mode. Reopening one matches on
+that field and serves the newest row for the topic.
+
+### Append-only
+
+The application never issues an `UPDATE` against `exam_topic_candidates`. A
+rescan writes a new analysis and a fresh set of rows; a regenerated plan writes
+a new row naming the one it supersedes. `past_exam_questions` is replaced rather
+than updated: re-reading a paper deletes its questions and writes them again,
+because a reprocessed document has new chunks and a question read from text that
+no longer exists would outlive the page it cites. Historical plans stay readable, which is the point: a
+plan records what the sources were, what the mastery was, and why each topic
+landed where it did, and rewriting that would erase the reasoning the student
+actually studied from.
+
+### Topic identity
+
+`exam_topic_candidates.topic_key` is produced by
+`services/exam_topics.canonical_topic_key`, a pure function of one label. It is
+what lets three vocabularies that have never agreed resolve to one topic:
+`course_topics.name` is student-entered, `quiz_questions.topic` is
+model-generated free text, and the analysis model invents its own wording. The
+key is computed at read time as well as write time, so a mastery label recorded
+months earlier can still find its topic without anything having been stored to
+connect them.
+
+Nothing references `course_topics.id`. Saving a course deletes and reinserts
+every one of its topic rows, so those identifiers churn; the names are re-read
+and re-keyed instead.
 
 ## Credit ledger
 

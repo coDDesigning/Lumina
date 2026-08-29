@@ -4,7 +4,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 
 from schemas.progress import CourseStatus
-from schemas.quiz import QuizCorrectAnswer, QuizQuestionType
+from schemas.quiz import QuizCorrectAnswer, QuizQuestionType, QuizView
 from schemas.reverse_quiz import Misconception
 
 MAX_TIME_SPENT_SECONDS = 86400
@@ -17,10 +17,10 @@ NEEDS_REVIEW_THRESHOLD = 60
 OPEN_ENDED_PASS_THRESHOLD = 0.6
 
 
-class MasteryStatus(str, Enum):
-    MASTERED = "Mastered"
-    IN_PROGRESS = "In Progress"
-    NEEDS_REVIEW = "Needs Review"
+class QuizSessionStatus(str, Enum):
+    ACTIVE = "active"
+    SUBMITTED = "submitted"
+    EXPIRED = "expired"
 
 
 class QuizAnswerSubmission(BaseModel):
@@ -39,6 +39,45 @@ class QuizAnswerSubmission(BaseModel):
         ge=0,
         le=MAX_TIME_SPENT_SECONDS,
     )
+
+
+class QuizSessionView(BaseModel):
+    """One timed sitting as the client is allowed to see it.
+
+    ``expires_at`` is the server's deadline and the only thing a countdown
+    should be built from. ``seconds_remaining`` is a convenience derived from
+    the same reading, never a second source of truth.
+
+    ``answers`` carries every draft saved so far, because a reload has to put
+    the student's own work back on the screen. A count alone would leave a
+    sitting that survived a refresh looking blank while the server still held
+    the answers it would grade.
+    """
+
+    session_id: int
+    quiz_id: int
+    status: QuizSessionStatus
+    started_at: datetime
+    expires_at: datetime
+    time_limit_seconds: int
+    seconds_remaining: int
+    elapsed_seconds: int
+    answered_count: int = 0
+    answers: list[QuizAnswerSubmission] = Field(default_factory=list)
+    attempt_id: int | None = None
+
+
+class QuizSessionStartResult(BaseModel):
+    """A sitting and the paper to sit, with its answers withheld."""
+
+    session: QuizSessionView
+    quiz: QuizView
+
+
+class MasteryStatus(str, Enum):
+    MASTERED = "Mastered"
+    IN_PROGRESS = "In Progress"
+    NEEDS_REVIEW = "Needs Review"
 
 
 class QuizAttemptRequest(BaseModel):
@@ -80,6 +119,9 @@ class QuizHistoryItem(BaseModel):
     total_questions: int
     time_spent_seconds: int | None = None
     created_at: datetime
+    quiz_purpose: str | None = None
+    timed: bool = False
+    expired: bool = False
 
 
 class QuizAttemptResponse(BaseModel):
@@ -91,6 +133,9 @@ class QuizAttemptResponse(BaseModel):
     total_questions: int
     time_spent_seconds: int | None = None
     created_at: datetime
+    quiz_purpose: str | None = None
+    timed: bool = False
+    expired: bool = False
     answers: list[QuizAnswerResult]
 
 

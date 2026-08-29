@@ -101,10 +101,18 @@ class CreditMutationResponse(BaseModel):
 
 
 class CreditStatusResponse(BaseModel):
-    """The balance plus the policy a client needs to explain and recover it."""
+    """The balance plus the policy a client needs to explain and recover it.
+
+    ``email_verification_required`` and ``is_email_verified`` travel with the
+    balance for the same reason the grant policy does: without them a client
+    cannot tell an account that has spent its credits from one that has not
+    been given any yet, and only the second has a next action.
+    """
 
     credits: float | None = None
     metering_enabled: bool
+    email_verification_required: bool = False
+    is_email_verified: bool = True
     monthly_grant: float | None = None
     balance_cap: float | None = None
     next_grant_at: datetime | None = None

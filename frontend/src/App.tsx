@@ -490,10 +490,9 @@ function App() {
           <Route path="appearance" element={<AccountAppearancePage />} />
           <Route path="security" element={<AccountSecurityPage />} />
         </Route>
-        <Route
-          path="/admin"
-          element={<AdminPage />}
-        />
+        <Route element={<ProtectedRoute requiredRole="admin" />}>
+          <Route path="/admin" element={<AdminPage />} />
+        </Route>
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

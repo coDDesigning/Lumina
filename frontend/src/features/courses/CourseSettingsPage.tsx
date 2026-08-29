@@ -20,6 +20,7 @@ import { PageHeader } from '@/ui/PageHeader';
 import { ErrorState } from '@/ui/ErrorState';
 import { Skeleton } from '@/ui/Skeleton';
 import { TagInput } from '@/ui/TagInput';
+import { DiscoveredTopics } from './DiscoveredTopics';
 import { useToast } from '@/ui/toastContext';
 import styles from './CourseSettingsPage.module.css';
 
@@ -308,6 +309,20 @@ export default function CourseSettingsPage({
                 placeholder="Add a topic, then press Enter"
                 disabled={isSupportView}
               />
+
+              <div className={styles.span}>
+                <DiscoveredTopics
+                  courseId={Number(workspace.id)}
+                  declared={course.topics}
+                  disabled={isSupportView}
+                  onAdd={(added) =>
+                    updateCourse('topics', [
+                      ...course.topics,
+                      ...added.filter((topic) => !course.topics.includes(topic)),
+                    ])
+                  }
+                />
+              </div>
 
               <Textarea
                 label="Syllabus"

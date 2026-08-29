@@ -16,6 +16,7 @@ import {
   progressLabel,
   stageNumber,
   stageReason,
+  visualAnalysisStatusLabel,
 } from './documentLabels';
 import styles from './DocumentRow.module.css';
 
@@ -28,10 +29,12 @@ export interface DocumentRowProps {
 
 function readyFacts(entry: DocumentEntry): string[] {
   const { document } = entry;
+  const visualStatus = visualAnalysisStatusLabel(document.visual_analysis_status);
   return [
     materialKindLabel(document.material_kind),
     document.file_type.toUpperCase(),
     formatFileSize(document.file_size),
+    visualStatus ?? '',
   ].filter(Boolean);
 }
 

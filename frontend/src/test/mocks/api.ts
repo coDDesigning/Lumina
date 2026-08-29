@@ -4,6 +4,8 @@ import type {
   DocumentResponse,
   DocumentStatusResponse,
   DocumentUploadResponse,
+  QuizGenerationResult,
+  QuizView,
   User,
 } from '../../api/types';
 
@@ -14,6 +16,7 @@ export function createMockUser(overrides: Partial<User> = {}): User {
     email: 'student@example.com',
     role: 'student',
     is_banned: false,
+    is_email_verified: true,
     credits: 100,
     preferred_model: 'gemini-1.5-flash',
     education_level: 'unspecified',
@@ -39,6 +42,43 @@ export function createMockCourse(overrides: Partial<Course> = {}): Course {
   };
 }
 
+export function createMockQuiz(overrides: Partial<QuizView> = {}): QuizView {
+  return {
+    quiz_id: 7,
+    course_id: 1,
+    title: 'Practice quiz',
+    created_at: '2026-08-19T10:00:00Z',
+    user_id: 1,
+    model_used: 'gemini:gemini-1.5-flash',
+    generation_settings: null,
+    generation_context: null,
+    quiz_purpose: 'practice',
+    exam_plan_output_id: null,
+    exam_topic_key: null,
+    timed: false,
+    time_limit_seconds: null,
+    answers_hidden: false,
+    questions: [],
+    ...overrides,
+  };
+}
+
+export function createMockQuizGenerationResult(
+  overrides: Partial<QuizGenerationResult> = {},
+): QuizGenerationResult {
+  return {
+    quiz: createMockQuiz(),
+    generated_output_id: 1,
+    context_truncated: false,
+    chunks_used: 1,
+    chunks_available: 1,
+    retrieval_narrowed: false,
+    lowest_similarity: null,
+    highest_similarity: null,
+    ...overrides,
+  };
+}
+
 export function createMockDocument(
   overrides: Partial<DocumentResponse> = {},
 ): DocumentResponse {
@@ -51,6 +91,7 @@ export function createMockDocument(
     file_size: 1048576,
     course_id: 1,
     status: 'uploaded',
+    visual_analysis_status: 'not_applicable',
     created_at: '2026-08-19T10:00:00Z',
     updated_at: '2026-08-19T10:00:00Z',
     ...overrides,

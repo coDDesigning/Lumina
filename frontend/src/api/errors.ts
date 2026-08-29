@@ -1,4 +1,4 @@
-import { APIError } from './client';
+import { APIError, MalformedResponseError } from './client';
 
 export interface DescribedError {
   message: string;
@@ -8,6 +8,9 @@ export interface DescribedError {
 }
 
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+export const MALFORMED_RESPONSE_CODE = 'malformed_response';
+export const INVALID_RESPONSE_DATA_CODE = 'invalid_response_data';
 
 export function isAbortError(error: unknown): boolean {
   if (error instanceof DOMException) {
@@ -23,6 +26,18 @@ export function describeError(error: unknown, fallback: string): DescribedError 
       status: error.status,
       code: error.code,
       retryable: RETRYABLE_STATUSES.has(error.status),
+    };
+  }
+
+  if (error instanceof MalformedResponseError) {
+    return {
+      message: error.message,
+      status: null,
+      code:
+        error.reason === 'invalid_data'
+          ? INVALID_RESPONSE_DATA_CODE
+          : MALFORMED_RESPONSE_CODE,
+      retryable: false,
     };
   }
 
@@ -113,6 +128,104 @@ const GENERATION_FAILURES: Record<string, FailureCopy> = {
     retryable: true,
     remedy: null,
   },
+  source_not_ready: {
+    title: 'A chosen source is still being read',
+    message:
+      'One of the documents you selected has not finished processing. Nothing was charged — try again once it is ready.',
+    retryable: true,
+    remedy: 'see_sources',
+  },
+  exam_date_missing: {
+    title: 'This course has no exam date',
+    message: 'Set an exam date for the course, then create the plan.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_date_not_future: {
+    title: 'That exam date has passed',
+    message:
+      'A first plan needs an exam still to come. Update the course exam date, then try again.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_analysis_required: {
+    title: 'Analyse your sources first',
+    message: 'Run the topic analysis for this course before creating an exam plan.',
+    retryable: false,
+    remedy: 'see_sources',
+  },
+  exam_plan_required: {
+    title: 'Create your plan first',
+    message: 'Build an exam plan for this course before studying one of its topics.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_topic_selection_required: {
+    title: 'Choose what to study',
+    message: 'Select at least one topic before creating the plan.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_topic_not_discovered: {
+    title: 'That topic is not in this analysis',
+    message:
+      'One of the selected topics is not part of the analysis it was chosen from. Review the discovered topics and try again.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_date_required: {
+    title: 'This course has no exam date',
+    message:
+      'A roadmap needs days to plan across. Set an exam date for the course, then try again.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_date_passed: {
+    title: 'That exam date has passed',
+    message:
+      'A new roadmap needs an exam still to come. Everything you have already saved stays readable.',
+    retryable: false,
+    remedy: null,
+  },
+  exam_topics_required: {
+    title: 'This course has nothing to plan',
+    message:
+      'The course declares no topics and has no quiz history to infer them from. Add the topics it covers, or take a quiz first.',
+    retryable: false,
+    remedy: null,
+  },
+  mock_exam_configuration_invalid: {
+    title: 'That paper cannot be built',
+    message:
+      'The question count, type mix, and topics cannot make a paper together. Every requested topic needs at least one question.',
+    retryable: false,
+    remedy: null,
+  },
+  timed_session_required: {
+    title: 'This paper is sat against a clock',
+    message: 'Start the timed sitting rather than handing answers in directly.',
+    retryable: false,
+    remedy: null,
+  },
+  timed_session_expired: {
+    title: 'Time is up',
+    message:
+      'The deadline has passed, so no further answers can be saved. Everything you saved before it is still there and will be marked.',
+    retryable: false,
+    remedy: null,
+  },
+  timed_session_already_submitted: {
+    title: 'This sitting is already finished',
+    message: 'It has been handed in and marked. Open the result to see how it went.',
+    retryable: false,
+    remedy: null,
+  },
+  timed_session_empty: {
+    title: 'Nothing to mark',
+    message: 'The sitting ended without a single saved answer, so no attempt was recorded.',
+    retryable: false,
+    remedy: null,
+  },
   retrieval_unavailable: {
     title: 'Search is unavailable',
     message: 'Your material could not be searched just now. Nothing was charged.',
@@ -134,7 +247,13 @@ const GENERATION_FAILURES: Record<string, FailureCopy> = {
   },
   provider_rate_limited: {
     title: 'Too many requests right now',
-    message: 'The model is busy. Try again in about a minute — nothing was charged.',
+    message: 'The model is busy. Try again in about a minute. Nothing was charged.',
+    retryable: true,
+    remedy: null,
+  },
+  generation_rate_limited: {
+    title: 'Generation limit reached',
+    message: 'Too many generation requests were made. Try again shortly. No credit was charged.',
     retryable: true,
     remedy: null,
   },
@@ -153,6 +272,14 @@ const GENERATION_FAILURES: Record<string, FailureCopy> = {
   },
 };
 
+function describeGenerationRateLimit(retryAfterSeconds: number | null): string {
+  const retryDelay =
+    retryAfterSeconds === null
+      ? 'Try again shortly.'
+      : `Try again in ${retryAfterSeconds} ${retryAfterSeconds === 1 ? 'second' : 'seconds'}.`;
+  return `Too many generation requests were made. ${retryDelay} No credit was charged.`;
+}
+
 export function describeGenerationError(error: unknown, fallback: string): GenerationFailure {
   const described = describeError(error, fallback);
   const known = described.code ? GENERATION_FAILURES[described.code] : undefined;
@@ -161,7 +288,10 @@ export function describeGenerationError(error: unknown, fallback: string): Gener
     return {
       ...described,
       title: known.title,
-      message: known.message,
+      message:
+        described.code === 'generation_rate_limited'
+          ? describeGenerationRateLimit(error instanceof APIError ? error.retryAfterSeconds : null)
+          : known.message,
       retryable: known.retryable,
       remedy: known.remedy,
     };

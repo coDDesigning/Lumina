@@ -64,7 +64,7 @@ import { PageHeader } from '@/ui/PageHeader';
 import { Spinner } from '@/ui/Spinner';
 import { Tabs } from '@/ui/Tabs';
 import { PromptGeneratorDialog } from './PromptGeneratorDialog';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Markdown } from '@/lib/markdown';
 import type { DocumentMaterialKind } from '@/api/types';
 import { MATERIAL_KIND_CHOICES } from '@/components/documents/documentLabels';
@@ -155,6 +155,7 @@ function setStoredConversationId(
 
 export default function WorkspacePage({ workspace, onUpdateProgress }: WorkspacePageProps) {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     refresh: refreshCredits,
     canAfford: canAffordCredits,
@@ -162,6 +163,12 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   } = useCredits();
 
   const courseId = Number(workspace.id);
+  const artifactParam = searchParams.get('artifact');
+  const parsedArtifactId = artifactParam === null ? null : Number(artifactParam);
+  const requestedArtifactId =
+    parsedArtifactId !== null && Number.isInteger(parsedArtifactId) && parsedArtifactId > 0
+      ? parsedArtifactId
+      : null;
   useDocumentTitle(workspace.name);
 
   const [threadType, setThreadType] = useState<ConversationType>('course_qa');
@@ -237,8 +244,10 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   const [isRoadmapOpen, setIsRoadmapOpen] = useState(false);
   const [isQuizOpen, setIsQuizOpen] = useState(false);
   const [isFlashcardOpen, setIsFlashcardOpen] = useState(false);
-  const [isMadeForYouOpen, setIsMadeForYouOpen] = useState(false);
-  const [madeForYouInitialId, setMadeForYouInitialId] = useState<number | null>(null);
+  const [isMadeForYouOpen, setIsMadeForYouOpen] = useState(requestedArtifactId !== null);
+  const [madeForYouInitialId, setMadeForYouInitialId] = useState<number | null>(
+    requestedArtifactId,
+  );
   const [openDeckId, setOpenDeckId] = useState<number | null>(null);
   const [materialKind, setMaterialKind] = useState<DocumentMaterialKind>('unspecified');
   const [isPastThreadsOpen, setIsPastThreadsOpen] = useState(false);
@@ -248,6 +257,14 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   const threadRef = useRef<HTMLDivElement>(null);
 
   const thread = threads[threadType];
+
+  useEffect(() => {
+    if (requestedArtifactId === null) {
+      return;
+    }
+    setMadeForYouInitialId(requestedArtifactId);
+    setIsMadeForYouOpen(true);
+  }, [requestedArtifactId]);
 
   useEffect(() => {
     const node = threadRef.current;
@@ -610,6 +627,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
               options={THREAD_TABS}
               value={threadType}
               onChange={setThreadType}
+              link={{ to: `/courses/${courseId}/exam-mode`, label: 'Exam Mode' }}
             />
             <span className={styles.threadActions}>
               {!isSupportView ? (
@@ -793,12 +811,8 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                 setOpenDeckId(artifact.outputId);
                 return;
               }
-              if (artifact.kind === 'quiz' || artifact.outputType === 'exam_roadmap') {
-                setMadeForYouInitialId(artifact.outputId);
-                setIsMadeForYouOpen(true);
-                return;
-              }
-              navigate(`/courses/${workspace.id}/guides/${artifact.outputId}`);
+              setMadeForYouInitialId(artifact.outputId);
+              setIsMadeForYouOpen(true);
             }}
             onOpenProgress={() => navigate(`/courses/${workspace.id}/progress`)}
           />
@@ -817,11 +831,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           courseName={workspace.name}
           topics={workspace.topics}
           readyDocumentCount={readyCount}
-          onGenerated={(outputId) => {
-            setIsSummaryOpen(false);
-            reloadArtifacts();
-            navigate(`/courses/${workspace.id}/guides/${outputId}`);
-          }}
+          onGenerated={reloadArtifacts}
           onClose={() => {
             setIsSummaryOpen(false);
             reloadArtifacts();
@@ -846,6 +856,11 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           onClose={() => {
             setIsMadeForYouOpen(false);
             setMadeForYouInitialId(null);
+            if (searchParams.has('artifact')) {
+              const nextParams = new URLSearchParams(searchParams);
+              nextParams.delete('artifact');
+              setSearchParams(nextParams, { replace: true });
+            }
           }}
         />
       ) : null}

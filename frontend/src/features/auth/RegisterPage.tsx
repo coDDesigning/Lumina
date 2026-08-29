@@ -8,9 +8,14 @@ import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
 import { Input } from '@/ui/Input';
 import { AuthLayout } from './AuthLayout';
+import { ResendVerification } from './ResendVerification';
 import styles from './AuthLayout.module.css';
 
 const MAX_PASSWORD_BYTES = 72;
+// The server owns the policy and states it in full when it refuses; this is the
+// floor the form can check before anybody waits for a round trip.
+// See docs/authentication.md.
+const MIN_PASSWORD_LENGTH = 12;
 
 function passwordByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
@@ -24,6 +29,13 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Set only where the deployment verifies addresses. The account already
+  // exists and is signed in; what is missing is the credits, and the link is
+  // what releases them.
+  const [awaitingVerification, setAwaitingVerification] = useState<{
+    email: string;
+    message: string;
+  } | null>(null);
 
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -49,9 +61,15 @@ export default function RegisterPage() {
     setIsSubmitting(true);
 
     try {
-      await authAPI.register(name.trim(), email.trim(), password);
+      const registration = await authAPI.register(name.trim(), email.trim(), password);
       const session = await authAPI.login(email.trim(), password);
       await login(session.access_token);
+
+      if (registration.email_verification_required && !registration.is_email_verified) {
+        setAwaitingVerification({ email: registration.user_email, message: registration.message });
+        return;
+      }
+
       navigate('/dashboard', { replace: true });
     } catch (caught) {
       setError(
@@ -60,6 +78,27 @@ export default function RegisterPage() {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  if (awaitingVerification) {
+    return (
+      <AuthLayout
+        tone={2}
+        documentTitle="Check your inbox"
+        title="Check your inbox."
+        subtitle={`We sent a confirmation link to ${awaitingVerification.email}.`}
+        footer={<Link to="/dashboard">Skip for now and look around</Link>}
+        note="Your account is ready to sign in to. The starting credits are added once you open the link, which is what keeps one person from opening fifty accounts."
+      >
+        <Alert tone="info" live="status">
+          {awaitingVerification.message}
+        </Alert>
+        <ResendVerification
+          knownEmail={awaitingVerification.email}
+          label="Send the link again"
+        />
+      </AuthLayout>
+    );
   }
 
   return (
@@ -107,11 +146,11 @@ export default function RegisterPage() {
           type="password"
           autoComplete="new-password"
           required
-          minLength={8}
+          minLength={MIN_PASSWORD_LENGTH}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           disabled={isSubmitting}
-          hint="At least 8 characters, up to 72 bytes."
+          hint="At least 12 characters, up to 72 bytes. A passphrase beats a short password with a digit on the end, and it cannot contain your name or email address."
         />
 
         <Input
@@ -119,7 +158,7 @@ export default function RegisterPage() {
           type="password"
           autoComplete="new-password"
           required
-          minLength={8}
+          minLength={MIN_PASSWORD_LENGTH}
           value={confirmPassword}
           onChange={(event) => setConfirmPassword(event.target.value)}
           disabled={isSubmitting}

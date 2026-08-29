@@ -4,6 +4,7 @@ from email_validator import EmailNotValidError, validate_email
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
+from datetime import datetime, timezone
 
 from backend.app.config import settings
 from backend.app.models import Role as RoleModel
@@ -13,7 +14,8 @@ from schemas.user import Role, UserCreate, UserResponse, UserUpdate
 from services.credits import CreditService
 from services.text_generation import get_available_models
 from utils.exceptions import BadRequestException, NotFoundException
-from utils.security import get_password_hash
+from utils.password_policy import PasswordPolicyError, validate_password
+from utils.security import get_password_hash, verify_password
 
 
 class UserService:
@@ -27,6 +29,7 @@ class UserService:
             email=user.email,
             role=Role(user.role.name),
             is_banned=user.is_banned,
+            is_email_verified=user.email_verified_at is not None,
             credits=CreditService.reported_balance(user),
             preferred_model=user.preferred_model,
             education_level=user.education_level,
@@ -165,20 +168,75 @@ class UserService:
                 default_model = str(m["id"])
                 break
 
+        # Where verification is required the account opens empty and earns its
+        # introductory credits by proving the address, so bulk registration buys
+        # a farmer nothing. The column is still 0.0 rather than null, because
+        # null means unmetered and this account is very much metered.
+        if role == Role.ADMIN:
+            opening_balance = None
+        elif settings.email_verification_required:
+            opening_balance = 0.0
+        else:
+            opening_balance = settings.credit_initial_grant
+
         user = User(
             name=user_data.name,
             email=canonical_email,
             password_hash=get_password_hash(user_data.password),
             role=UserService._get_role(db, role),
             is_initial_admin=True if claims_initial_admin else None,
-            credits=None if role == Role.ADMIN else settings.credit_initial_grant,
+            credits=opening_balance,
             is_banned=False,
             preferred_model=default_model,
         )
-        initial_grant = CreditService.build_initial_grant(user)
-        if initial_grant is not None:
-            user.credit_transactions.append(initial_grant)
+        if not settings.email_verification_required:
+            initial_grant = CreditService.build_initial_grant(user)
+            if initial_grant is not None:
+                user.credit_transactions.append(initial_grant)
         return user
+
+    @staticmethod
+    def change_password(
+        db: Session, user_id: int, current_password: str, new_password: str
+    ) -> None:
+        """Replace one account's password after proving the current one.
+
+        The new password goes through ``utils/password_policy.py``, the same
+        module registration uses, so the two flows cannot enforce different
+        rules. The account's own name and address are supplied as identifiers
+        here for the same reason they are at registration.
+        """
+        user = db.scalar(
+            select(User).where(User.id == user_id).with_for_update(of=User)
+        )
+        if user is None:
+            raise NotFoundException("User not found")
+        if not verify_password(current_password, user.password_hash):
+            raise BadRequestException("Current password is incorrect")
+
+        try:
+            validate_password(new_password, identifiers=(user.name, user.email))
+        except PasswordPolicyError as exc:
+            raise BadRequestException(str(exc)) from exc
+
+        user.password_hash = get_password_hash(new_password)
+        user.tokens_valid_after = datetime.now(timezone.utc)
+        db.commit()
+
+    @staticmethod
+    def force_change_password(db: Session, user: User, new_password: str) -> None:
+        """Replace a user's password without requiring the current one.
+
+        Used by the password reset flow. Invalidates all existing sessions.
+        """
+        try:
+            validate_password(new_password, identifiers=(user.name, user.email))
+        except PasswordPolicyError as exc:
+            raise BadRequestException(str(exc)) from exc
+
+        user.password_hash = get_password_hash(new_password)
+        user.tokens_valid_after = datetime.now(timezone.utc)
+        db.commit()
 
     @staticmethod
     def update_user(db: Session, email: str, update_data: UserUpdate) -> UserResponse:

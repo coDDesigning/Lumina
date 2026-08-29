@@ -37,6 +37,7 @@ x-lumina-environment: &lumina-environment
   AI_PROVIDER: ${AI_PROVIDER:-ollama}
   AI_FALLBACK_PROVIDERS: ${AI_FALLBACK_PROVIDERS:-}
   AI_GENERATION_TIMEOUT_SECONDS: ${AI_GENERATION_TIMEOUT_SECONDS:-60}
+  AI_GENERATION_OVERALL_TIMEOUT_SECONDS: ${AI_GENERATION_OVERALL_TIMEOUT_SECONDS:-110}
   OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
   OLLAMA_TEMPERATURE: ${OLLAMA_TEMPERATURE:-0.2}
   OLLAMA_TOP_P: ${OLLAMA_TOP_P:-0.9}
@@ -50,6 +51,29 @@ x-lumina-environment: &lumina-environment
   COURSE_QA_MATERIAL_MAX_CHARS: ${COURSE_QA_MATERIAL_MAX_CHARS:-120000}
   OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  # Self-hosted deployments do not verify addresses by default: there are no
+  # introductory credits to farm, so demanding a relay would be a cost with no
+  # benefit. An operator running a shared instance turns it on and supplies the
+  # rest; the application names whichever one is missing. A relay on the Docker
+  # host is reached at host.docker.internal, not localhost.
+  EMAIL_VERIFICATION_REQUIRED: ${EMAIL_VERIFICATION_REQUIRED:-false}
+  EMAIL_VERIFICATION_TOKEN_TTL_HOURS: ${EMAIL_VERIFICATION_TOKEN_TTL_HOURS:-24}
+  APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-}
+  EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+  SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
+  PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-12}
+  SECURITY_HEADERS_ENABLED: ${SECURITY_HEADERS_ENABLED:-true}
+  # Off unless this deployment is reached over HTTPS. Turn it on once a TLS
+  # reverse proxy fronts the API; browsers remember the promise for a year.
+  SECURITY_HSTS_ENABLED: ${SECURITY_HSTS_ENABLED:-false}
+  SECURITY_HSTS_MAX_AGE_SECONDS: ${SECURITY_HSTS_MAX_AGE_SECONDS:-31536000}
   AI_MODEL_COST_RATES: "${AI_MODEL_COST_RATES:-}"
   GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-text-embedding-004}
   EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
@@ -58,6 +82,28 @@ x-lumina-environment: &lumina-environment
   EMBEDDING_BACKFILL_INTERVAL_SECONDS: ${EMBEDDING_BACKFILL_INTERVAL_SECONDS:-3600}
   EMBEDDING_BACKFILL_BATCH_SIZE: ${EMBEDDING_BACKFILL_BATCH_SIZE:-64}
   EMBEDDING_BACKFILL_PRUNE_ORPHANS: ${EMBEDDING_BACKFILL_PRUNE_ORPHANS:-false}
+  # Rate limiting
+  RATE_LIMIT_LOGIN_MAX_ATTEMPTS: ${RATE_LIMIT_LOGIN_MAX_ATTEMPTS:-10}
+  RATE_LIMIT_LOGIN_WINDOW_SECONDS: ${RATE_LIMIT_LOGIN_WINDOW_SECONDS:-300}
+  RATE_LIMIT_REGISTER_MAX_ATTEMPTS: ${RATE_LIMIT_REGISTER_MAX_ATTEMPTS:-5}
+  RATE_LIMIT_REGISTER_WINDOW_SECONDS: ${RATE_LIMIT_REGISTER_WINDOW_SECONDS:-3600}
+  RATE_LIMIT_GENERATION_MAX_ATTEMPTS: ${RATE_LIMIT_GENERATION_MAX_ATTEMPTS:-30}
+  RATE_LIMIT_GENERATION_WINDOW_SECONDS: ${RATE_LIMIT_GENERATION_WINDOW_SECONDS:-3600}
+  RATE_LIMIT_LOCKOUT_BASE_SECONDS: ${RATE_LIMIT_LOCKOUT_BASE_SECONDS:-30}
+  RATE_LIMIT_LOCKOUT_MAX_SECONDS: ${RATE_LIMIT_LOCKOUT_MAX_SECONDS:-1800}
+  RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS: ${RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS:-5}
+  RATE_LIMIT_VERIFICATION_WINDOW_SECONDS: ${RATE_LIMIT_VERIFICATION_WINDOW_SECONDS:-3600}
+  RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS: ${RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS:-5}
+  RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS: ${RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS:-3600}
+  # Proxy trust for client IP resolution
+  # The frontend service proxies every browser request, so the API must trust
+  # the forwarded client address from it or all users collapse into a single
+  # per-IP rate-limit bucket. This covers the private range Docker allocates
+  # Compose networks from; a daemon configured with a different address pool
+  # needs this set explicitly. Widening it is safe here only because the API
+  # port is published on loopback and the proxy overwrites X-Forwarded-For
+  # rather than appending to whatever the client sent.
+  FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}
 
 x-lumina-service: &lumina-service
   image: ${LUMINA_IMAGE:-lumina:local}
@@ -97,8 +143,7 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?set BOOTSTRAP_ADMIN_EMAIL in .env}
       BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:?set BOOTSTRAP_ADMIN_TOKEN in .env}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
-    command:
-      ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--limit-concurrency", "100", "--timeout-graceful-shutdown", "330", "--no-access-log"]
+    command: ["sh", "-c", "exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330 --no-access-log --proxy-headers --forwarded-allow-ips \"${FORWARDED_ALLOW_IPS:-127.0.0.1}\""]
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -134,6 +179,52 @@ services:
       start_period: 10s
     init: true
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-345s}
+    restart: unless-stopped
+
+  # Written out rather than merged from *lumina-service: that anchor carries the
+  # lumina-data volume and every AI provider key, and neither belongs in a
+  # public-facing static server. It also builds a different image entirely.
+  frontend:
+    image: ${LUMINA_FRONTEND_IMAGE:-lumina-frontend:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        # Baked into the bundle at build time. Changing it requires
+        # `docker compose build frontend`, not a restart.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    # The base image's own user. Stated explicitly for auditability; it is not
+    # 10001 because nothing in this image is owned by the backend's user.
+    user: "101:101"
+    # Waiting for a healthy API keeps first-run startup ordered. The trade-off
+    # is that a permanently unhealthy API means no interface at all, rather than
+    # an interface that loads and then fails every request.
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-8080}:8080"
+    read_only: true
+    tmpfs:
+      # The base image puts the pid file and all five *_temp_path directories
+      # here. Nothing is spooled to disk in either direction, so this stays small.
+      - /tmp:rw,noexec,nosuid,nodev,mode=1777,size=${LUMINA_FRONTEND_TMPFS_SIZE_BYTES:-67108864}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    init: true
+    healthcheck:
+      # Answered by nginx itself. Probing the API here would report this
+      # service unhealthy for the whole of every ops/self_hosted_backup.sh run,
+      # which stops api and worker by design.
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    stop_grace_period: 30s
     restart: unless-stopped
 
   backup:

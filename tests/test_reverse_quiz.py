@@ -1,9 +1,8 @@
-import pytest
 import json
-from sqlalchemy import select
 
 from backend.app.models import GeneratedOutput
 from schemas.reverse_quiz import ConceptStatus
+
 
 def test_reverse_quiz_adds_misconceptions_to_weak_topics(upload_api) -> None:
     # 1. Create a GeneratedOutput entry with misconceptions
@@ -17,17 +16,17 @@ def test_reverse_quiz_adds_misconceptions_to_weak_topics(upload_api) -> None:
             {
                 "concept": "Plant nutrition",
                 "status": ConceptStatus.CONTRADICTED.value,
-                "detail": "Plants make food via photosynthesis"
+                "detail": "Plants make food via photosynthesis",
             }
-        ]
+        ],
     }
-    
+
     with upload_api.session_factory() as session:
         output = GeneratedOutput(
             course_id=upload_api.course_id,
             user_id=upload_api.user_id,
             output_type="reverse_quiz",
-            content=json.dumps(content)
+            content=json.dumps(content),
         )
         session.add(output)
         session.commit()
@@ -37,12 +36,13 @@ def test_reverse_quiz_adds_misconceptions_to_weak_topics(upload_api) -> None:
         f"/api/courses/{upload_api.course_id}/progress",
         headers=upload_api.authorization,
     )
-    
+
     assert response.status_code == 200, response.text
     payload = response.json()["data"]
-    
+
     # 3. Verify that the weak topics include the reverse quiz topic
     assert "Photosynthesis (Reverse Quiz)" in payload["weak_topics"]
+
 
 def test_reverse_quiz_omits_mastered_topics_from_weak_topics(upload_api) -> None:
     content = {
@@ -51,15 +51,15 @@ def test_reverse_quiz_omits_mastered_topics_from_weak_topics(upload_api) -> None
         "topic": "Cell Biology",
         "explanation": "Cells are the basic unit of life.",
         "feedback": "Great job.",
-        "misconceptions": []
+        "misconceptions": [],
     }
-    
+
     with upload_api.session_factory() as session:
         output = GeneratedOutput(
             course_id=upload_api.course_id,
             user_id=upload_api.user_id,
             output_type="reverse_quiz",
-            content=json.dumps(content)
+            content=json.dumps(content),
         )
         session.add(output)
         session.commit()
@@ -68,8 +68,8 @@ def test_reverse_quiz_omits_mastered_topics_from_weak_topics(upload_api) -> None
         f"/api/courses/{upload_api.course_id}/progress",
         headers=upload_api.authorization,
     )
-    
+
     assert response.status_code == 200, response.text
     payload = response.json()["data"]
-    
+
     assert "Cell Biology (Reverse Quiz)" not in payload["weak_topics"]

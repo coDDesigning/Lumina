@@ -22,9 +22,11 @@ from backend.app.request_size import (
     MULTIPART_OVERHEAD_BYTES,
     RequestSizeLimitMiddleware,
 )
+from backend.app.security_headers import SecurityHeadersMiddleware
 from routes import (
     activity,
     admin,
+    ads,
     ai_models,
     ai_tutor,
     auth,
@@ -33,9 +35,11 @@ from routes import (
     course_qa,
     course_settings,
     document,
+    exam_mode,
     exam_roadmap,
     flashcard,
     generated_output,
+    profile_document,
     profile_knowledge,
     progress,
     prompt_generator,
@@ -70,6 +74,15 @@ app.add_middleware(
     max_concurrent_uploads=settings.max_concurrent_document_validations,
     upload_request_timeout_seconds=settings.upload_request_timeout_seconds,
 )
+if settings.security_headers_enabled:
+    # Added after the size limiter so it wraps it, and therefore covers the
+    # responses that limiter returns before a route is ever reached.
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        hsts_enabled=settings.hsts_enabled,
+        hsts_max_age_seconds=settings.hsts_max_age_seconds,
+        settings=settings,
+    )
 app.include_router(auth.router)
 app.include_router(course.router)
 app.include_router(course_settings.router)
@@ -79,10 +92,12 @@ app.include_router(admin.router)
 app.include_router(user.router)
 app.include_router(ai_models.router)
 app.include_router(profile_knowledge.router)
+app.include_router(profile_document.router)
 app.include_router(document.router)
 app.include_router(study_guide.router)
 app.include_router(exam_roadmap.router)
 app.include_router(generated_output.router)
+app.include_router(exam_mode.router)
 app.include_router(conversation.router)
 app.include_router(quiz.router)
 app.include_router(reverse_quiz.router)
@@ -90,6 +105,7 @@ app.include_router(flashcard.router)
 app.include_router(prompt_generator.router)
 app.include_router(ai_tutor.router)
 app.include_router(course_qa.router)
+app.include_router(ads.router)
 app.add_exception_handler(
     RequestValidationError,
     document.upload_request_validation_error,
@@ -126,6 +142,7 @@ async def observe_request(request: Request, call_next):
                 "http_method": request.method,
                 "http_path": request.url.path,
                 "http_status": response.status_code,
+                "error_code": response.headers.get("X-Error-Code"),
                 "duration_ms": round((time.perf_counter() - started) * 1000, 3),
             },
         )
@@ -168,5 +185,5 @@ if settings.cors_allowed_origins:
         allow_credentials=False,
         allow_methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
         allow_headers=("Authorization", "Content-Type"),
-        expose_headers=("X-Error-Code",),
+        expose_headers=("Retry-After", "X-Error-Code", "X-Request-ID"),
     )

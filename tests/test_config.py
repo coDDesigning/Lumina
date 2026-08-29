@@ -64,6 +64,9 @@ from backend.app.config import (
     DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS,
     DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE,
     DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS,
+    DEFAULT_HSTS_MAX_AGE_SECONDS,
+    DEFAULT_PASSWORD_MIN_LENGTH,
+    MAX_PASSWORD_MIN_LENGTH,
     load_settings,
 )
 from backend.app.database_config import load_database_url
@@ -163,6 +166,24 @@ CONFIGURATION_KEYS = (
     "RATE_LIMIT_GENERATION_WINDOW_SECONDS",
     "RATE_LIMIT_LOCKOUT_BASE_SECONDS",
     "RATE_LIMIT_LOCKOUT_MAX_SECONDS",
+    "RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS",
+    "RATE_LIMIT_VERIFICATION_WINDOW_SECONDS",
+    "RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS",
+    "RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS",
+    "PASSWORD_MIN_LENGTH",
+    "EMAIL_VERIFICATION_REQUIRED",
+    "EMAIL_VERIFICATION_TOKEN_TTL_HOURS",
+    "APP_PUBLIC_BASE_URL",
+    "EMAIL_FROM_ADDRESS",
+    "SMTP_HOST",
+    "SMTP_PORT",
+    "SMTP_USERNAME",
+    "SMTP_PASSWORD",
+    "SMTP_USE_TLS",
+    "SECURITY_HEADERS_ENABLED",
+    "SECURITY_HSTS_ENABLED",
+    "SECURITY_HSTS_MAX_AGE_SECONDS",
+    "SMTP_TIMEOUT_SECONDS",
 )
 
 
@@ -200,6 +221,11 @@ def _configure_hosted_s3(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("S3_ACCESS_KEY_ID", "lumina-ci-access")
     monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "lumina-ci-secret")
     monkeypatch.setenv("S3_FORCE_PATH_STYLE", "true")
+    # Hosted mode verifies addresses by default, and a deployment that cannot
+    # deliver the link refuses to start.
+    monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://app.example.com")
+    monkeypatch.setenv("EMAIL_FROM_ADDRESS", "no-reply@example.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
 
 
 def test_self_hosted_defaults_are_safe_and_runnable() -> None:
@@ -881,10 +907,19 @@ def test_hosted_mode_requires_postgres_secret_and_bootstrap_email(
         load_settings()
 
     monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "y" * 32)
+    # Hosted mode gates introductory credits on a verification link, so it also
+    # has to be able to send one.
+    with pytest.raises(ValueError, match="EMAIL_VERIFICATION_REQUIRED"):
+        load_settings()
+
+    monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://app.example.com")
+    monkeypatch.setenv("EMAIL_FROM_ADDRESS", "no-reply@example.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     loaded = load_settings()
     assert loaded.deployment_mode == MODE_HOSTED
     assert loaded.bootstrap_admin_email == "admin@example.com"
     assert loaded.bootstrap_admin_token == "y" * 32
+    assert loaded.email_verification_required is True
 
 
 def test_database_only_loader_does_not_require_runtime_secrets(
@@ -953,24 +988,24 @@ def test_ai_provider_rejects_unsupported_value(
 
 
 @pytest.mark.parametrize("provider", ["openai", "claude"])
-def test_recognized_but_unimplemented_provider_fails_at_startup(
+def test_recognized_provider_requires_api_key(
     monkeypatch: pytest.MonkeyPatch,
     provider: str,
 ) -> None:
     monkeypatch.setenv("AI_PROVIDER", provider)
 
-    with pytest.raises(ValueError, match="not implemented"):
+    with pytest.raises(ValueError, match="API_KEY is required"):
         load_settings()
 
 
 @pytest.mark.parametrize("fallback", ["openai", "gemini,claude", " claude "])
-def test_unimplemented_fallback_provider_fails_at_startup(
+def test_fallback_provider_requires_api_key(
     monkeypatch: pytest.MonkeyPatch,
     fallback: str,
 ) -> None:
     monkeypatch.setenv("AI_FALLBACK_PROVIDERS", fallback)
 
-    with pytest.raises(ValueError, match="not implemented"):
+    with pytest.raises(ValueError, match="API_KEY is required"):
         load_settings()
 
 
@@ -987,12 +1022,13 @@ def test_implemented_fallback_providers_load(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AI_FALLBACK_PROVIDERS", "gemini,ollama")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
     assert load_settings().ai_fallback_providers == "gemini,ollama"
 
 
 def test_implemented_providers_are_the_authoritative_list() -> None:
-    assert IMPLEMENTED_AI_PROVIDERS == ("gemini", "ollama")
+    assert IMPLEMENTED_AI_PROVIDERS == ("gemini", "ollama", "openai", "claude")
     assert set(IMPLEMENTED_AI_PROVIDERS) <= set(RECOGNIZED_AI_PROVIDERS)
 
 
@@ -1195,10 +1231,11 @@ def test_env_example_marks_settings_config_does_not_read() -> None:
         encoding="utf-8"
     )
 
+    # OPENAI_API_KEY and ANTHROPIC_API_KEY are now implemented and read by config.py
     for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
-        assert f'"{name}"' not in config_source
+        assert f'"{name}"' in config_source
         assert name in section
-        assert "Not read by backend/app/config.py yet" in section
+        assert "Not read by backend/app/config.py yet" not in section
 
 
 def test_env_example_advertises_every_active_ollama_setting() -> None:
@@ -1263,6 +1300,7 @@ def test_gemini_provider_does_not_require_ollama_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
     loaded = load_settings()
 
@@ -1510,6 +1548,9 @@ def test_vector_backend_defaults_to_pgvector_on_postgresql(
     monkeypatch.setenv("JWT_SECRET_KEY", "x" * 32)
     monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
     monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "y" * 32)
+    monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://app.example.com")
+    monkeypatch.setenv("EMAIL_FROM_ADDRESS", "no-reply@example.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
 
     assert load_settings().vector_backend == VECTOR_BACKEND_PGVECTOR
 
@@ -1544,6 +1585,9 @@ def test_chroma_backend_is_allowed_on_postgresql(
     monkeypatch.setenv("JWT_SECRET_KEY", "x" * 32)
     monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
     monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "y" * 32)
+    monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://app.example.com")
+    monkeypatch.setenv("EMAIL_FROM_ADDRESS", "no-reply@example.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("VECTOR_BACKEND", VECTOR_BACKEND_CHROMA)
 
     assert load_settings().vector_backend == VECTOR_BACKEND_CHROMA
@@ -1588,6 +1632,8 @@ def test_every_implemented_image_provider_configures(
     provider: str,
 ) -> None:
     monkeypatch.setenv("IMAGE_PROVIDER", provider)
+    if provider == "gemini":
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
 
     assert load_settings().image_provider == provider
 
@@ -1595,6 +1641,133 @@ def test_every_implemented_image_provider_configures(
 def test_implemented_image_providers_are_recognized() -> None:
     assert IMPLEMENTED_IMAGE_PROVIDERS == ("none", "gemini", "ollama")
     assert set(IMPLEMENTED_IMAGE_PROVIDERS) <= set(RECOGNIZED_IMAGE_PROVIDERS)
+
+
+def test_image_provider_explicit_none_preserves_text_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", "none")
+    assert load_settings().image_provider == "none"
+
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+    monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("IMAGE_PROVIDER", "none")
+    assert load_settings().image_provider == "none"
+
+
+def test_hosted_mode_defaults_to_hosted_provider_vision_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+    monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    loaded = load_settings()
+    assert loaded.image_provider == "gemini"
+
+
+def test_hosted_mode_with_unsupported_vision_provider_defaults_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+    monkeypatch.setenv("AI_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
+    # Even if Gemini API key happens to exist in the environment, do not cross-route.
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    loaded = load_settings()
+    assert loaded.image_provider == "none"
+
+
+def test_self_hosted_mode_uses_advertised_vision_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AI_MODEL_CATALOG",
+        json.dumps(
+            {
+                "ollama": [
+                    {
+                        "model": "llama3.2-vision",
+                        "json_mode": True,
+                        "context_window": 8192,
+                        "vision": True,
+                    }
+                ]
+            }
+        ),
+    )
+    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "llama3.2-vision")
+
+    loaded = load_settings()
+    assert loaded.image_provider == "ollama"
+
+
+def test_self_hosted_mode_defaults_to_none_when_vision_not_advertised(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("INFO"):
+        loaded = load_settings()
+
+    assert loaded.image_provider == "none"
+    assert "Visual analysis is disabled (IMAGE_PROVIDER='none')" in caplog.text
+
+
+def test_explicit_gemini_image_provider_requires_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", "gemini")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="GEMINI_API_KEY is required"):
+        load_settings()
+
+
+def test_explicit_ollama_image_provider_rejects_model_declared_without_vision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "llama3.1")
+
+    with pytest.raises(
+        ValueError, match="OLLAMA_IMAGE_MODEL 'llama3.1' is declared with vision=False"
+    ):
+        load_settings()
+
+
+def test_explicit_ollama_image_provider_rejects_catalog_model_with_vision_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "AI_MODEL_CATALOG",
+        json.dumps(
+            {
+                "ollama": [
+                    {
+                        "model": "custom-vision-disabled",
+                        "json_mode": True,
+                        "context_window": 8192,
+                        "vision": False,
+                    }
+                ]
+            }
+        ),
+    )
+    monkeypatch.setenv("IMAGE_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "custom-vision-disabled")
+
+    with pytest.raises(
+        ValueError,
+        match="OLLAMA_IMAGE_MODEL 'custom-vision-disabled' is declared with vision=False",
+    ):
+        load_settings()
 
 
 def test_ollama_image_model_rejects_unsafe_characters(
@@ -1897,6 +2070,138 @@ def test_periodic_reconciliation_settings_are_configurable(
     ],
 )
 def test_invalid_periodic_reconciliation_settings_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, value: str
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError):
+        load_settings()
+
+
+# --- authentication hardening ------------------------------------------------
+
+
+def test_self_hosted_does_not_verify_addresses_or_promise_hsts() -> None:
+    """A LAN deployment pays for no inference and may not be behind TLS."""
+    loaded = load_settings()
+
+    assert loaded.email_verification_required is False
+    assert loaded.hsts_enabled is False
+    assert loaded.security_headers_enabled is True
+    assert loaded.password_min_length == DEFAULT_PASSWORD_MIN_LENGTH
+    assert loaded.email_delivery_configured is False
+
+
+def test_hosted_verifies_addresses_and_promises_hsts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_hosted_s3(monkeypatch)
+    monkeypatch.setenv("JWT_SECRET_KEY", "x" * 32)
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "y" * 32)
+
+    loaded = load_settings()
+
+    assert loaded.email_verification_required is True
+    assert loaded.hsts_enabled is True
+    assert loaded.hsts_max_age_seconds == DEFAULT_HSTS_MAX_AGE_SECONDS
+    assert loaded.email_delivery_configured is True
+
+
+def test_self_hosted_can_opt_into_verification_and_hsts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A shared instance behind a TLS proxy is the case this exists for."""
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("EMAIL_VERIFICATION_REQUIRED", "true")
+    monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://lumina.example.org")
+    monkeypatch.setenv("EMAIL_FROM_ADDRESS", "No-Reply@Example.Org")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
+    monkeypatch.setenv("SECURITY_HSTS_ENABLED", "true")
+
+    loaded = load_settings()
+
+    assert loaded.email_verification_required is True
+    assert loaded.hsts_enabled is True
+    assert loaded.email_from_address == "No-Reply@example.org"
+
+
+@pytest.mark.parametrize(
+    "missing", ["APP_PUBLIC_BASE_URL", "EMAIL_FROM_ADDRESS", "SMTP_HOST"]
+)
+def test_verification_without_a_way_to_send_the_link_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, missing: str
+) -> None:
+    """Otherwise every new account would open empty with no way out of it."""
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("EMAIL_VERIFICATION_REQUIRED", "true")
+    monkeypatch.setenv("APP_PUBLIC_BASE_URL", "https://lumina.example.org")
+    monkeypatch.setenv("EMAIL_FROM_ADDRESS", "no-reply@example.org")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
+    monkeypatch.delenv(missing)
+
+    with pytest.raises(ValueError, match=missing):
+        load_settings()
+
+
+@pytest.mark.parametrize("unset", ["SMTP_USERNAME", "SMTP_PASSWORD"])
+def test_smtp_credentials_must_be_set_together(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unset: str
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
+    monkeypatch.setenv("SMTP_USERNAME", "mailer")
+    monkeypatch.setenv("SMTP_PASSWORD", "relay-secret")
+    monkeypatch.delenv(unset)
+
+    with pytest.raises(ValueError, match="SMTP_USERNAME and SMTP_PASSWORD"):
+        load_settings()
+
+
+def test_password_minimum_may_be_raised_but_not_lowered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The documented floor is a floor; bcrypt's 72 bytes is the ceiling."""
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("PASSWORD_MIN_LENGTH", str(MAX_PASSWORD_MIN_LENGTH))
+
+    assert load_settings().password_min_length == MAX_PASSWORD_MIN_LENGTH
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("PASSWORD_MIN_LENGTH", str(DEFAULT_PASSWORD_MIN_LENGTH - 1)),
+        ("PASSWORD_MIN_LENGTH", str(MAX_PASSWORD_MIN_LENGTH + 1)),
+        ("PASSWORD_MIN_LENGTH", "not-a-number"),
+        ("EMAIL_VERIFICATION_TOKEN_TTL_HOURS", "0"),
+        ("EMAIL_VERIFICATION_TOKEN_TTL_HOURS", "169"),
+        ("EMAIL_FROM_ADDRESS", "not-an-address"),
+        ("APP_PUBLIC_BASE_URL", "ftp://app.example.com"),
+        ("SMTP_PORT", "0"),
+        ("SMTP_PORT", "65536"),
+        ("SMTP_USE_TLS", "maybe"),
+        ("SMTP_TIMEOUT_SECONDS", "0"),
+        ("SMTP_TIMEOUT_SECONDS", "121"),
+        ("SECURITY_HEADERS_ENABLED", "maybe"),
+        ("SECURITY_HSTS_ENABLED", "maybe"),
+        ("SECURITY_HSTS_MAX_AGE_SECONDS", "-1"),
+        ("RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS", "0"),
+        ("RATE_LIMIT_VERIFICATION_WINDOW_SECONDS", "0"),
+        ("RATE_LIMIT_LOGIN_MAX_ATTEMPTS", "0"),
+        ("RATE_LIMIT_LOGIN_WINDOW_SECONDS", "0"),
+        ("RATE_LIMIT_REGISTER_MAX_ATTEMPTS", "0"),
+        ("RATE_LIMIT_REGISTER_WINDOW_SECONDS", "0"),
+        ("RATE_LIMIT_GENERATION_MAX_ATTEMPTS", "0"),
+        ("RATE_LIMIT_GENERATION_WINDOW_SECONDS", "0"),
+        ("RATE_LIMIT_LOCKOUT_BASE_SECONDS", "0"),
+        ("RATE_LIMIT_LOCKOUT_MAX_SECONDS", "0"),
+        ("RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS", "0"),
+        ("RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS", "0"),
+    ],
+)
+def test_invalid_authentication_hardening_settings_are_rejected(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, value: str
 ) -> None:
     _configure_production(monkeypatch, tmp_path)

@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from backend.app.models import ProcessingJob, UploadedDocument
+from backend.app.models import DocumentPage, ProcessingJob, UploadedDocument
 from main import app
 from services.document import DocumentService
 import services.document as document_service
@@ -377,3 +377,129 @@ def test_processing_status_and_retry_are_documented_in_openapi():
     assert retry_operation["security"] == [{"OAuth2PasswordBearer": []}]
     assert "202" in retry_operation["responses"]
     assert "409" in retry_operation["responses"]
+
+
+def test_visual_analysis_status_rollup_and_api_contract(upload_api):
+    uploaded = _upload(upload_api, b"%PDF-1.4 visual test document")
+    document_id = UUID(uploaded.json()["document"]["id"])
+
+    with upload_api.session_factory() as session:
+        doc = session.get(UploadedDocument, document_id)
+        assert doc is not None
+        doc.file_type = "pdf"
+        doc.status = "ready"
+        session.commit()
+
+    test_scenarios = [
+        # (pages_spec: list of (has_visual_content, visual_analysis_status), expected_rollup)
+        # 1. No visual pages
+        ([(False, "not_applicable"), (False, "not_applicable")], "not_applicable"),
+        # 2. All completed
+        ([(True, "completed"), (True, "completed")], "completed"),
+        # 3. All not_configured
+        ([(True, "not_configured"), (True, "not_configured")], "not_configured"),
+        # 4. All failed
+        ([(True, "failed"), (True, "failed")], "failed"),
+        # 5. Any pending
+        ([(True, "completed"), (True, "pending")], "pending"),
+        ([(True, "failed"), (True, "pending")], "pending"),
+        # 6. Mixed completed + not_configured -> partial
+        ([(True, "completed"), (True, "not_configured")], "partial"),
+        # 7. Mixed completed + failed -> partial
+        ([(True, "completed"), (True, "failed")], "partial"),
+        # 8. Mixed failed + not_configured -> partial
+        ([(True, "failed"), (True, "not_configured")], "partial"),
+        # 9. Individual page partial -> partial
+        ([(True, "partial"), (False, "not_applicable")], "partial"),
+        # 10. Completed visual page + non-visual page -> completed
+        ([(True, "completed"), (False, "not_applicable")], "completed"),
+    ]
+
+    for pages_spec, expected_status in test_scenarios:
+        with upload_api.session_factory() as session:
+            session.query(DocumentPage).filter(
+                DocumentPage.document_id == document_id
+            ).delete()
+            for idx, (has_visual, visual_status) in enumerate(pages_spec):
+                session.add(
+                    DocumentPage(
+                        document_id=document_id,
+                        course_id=upload_api.course_id,
+                        content_index=idx,
+                        page_number=idx + 1,
+                        raw_text=f"Page {idx + 1}",
+                        text=f"Page {idx + 1}",
+                        has_visual_content=has_visual,
+                        visual_analysis_status=visual_status,
+                    )
+                )
+            session.commit()
+
+        # Check single document status API
+        response = upload_api.client.get(
+            f"/api/courses/{upload_api.course_id}/documents/{document_id}",
+            headers=upload_api.authorization,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["document"]["visual_analysis_status"] == expected_status
+
+        # Check document list API
+        list_response = upload_api.client.get(
+            f"/api/courses/{upload_api.course_id}/documents",
+            headers=upload_api.authorization,
+        )
+        assert list_response.status_code == 200
+        docs = list_response.json()["data"]
+        matching_doc = next(d for d in docs if d["id"] == str(document_id))
+        assert matching_doc["visual_analysis_status"] == expected_status
+
+
+def test_visual_analysis_status_backward_compatibility_legacy_documents(upload_api):
+    # Older ready PDF with 0 DocumentPage records -> not_applicable (never false completed)
+    uploaded = _upload(upload_api, b"%PDF-1.4 legacy pdf")
+    pdf_id = UUID(uploaded.json()["document"]["id"])
+    with upload_api.session_factory() as session:
+        doc = session.get(UploadedDocument, pdf_id)
+        assert doc is not None
+        doc.file_type = "pdf"
+        doc.status = "ready"
+        session.commit()
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/documents/{pdf_id}",
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200
+    assert response.json()["document"]["visual_analysis_status"] == "not_applicable"
+
+    # In-flight (uploaded/processing) PDF with 0 DocumentPage records -> pending
+    with upload_api.session_factory() as session:
+        doc = session.get(UploadedDocument, pdf_id)
+        assert doc is not None
+        doc.status = "processing"
+        session.commit()
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/documents/{pdf_id}",
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200
+    assert response.json()["document"]["visual_analysis_status"] == "pending"
+
+    # Text document with 0 DocumentPage records -> not_applicable
+    text_uploaded = _upload(upload_api, b"plain text legacy")
+    text_id = UUID(text_uploaded.json()["document"]["id"])
+    with upload_api.session_factory() as session:
+        doc = session.get(UploadedDocument, text_id)
+        assert doc is not None
+        doc.file_type = "text"
+        doc.status = "ready"
+        session.commit()
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/documents/{text_id}",
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200
+    assert response.json()["document"]["visual_analysis_status"] == "not_applicable"

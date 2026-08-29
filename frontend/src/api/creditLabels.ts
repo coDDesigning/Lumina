@@ -20,6 +20,11 @@ const SOURCE_LABELS: Record<string, string> = {
   ai_tutor: 'AI tutor',
   course_qa: 'Course Q&A',
   prompt_generator: 'Prompt generator',
+  exam_topic_analysis: 'Exam source analysis',
+  exam_topic_analysis_rescan: 'Exam source rescan',
+  exam_topic_unlock: 'Exam topic',
+  exam_mock_exam: 'Mock exam',
+  exam_review_sheet: 'Review sheet',
 };
 
 export const ADMIN_CREDIT_REASONS: readonly AdminCreditReason[] = [

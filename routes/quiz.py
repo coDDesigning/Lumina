@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
+from backend.app.models import ANSWER_HIDDEN_QUIZ_PURPOSES
 from backend.app.database import get_db
 from schemas.quiz import (
     QuizGenerationContext,
@@ -14,6 +15,9 @@ from schemas.quiz import (
     QuizView,
 )
 from schemas.quiz_attempt import (
+    QuizAnswerSubmission,
+    QuizSessionStartResult,
+    QuizSessionView,
     CourseProgressResponse,
     QuizAttemptRequest,
     QuizAttemptResponse,
@@ -24,11 +28,19 @@ from schemas.user import UserResponse
 from services.credits import CreditService
 from services.quiz import QuizService
 from services.quiz_attempt import QuizAttemptService
+from services.quiz_session import (
+    QuizSessionService,
+    SessionState,
+    TimedSessionEmptyError,
+    TimedSessionExpiredError,
+    TimedSessionSubmittedError,
+    is_timed,
+)
 from services.text_generation import (
     get_text_generation_provider,
     resolve_effective_model,
 )
-from utils.ai_errors import ai_generation_http_exception
+from utils.ai_errors import ERROR_CODE_HEADER, ai_generation_http_exception
 from utils.authorization import AuthorizedCourse, OwnedCourse
 from utils.deps import get_current_user
 from utils.rate_limit import rate_limit_generation
@@ -46,6 +58,63 @@ def _provider_for(model: str | None, preferred_model: str | None):
     return get_text_generation_provider(
         effective_model=effective_model,
         require_json_mode=True,
+    )
+
+
+def _grading_provider_for(preferred_model: str | None):
+    """A grader bounded to finish before the database closes the transaction.
+
+    Grading runs inside the transaction that writes the attempt. The generation
+    budget is longer than a hosted database will leave a transaction idle, so a
+    slow grader would take the student's answers down with it; this trades an
+    ungraded written answer, which the attempt already handles, for a lost one.
+    """
+    effective_model = resolve_effective_model(
+        None, preferred_model, required_capability="quiz"
+    )
+    return get_text_generation_provider(
+        effective_model=effective_model,
+        require_json_mode=True,
+        overall_timeout_seconds=settings.ai_grading_overall_timeout_seconds,
+    )
+
+
+# Stable categories a client can branch on. Timed-sitting failures are not
+# generation failures, so they carry their own codes rather than borrowing the
+# AI error vocabulary.
+ERROR_TIMED_SESSION_REQUIRED = "timed_session_required"
+ERROR_TIMED_SESSION_EXPIRED = "timed_session_expired"
+ERROR_TIMED_SESSION_SUBMITTED = "timed_session_already_submitted"
+ERROR_TIMED_SESSION_EMPTY = "timed_session_empty"
+
+SESSION_RESPONSES = {
+    401: {"description": "Authentication required"},
+    404: {"description": "Course, quiz, or session not found"},
+    409: {"description": "The session cannot be used in its current state"},
+}
+
+
+def _session_view(state: SessionState) -> QuizSessionView:
+    return QuizSessionView(
+        session_id=state.session_id,
+        quiz_id=state.quiz_id,
+        status=state.status,
+        started_at=state.started_at,
+        expires_at=state.expires_at,
+        time_limit_seconds=state.time_limit_seconds,
+        seconds_remaining=state.seconds_remaining,
+        elapsed_seconds=state.elapsed_seconds,
+        answered_count=state.answered_count,
+        answers=list(state.answers),
+        attempt_id=state.attempt_id,
+    )
+
+
+def _session_conflict(exc: Exception, code: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=str(exc),
+        headers={ERROR_CODE_HEADER: code},
     )
 
 
@@ -186,13 +255,22 @@ def get_quiz(
     course: AuthorizedCourse,
     db: Annotated[Session, Depends(get_db)],
 ) -> BaseResponse[QuizView]:
-    """Return one stored quiz, questions in stable order, without regenerating."""
+    """Return one stored quiz, questions in stable order, without regenerating.
+
+    An assessment is served with its answers withheld. Exam Mode redacts its own
+    responses, but this endpoint reads the same rows, so without the same rule
+    here a candidate could simply ask for the quiz and read the answers off it.
+    Practice keeps its answers, because immediate feedback is its whole point.
+    """
     quiz = QuizService.get_course_quiz(db, course.id, quiz_id)
+    view = QuizService.build_quiz_view(quiz)
+    if quiz.purpose in ANSWER_HIDDEN_QUIZ_PURPOSES:
+        view = QuizService.hide_answers(view)
 
     return BaseResponse(
         success=True,
         message="Quiz retrieved successfully",
-        data=QuizService.build_quiz_view(quiz),
+        data=view,
     )
 
 
@@ -214,18 +292,163 @@ def submit_quiz_attempt(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
+    """Record one attempt at an untimed quiz.
+
+    A quiz with a time limit is refused here. Its elapsed time has to be
+    measured by the server, and this endpoint would take the client's word for
+    it, which is the whole thing a timed sitting exists to prevent.
+    """
+    quiz = QuizService.get_course_quiz(db, course.id, quiz_id)
+    if is_timed(quiz):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This quiz is sat against a clock. Start an exam session first.",
+            headers={ERROR_CODE_HEADER: ERROR_TIMED_SESSION_REQUIRED},
+        )
+
     attempt = QuizAttemptService.record_attempt(
         db,
         course.id,
         quiz_id,
         request,
         user_id=current_user.id,
-        provider_factory=lambda: _provider_for(None, current_user.preferred_model),
+        provider_factory=lambda: _grading_provider_for(current_user.preferred_model),
     )
 
     return BaseResponse(
         success=True,
         message="Quiz attempt recorded successfully",
+        data=attempt,
+    )
+
+
+@router.post(
+    "/{course_id}/quizzes/{quiz_id}/sessions",
+    response_model=BaseResponse[QuizSessionStartResult],
+    status_code=status.HTTP_201_CREATED,
+    responses=SESSION_RESPONSES,
+)
+def start_quiz_session(
+    course: OwnedCourse,
+    quiz_id: int,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Open a timed sitting, or rejoin the one already running.
+
+    The deadline in the response is the server's own and the only one that
+    counts. A reloaded page rejoins its sitting rather than starting a second
+    clock, so the drafts stay together.
+    """
+    state = QuizSessionService.start_session(
+        db, course.id, quiz_id, user_id=current_user.id
+    )
+    quiz = QuizService.get_course_quiz(db, course.id, quiz_id)
+    return BaseResponse(
+        success=True,
+        message="Exam session started successfully",
+        data=QuizSessionStartResult(
+            session=_session_view(state),
+            quiz=QuizService.hide_answers(QuizService.build_quiz_view(quiz)),
+        ),
+    )
+
+
+@router.get(
+    "/{course_id}/quizzes/{quiz_id}/sessions/{session_id}",
+    response_model=BaseResponse[QuizSessionView],
+    responses=SESSION_RESPONSES,
+)
+def read_quiz_session(
+    course: OwnedCourse,
+    quiz_id: int,
+    session_id: int,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Report a sitting, including one whose deadline has quietly passed."""
+    state = QuizSessionService.get_session(
+        db, course.id, quiz_id, session_id, user_id=current_user.id
+    )
+    return BaseResponse(
+        success=True,
+        message="Exam session retrieved successfully",
+        data=_session_view(state),
+    )
+
+
+@router.put(
+    "/{course_id}/quizzes/{quiz_id}/sessions/{session_id}/answers/{question_id}",
+    response_model=BaseResponse[QuizSessionView],
+    responses={
+        **SESSION_RESPONSES,
+        400: {"description": "The answer is not valid for this question"},
+    },
+)
+def save_quiz_session_answer(
+    course: OwnedCourse,
+    quiz_id: int,
+    session_id: int,
+    question_id: int,
+    request: QuizAnswerSubmission,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Save one answer as it stands, so the deadline cannot cost the student it."""
+    answer = request.model_copy(update={"question_id": question_id})
+    try:
+        state = QuizSessionService.save_draft_answer(
+            db, course.id, quiz_id, session_id, answer, user_id=current_user.id
+        )
+    except TimedSessionExpiredError as exc:
+        raise _session_conflict(exc, ERROR_TIMED_SESSION_EXPIRED) from exc
+    except TimedSessionSubmittedError as exc:
+        raise _session_conflict(exc, ERROR_TIMED_SESSION_SUBMITTED) from exc
+
+    return BaseResponse(
+        success=True,
+        message="Answer saved successfully",
+        data=_session_view(state),
+    )
+
+
+@router.post(
+    "/{course_id}/quizzes/{quiz_id}/sessions/{session_id}/submit",
+    response_model=BaseResponse[QuizAttemptResponse],
+    status_code=status.HTTP_201_CREATED,
+    responses=SESSION_RESPONSES,
+)
+def submit_quiz_session(
+    course: OwnedCourse,
+    quiz_id: int,
+    session_id: int,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Finalise a sitting into an ordinary attempt, exactly once.
+
+    What is graded is the answers saved before the deadline. Submitting twice
+    returns the same attempt rather than grading the paper again.
+    """
+    try:
+        attempt = QuizSessionService.submit_session(
+            db,
+            course.id,
+            quiz_id,
+            session_id,
+            user_id=current_user.id,
+            provider_factory=lambda: _grading_provider_for(
+                current_user.preferred_model
+            ),
+        )
+    except TimedSessionEmptyError as exc:
+        raise _session_conflict(exc, ERROR_TIMED_SESSION_EMPTY) from exc
+    except TimedSessionSubmittedError as exc:
+        raise _session_conflict(exc, ERROR_TIMED_SESSION_SUBMITTED) from exc
+
+    return BaseResponse(
+        success=True,
+        message="Exam session submitted successfully",
         data=attempt,
     )
 

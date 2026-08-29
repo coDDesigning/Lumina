@@ -53,9 +53,8 @@ something new fails loudly instead of hanging.
   `include: ['src/**/*.test.{ts,tsx}']`. Browser specs are `e2e/*.spec.ts`, so the two runners
   never collect each other's files.
 - `frontend/src/setupTests.ts` loads `@testing-library/jest-dom/vitest`, runs `cleanup()` and
-  `resetQueryCache()` after each test, polyfills `matchMedia` and `scrollTo`, and **promotes React
-  warnings to failures** — duplicate keys, invalid DOM nesting, missing `act`, bad ARIA. A green
-  run therefore means the render was clean.
+  `resetQueryCache()` after each test, polyfills `matchMedia` and `scrollTo`, and promotes every
+  unconsumed `console.error` to a failure. A green run therefore means the render was clean.
 - The query cache is a module singleton reset once in `setupTests.ts`. No test needs a provider.
 - `Dialog` renders through `createPortal` to `document.body`, so scope queries to `screen`, never
   to the container `render()` returns.
@@ -93,6 +92,11 @@ mockGenerate.mockRejectedValue(new APIError(503, { detail: 'down' }, 'provider_u
 A dropped connection is a `TypeError`, which the client reports as "You are offline". See
 `src/features/study/quiz/QuizModal.failures.test.tsx` for one case per mapped code.
 
+Tests for an expected error must locally intercept `console.error`, assert the complete expected
+call, and restore the spy. Error-boundary fixtures should also pass React 19's `onCaughtError` to
+`render` and assert it; this suppresses React's default report while the boundary's explicit
+`Unhandled interface error` log remains part of the fixture contract.
+
 ### Testing timers
 
 ```ts
@@ -121,7 +125,7 @@ anything. They are cheap and they have all caught something real.
 
 | Guard | What it refuses |
 |---|---|
-| `setupTests.ts` | A React warning during any test |
+| `setupTests.ts` | Any unconsumed `console.error` during a test |
 | `styles/tokenUsage.test.ts` | A `var(--x)` that nothing defines |
 | `styles/rawValues.test.ts` | A colour literal outside `tokens.css`, and a theme branch in a component |
 | `styles/contrast.test.ts` | A token pair below its WCAG ratio |
@@ -145,7 +149,7 @@ jsdom has no layout engine, so no component test can catch a contrast, overflow,
 |---|---|
 | `quiz.spec.ts` | The core learning interaction end to end — configure, answer one of each supported type, hand in, read the review, and confirm an ungraded written answer reads as unscored rather than wrong. Plus the live countdown and 360px layout. |
 | `auth.spec.ts` | Sign-in redirect, sign-in, landmarks, and client-side registration validation. |
-| `a11y.spec.ts` | axe over eight screens, failing on any serious or critical violation; one heading and one `<main>` per screen; no sideways scroll at 360px. |
+| `a11y.spec.ts` | axe over eight screens and representative open modal/dialog states, failing on any serious or critical violation; one heading and one `<main>` per screen; no sideways scroll at 360px. |
 
 Two conventions matter there. Click what a person clicks: a radio input is visually hidden beneath
 its letter badge, so target the label text rather than the input. And the accessibility spec
@@ -155,9 +159,7 @@ purpose, so darkening it is a palette decision rather than a test fix. The allow
 the colour, not the route, and a separate test asserts it is still the only failing pair — any new
 contrast failure breaks the build.
 
-CI runs the browser suite as **Frontend end-to-end**, currently `continue-on-error: true` while it
-proves itself. Job names are referenced by dormant branch rulesets, so flag the ruleset when that
-changes.
+CI runs the browser suite as **Frontend end-to-end**, a blocking quality gate alongside **Frontend quality and build** (which enforces global test coverage thresholds via `npm run test:coverage`). Job names are referenced by dormant branch rulesets, so flag the ruleset before renaming one.
 
 ## What is not covered
 

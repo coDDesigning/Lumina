@@ -9,6 +9,7 @@ import { userAPI } from '@/api/user';
 import type { CreditStatus } from '@/api/types';
 import type { Workspace } from '@/data/workspaces';
 import { CreditProvider } from '@/context/CreditContext';
+import { createMockQuiz, createMockQuizGenerationResult } from '@/test/mocks/api';
 import ProgressPage from './ProgressPage';
 
 vi.mock('@/api/progress', () => ({ progressAPI: { get: vi.fn(), listAll: vi.fn() } }));
@@ -48,6 +49,8 @@ const mockGetCredits = vi.mocked(userAPI.getCredits);
 const STATUS: CreditStatus = {
   credits: null,
   metering_enabled: false,
+  email_verification_required: false,
+  is_email_verified: true,
   monthly_grant: null,
   balance_cap: null,
   next_grant_at: null,
@@ -114,9 +117,9 @@ describe('ProgressPage', () => {
   });
 
   it('generates the quiz against the weak topic it was opened for', async () => {
-    mockGenerate.mockResolvedValue({
-      quiz: { quiz_id: 7, course_id: 10, questions: [] },
-    } as never);
+    mockGenerate.mockResolvedValue(
+      createMockQuizGenerationResult({ quiz: createMockQuiz({ course_id: 10 }) }),
+    );
 
     renderPage();
 

@@ -49,7 +49,15 @@ class GeneratedOutputService:
         generation_context: str | None = None,
         commit: bool = True,
     ) -> GeneratedOutput:
-        """Store one generation, with the user and model that actually produced it."""
+        """Store one generation, with the user and model that actually produced it.
+
+        ``commit=False`` hands the transaction back to a caller that must write
+        rows referencing the new identifier, so the parent row and its children
+        succeed or fail together. ``QuizService.save_generated_quiz`` already
+        does the same in reverse, staging its rows and letting this function's
+        commit cover both. Either way this stays the only place a
+        ``GeneratedOutput`` is constructed.
+        """
         generated_output = GeneratedOutput(
             course_id=course_id,
             user_id=user_id,

@@ -9,7 +9,17 @@ locals {
     jwt_secret_key        = "${local.ssm_base}/jwt-secret-key"
     bootstrap_admin_token = "${local.ssm_base}/bootstrap-admin-token"
     gemini_api_key        = "${local.ssm_base}/gemini-api-key"
+    openai_api_key        = "${local.ssm_base}/openai-api-key"
+    anthropic_api_key     = "${local.ssm_base}/anthropic-api-key"
+    smtp_password         = "${local.ssm_base}/smtp-password"
   }
+
+  # Only referenced when a relay actually asks for a login; naming the parameter
+  # unconditionally would make every task definition depend on a secret that a
+  # deployment using an IP-authenticated relay never creates.
+  smtp_secrets = var.smtp_username == "" ? [] : [
+    { name = "SMTP_PASSWORD", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.smtp_password}" },
+  ]
 
   common_env = [
     { name = "APP_ENV", value = "production" },
@@ -53,6 +63,7 @@ locals {
     { name = "AI_GENERATION_BACKOFF_BASE_SECONDS", value = "1.0" },
     { name = "AI_GENERATION_BACKOFF_MAX_SECONDS", value = "10.0" },
     { name = "AI_GENERATION_MAX_CONCURRENCY", value = "10" },
+    { name = "AI_GENERATION_OVERALL_TIMEOUT_SECONDS", value = "110" },
     { name = "STUDY_GUIDE_MATERIAL_MAX_CHARS", value = "120000" },
     { name = "QUIZ_MATERIAL_MAX_CHARS", value = "120000" },
     { name = "FLASHCARD_MATERIAL_MAX_CHARS", value = "120000" },
@@ -60,21 +71,37 @@ locals {
     { name = "COURSE_QA_MATERIAL_MAX_CHARS", value = "120000" },
     { name = "COURSE_PURGE_INTERVAL_SECONDS", value = tostring(var.course_purge_interval_seconds) },
     { name = "EMBEDDING_BACKFILL_INTERVAL_SECONDS", value = tostring(var.embedding_backfill_interval_seconds) },
+    # Every task loads the same configuration module, so the mail settings are
+    # common even though only the API sends anything: a worker missing them
+    # would fail startup validation rather than start without mail.
+    { name = "EMAIL_VERIFICATION_REQUIRED", value = tostring(var.email_verification_required) },
+    { name = "APP_PUBLIC_BASE_URL", value = "https://${var.frontend_domain_name}" },
+    { name = "EMAIL_FROM_ADDRESS", value = var.email_from_address },
+    { name = "SMTP_HOST", value = var.smtp_host },
+    { name = "SMTP_PORT", value = tostring(var.smtp_port) },
+    { name = "SMTP_USERNAME", value = var.smtp_username },
+    { name = "SMTP_USE_TLS", value = tostring(var.smtp_use_tls) },
+    # Trust only the ALB (VPC CIDR) for forwarded headers
+    { name = "FORWARDED_ALLOW_IPS", value = var.vpc_cidr_block },
   ]
 
-  app_secrets = [
+  app_secrets = concat([
     { name = "DATABASE_URL", valueFrom = var.runtime_database_url_secret_arn },
     { name = "JWT_SECRET_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.jwt_secret_key}" },
     { name = "BOOTSTRAP_ADMIN_TOKEN", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.bootstrap_admin_token}" },
     { name = "GEMINI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.gemini_api_key}" },
-  ]
+    { name = "OPENAI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.openai_api_key}" },
+    { name = "ANTHROPIC_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.anthropic_api_key}" },
+  ], local.smtp_secrets)
 
-  migrate_secrets = [
+  migrate_secrets = concat([
     { name = "DATABASE_URL", valueFrom = var.migration_database_url_secret_arn },
     { name = "JWT_SECRET_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.jwt_secret_key}" },
     { name = "BOOTSTRAP_ADMIN_TOKEN", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.bootstrap_admin_token}" },
     { name = "GEMINI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.gemini_api_key}" },
-  ]
+    { name = "OPENAI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.openai_api_key}" },
+    { name = "ANTHROPIC_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.anthropic_api_key}" },
+  ], local.smtp_secrets)
 
   restore_secrets = [
     { name = "DATABASE_URL", valueFrom = var.migration_database_url_secret_arn },

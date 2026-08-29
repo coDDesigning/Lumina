@@ -20,6 +20,7 @@ htmlcov/
 node_modules/
 dist/
 build/
+coverage/
 
 # ── Databases & vector stores (self-hosted mode) ─────────
 *.sqlite3

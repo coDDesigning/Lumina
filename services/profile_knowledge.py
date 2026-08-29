@@ -1,15 +1,22 @@
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from backend.app.models import ProfileKnowledge
+from backend.app.models import (
+    ProfileDocument,
+    ProfileDocumentChunk,
+    ProfileKnowledge,
+)
 from schemas.profile_knowledge import (
     ProfileKnowledgeCreate,
     ProfileKnowledgeImport,
     ProfileKnowledgeUpdate,
 )
 from services.course_material import CourseMaterial, load_course_material
+
+logger = logging.getLogger(__name__)
 
 ITEM_SEPARATOR = "\n\n"
 DEFAULT_PROFILE_KNOWLEDGE_BUDGET = 2000
@@ -152,6 +159,17 @@ class ProfileKnowledgeService:
         return True
 
     @staticmethod
+    def delete_all(
+        db: Session,
+        user_id: int,
+    ) -> int:
+        result = db.execute(
+            delete(ProfileKnowledge).where(ProfileKnowledge.user_id == user_id)
+        )
+        db.commit()
+        return result.rowcount
+
+    @staticmethod
     def bulk_import(
         db: Session,
         user_id: int,
@@ -178,8 +196,9 @@ def load_profile_knowledge(
     user_id: int,
     *,
     max_characters: int = DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
+    query: str | None = None,
 ) -> ProfileKnowledgeContext:
-    """Loads student profile knowledge formatted for AI context within budget bounds."""
+    """Loads student profile knowledge and profile documents formatted for AI context within budget bounds."""
     if max_characters <= 0:
         raise ValueError("max_characters must be a positive integer.")
 
@@ -197,11 +216,57 @@ def load_profile_knowledge(
             continue
         eligible.append(f"Topic: {topic_str}\nDetail: {detail_str}")
 
+    doc_chunks: list[str] = []
+    if query and query.strip():
+        try:
+            from services.semantic_retrieval import retrieve_profile_chunks
+
+            retrieved = retrieve_profile_chunks(
+                db, user_id=user_id, query=query, limit=5
+            )
+            for chunk in retrieved:
+                doc_name_row = db.scalar(
+                    select(ProfileDocument.original_file_name).where(
+                        ProfileDocument.id == chunk.document_id,
+                        ProfileDocument.user_id == user_id,
+                    )
+                )
+                label = (
+                    f"Document: {doc_name_row}" if doc_name_row else "Profile Document"
+                )
+                doc_chunks.append(f"[{label}]\n{chunk.text.strip()}")
+        except Exception:
+            logger.warning(
+                "Could not retrieve semantic profile chunks for user %s", user_id
+            )
+    else:
+        statement_chunks = (
+            select(ProfileDocumentChunk.text, ProfileDocument.original_file_name)
+            .join(
+                ProfileDocument,
+                ProfileDocument.id == ProfileDocumentChunk.document_id,
+            )
+            .where(
+                ProfileDocumentChunk.user_id == user_id,
+                ProfileDocument.status == "ready",
+            )
+            .order_by(
+                ProfileDocument.created_at.desc(),
+                ProfileDocumentChunk.chunk_index.asc(),
+            )
+            .limit(10)
+        )
+        for chunk_text, file_name in db.execute(statement_chunks).all():
+            if chunk_text and chunk_text.strip():
+                label = f"Document: {file_name}" if file_name else "Profile Document"
+                doc_chunks.append(f"[{label}]\n{chunk_text.strip()}")
+
+    all_eligible = eligible + doc_chunks
     parts: list[str] = []
     length = 0
     truncated = False
 
-    for formatted in eligible:
+    for formatted in all_eligible:
         addition = len(formatted) + (len(ITEM_SEPARATOR) if parts else 0)
         if length + addition > max_characters:
             truncated = True
@@ -212,7 +277,7 @@ def load_profile_knowledge(
     return ProfileKnowledgeContext(
         text=ITEM_SEPARATOR.join(parts),
         items_used=len(parts),
-        items_available=len(eligible),
+        items_available=len(all_eligible),
         truncated=truncated,
     )
 
@@ -223,11 +288,14 @@ def load_profile_knowledge_for_generation(
     *,
     opted_in: bool,
     max_characters: int = DEFAULT_PROFILE_KNOWLEDGE_BUDGET,
+    query: str | None = None,
 ) -> ProfileKnowledgeContext:
     """Single consent gate: profile knowledge is queried only for an opted-in owner."""
     if user_id is None or not opted_in:
         return EMPTY_PROFILE_KNOWLEDGE
-    return load_profile_knowledge(db, user_id, max_characters=max_characters)
+    return load_profile_knowledge(
+        db, user_id, max_characters=max_characters, query=query
+    )
 
 
 def assemble_generation_context(

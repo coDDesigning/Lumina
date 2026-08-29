@@ -113,19 +113,6 @@ locals {
       treat_missing_data  = "breaching"
       dimensions          = { DBInstanceIdentifier = var.rds_instance_identifier }
     }
-    proxy_pinned = {
-      namespace           = "AWS/RDS"
-      metric_name         = "DatabaseConnectionsCurrentlySessionPinned"
-      statistic           = "Maximum"
-      extended_statistic  = null
-      period              = 300
-      evaluation_periods  = 2
-      datapoints_to_alarm = 2
-      threshold           = 10
-      comparison_operator = "GreaterThanOrEqualToThreshold"
-      treat_missing_data  = "notBreaching"
-      dimensions          = { DBProxyName = var.rds_proxy_name }
-    }
     queue_age = {
       namespace           = "Lumina/Worker"
       metric_name         = "OldestQueuedAgeSeconds"
@@ -164,6 +151,19 @@ locals {
       comparison_operator = "GreaterThanOrEqualToThreshold"
       treat_missing_data  = "notBreaching"
       dimensions          = { Service = "course_purge", Environment = var.environment }
+    }
+    ai_provider_errors = {
+      namespace           = "Lumina/AI"
+      metric_name         = "ProviderErrors"
+      statistic           = "Sum"
+      extended_statistic  = null
+      period              = 300
+      evaluation_periods  = 1
+      datapoints_to_alarm = 1
+      threshold           = 5
+      comparison_operator = "GreaterThanOrEqualToThreshold"
+      treat_missing_data  = "notBreaching"
+      dimensions          = { Service = "api", Environment = var.environment }
     }
   }
 }
@@ -242,7 +242,6 @@ resource "aws_cloudwatch_dashboard" "this" {
           metrics = [
             ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", var.rds_instance_identifier],
             [".", "DatabaseConnections", ".", "."],
-            [".", "DatabaseConnectionsCurrentlySessionPinned", "DBProxyName", var.rds_proxy_name],
           ]
         }
       },
@@ -254,9 +253,9 @@ resource "aws_cloudwatch_dashboard" "this" {
           title  = "AI provider health"
           region = data.aws_region.current.name
           metrics = [
-            ["Lumina/AI", "ProviderCalls", "Service", "api", "Environment", var.environment, { stat = "Sum" }],
-            [".", "ProviderLatencyMs", ".", ".", ".", ".", { stat = "p95", yAxis = "right" }],
-            [".", "ProviderErrors", ".", ".", ".", ".", { stat = "Sum" }],
+            ["Lumina/AI", "ProviderCalls", "Service", "api", "Environment", var.environment, "Provider", "*", { stat = "Sum" }],
+            [".", "ProviderLatencyMs", ".", ".", ".", ".", ".", ".", { stat = "p95", yAxis = "right" }],
+            [".", "ProviderErrors", ".", ".", ".", ".", ".", ".", { stat = "Sum" }],
           ]
         }
       },

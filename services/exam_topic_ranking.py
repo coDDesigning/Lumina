@@ -58,9 +58,10 @@ class RankedTopic:
     syllabus_position: int | None
     importance: float
     mastery_percentage: int | None
-    questions_answered: int
+    questions_answered: int | None
     weakness: float
     priority: float
+    topic_key: str | None = None
 
 
 def _normalize(topic: str) -> str:

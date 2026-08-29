@@ -162,6 +162,15 @@ class AiUsageLogger:
                     },
                     namespace="Lumina/AI",
                 )
+            if not success:
+                emit_emf_metrics(
+                    {"ProviderErrors": 1},
+                    dimensions={
+                        "Service": "api",
+                        "Environment": settings.app_env,
+                    },
+                    namespace="Lumina/AI",
+                )
         except Exception:
             logger.warning(
                 "Failed to emit AI provider health metrics",

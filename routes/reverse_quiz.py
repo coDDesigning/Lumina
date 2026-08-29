@@ -1,4 +1,3 @@
-import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,7 +10,10 @@ from schemas.response import BaseResponse
 from schemas.reverse_quiz import ReverseQuizRequest, ReverseQuizResponse
 from schemas.user import UserResponse
 from services.reverse_quiz import ReverseQuizService
-from services.text_generation import get_text_generation_provider, resolve_effective_model
+from services.text_generation import (
+    get_text_generation_provider,
+    resolve_effective_model,
+)
 from utils.ai_errors import ai_generation_http_exception
 from utils.authorization import AuthorizedCourse, OwnedCourse
 from utils.deps import get_current_user
@@ -22,6 +24,7 @@ router = APIRouter(
     tags=["Reverse Quiz"],
 )
 
+
 def _provider_for(preferred_model: str | None):
     effective_model = resolve_effective_model(
         None, preferred_model, required_capability="quiz"
@@ -30,6 +33,7 @@ def _provider_for(preferred_model: str | None):
         effective_model=effective_model,
         require_json_mode=True,
     )
+
 
 @router.post(
     "/{course_id}/reverse-quiz",
@@ -55,32 +59,32 @@ def generate_reverse_quiz(
 ):
     try:
         provider = _provider_for(current_user.preferred_model)
-        
+
         # User is passed to match the current user since the course is owned
         # We need the real user model, not just UserResponse.
         # But wait, ReverseQuizService uses user.id
         # Let's pass user=course.owner since course is OwnedCourse which implies we can get user ID
-        # Wait, OwnedCourse is a Course model object. course.owner is loaded? 
-        # Actually `current_user` is a User model object because get_current_user returns `User`. 
+        # Wait, OwnedCourse is a Course model object. course.owner is loaded?
+        # Actually `current_user` is a User model object because get_current_user returns `User`.
         # Let's verify: In quiz.py it uses `current_user.id`. Wait, `current_user` annotation says `UserResponse` but it might be `User` model.
-        # Let's just pass `user_id=current_user.id`. Wait, ReverseQuizService expects `User`! 
+        # Let's just pass `user_id=current_user.id`. Wait, ReverseQuizService expects `User`!
         # I will update ReverseQuizService to take user_id or I can fetch it. Let's pass current_user directly.
         # Oh, let me just pass `user=current_user` since it's a User model.
         pass
     except Exception:
         pass
-    
+
     try:
         provider = _provider_for(current_user.preferred_model)
-        
+
         response = ReverseQuizService.generate(
             db=db,
             course_id=course.id,
             user=current_user,
             request=request,
-            provider=provider
+            provider=provider,
         )
-        
+
         db.commit()
     except HTTPException:
         raise
@@ -112,11 +116,11 @@ def list_reverse_quizzes(
         .where(
             GeneratedOutput.course_id == course.id,
             GeneratedOutput.user_id == course.owner_id,
-            GeneratedOutput.output_type == "reverse_quiz"
+            GeneratedOutput.output_type == "reverse_quiz",
         )
         .order_by(GeneratedOutput.created_at.desc())
     ).all()
-    
+
     history = []
     for output in outputs:
         try:
@@ -126,7 +130,7 @@ def list_reverse_quizzes(
         except Exception:
             # Skip invalid or corrupted entries
             continue
-            
+
     return BaseResponse(
         success=True,
         message="Reverse quizzes retrieved successfully",

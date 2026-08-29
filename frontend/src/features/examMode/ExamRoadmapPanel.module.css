@@ -1,0 +1,155 @@
+/*
+  Days are the second genuinely ordinal thing in Exam Mode, so they get the same
+  numeral treatment as a topic's rank -- the two rhyme because they mean the
+  same kind of thing: an order the student acts on.
+
+  The day is labelled "Day 2", never "17 October". The schedule's length comes
+  from a real horizon, but a student who falls a day behind has not invalidated
+  their plan, and naming the date would tell them they had.
+*/
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.lede {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.days {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.day {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 0 var(--space-4);
+  align-items: start;
+  padding: var(--space-4) 0;
+  border-top: var(--border-width) solid var(--border);
+  min-width: 0;
+}
+
+.day:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.dayMark {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  text-align: right;
+}
+
+.dayNumber {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-display);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.dayKind {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-label);
+  font-weight: var(--weight-bold);
+  color: var(--text-subtle);
+}
+
+.dayKindExam {
+  color: var(--warning);
+}
+
+.dayBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.focus {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+
+.topics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.topic {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.topicHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.topicTitle {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+a.topicTitle:hover {
+  color: var(--accent);
+}
+
+.pass {
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+}
+
+.goal {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: var(--leading-normal);
+  max-width: var(--measure-prose);
+}
+
+.gap {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+}
+
+@media (max-width: 30rem) {
+  .day {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .dayMark {
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--space-2);
+    text-align: left;
+  }
+}

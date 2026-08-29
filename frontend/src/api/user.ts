@@ -44,4 +44,13 @@ export const userAPI = {
     );
     return unwrapData(res, 'User credit transactions');
   },
+
+  changePassword: async (current_password: string, new_password: string, options?: RequestInit): Promise<void> => {
+    const res = await apiClient.put<BaseResponse<null>>(
+      '/users/me/password',
+      { current_password, new_password },
+      options,
+    );
+    unwrapData(res, 'Change password');
+  },
 };

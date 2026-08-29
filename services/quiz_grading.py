@@ -265,7 +265,9 @@ class QuizGradingService:
                 text_response=answer.text_response,
                 correct_option_index=answer.correct_option_index,
                 correct_answer=answer.correct_answer,
-                is_correct=verdict.score >= OPEN_ENDED_PASS_THRESHOLD if verdict.score is not None else None,
+                is_correct=verdict.score >= OPEN_ENDED_PASS_THRESHOLD
+                if verdict.score is not None
+                else None,
                 score=verdict.score,
                 feedback=verdict.feedback or None,
                 misconceptions=verdict.misconceptions,

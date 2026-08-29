@@ -105,7 +105,7 @@ output "s3_bucket" {
 
 output "database_url_secret_arn" {
   description = "Secrets Manager ARN holding the runtime DATABASE_URL through RDS Proxy."
-  value       = module.rds.database_url_secret_arn
+  value       = module.rds_proxy.runtime_database_url_secret_arn
 }
 
 output "migration_database_url_secret_arn" {
@@ -146,6 +146,11 @@ output "rds_parameter_group_name" {
 output "rds_option_group_name" {
   description = "Production RDS option group applied to temporary recovery restores."
   value       = module.rds.option_group_name
+}
+
+output "rds_proxy_endpoint" {
+  description = "TLS-only RDS Proxy endpoint used by API and worker tasks."
+  value       = module.rds_proxy.endpoint
 }
 
 output "github_actions_role_arn" {

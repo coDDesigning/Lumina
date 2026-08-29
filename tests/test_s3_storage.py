@@ -327,3 +327,16 @@ def test_storage_dependency_builds_s3_storage_for_s3_backend(
 
     assert isinstance(storage, S3Storage)
     assert storage.provider == "s3:self-hosted"
+
+
+def test_s3_storage_supports_multiprocessing_pickle() -> None:
+    import pickle
+
+    storage = S3Storage("lumina-pickle-test", namespace="prod")
+    data = pickle.dumps(storage)
+    restored = pickle.loads(data)
+
+    assert isinstance(restored, S3Storage)
+    assert restored._bucket == "lumina-pickle-test"
+    assert restored._namespace == "prod"
+    assert restored._client is not None

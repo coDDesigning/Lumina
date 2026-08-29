@@ -61,7 +61,7 @@ jobs:
       - name: Required repository files exist
         run: |
           missing=0
-          for f in README.md .gitignore .gitattributes .editorconfig .env.example .dockerignore; do
+          for f in README.md .gitignore .gitattributes .editorconfig .env.example .dockerignore docs/runbooks/demo_checklist.md; do
             if [ ! -f "$f" ]; then
               echo "::error::Missing required file: $f"
               missing=1

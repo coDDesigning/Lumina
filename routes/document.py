@@ -11,6 +11,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     Response,
     UploadFile,
@@ -255,9 +256,21 @@ def delete_document(
     course: OwnedCourse,
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[Storage, Depends(get_storage)],
+    force: Annotated[
+        bool,
+        Query(
+            description=(
+                "Discard a document whose extraction is stuck (queued with no "
+                "worker, or running with an expired worker lease). A job a "
+                "worker is actively holding is still rejected."
+            )
+        ),
+    ] = False,
 ) -> Response:
     try:
-        DocumentService.delete_document(db, storage, document_id, course.id)
+        DocumentService.delete_document(
+            db, storage, document_id, course.id, force=force
+        )
     except DocumentActiveError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

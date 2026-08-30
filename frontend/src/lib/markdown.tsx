@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 import type { Citation } from '@/api/types';
 import { citationsByKey } from '@/features/study/citations';
 import { CitationChip } from '@/ui/CitationChip';
@@ -15,14 +17,82 @@ type CitationIndex = Map<string, Citation> | undefined;
 
 const SAFE_LINK = /^(https?:\/\/|mailto:)/i;
 
+// Models routinely typeset with LaTeX: `$x$` / `\(x\)` inline, `$$…$$` / `\[…\]`
+// for a display block. KaTeX turns the source into markup; `throwOnError: false`
+// makes a malformed expression render as the offending text in the error colour
+// rather than throwing.
+function TeX({ tex, display = false }: { tex: string; display?: boolean }): ReactNode {
+  const trimmed = tex.trim();
+  if (!trimmed) {
+    return <>{display ? '$$$$' : '$$'}</>;
+  }
+  let html: string;
+  try {
+    html = katex.renderToString(trimmed, {
+      displayMode: display,
+      throwOnError: false,
+      errorColor: 'currentColor',
+      output: 'htmlAndMathml',
+      strict: false,
+    });
+  } catch {
+    // Only reached if KaTeX itself throws despite throwOnError; keep the source.
+    return <span className={styles.mathError}>{display ? `$$${trimmed}$$` : `$${trimmed}$`}</span>;
+  }
+  return (
+    <span
+      className={display ? styles.mathBlock : styles.mathInline}
+      // KaTeX output is a typesetting result we generate, not caller HTML.
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+// A `$$…$$` or `\[…\]` block, possibly spanning several lines. Returns the TeX
+// source and the line after the closing delimiter, or null when the opener has
+// no matching close within a sane distance (then it is left as plain text).
+function readDisplayMath(lines: string[], start: number): { tex: string; next: number } | null {
+  const opener = lines[start].trimStart();
+  const [open, close] = opener.startsWith('$$')
+    ? ['$$', '$$']
+    : opener.startsWith('\\[')
+      ? ['\\[', '\\]']
+      : ['', ''];
+  if (!open) {
+    return null;
+  }
+
+  const first = opener.slice(open.length);
+  const limit = Math.min(lines.length, start + 40);
+
+  const onOneLine = first.trimEnd().endsWith(close) && first.trim().length > close.length;
+  if (onOneLine) {
+    return { tex: first.trimEnd().slice(0, -close.length), next: start + 1 };
+  }
+
+  const body: string[] = first ? [first] : [];
+  for (let cursor = start + 1; cursor < limit; cursor += 1) {
+    const line = lines[cursor];
+    if (line.trimEnd().endsWith(close)) {
+      body.push(line.trimEnd().slice(0, -close.length));
+      return { tex: body.join('\n'), next: cursor + 1 };
+    }
+    body.push(line);
+  }
+  return null;
+}
+
 function inline(text: string, keyPrefix: string, citations?: CitationIndex): ReactNode[] {
   const nodes: ReactNode[] = [];
   let rest = text;
   let index = 0;
 
-  // Code spans are matched first so that markers inside them stay literal.
+  // Code spans are matched first so that markers inside them stay literal. Math
+  // delimiters come next so a `*` or `_` inside an expression is never read as
+  // emphasis. `$…$` requires a non-space just inside each delimiter, which keeps
+  // prices ("$5 and $10 more") from being mistaken for math.
   const pattern =
-    /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![A-Za-z0-9])__(?:(?!__)[^\n])+__(?![A-Za-z0-9]))|(\*[^*\n]+\*)|((?<![A-Za-z0-9])_[^_\n]+_(?![A-Za-z0-9]))|(\[[^\]\n]*\]\([^)\s]+\))|(\[S\d{1,3}\])/;
+    /(`[^`\n]+`)|(\$\$(?:\\.|[^\n])+?\$\$)|(\\\[(?:\\.|[^\n])+?\\\])|(\\\((?:\\.|[^\n])+?\\\))|(\$(?![\s$])(?:\\.|[^$\n])*?[^\s$]\$)|(\*\*[^*\n]+\*\*)|((?<![A-Za-z0-9])__(?:(?!__)[^\n])+__(?![A-Za-z0-9]))|(\*[^*\n]+\*)|((?<![A-Za-z0-9])_[^_\n]+_(?![A-Za-z0-9]))|(\[[^\]\n]*\]\([^)\s]+\))|(\[S\d{1,3}\])/;
 
   while (rest.length > 0) {
     const hit = pattern.exec(rest);
@@ -53,6 +123,14 @@ function inline(text: string, keyPrefix: string, citations?: CitationIndex): Rea
           {token.slice(1, -1)}
         </code>,
       );
+    } else if (token.startsWith('$$')) {
+      nodes.push(<TeX display key={key} tex={token.slice(2, -2)} />);
+    } else if (token.startsWith('\\[')) {
+      nodes.push(<TeX display key={key} tex={token.slice(2, -2)} />);
+    } else if (token.startsWith('\\(')) {
+      nodes.push(<TeX key={key} tex={token.slice(2, -2)} />);
+    } else if (token.startsWith('$')) {
+      nodes.push(<TeX key={key} tex={token.slice(1, -1)} />);
     } else if (token.startsWith('**') || token.startsWith('__')) {
       nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
     } else if (token.startsWith('[')) {
@@ -138,6 +216,21 @@ export function Markdown({ text, className, citations }: MarkdownProps) {
       continue;
     }
 
+    // A display equation standing on its own — `$$…$$` or `\[…\]`, one line or
+    // several. An unterminated opener falls through to normal text handling.
+    if (/^\s*(\$\$|\\\[)/.test(line)) {
+      const math = readDisplayMath(lines, cursor);
+      if (math) {
+        blocks.push(
+          <div className={styles.mathDisplay} key={nextKey()} tabIndex={0}>
+            <TeX display tex={math.tex} />
+          </div>,
+        );
+        cursor = math.next;
+        continue;
+      }
+    }
+
     const heading = /^(#{1,4})\s+(.*)$/.exec(line);
     if (heading) {
       const depth = heading[1].length;
@@ -213,7 +306,10 @@ export function Markdown({ text, className, citations }: MarkdownProps) {
       !/^#{1,4}\s/.test(lines[cursor]) &&
       !/^\s*>\s?/.test(lines[cursor]) &&
       !bullet.test(lines[cursor]) &&
-      !numbered.test(lines[cursor])
+      !numbered.test(lines[cursor]) &&
+      // A later line that opens a display equation starts its own block, even
+      // with no blank line before it.
+      !(cursor > startedAt && /^\s*(\$\$|\\\[)/.test(lines[cursor]))
     ) {
       paragraph.push(lines[cursor]);
       cursor += 1;

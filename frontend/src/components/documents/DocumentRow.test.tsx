@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { DocumentResponse, DocumentStatus } from '@/api/types';
@@ -50,11 +50,32 @@ describe('DocumentRow', () => {
     expect(screen.getAllByRole('button', { name: /try again/i })).toHaveLength(1);
   });
 
-  it('offers no removal at all while a source is being read, and says why', () => {
+  it('holds back the normal removal while a source is being read, and says why', () => {
     renderRow(entry('processing'));
 
     expect(screen.queryByRole('button', { name: /Remove week-3-lecture/ })).toBeNull();
     expect(screen.getByText(/cannot be removed until this finishes/i)).toBeInTheDocument();
+  });
+
+  it('still lets the reader force out a source whose reading is stuck', async () => {
+    const user = userEvent.setup();
+    const remove = vi.fn();
+    renderRow(entry('processing'), { remove });
+
+    await user.click(screen.getByRole('button', { name: /remove it anyway/i }));
+    // a sterner confirm dialog, then the forced delete
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /remove it anyway/i }));
+
+    expect(remove).toHaveBeenCalledWith('doc-1', { force: true });
+  });
+
+  it('offers no force removal in readOnly mode', () => {
+    render(
+      <DocumentRow entry={entry('processing')} onRetry={vi.fn()} onDelete={vi.fn()} readOnly />,
+    );
+
+    expect(screen.queryByRole('button', { name: /remove it anyway/i })).toBeNull();
   });
 
   it('reports how far through the reading a source is', () => {

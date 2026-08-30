@@ -482,6 +482,8 @@ def test_every_course_route_requires_authentication_in_openapi():
         for method, operation in methods.items()
     ]
 
+    # Guards against a new course route shipping without auth; the number tracks
+    # the committed docs/openapi.json snapshot.
     assert len(operations) == 62
     for method, path, operation in operations:
         assert operation["security"] == [{"OAuth2PasswordBearer": []}], (

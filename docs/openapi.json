@@ -1628,6 +1628,34 @@
         "title": "BaseResponse[QuizView]",
         "type": "object"
       },
+      "BaseResponse_ReverseQuizQuestionsResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReverseQuizQuestionsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ReverseQuizQuestionsResponse]",
+        "type": "object"
+      },
       "BaseResponse_ReverseQuizResponse_": {
         "properties": {
           "data": {
@@ -8388,6 +8416,48 @@
         "title": "RegistrationResponse",
         "type": "object"
       },
+      "ReverseQuizQuestion": {
+        "properties": {
+          "question": {
+            "maxLength": 600,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          },
+          "topic": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "question"
+        ],
+        "title": "ReverseQuizQuestion",
+        "type": "object"
+      },
+      "ReverseQuizQuestionsResponse": {
+        "properties": {
+          "course_id": {
+            "title": "Course Id",
+            "type": "integer"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/ReverseQuizQuestion"
+            },
+            "title": "Questions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "course_id"
+        ],
+        "title": "ReverseQuizQuestionsResponse",
+        "type": "object"
+      },
       "ReverseQuizRequest": {
         "properties": {
           "explanation": {
@@ -8395,6 +8465,18 @@
             "minLength": 1,
             "title": "Explanation",
             "type": "string"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "maxLength": 600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
           },
           "topic": {
             "maxLength": 100,
@@ -8434,6 +8516,17 @@
             },
             "title": "Misconceptions",
             "type": "array"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
           },
           "topic": {
             "title": "Topic",
@@ -13700,6 +13793,68 @@
           }
         ],
         "summary": "Generate Reverse Quiz",
+        "tags": [
+          "Reverse Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/reverse-quiz/questions": {
+      "post": {
+        "operationId": "suggest_reverse_quiz_questions_api_courses__course_id__reverse_quiz_questions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ReverseQuizQuestionsResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Suggest Reverse Quiz Questions",
         "tags": [
           "Reverse Quiz"
         ]

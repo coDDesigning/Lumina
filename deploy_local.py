@@ -44,7 +44,7 @@ except ImportError:
     pass
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
 ROOT = Path(__file__).resolve().parent
 
@@ -642,7 +642,25 @@ def main(argv: list[str] | None = None) -> int:
             write_state(release, snapshot_id, previous, new)
         log("Deployment complete" if not args.dry_run else "Dry run complete")
         return 0
-    except (DeployError, subprocess.CalledProcessError) as exc:
+    except NoCredentialsError:
+        print(
+            "\nDEPLOY FAILED: AWS credentials not found.\n"
+            "Please set your AWS credentials in your terminal or .env file before running:\n"
+            "  In PowerShell:\n"
+            "    $env:AWS_ACCESS_KEY_ID = 'your_access_key'\n"
+            "    $env:AWS_SECRET_ACCESS_KEY = 'your_secret_key'\n"
+            "    $env:AWS_SESSION_TOKEN = 'your_session_token'  # if using temporary credentials\n"
+            "    $env:AWS_DEFAULT_REGION = 'eu-central-1'\n",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
+    except (
+        DeployError,
+        subprocess.CalledProcessError,
+        BotoCoreError,
+        ClientError,
+    ) as exc:
         print(f"\nDEPLOY FAILED: {exc}", file=sys.stderr, flush=True)
         print(
             "Check deploy_state.json (if written) for rollback commands. If the "

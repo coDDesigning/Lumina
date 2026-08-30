@@ -1,7 +1,7 @@
 """add generation jobs
 
 Revision ID: ebccfdeadee4
-Revises: e74c4d3649f1
+Revises: 2ecde7624a99
 Create Date: 2026-08-30 18:26:15.173726
 """
 
@@ -14,7 +14,7 @@ import backend
 
 
 revision: str = "ebccfdeadee4"
-down_revision: str | Sequence[str] | None = "e74c4d3649f1"
+down_revision: str | Sequence[str] | None = "2ecde7624a99"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

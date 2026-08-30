@@ -2119,3 +2119,66 @@ def test_chunking_stage_does_not_retry_non_retryable_error(
     assert calls == 1
     assert exc_info.value.code == ProcessingErrorCode.DOCUMENT_CHUNK_LIMIT_EXCEEDED
     assert exc_info.value.retryable is False
+
+
+def test_one_image_placed_many_times_collapses_to_a_single_visual() -> None:
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=595, height=842)
+    page.insert_text((36, 24), "Native text keeps this visual page processable.")
+    pixel = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 4, 4), False)
+    pixel.clear_with(180)
+    stream = pixel.tobytes("png")
+    for index in range(200):
+        left = 40.0 + (index % 5) * 90.0
+        top = 60.0 + (index // 5) * 18.0
+        page.insert_image(
+            pymupdf.Rect(left, top, left + 80.0, top + 80.0),
+            stream=stream,
+        )
+    content = pdf.tobytes()
+    pdf.close()
+
+    extracted = extract_raw_document("pdf", content, options=pipeline_options())
+
+    page_result = extracted.contents[0]
+    image_visuals = [
+        visual for visual in page_result.visuals if visual.source == VisualSource.IMAGE
+    ]
+    assert len(image_visuals) == 1
+
+
+def test_repeated_image_xref_is_resolved_for_fingerprinting() -> None:
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=595, height=842)
+    insert_test_image(page, pymupdf.Rect(40, 60, 200, 220), shade=180)
+    insert_test_image(page, pymupdf.Rect(240, 60, 400, 220), shade=90)
+    content = pdf.tobytes()
+    pdf.close()
+
+    with pymupdf.open(stream=content, filetype="pdf") as document:
+        image_info = document.load_page(0).get_image_info(xrefs=True)
+
+    xrefs = {image.get("xref") for image in image_info}
+    assert xrefs
+    assert all(type(xref) is int and xref > 0 for xref in xrefs)
+
+
+def test_shared_image_xref_is_counted_once_against_the_render_budget() -> None:
+    pixel = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 2000, 2000), False)
+    pixel.clear_with(200)
+    stream = pixel.tobytes("png")
+    pdf = pymupdf.open()
+    for _ in range(3):
+        page = pdf.new_page(width=595, height=842)
+        page.insert_text((36, 24), "Native text keeps this page processable.")
+        page.insert_image(pymupdf.Rect(40, 60, 400, 420), stream=stream)
+    content = pdf.tobytes()
+    pdf.close()
+
+    options = pipeline_options(
+        max_pdf_page_pixels=8_000_000,
+        max_pdf_total_pixels=10_000_000,
+    )
+    extracted = extract_raw_document("pdf", content, options=options)
+
+    assert len(extracted.contents) == 3

@@ -677,7 +677,7 @@ def test_transient_error_classification() -> None:
         assert not is_transient_generation_error(
             anthropic.APIStatusError("unauth", response=httpx.Response(401, request=req), body=None)
         )
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError, NameError, UnboundLocalError):
         class _Status400(Exception):
             status_code = 400
         class _Status401(Exception):

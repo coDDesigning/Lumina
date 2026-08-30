@@ -320,13 +320,17 @@ def submit_quiz_attempt(
             headers={ERROR_CODE_HEADER: ERROR_TIMED_SESSION_REQUIRED},
         )
 
+    db_user = db.get(User, current_user.id)
     attempt = QuizAttemptService.record_attempt(
         db,
         course.id,
         quiz_id,
         request,
         user_id=current_user.id,
-        provider_factory=lambda: _grading_provider_for(current_user.preferred_model),
+        provider_factory=lambda: _grading_provider_for(
+            current_user.preferred_model,
+            user=db_user,
+        ),
     )
 
     return BaseResponse(

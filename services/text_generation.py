@@ -134,10 +134,46 @@ class ProviderRegistry:
         return entry["is_local"] if entry else False
 
 
-def _model_catalog_entry(model_id: str) -> dict[str, object] | None:
-    for model in get_available_models():
+def _model_catalog_entry(
+    model_id: str, user: object | None = None
+) -> dict[str, object] | None:
+    for model in get_available_models(user=user):
         if model["id"] == model_id:
             return model
+    if ":" in model_id:
+        provider, model_name = model_id.split(":", 1)
+        catalog_dict = getattr(settings, "ai_model_catalog", None) or {}
+        for entry in catalog_dict.get(provider, []):
+            if str(entry.get("model")) == model_name:
+                vendor = ProviderRegistry.get_vendor(provider) or provider.title()
+                is_local = ProviderRegistry.is_local(provider)
+                is_json = bool(entry.get("json_mode", True))
+                return {
+                    "id": model_id,
+                    "provider": provider,
+                    "model": model_name,
+                    "display_name": f"{vendor} ({model_name})",
+                    "is_default": False,
+                    "cost_hint": (
+                        "Local execution · Unmetered"
+                        if is_local
+                        else "Metered (1-2 credits)"
+                    ),
+                    "capabilities": [
+                        "study_guide",
+                        "quiz",
+                        "flashcard",
+                        "ai_tutor",
+                        "course_qa",
+                        "prompt_generator",
+                    ],
+                    "description": f"{vendor} ({model_name})",
+                    "is_local": is_local,
+                    "supports_json": is_json,
+                    "json_mode": is_json,
+                    "context_window": int(entry.get("context_window", 8192)),
+                    "vision": bool(entry.get("vision", False)),
+                }
     return None
 
 
@@ -195,6 +231,30 @@ class TextGenerationAuthError(TextGenerationError):
 
     def __init__(self, message: str = "Text generation authentication failed.") -> None:
         super().__init__(message, error_category=ErrorCategory.AUTHENTICATION_ERROR)
+
+
+class PersonalKeyAuthError(TextGenerationAuthError):
+    """Personal/BYOK API key authentication failure (disables silent fallback)."""
+
+    def __init__(
+        self,
+        message: str = "Your personal API key is invalid or expired.",
+        provider: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.provider = provider
+
+
+def _vendor_display_name(provider_name: str) -> str:
+    clean = provider_name.strip().lower()
+    mapping = {
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "claude": "Anthropic Claude",
+        "anthropic": "Anthropic Claude",
+        "ollama": "Ollama",
+    }
+    return mapping.get(clean, clean.title())
 
 
 class TextGenerationEmptyResponseError(TextGenerationError):
@@ -1208,6 +1268,21 @@ class ReliableTextGenerationProvider:
                         },
                     )
 
+                is_auth_error = isinstance(last_exception, TextGenerationAuthError)
+                if not is_auth_error and last_exception is not None:
+                    status_code = getattr(
+                        last_exception, "status_code", getattr(last_exception, "code", None)
+                    )
+                    if status_code in {401, 403}:
+                        is_auth_error = True
+
+                if getattr(provider, "is_personal_key", False) and is_auth_error:
+                    vendor = _vendor_display_name(provider_name)
+                    raise PersonalKeyAuthError(
+                        f"Your personal {vendor} API key is invalid or expired.",
+                        provider=provider_name,
+                    ) from last_exception
+
             if isinstance(last_exception, TextGenerationError):
                 raise last_exception
             raise TextGenerationError(
@@ -1249,7 +1324,7 @@ class ReliableTextGenerationProvider:
         return result
 
 
-def get_available_models() -> list[dict[str, object]]:
+def get_available_models(user: object | None = None) -> list[dict[str, object]]:
     primary_name = settings.ai_provider
     provider_names = [primary_name]
 
@@ -1261,6 +1336,23 @@ def get_available_models() -> list[dict[str, object]]:
         ):
             if fallback_token not in provider_names:
                 provider_names.append(fallback_token)
+
+    if user is not None:
+        if getattr(user, "encrypted_gemini_api_key", None) or (
+            isinstance(user, dict) and user.get("encrypted_gemini_api_key")
+        ):
+            if AI_PROVIDER_GEMINI not in provider_names:
+                provider_names.append(AI_PROVIDER_GEMINI)
+        if getattr(user, "encrypted_openai_api_key", None) or (
+            isinstance(user, dict) and user.get("encrypted_openai_api_key")
+        ):
+            if AI_PROVIDER_OPENAI not in provider_names:
+                provider_names.append(AI_PROVIDER_OPENAI)
+        if getattr(user, "encrypted_anthropic_api_key", None) or (
+            isinstance(user, dict) and user.get("encrypted_anthropic_api_key")
+        ):
+            if AI_PROVIDER_CLAUDE not in provider_names:
+                provider_names.append(AI_PROVIDER_CLAUDE)
 
     standard_capabilities = [
         "study_guide",
@@ -1320,6 +1412,7 @@ def resolve_effective_model(
     request_model: str | None = None,
     user_preferred_model: str | None = None,
     required_capability: str | None = None,
+    user: object | None = None,
 ) -> str:
     """Resolve the effective model using precedence rule:
     1. Explicit request override
@@ -1328,13 +1421,16 @@ def resolve_effective_model(
 
     Optionally validates that the resolved model supports ``required_capability``.
     """
-    catalog = get_available_models()
+    catalog = get_available_models(user=user)
     catalog_by_id = {m["id"]: m for m in catalog}
     valid_ids = set(catalog_by_id.keys())
 
     if request_model:
         if request_model not in valid_ids:
-            raise UnavailableModelError("Requested AI model is not available.")
+            full_entry = _model_catalog_entry(request_model, user=user)
+            if full_entry is None:
+                raise UnavailableModelError("Requested AI model is not available.")
+            catalog_by_id[request_model] = full_entry
         if required_capability:
             caps = catalog_by_id[request_model].get("capabilities") or []
             if required_capability not in caps:
@@ -1345,11 +1441,19 @@ def resolve_effective_model(
 
     resolved_id: str | None = None
 
-    if user_preferred_model and user_preferred_model in catalog_by_id:
-        if not required_capability or required_capability in (
-            catalog_by_id[user_preferred_model].get("capabilities") or []
-        ):
-            resolved_id = user_preferred_model
+    if user_preferred_model:
+        if user_preferred_model in catalog_by_id:
+            if not required_capability or required_capability in (
+                catalog_by_id[user_preferred_model].get("capabilities") or []
+            ):
+                resolved_id = user_preferred_model
+        else:
+            full_entry = _model_catalog_entry(user_preferred_model, user=user)
+            if full_entry is not None:
+                if not required_capability or required_capability in (
+                    full_entry.get("capabilities") or []
+                ):
+                    resolved_id = user_preferred_model
 
     if not resolved_id:
         for m in catalog:
@@ -1474,7 +1578,7 @@ def get_text_generation_provider(
 
     # Validate effective model's JSON mode requirement
     if effective_model and require_json_mode:
-        model_entry = _model_catalog_entry(effective_model)
+        model_entry = _model_catalog_entry(effective_model, user=user)
 
         if model_entry is None:
             raise UnavailableModelError("Requested AI model is not available.")
@@ -1486,7 +1590,7 @@ def get_text_generation_provider(
 
     # Validate fallback models also support required capabilities
     if require_json_mode:
-        catalog = get_available_models()
+        catalog = get_available_models(user=user)
         # Determine selected_provider early for validation
         selected_provider_for_validation: str | None = None
         if effective_model:
@@ -1513,7 +1617,7 @@ def get_text_generation_provider(
 
         if selected_provider in provider_names:
             provider_names.remove(selected_provider)
-            provider_names.insert(0, selected_provider)
+        provider_names.insert(0, selected_provider)
 
     providers: list[TextGenerationProvider] = []
 
@@ -1525,7 +1629,24 @@ def get_text_generation_provider(
             user_api_keys=user_api_keys,
             explicit_key=api_key if name == selected_provider else None,
         )
-        providers.append(_instantiate_provider(name, model_override, api_key=resolved_key))
+        is_personal = bool(resolved_key)
+        try:
+            provider_inst = _instantiate_provider(
+                name, model_override, api_key=resolved_key
+            )
+        except TypeError:
+            provider_inst = _instantiate_provider(name, model_override)
+        except TextGenerationAuthError as exc:
+            if is_personal:
+                vendor = _vendor_display_name(name)
+                raise PersonalKeyAuthError(
+                    f"Your personal {vendor} API key is invalid or expired.",
+                    provider=name,
+                ) from exc
+            raise
+        setattr(provider_inst, "is_personal_key", is_personal)
+        setattr(provider_inst, "provider_name", name)
+        providers.append(provider_inst)
 
     return ReliableTextGenerationProvider(
         providers,

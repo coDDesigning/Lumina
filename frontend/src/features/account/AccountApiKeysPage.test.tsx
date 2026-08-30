@@ -1,10 +1,36 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '@/api/client';
 import { userAPI } from '@/api/user';
 import { ToastProvider } from '@/ui/ToastProvider';
 import AccountApiKeysPage from './AccountApiKeysPage';
+
+const authState = {
+  user: {
+    id: 1,
+    name: 'Admin User',
+    email: 'admin@example.com',
+    role: 'admin',
+    is_banned: false,
+    is_email_verified: true,
+    credits: null,
+    preferred_model: 'gemini-1.5-flash',
+    education_level: 'unspecified',
+  },
+};
+
+vi.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({
+    user: authState.user,
+    isAuthenticated: true,
+    isLoading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+    refreshUser: vi.fn(),
+  }),
+}));
 
 vi.mock('@/api/user', () => ({
   userAPI: {
@@ -18,15 +44,18 @@ const mockUpdateApiKeys = vi.mocked(userAPI.updateApiKeys);
 
 function renderPage() {
   return render(
-    <ToastProvider>
-      <AccountApiKeysPage />
-    </ToastProvider>,
+    <MemoryRouter>
+      <ToastProvider>
+        <AccountApiKeysPage />
+      </ToastProvider>
+    </MemoryRouter>,
   );
 }
 
 describe('AccountApiKeysPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.user.role = 'admin';
   });
 
   it('renders provider sections and input fields with system default badges when unconfigured', async () => {
@@ -233,5 +262,57 @@ describe('AccountApiKeysPage', () => {
     await user.click(saveButton);
 
     expect(await screen.findByText('Server failed to encrypt keys.')).toBeInTheDocument();
+  });
+
+  it('validates OpenAI API key prefix and prevents submission when invalid', async () => {
+    const user = userEvent.setup();
+    mockGetApiKeys.mockResolvedValue({
+      openai_api_key: null,
+      gemini_api_key: null,
+      anthropic_api_key: null,
+      has_openai_key: false,
+      has_gemini_key: false,
+      has_anthropic_key: false,
+    });
+
+    renderPage();
+
+    const openaiInput = await screen.findByLabelText('OpenAI API Key');
+    await user.type(openaiInput, 'invalid-prefix-key-1234');
+
+    const saveButton = screen.getByRole('button', { name: 'Save API keys' });
+    await user.click(saveButton);
+
+    expect(mockUpdateApiKeys).not.toHaveBeenCalled();
+    expect(await screen.findByText("OpenAI API key must start with 'sk-'.")).toBeInTheDocument();
+  });
+
+  it('validates Anthropic API key prefix and prevents submission when invalid', async () => {
+    const user = userEvent.setup();
+    mockGetApiKeys.mockResolvedValue({
+      openai_api_key: null,
+      gemini_api_key: null,
+      anthropic_api_key: null,
+      has_openai_key: false,
+      has_gemini_key: false,
+      has_anthropic_key: false,
+    });
+
+    renderPage();
+
+    const anthropicInput = await screen.findByLabelText('Anthropic API Key');
+    await user.type(anthropicInput, 'sk-notant-invalid-key');
+
+    const saveButton = screen.getByRole('button', { name: 'Save API keys' });
+    await user.click(saveButton);
+
+    expect(mockUpdateApiKeys).not.toHaveBeenCalled();
+    expect(await screen.findByText("Anthropic API key must start with 'sk-ant-'.")).toBeInTheDocument();
+  });
+
+  it('redirects non-admin users away from the API keys page', () => {
+    authState.user.role = 'Student';
+    renderPage();
+    expect(screen.queryByRole('heading', { name: 'API keys' })).not.toBeInTheDocument();
   });
 });

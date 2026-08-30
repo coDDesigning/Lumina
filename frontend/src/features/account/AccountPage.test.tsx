@@ -32,22 +32,26 @@ vi.mock('@/context/CreditContext', () => ({
   }),
 }))
 
+const authState = {
+  user: {
+    id: 1,
+    name: 'Ada Lovelace',
+    email: 'ada@example.com',
+    role: 'Student',
+    is_banned: false,
+    is_email_verified: true,
+    credits: 42,
+    preferred_model: 'gemini-1.5-flash',
+    education_level: 'unspecified',
+  },
+}
+
 const mockLogout = vi.fn()
 const mockRefreshUser = vi.fn()
 
 vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({
-    user: {
-      id: 1,
-      name: 'Ada Lovelace',
-      email: 'ada@example.com',
-      role: 'Student',
-      is_banned: false,
-      is_email_verified: true,
-      credits: 42,
-      preferred_model: 'gemini-1.5-flash',
-      education_level: 'unspecified',
-    },
+    user: authState.user,
     isAuthenticated: true,
     isLoading: false,
     login: vi.fn(),
@@ -132,6 +136,7 @@ function renderAccountPage(path = '/account') {
 describe('AccountPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    authState.user.role = 'Student'
     mockAdsGetConfig.mockResolvedValue({
       enabled: false,
       provider: null,
@@ -369,7 +374,8 @@ describe('AccountPage credits', () => {
     expect(screen.queryByText(/credits/i)).toBeNull()
   })
 
-  it('gives every part of the account its own address', async () => {
+  it('gives every part of the account its own address and hides API keys for non-admins', async () => {
+    authState.user.role = 'Student'
     renderAccountPage()
 
     const nav = screen.getByRole('navigation', { name: 'Account sections' })
@@ -379,13 +385,21 @@ describe('AccountPage credits', () => {
       '/account/background',
     )
     expect(within(nav).getByRole('link', { name: 'AI' })).toHaveAttribute('href', '/account/ai')
-    expect(within(nav).getByRole('link', { name: 'API keys' })).toHaveAttribute(
-      'href',
-      '/account/api-keys',
-    )
+    expect(within(nav).queryByRole('link', { name: 'API keys' })).not.toBeInTheDocument()
     expect(within(nav).getByRole('link', { name: 'Appearance' })).toHaveAttribute(
       'href',
       '/account/appearance',
+    )
+  })
+
+  it('shows API keys section for admin users', async () => {
+    authState.user.role = 'admin'
+    renderAccountPage()
+
+    const nav = screen.getByRole('navigation', { name: 'Account sections' })
+    expect(within(nav).getByRole('link', { name: 'API keys' })).toHaveAttribute(
+      'href',
+      '/account/api-keys',
     )
   })
 

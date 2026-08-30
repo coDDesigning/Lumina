@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<items>
+	<item id="NodeList/SQLiteTable">
+		<column name="Table Name" visible="true" order="0" width="194"/>
+		<column name="Table Type" visible="true" order="1" width="100"/>
+		<column name="Strict typing" visible="true" order="2" width="100"/>
+		<column name="Table Description" visible="true" order="3" width="105"/>
+	</item>
+</items>

@@ -60,27 +60,10 @@ def generate_reverse_quiz(
     try:
         provider = _provider_for(current_user.preferred_model)
 
-        # User is passed to match the current user since the course is owned
-        # We need the real user model, not just UserResponse.
-        # But wait, ReverseQuizService uses user.id
-        # Let's pass user=course.owner since course is OwnedCourse which implies we can get user ID
-        # Wait, OwnedCourse is a Course model object. course.owner is loaded?
-        # Actually `current_user` is a User model object because get_current_user returns `User`.
-        # Let's verify: In quiz.py it uses `current_user.id`. Wait, `current_user` annotation says `UserResponse` but it might be `User` model.
-        # Let's just pass `user_id=current_user.id`. Wait, ReverseQuizService expects `User`!
-        # I will update ReverseQuizService to take user_id or I can fetch it. Let's pass current_user directly.
-        # Oh, let me just pass `user=current_user` since it's a User model.
-        pass
-    except Exception:
-        pass
-
-    try:
-        provider = _provider_for(current_user.preferred_model)
-
         response = ReverseQuizService.generate(
             db=db,
             course_id=course.id,
-            user=current_user,
+            user_id=current_user.id,
             request=request,
             provider=provider,
         )

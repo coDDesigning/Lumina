@@ -727,6 +727,252 @@ def check_worker_ready(
         check_readiness(session, storage)
 
 
+class _MaintenanceSchedule:
+    def __init__(self) -> None:
+        self.recovery_interval = min(
+            30.0,
+            max(0.1, settings.processing_job_lease_seconds / 2),
+        )
+        self.next_recovery = 0.0
+        self.purge_interval = settings.course_purge_interval_seconds
+        self.backfill_interval = settings.embedding_backfill_interval_seconds
+        self.next_purge = 0.0 if self.purge_interval > 0 else float("inf")
+        self.next_backfill = 0.0 if self.backfill_interval > 0 else float("inf")
+
+
+class _CompositeStopEvent:
+    def __init__(self, external: StopEvent) -> None:
+        self._external = external
+        self._internal = threading.Event()
+
+    def set(self) -> None:
+        self._internal.set()
+
+    def is_set(self) -> bool:
+        return self._internal.is_set() or self._external.is_set()
+
+    def wait(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while not self.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            self._internal.wait(min(0.1, remaining))
+        return self.is_set()
+
+
+def _maintenance_cycle(
+    schedule: _MaintenanceSchedule,
+    *,
+    session_factory: SessionFactory,
+    storage: Storage,
+    stop: StopEvent,
+) -> None:
+    monotonic_now = time.monotonic()
+    if monotonic_now >= schedule.next_recovery:
+        recovery_saturated = False
+        try:
+            recovered_total = 0
+            for _ in range(MAX_RECOVERY_BATCHES_PER_PASS):
+                if stop.is_set():
+                    break
+                with session_factory() as session:
+                    recovered = recover_expired_jobs(
+                        session,
+                        limit=RECOVERY_BATCH_SIZE,
+                    )
+                recovered_total += recovered
+                if recovered < RECOVERY_BATCH_SIZE:
+                    break
+            else:
+                recovery_saturated = True
+            if recovered_total:
+                logger.info("Recovered %s expired processing jobs", recovered_total)
+            with session_factory() as session:
+                queue = processing_queue_metrics(session)
+            emit_emf_metrics(
+                {
+                    "QueuedJobs": queue.queued,
+                    "RunningJobs": queue.running,
+                    "FailedJobs": queue.failed,
+                    "OldestQueuedAgeSeconds": queue.oldest_queued_age_seconds,
+                    "RecoveredJobs": recovered_total,
+                },
+                dimensions={
+                    "Service": "worker",
+                    "Environment": settings.app_env,
+                },
+                units={"OldestQueuedAgeSeconds": "Seconds"},
+            )
+        except Exception:
+            logger.exception("Failed to recover expired processing jobs")
+        schedule.next_recovery = (
+            monotonic_now
+            if recovery_saturated
+            else monotonic_now + schedule.recovery_interval
+        )
+
+    if stop.is_set():
+        return
+
+    if schedule.purge_interval > 0 and monotonic_now >= schedule.next_purge:
+        try:
+            run_purge(
+                session_factory=session_factory,
+                storage=storage,
+                stop_event=stop,
+            )
+        except Exception:
+            logger.exception("Periodic course purge reconciliation failed")
+        schedule.next_purge = monotonic_now + schedule.purge_interval
+
+    if stop.is_set():
+        return
+
+    if schedule.backfill_interval > 0 and monotonic_now >= schedule.next_backfill:
+        try:
+            run_backfill(
+                session_factory=session_factory,
+                batch_size=settings.embedding_backfill_batch_size,
+                prune_orphans=settings.embedding_backfill_prune_orphans,
+                stop_event=stop,
+            )
+        except Exception:
+            logger.exception("Periodic embedding backfill reconciliation failed")
+        schedule.next_backfill = monotonic_now + schedule.backfill_interval
+
+
+def _claim_once(
+    *,
+    session_factory: SessionFactory,
+    storage: Storage,
+    worker_id: str,
+    stop: StopEvent,
+) -> bool:
+    try:
+        return process_next_job(
+            session_factory=session_factory,
+            storage=storage,
+            worker_id=worker_id,
+            shutdown_requested=stop.is_set,
+        )
+    except WorkerProcessFatalError:
+        logger.critical("Document worker requires process recycle")
+        raise
+    except Exception:
+        logger.exception("Document worker iteration failed")
+        return False
+
+
+def _run_worker_serially(
+    *,
+    once: bool,
+    worker_id: str,
+    session_factory: SessionFactory,
+    storage: Storage,
+    stop: StopEvent,
+) -> None:
+    schedule = _MaintenanceSchedule()
+    while True:
+        if stop.is_set():
+            logger.info(
+                "Shutdown requested; document worker %s will not claim another job",
+                worker_id,
+            )
+            break
+        _maintenance_cycle(
+            schedule,
+            session_factory=session_factory,
+            storage=storage,
+            stop=stop,
+        )
+        if stop.is_set():
+            break
+        processed = _claim_once(
+            session_factory=session_factory,
+            storage=storage,
+            worker_id=worker_id,
+            stop=stop,
+        )
+        if once:
+            return
+        if not processed:
+            stop.wait(settings.processing_job_poll_seconds)
+
+
+def _run_worker_slots(
+    *,
+    worker_id: str,
+    concurrency: int,
+    session_factory: SessionFactory,
+    storage: Storage,
+    stop: StopEvent,
+) -> None:
+    composite = _CompositeStopEvent(stop)
+    fatal: list[BaseException] = []
+    fatal_lock = threading.Lock()
+
+    def coordinate() -> None:
+        schedule = _MaintenanceSchedule()
+        while not composite.is_set():
+            _maintenance_cycle(
+                schedule,
+                session_factory=session_factory,
+                storage=storage,
+                stop=composite,
+            )
+            composite.wait(settings.processing_job_poll_seconds)
+
+    def claim(slot_worker_id: str) -> None:
+        while not composite.is_set():
+            try:
+                processed = _claim_once(
+                    session_factory=session_factory,
+                    storage=storage,
+                    worker_id=slot_worker_id,
+                    stop=composite,
+                )
+            except BaseException as exc:
+                with fatal_lock:
+                    fatal.append(exc)
+                composite.set()
+                return
+            if not processed:
+                composite.wait(settings.processing_job_poll_seconds)
+        logger.info(
+            "Shutdown requested; document worker %s will not claim another job",
+            slot_worker_id,
+        )
+
+    threads = [threading.Thread(target=coordinate, daemon=True)]
+    threads.extend(
+        threading.Thread(
+            target=claim,
+            args=(f"{worker_id}:slot-{index}",),
+            daemon=True,
+        )
+        for index in range(concurrency)
+    )
+    for thread in threads:
+        thread.start()
+    try:
+        while any(thread.is_alive() for thread in threads):
+            if composite.is_set():
+                break
+            composite.wait(0.1)
+    finally:
+        composite.set()
+        deadline = time.monotonic() + (
+            settings.processing_job_attempt_timeout_seconds + HEARTBEAT_SHUTDOWN_SECONDS
+        )
+        for thread in threads:
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
+    with fatal_lock:
+        if fatal:
+            raise fatal[0]
+
+
 def run_worker(
     *,
     once: bool,
@@ -734,7 +980,10 @@ def run_worker(
     stop_event: StopEvent | None = None,
     session_factory: SessionFactory = SessionLocal,
     storage: Storage | None = None,
+    concurrency: int = 1,
 ) -> None:
+    if concurrency < 1:
+        raise ValueError("concurrency must be positive")
     stop = stop_event or threading.Event()
     if stop.is_set():
         return
@@ -745,121 +994,32 @@ def run_worker(
         return
 
     worker_id = worker_id or _default_worker_id()
-    recovery_interval = min(
-        30.0,
-        max(0.1, settings.processing_job_lease_seconds / 2),
-    )
-    next_recovery = 0.0
-    purge_interval = settings.course_purge_interval_seconds
-    backfill_interval = settings.embedding_backfill_interval_seconds
-    next_purge = 0.0 if purge_interval > 0 else float("inf")
-    next_backfill = 0.0 if backfill_interval > 0 else float("inf")
+    if once:
+        concurrency = 1
 
     logger.info("Document worker %s started", worker_id)
     try:
-        while True:
-            if stop.is_set():
-                logger.info(
-                    "Shutdown requested; document worker %s will not claim another job",
-                    worker_id,
-                )
-                break
-            monotonic_now = time.monotonic()
-            if monotonic_now >= next_recovery:
-                recovery_saturated = False
-                try:
-                    recovered_total = 0
-                    for _ in range(MAX_RECOVERY_BATCHES_PER_PASS):
-                        if stop.is_set():
-                            break
-                        with session_factory() as session:
-                            recovered = recover_expired_jobs(
-                                session,
-                                limit=RECOVERY_BATCH_SIZE,
-                            )
-                        recovered_total += recovered
-                        if recovered < RECOVERY_BATCH_SIZE:
-                            break
-                    else:
-                        recovery_saturated = True
-                    if recovered_total:
-                        logger.info(
-                            "Recovered %s expired processing jobs", recovered_total
-                        )
-                    with session_factory() as session:
-                        queue = processing_queue_metrics(session)
-                    emit_emf_metrics(
-                        {
-                            "QueuedJobs": queue.queued,
-                            "RunningJobs": queue.running,
-                            "FailedJobs": queue.failed,
-                            "OldestQueuedAgeSeconds": queue.oldest_queued_age_seconds,
-                            "RecoveredJobs": recovered_total,
-                        },
-                        dimensions={
-                            "Service": "worker",
-                            "Environment": settings.app_env,
-                        },
-                        units={"OldestQueuedAgeSeconds": "Seconds"},
-                    )
-                except Exception:
-                    logger.exception("Failed to recover expired processing jobs")
-                next_recovery = (
-                    monotonic_now
-                    if recovery_saturated
-                    else monotonic_now + recovery_interval
-                )
-
-            if stop.is_set():
-                break
-
-            if purge_interval > 0 and monotonic_now >= next_purge:
-                try:
-                    run_purge(
-                        session_factory=session_factory,
-                        storage=storage,
-                        stop_event=stop,
-                    )
-                except Exception:
-                    logger.exception("Periodic course purge reconciliation failed")
-                next_purge = monotonic_now + purge_interval
-
-            if stop.is_set():
-                break
-
-            if backfill_interval > 0 and monotonic_now >= next_backfill:
-                try:
-                    run_backfill(
-                        session_factory=session_factory,
-                        batch_size=settings.embedding_backfill_batch_size,
-                        prune_orphans=settings.embedding_backfill_prune_orphans,
-                        stop_event=stop,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Periodic embedding backfill reconciliation failed"
-                    )
-                next_backfill = monotonic_now + backfill_interval
-
-            if stop.is_set():
-                break
-            try:
-                processed = process_next_job(
-                    session_factory=session_factory,
-                    storage=storage,
-                    worker_id=worker_id,
-                    shutdown_requested=stop.is_set,
-                )
-            except WorkerProcessFatalError:
-                logger.critical("Document worker requires process recycle")
-                raise
-            except Exception:
-                logger.exception("Document worker iteration failed")
-                processed = False
-            if once:
-                return
-            if not processed:
-                stop.wait(settings.processing_job_poll_seconds)
+        if concurrency == 1:
+            _run_worker_serially(
+                once=once,
+                worker_id=worker_id,
+                session_factory=session_factory,
+                storage=storage,
+                stop=stop,
+            )
+        else:
+            logger.info(
+                "Document worker %s running %s concurrent job slots",
+                worker_id,
+                concurrency,
+            )
+            _run_worker_slots(
+                worker_id=worker_id,
+                concurrency=concurrency,
+                session_factory=session_factory,
+                storage=storage,
+                stop=stop,
+            )
     finally:
         logger.info("Document worker %s stopped", worker_id)
 
@@ -896,7 +1056,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     stop_event = _SignalStopEvent()
     _install_shutdown_handlers(stop_event)
     try:
-        run_worker(once=args.once, worker_id=args.worker_id, stop_event=stop_event)
+        run_worker(
+            once=args.once,
+            worker_id=args.worker_id,
+            stop_event=stop_event,
+            concurrency=settings.processing_job_concurrency,
+        )
     except ReadinessError as exc:
         logger.error("Document worker readiness check failed: %s", exc)
         raise SystemExit(1) from None

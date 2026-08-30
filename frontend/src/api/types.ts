@@ -1313,6 +1313,7 @@ export interface Misconception {
 export interface ReverseQuizRequest {
   topic: string;
   explanation: string;
+  question?: string | null;
 }
 
 export interface ReverseQuizResponse {
@@ -1322,6 +1323,17 @@ export interface ReverseQuizResponse {
   explanation: string;
   feedback: string;
   misconceptions: Misconception[];
+  question?: string | null;
+}
+
+export interface ReverseQuizQuestion {
+  topic: string;
+  question: string;
+}
+
+export interface ReverseQuizQuestionsResponse {
+  course_id: number;
+  questions: ReverseQuizQuestion[];
 }
 
 export type AdPlacement = 'sidebar' | 'footer' | 'dashboard' | 'landing';

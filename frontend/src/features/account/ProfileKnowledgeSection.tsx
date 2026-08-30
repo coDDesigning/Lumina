@@ -302,7 +302,7 @@ export function ProfileKnowledgeSection() {
               ref={fileInputRef}
               type="file"
               className={styles.fileInput}
-              accept=".pdf,.txt,.md,.markdown"
+              accept=".pdf,.txt,.md,.markdown,.png,.jpg,.jpeg"
               onChange={(e) => void handleFileUpload(e)}
             />
             <Button

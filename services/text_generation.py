@@ -26,6 +26,7 @@ from backend.app.config import (
     DEFAULT_OPENAI_MODEL,
     settings,
 )
+from services.ollama import resolve_ollama_base_url
 from schemas.ai_usage import ErrorCategory
 from utils.exceptions import BadRequestException
 
@@ -554,8 +555,6 @@ class OllamaTextGenerationProvider:
         model: str | None = None,
         base_url: str | None = None,
     ) -> None:
-        from services.embeddings import resolve_ollama_base_url
-
         self._base_url = resolve_ollama_base_url(base_url or settings.ollama_base_url)
         self._model = model or settings.ollama_model
         self._timeout_seconds = (

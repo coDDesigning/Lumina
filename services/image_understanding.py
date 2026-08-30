@@ -21,6 +21,7 @@ from backend.app.config import (
 )
 from schemas.prompt_context import PromptContext
 from schemas.prompt_template import PromptTemplateError
+from services.ollama import resolve_ollama_base_url
 from services.document_pipeline import (
     DisabledImageUnderstandingProvider,
     ImageUnderstandingProvider,
@@ -210,8 +211,6 @@ class OllamaImageUnderstandingProvider:
         client: httpx.Client | None = None,
         prompt_context: PromptContext | None = None,
     ) -> None:
-        from services.embeddings import resolve_ollama_base_url
-
         self._base_url = resolve_ollama_base_url(base_url or settings.ollama_base_url)
         self._model = model or self.MODEL
         self._timeout_seconds = (

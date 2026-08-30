@@ -213,6 +213,104 @@ def test_reverse_quiz_adds_misconceptions_to_weak_topics(upload_api) -> None:
     assert "Photosynthesis (Reverse Quiz)" in payload["weak_topics"]
 
 
+def test_reverse_quiz_endpoint_accepts_a_picked_question(
+    upload_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with upload_api.session_factory() as session:
+        seed_ready_material(
+            session,
+            upload_api.course_id,
+            ["Photosynthesis converts light energy into glucose inside chloroplasts."],
+            file_hash="c" * 64,
+            retrieval_env=retrieval_env,
+        )
+
+    stub = _EvalStub({"feedback": "Close, but incomplete.", "misconceptions": []})
+    _install_provider(monkeypatch, stub)
+
+    question = "Explain how chloroplasts turn light into chemical energy."
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/reverse-quiz",
+        json={
+            "topic": "Photosynthesis",
+            "question": question,
+            "explanation": "Chloroplasts use light to make sugar.",
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["question"] == question
+    assert question in stub.prompts[0]
+
+
+def test_reverse_quiz_questions_endpoint_drafts_from_sources(
+    upload_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with upload_api.session_factory() as session:
+        seed_ready_material(
+            session,
+            upload_api.course_id,
+            [
+                "Insertion sort builds a sorted prefix by shifting larger elements right.",
+                "Its worst-case running time is quadratic in the number of elements.",
+            ],
+            file_hash="d" * 64,
+            retrieval_env=retrieval_env,
+        )
+
+    stub = _EvalStub(
+        {
+            "questions": [
+                {
+                    "topic": "Insertion sort mechanism",
+                    "question": "Explain in your own words how insertion sort places each new element.",
+                },
+                {
+                    "topic": "Time complexity",
+                    "question": "Describe why insertion sort is quadratic in the worst case.",
+                },
+                # duplicate is dropped
+                {
+                    "topic": "Time complexity",
+                    "question": "Describe why insertion sort is quadratic in the worst case.",
+                },
+            ]
+        }
+    )
+    _install_provider(monkeypatch, stub)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/reverse-quiz/questions",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["course_id"] == upload_api.course_id
+    assert len(data["questions"]) == 2
+    assert data["questions"][0]["topic"] == "Insertion sort mechanism"
+    assert all(q["question"] for q in data["questions"])
+
+
+def test_reverse_quiz_questions_endpoint_empty_without_material(
+    upload_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stub = _EvalStub({"questions": []})
+    _install_provider(monkeypatch, stub)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/reverse-quiz/questions",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["questions"] == []
+    # no indexed material -> the provider is never asked
+    assert stub.prompts == []
+
+
 def test_reverse_quiz_omits_mastered_topics_from_weak_topics(upload_api) -> None:
     content = {
         "id": 2,

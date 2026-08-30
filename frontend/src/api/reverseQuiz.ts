@@ -1,5 +1,10 @@
 import { apiClient, unwrapData } from './client';
-import { BaseResponse, ReverseQuizRequest, ReverseQuizResponse } from './types';
+import {
+  BaseResponse,
+  ReverseQuizQuestionsResponse,
+  ReverseQuizRequest,
+  ReverseQuizResponse,
+} from './types';
 
 export async function generateReverseQuiz(
   courseId: number,
@@ -12,6 +17,18 @@ export async function generateReverseQuiz(
     { signal }
   );
   return unwrapData(response, 'Reverse Quiz');
+}
+
+export async function suggestReverseQuizQuestions(
+  courseId: number,
+  signal?: AbortSignal
+): Promise<ReverseQuizQuestionsResponse> {
+  const response = await apiClient.post<BaseResponse<ReverseQuizQuestionsResponse>>(
+    `/courses/${courseId}/reverse-quiz/questions`,
+    undefined,
+    { signal }
+  );
+  return unwrapData(response, 'Reverse Quiz questions');
 }
 
 export async function getReverseQuizzes(

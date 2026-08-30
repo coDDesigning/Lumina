@@ -6,13 +6,17 @@ from backend.app.config import settings
 from backend.app.models import Course, User
 from services.generated_output import GeneratedOutputService
 from schemas.ai_usage import ErrorCategory, GenerationType
-from schemas.quiz import OpenEndedAnswer
-from schemas.quiz_attempt import OpenEndedGradingResponse
-from schemas.reverse_quiz import ReverseQuizRequest, ReverseQuizResponse, Misconception
+from schemas.reverse_quiz import (
+    Misconception,
+    ReverseQuizEvaluation,
+    ReverseQuizRequest,
+    ReverseQuizResponse,
+)
 from services.ai_usage_logger import AiUsageLogger
 from services.citations import sanitize_citation_markers
 from services.prompt_context import resolve_prompt_context
-from services.quiz_grading import QuizGradingService
+from services.prompt_loader import PromptLoader
+from schemas.prompt_context import PromptContext
 from services.retrieval_material import (
     RetrievedCourseMaterial,
     load_retrieved_material,
@@ -28,6 +32,32 @@ REVERSE_QUIZ_MAX_CHUNKS = 15
 
 
 class ReverseQuizService:
+    PROMPT_TEMPLATE_NAME = "reverse_quiz"
+
+    @classmethod
+    def build_prompt(
+        cls,
+        *,
+        topic: str,
+        explanation: str,
+        course_material: str,
+        context: PromptContext,
+    ) -> str:
+        material_text = (
+            course_material
+            if course_material.strip()
+            else "(No specific course material retrieved. Rely on general academic knowledge of the topic.)"
+        )
+        return PromptLoader.render(
+            cls.PROMPT_TEMPLATE_NAME,
+            {
+                **context.as_variables(),
+                "TOPIC": topic,
+                "STUDENT_EXPLANATION": explanation,
+                "COURSE_MATERIAL": material_text,
+            },
+        )
+
     @classmethod
     def generate(
         cls,
@@ -52,7 +82,7 @@ class ReverseQuizService:
                 course_id,
                 query=query,
                 limit=REVERSE_QUIZ_MAX_CHUNKS,
-                min_similarity=settings.RETRIEVAL_MIN_SIMILARITY,
+                min_similarity=settings.retrieval_min_similarity,
                 max_characters=REVERSE_QUIZ_MAX_CHARS,
                 include_citations=True,
                 provider=None,  # uses default embeddings
@@ -69,21 +99,13 @@ class ReverseQuizService:
                 citations=(),
             )
 
-        # 2. Build the "grading" request by using the QuizGradingService prompt
-        # We construct a virtual open-ended answer where the reference answer is the retrieved material.
-        class VirtualQuestion:
-            question_text = f"Topic: {request.topic}"
-
-        question = VirtualQuestion()
-        answer = OpenEndedAnswer(
-            reference_answer=material.text
-            if material.text
-            else "(No specific course material retrieved. Rely on general knowledge of the topic.)"
-        )
-
-        pending = [(0, question, request.explanation, answer)]
         prompt_context = resolve_prompt_context(db, course=course, user_id=user.id)
-        prompt = QuizGradingService.build_prompt(pending, context=prompt_context)
+        prompt = cls.build_prompt(
+            topic=request.topic,
+            explanation=request.explanation,
+            course_material=material.text,
+            context=prompt_context,
+        )
 
         metadata = None
         try:
@@ -96,7 +118,7 @@ class ReverseQuizService:
                 db,
                 user_id=user.id,
                 course_id=course_id,
-                generation_type=GenerationType.QUIZ_GRADING,
+                generation_type=GenerationType.REVERSE_QUIZ,
                 error_category=getattr(
                     exc, "error_category", ErrorCategory.PROVIDER_ERROR
                 ),
@@ -104,27 +126,27 @@ class ReverseQuizService:
             raise
 
         try:
-            verdicts = OpenEndedGradingResponse.model_validate(result)
+            evaluation = ReverseQuizEvaluation.model_validate(result)
         except ValidationError:
             AiUsageLogger.log_failure(
                 db,
                 user_id=user.id,
                 course_id=course_id,
-                generation_type=GenerationType.QUIZ_GRADING,
+                generation_type=GenerationType.REVERSE_QUIZ,
                 error_category=ErrorCategory.INVALID_STRUCTURE,
                 latency_ms=metadata.latency_ms if metadata else None,
             )
-            raise ValueError("Provider returned an invalid grading structure")
-
-        verdict = verdicts.verdicts[0]
+            raise ValueError(
+                "Provider returned an invalid reverse quiz evaluation structure"
+            )
 
         # 3. Apply citations to feedback and misconception details
         feedback_cited = sanitize_citation_markers(
-            verdict.feedback, material.citation_map
+            evaluation.feedback, material.citation_map
         )
 
         misconceptions = []
-        for m in verdict.misconceptions:
+        for m in evaluation.misconceptions:
             m_cited = sanitize_citation_markers(m.detail, material.citation_map)
             misconceptions.append(
                 Misconception(concept=m.concept, status=m.status, detail=m_cited.text)
@@ -134,7 +156,7 @@ class ReverseQuizService:
             db,
             user_id=user.id,
             course_id=course_id,
-            generation_type=GenerationType.QUIZ_GRADING,
+            generation_type=GenerationType.REVERSE_QUIZ,
             metadata=metadata,
         )
 
@@ -148,11 +170,19 @@ class ReverseQuizService:
             misconceptions=misconceptions,
         )
 
+        model_used = (
+            metadata.model
+            if metadata
+            else getattr(provider, "effective_model", None)
+            or getattr(provider, "model", None)
+            or provider.name
+        )
+
         output = GeneratedOutputService.record(
             db,
             course_id=course_id,
             user_id=user.id,
-            model_used=provider.name,
+            model_used=model_used,
             output_type="reverse_quiz",
             content=response_model.model_dump_json(),
             commit=False,

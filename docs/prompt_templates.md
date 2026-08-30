@@ -2,7 +2,7 @@
 
 ## Overview
 
-Lumina uses a versioned, structured, and learner-aware prompt template architecture for every AI prompt it sends. The eleven templates under `app/prompts/` cover study guides, quizzes, exam-style questions, quiz grading, flashcards, AI tutoring, course Q&A, prompt generation, image description, visual content understanding, and OCR cleanup. The only model-facing text outside this directory is the small set of composed fragments the templates are built from: the shared blocks in `services/prompt_components.py`, the learner-context directives in `schemas/prompt_context.py`, and the profile-context wrapper in `services/profile_knowledge.py`. Those are scanned for neutrality alongside the templates themselves (see **Prompt neutrality policy**), so a semantic prompt written inline anywhere in production fails CI.
+Lumina uses a versioned, structured, and learner-aware prompt template architecture for every AI prompt it sends. The templates under `app/prompts/` cover study guides, quizzes, exam-style questions, quiz grading, reverse-quiz explanation analysis, flashcards, AI tutoring, course Q&A, prompt generation, image description, visual content understanding, and OCR cleanup. The only model-facing text outside this directory is the small set of composed fragments the templates are built from: the shared blocks in `services/prompt_components.py`, the learner-context directives in `schemas/prompt_context.py`, and the profile-context wrapper in `services/profile_knowledge.py`. Those are scanned for neutrality alongside the templates themselves (see **Prompt neutrality policy**), so a semantic prompt written inline anywhere in production fails CI.
 
 Every template carries a `status`. Most are `active` and owned by a feature service. Two — `ocr_cleanup` and `visual_content` — are **explicitly deferred**: declared, validated, and tested, but refused by `PromptLoader.render` so they cannot reach a provider. See **Deferred templates** below for the decision and the reason behind each one. `image_description` is the one vision template that is wired, and `services/image_understanding.py` renders it for every extracted visual.
 
@@ -57,6 +57,7 @@ All templates reside in `app/prompts/<task_name>.json`:
 | `exam_mock_exam` | `2.0.0` | active | `services/exam_course_artifacts.py` | Timed mock examination assembled to calculated per-topic and per-type quotas | `QuizGenerationResponse` |
 | `exam_review_sheet` | `1.0.0` | active | `services/exam_course_artifacts.py` | Last-minute review sheet across a whole exam plan | `GeneratedExamReviewSheet` |
 | `quiz_grading` | `2.0.0` | active | `services/quiz_grading.py` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
+| `reverse_quiz` | `1.0.0` | active | `services/reverse_quiz.py` | Grades a student's own-words explanation of a topic and flags misconceptions and missing points | `ReverseQuizEvaluation` |
 | `flashcard` | `2.2.0` | active | `services/flashcard.py` | Active recall flashcard decks | `FlashcardGenerationResponse` |
 | `ai_tutor` | `2.3.0` | active | `services/ai_tutor.py` | Hint-first tutoring with stepwise guidance | `AiTutorResponse` |
 | `course_qa` | `2.3.0` | active | `services/course_qa.py` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |

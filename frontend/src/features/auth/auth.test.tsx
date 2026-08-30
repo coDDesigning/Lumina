@@ -224,6 +224,8 @@ describe('RegisterPage', () => {
     // The account exists and the session is real; only the credits are held back.
     expect(login).toHaveBeenCalledWith('token-xyz');
     expect(screen.queryByRole('heading', { name: 'Courses' })).not.toBeInTheDocument();
+    // No bypass: the only way on is the emailed link.
+    expect(screen.queryByRole('link', { name: /skip|look around/i })).not.toBeInTheDocument();
   });
 
   it('asks for another link without making the user retype their address', async () => {

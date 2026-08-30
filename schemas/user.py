@@ -1,3 +1,4 @@
+import re
 from enum import Enum
 
 from pydantic import (
@@ -121,6 +122,42 @@ class UserApiKeysUpdateRequest(BaseModel):
     openai_api_key: str | None = Field(None, max_length=512)
     gemini_api_key: str | None = Field(None, max_length=512)
     anthropic_api_key: str | None = Field(None, max_length=512)
+
+    @field_validator("openai_api_key")
+    @classmethod
+    def validate_openai_key(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        if not stripped:
+            return ""
+        if not stripped.startswith("sk-") or not re.match(r"^sk-[A-Za-z0-9_\-]+$", stripped):
+            raise ValueError("OpenAI API key must start with 'sk-'.")
+        return stripped
+
+    @field_validator("anthropic_api_key")
+    @classmethod
+    def validate_anthropic_key(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        if not stripped:
+            return ""
+        if not stripped.startswith("sk-ant-") or not re.match(r"^sk-ant-[A-Za-z0-9_\-]+$", stripped):
+            raise ValueError("Anthropic API key must start with 'sk-ant-'.")
+        return stripped
+
+    @field_validator("gemini_api_key")
+    @classmethod
+    def validate_gemini_key(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        if not stripped:
+            return ""
+        if not re.match(r"^[A-Za-z0-9_\-]+$", stripped):
+            raise ValueError("Gemini API key contains invalid characters.")
+        return stripped
 
 
 class UserApiKeysResponse(BaseModel):

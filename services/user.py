@@ -273,7 +273,7 @@ class UserService:
 
         pref_model = update_dict.get("preferred_model")
         if pref_model is not None:
-            available_model_ids = {m["id"] for m in get_available_models()}
+            available_model_ids = {m["id"] for m in get_available_models(user=user)}
             if pref_model not in available_model_ids:
                 raise BadRequestException(f"Unsupported AI model: {pref_model}")
 

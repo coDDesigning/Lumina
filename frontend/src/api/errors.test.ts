@@ -281,6 +281,21 @@ describe('error description helpers', () => {
       );
     });
 
+    it('describes personal key invalid errors clearly with server message', () => {
+      const described = describeGenerationError(
+        new APIError(
+          401,
+          { detail: 'Your personal OpenAI API key is invalid or expired.' },
+          'personal_key_invalid',
+        ),
+        'Generation failed',
+      );
+
+      expect(described.title).toBe('Invalid API key');
+      expect(described.message).toBe('Your personal OpenAI API key is invalid or expired.');
+      expect(described.retryable).toBe(false);
+    });
+
     it('keeps whatever the server said for a code it has never seen', () => {
       const described = describeGenerationError(
         new APIError(400, { detail: 'Course has no ready material.' }, 'brand_new_code'),

@@ -39,6 +39,11 @@ export default function AccountLayout() {
     navigate('/login');
   }
 
+  const isAdmin = user?.role?.toLowerCase() === 'admin';
+  const visibleSections = SECTIONS.filter(
+    (section) => section.to !== '/account/api-keys' || isAdmin,
+  );
+
   return (
     <div className={styles.page}>
       <PageHeader crumbs={[{ label: 'Account' }]} />
@@ -63,7 +68,7 @@ export default function AccountLayout() {
         </Card>
 
         <nav className={styles.sectionNav} aria-label="Account sections">
-          {SECTIONS.map((section) => (
+          {visibleSections.map((section) => (
             <NavLink
               key={section.to}
               to={section.to}

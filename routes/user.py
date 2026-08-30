@@ -24,7 +24,7 @@ from services.credits import (
     next_grant_at,
 )
 from services.user import UserService
-from utils.deps import get_current_user
+from utils.deps import get_current_admin, get_current_user
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
 
@@ -147,10 +147,10 @@ def list_my_credit_transactions(
 
 @router.get("/me/api-keys", response_model=BaseResponse[UserApiKeysResponse])
 def get_my_api_keys(
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    """Retrieve masked BYOK API keys for the authenticated user."""
+    """Retrieve masked BYOK API keys for the authenticated administrator."""
     keys = UserService.get_user_api_keys(db, current_user.id)
     return BaseResponse(
         success=True,
@@ -162,10 +162,10 @@ def get_my_api_keys(
 @router.put("/me/api-keys", response_model=BaseResponse[UserApiKeysResponse])
 def update_my_api_keys(
     payload: UserApiKeysUpdateRequest,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    """Save, update, or clear BYOK API keys for the authenticated user."""
+    """Save, update, or clear BYOK API keys for the authenticated administrator."""
     keys = UserService.update_user_api_keys(db, current_user.id, payload)
     return BaseResponse(
         success=True,

@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { Navigate } from 'react-router-dom';
 import { Eye, EyeOff, KeyRound, Sparkles, Trash2 } from 'lucide-react';
 import { describeError } from '@/api/errors';
 import { queryKeys } from '@/api/queryKeys';
 import { userAPI } from '@/api/user';
 import type { UserApiKeys } from '@/api/types';
+import { useAuth } from '@/context/AuthContext';
 import { queryCache } from '@/lib/query/cache';
 import { useQuery } from '@/lib/query/useQuery';
 import { Alert } from '@/ui/Alert';
@@ -18,6 +20,7 @@ import { useToast } from '@/ui/toastContext';
 import styles from './AccountPage.module.css';
 
 export default function AccountApiKeysPage() {
+  const { user } = useAuth();
   const { showToast } = useToast();
 
   const [openaiKey, setOpenaiKey] = useState('');
@@ -42,6 +45,10 @@ export default function AccountApiKeysPage() {
   const isLoading = apiKeysQuery.status === 'pending' || apiKeysQuery.status === 'idle';
   const queryError = apiKeysQuery.error?.message ?? null;
 
+  if (user && user.role?.toLowerCase() !== 'admin') {
+    return <Navigate to="/account" replace />;
+  }
+
   const hasAnyConfiguredKey = Boolean(
     data?.has_openai_key || data?.has_gemini_key || data?.has_anthropic_key,
   );
@@ -54,6 +61,32 @@ export default function AccountApiKeysPage() {
 
     setError(null);
     setNotice(null);
+
+    const trimmedOpenai = openaiKey.trim();
+    const trimmedGemini = geminiKey.trim();
+    const trimmedAnthropic = anthropicKey.trim();
+
+    if (trimmedOpenai !== '') {
+      if (!trimmedOpenai.startsWith('sk-') || !/^sk-[A-Za-z0-9_-]+$/.test(trimmedOpenai)) {
+        setError("OpenAI API key must start with 'sk-'.");
+        return;
+      }
+    }
+
+    if (trimmedAnthropic !== '') {
+      if (!trimmedAnthropic.startsWith('sk-ant-') || !/^sk-ant-[A-Za-z0-9_-]+$/.test(trimmedAnthropic)) {
+        setError("Anthropic API key must start with 'sk-ant-'.");
+        return;
+      }
+    }
+
+    if (trimmedGemini !== '') {
+      if (!/^[A-Za-z0-9_-]+$/.test(trimmedGemini)) {
+        setError('Gemini API key contains invalid characters.');
+        return;
+      }
+    }
+
     setStatus('submitting');
 
     try {
@@ -63,18 +96,19 @@ export default function AccountApiKeysPage() {
         anthropic_api_key?: string;
       } = {};
 
-      if (openaiKey.trim() !== '') {
-        payload.openai_api_key = openaiKey.trim();
+      if (trimmedOpenai !== '') {
+        payload.openai_api_key = trimmedOpenai;
       }
-      if (geminiKey.trim() !== '') {
-        payload.gemini_api_key = geminiKey.trim();
+      if (trimmedGemini !== '') {
+        payload.gemini_api_key = trimmedGemini;
       }
-      if (anthropicKey.trim() !== '') {
-        payload.anthropic_api_key = anthropicKey.trim();
+      if (trimmedAnthropic !== '') {
+        payload.anthropic_api_key = trimmedAnthropic;
       }
 
       await userAPI.updateApiKeys(payload);
       void queryCache.invalidate(queryKeys.userApiKeys());
+      void queryCache.invalidate(queryKeys.models());
 
       setOpenaiKey('');
       setGeminiKey('');
@@ -103,6 +137,7 @@ export default function AccountApiKeysPage() {
       };
       await userAPI.updateApiKeys(payload);
       void queryCache.invalidate(queryKeys.userApiKeys());
+      void queryCache.invalidate(queryKeys.models());
 
       if (provider === 'openai') setOpenaiKey('');
       if (provider === 'gemini') setGeminiKey('');
@@ -135,6 +170,7 @@ export default function AccountApiKeysPage() {
         anthropic_api_key: '',
       });
       void queryCache.invalidate(queryKeys.userApiKeys());
+      void queryCache.invalidate(queryKeys.models());
 
       setOpenaiKey('');
       setGeminiKey('');

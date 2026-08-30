@@ -611,6 +611,7 @@ def test_route_inventory_generation_rate_limiting() -> None:
         "/api/courses/{course_id}/qa",
         "/api/prompt-generator",
         "/api/courses/{course_id}/reverse-quiz",
+        "/api/courses/{course_id}/reverse-quiz/questions",
         "/api/courses/{course_id}/exam-roadmap",
         "/api/courses/{course_id}/exam-mode/analysis",
         "/api/courses/{course_id}/exam-mode/analysis/rescan",

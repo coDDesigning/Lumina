@@ -700,6 +700,7 @@ image model it cannot send an image to.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `IMAGE_UNDERSTANDING_ENABLED` | `true` | Set `false` to skip visual analysis entirely. Describing a visual is a paid call per image, so a deployment can decline it without giving up the vendor that answers generation. |
 | `IMAGE_UNDERSTANDING_TIMEOUT_SECONDS` | `30` | Per-visual deadline, 1-300 seconds. |
 | `IMAGE_UNDERSTANDING_MAX_BYTES` | `10485760` | Maximum accepted rendered image size (10 MB). |
 

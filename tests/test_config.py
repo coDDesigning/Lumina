@@ -126,6 +126,7 @@ CONFIGURATION_KEYS = (
     "RETRIEVAL_MIN_SIMILARITY",
     "EMBEDDING_BATCH_SIZE",
     "EMBEDDING_MODEL_CACHE_DIRECTORY",
+    "IMAGE_UNDERSTANDING_ENABLED",
     "IMAGE_UNDERSTANDING_TIMEOUT_SECONDS",
     "IMAGE_UNDERSTANDING_MAX_BYTES",
     "VECTOR_BACKEND",
@@ -1077,6 +1078,19 @@ def test_vision_needs_a_vendor_we_can_send_an_image_to(
 
     assert any(entry["vision"] for entry in loaded.ai_model_catalog["openai"])
     assert loaded.ai_vision_model is None
+
+
+def test_vision_can_be_declined_without_dropping_the_vendor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only(monkeypatch, GEMINI_API_KEY="k")
+    monkeypatch.setenv("IMAGE_UNDERSTANDING_ENABLED", "false")
+
+    loaded = load_settings()
+
+    assert loaded.ai_vision_model is None
+    assert loaded.ai_available_vendors == ("gemini",)
+    assert loaded.ai_default_model.startswith("gemini:")
 
 
 def test_vision_resolves_to_a_vendor_with_an_implementation(

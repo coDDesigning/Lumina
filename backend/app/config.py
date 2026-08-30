@@ -81,6 +81,7 @@ IMAGE_PROVIDER_NONE = "none"
 # Vendors with an ImageUnderstandingProvider implementation. A catalog entry
 # may advertise vision for a vendor we cannot send an image to.
 IMPLEMENTED_IMAGE_VENDORS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
+DEFAULT_IMAGE_UNDERSTANDING_ENABLED = True
 DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS = 30
 DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES = 10 * 1024 * 1024
 
@@ -584,7 +585,14 @@ def load_settings() -> Settings:
             "Ollama server."
         )
     ai_default_model = _ai_default_model_setting(ai_model_catalog, ai_available_vendors)
-    ai_vision_model = _ai_vision_model(ai_model_catalog, ai_available_vendors)
+    ai_vision_model = _ai_vision_model(
+        ai_model_catalog,
+        ai_available_vendors,
+        enabled=_boolean_setting(
+            "IMAGE_UNDERSTANDING_ENABLED",
+            default=DEFAULT_IMAGE_UNDERSTANDING_ENABLED,
+        ),
+    )
     ai_pricing_version, ai_model_cost_rates = _ai_model_cost_rates_setting()
 
     max_upload_size_bytes = _positive_integer_setting(
@@ -1477,7 +1485,13 @@ def _ai_default_model_setting(
 def _ai_vision_model(
     catalog: dict[str, list[dict[str, object]]],
     available_vendors: tuple[str, ...],
+    *,
+    enabled: bool,
 ) -> str | None:
+    # Describing an image is a paid call per visual, so a deployment must be
+    # able to decline it without giving up the vendor that would answer.
+    if not enabled:
+        return None
     for vendor in available_vendors:
         if vendor not in IMPLEMENTED_IMAGE_VENDORS:
             continue

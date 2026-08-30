@@ -18,6 +18,14 @@ NGINX_DIRECTORY = Path(__file__).resolve().parents[1] / "ops" / "nginx"
 DEFAULT_CONF = NGINX_DIRECTORY / "default.conf"
 PROXY_CONF = NGINX_DIRECTORY / "proxy-api.conf"
 HEADERS_CONF = NGINX_DIRECTORY / "security-headers.conf"
+TERRAFORM_FRONTEND_MAIN = (
+    Path(__file__).resolve().parents[1]
+    / "terraform"
+    / "modules"
+    / "frontend"
+    / "main.tf"
+)
+TLS_ONLY_DIRECTIVES = {"upgrade-insecure-requests"}
 
 
 def _text(path: Path) -> str:
@@ -102,23 +110,55 @@ def test_the_browser_policy_omits_the_directives_that_assume_tls() -> None:
     assert "Strict-Transport-Security" not in body
 
 
+def _directives(policy: str) -> dict[str, set[str]]:
+    parsed: dict[str, set[str]] = {}
+    for chunk in policy.split(";"):
+        sources = chunk.split()
+        if sources:
+            parsed[sources[0]] = set(sources[1:])
+    return parsed
+
+
+def _self_hosted_policy() -> str:
+    match = re.search(
+        r'add_header\s+Content-Security-Policy\s+"([^"]+)"', _uncommented(HEADERS_CONF)
+    )
+    assert match, "security-headers.conf declares no Content-Security-Policy"
+    return match.group(1)
+
+
+def _hosted_policy() -> str:
+    body = "\n".join(
+        line.split("#", 1)[0]
+        for line in TERRAFORM_FRONTEND_MAIN.read_text(encoding="utf-8").splitlines()
+    )
+    resolved = dict(re.findall(r'^  (\w+)\s*=\s*"([^"]*)"\s*$', body, re.MULTILINE))
+    resolved["connect_src"] = "'self'"
+
+    block = body.split('content_security_policy = join(" ", [', 1)[1].split("])", 1)[0]
+    policy = " ".join(re.findall(r'"([^"]+)"', block))
+    return re.sub(r"\$\{local\.(\w+)\}", lambda m: resolved[m.group(1)], policy)
+
+
 def test_the_browser_policy_matches_the_hosted_distribution() -> None:
-    body = _uncommented(HEADERS_CONF)
-    for directive in (
-        "default-src 'self'",
-        "base-uri 'self'",
-        "connect-src 'self'",
-        "font-src 'self'",
-        "form-action 'self'",
-        "frame-ancestors 'none'",
-        "img-src 'self' data: blob:",
-        "object-src 'none'",
-        "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
-    ):
-        assert directive in body
-    assert "nosniff" in body
-    assert "DENY" in body
+    self_hosted = _directives(_self_hosted_policy())
+    hosted = _directives(_hosted_policy())
+
+    assert set(hosted) - set(self_hosted) == TLS_ONLY_DIRECTIVES
+    assert set(self_hosted) - set(hosted) == set()
+    for directive, sources in self_hosted.items():
+        assert sources == hosted[directive], directive
+
+    headers = _uncommented(HEADERS_CONF)
+    assert "nosniff" in headers
+    assert "DENY" in headers
+
+
+def test_the_hosted_policy_admits_the_adsense_loader() -> None:
+    hosted = _directives(_hosted_policy())
+    assert "https://pagead2.googlesyndication.com" in hosted["script-src"]
+    assert "https://tpc.googlesyndication.com" in hosted["frame-src"]
+    assert "https://googleads.g.doubleclick.net" in hosted["frame-src"]
 
 
 def test_upstream_resolution_is_deferred_so_a_recreated_api_is_followed() -> None:

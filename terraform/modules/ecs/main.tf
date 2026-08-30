@@ -82,6 +82,9 @@ locals {
     { name = "SMTP_PORT", value = tostring(var.smtp_port) },
     { name = "SMTP_USERNAME", value = var.smtp_username },
     { name = "SMTP_USE_TLS", value = tostring(var.smtp_use_tls) },
+    { name = "ENABLE_HOSTED_ADS", value = tostring(var.enable_hosted_ads) },
+    { name = "HOSTED_ADS_PROVIDER", value = var.hosted_ads_provider },
+    { name = "HOSTED_ADS_PUBLISHER_ID", value = var.hosted_ads_publisher_id },
     # Trust only the ALB (VPC CIDR) for forwarded headers
     { name = "FORWARDED_ALLOW_IPS", value = var.vpc_cidr_block },
   ]

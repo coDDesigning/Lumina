@@ -3,14 +3,12 @@
 import pytest
 from sqlalchemy import select
 
-from backend.app.config import settings
 from backend.app.models import Role as RoleModel
 from backend.app.models import User
 from utils.crypto import (
     decrypt_value,
     derive_fernet_key,
     encrypt_value,
-    get_fernet,
 )
 
 

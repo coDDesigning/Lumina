@@ -32,7 +32,9 @@ def resolve_ollama_base_url(url_str: str | None = None) -> str:
     raw = (
         url_str
         if url_str is not None
-        else (getattr(settings, "ollama_base_url", None) or os.getenv("OLLAMA_BASE_URL"))
+        else (
+            getattr(settings, "ollama_base_url", None) or os.getenv("OLLAMA_BASE_URL")
+        )
     )
     if not raw or not isinstance(raw, str) or not raw.strip():
         return default_url

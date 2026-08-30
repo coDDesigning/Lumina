@@ -603,12 +603,17 @@ def test_transient_error_classification() -> None:
         import openai
 
         openai_conn_err = openai.APIConnectionError(request=req)
-        openai_status_500 = openai.APIStatusError("err", response=httpx.Response(500, request=req), body=None)
+        openai_status_500 = openai.APIStatusError(
+            "err", response=httpx.Response(500, request=req), body=None
+        )
     except (ImportError, AttributeError):
+
         class _OpenAIConnectionError(Exception):
             pass
+
         class _OpenAIStatusError(Exception):
             status_code = 500
+
         openai_conn_err = _OpenAIConnectionError("connection error")
         openai_status_500 = _OpenAIStatusError("server error")
 
@@ -616,12 +621,17 @@ def test_transient_error_classification() -> None:
         import anthropic
 
         anthropic_conn_err = anthropic.APIConnectionError(request=req)
-        anthropic_status_503 = anthropic.APIStatusError("err", response=httpx.Response(503, request=req), body=None)
+        anthropic_status_503 = anthropic.APIStatusError(
+            "err", response=httpx.Response(503, request=req), body=None
+        )
     except (ImportError, AttributeError):
+
         class _AnthropicConnectionError(Exception):
             pass
+
         class _AnthropicStatusError(Exception):
             status_code = 503
+
         anthropic_conn_err = _AnthropicConnectionError("connection error")
         anthropic_status_503 = _AnthropicStatusError("service unavailable")
 
@@ -672,16 +682,23 @@ def test_transient_error_classification() -> None:
 
     try:
         assert not is_transient_generation_error(
-            openai.APIStatusError("bad", response=httpx.Response(400, request=req), body=None)
+            openai.APIStatusError(
+                "bad", response=httpx.Response(400, request=req), body=None
+            )
         )
         assert not is_transient_generation_error(
-            anthropic.APIStatusError("unauth", response=httpx.Response(401, request=req), body=None)
+            anthropic.APIStatusError(
+                "unauth", response=httpx.Response(401, request=req), body=None
+            )
         )
     except (ImportError, AttributeError, NameError, UnboundLocalError):
+
         class _Status400(Exception):
             status_code = 400
+
         class _Status401(Exception):
             status_code = 401
+
         assert not is_transient_generation_error(_Status400("bad"))
         assert not is_transient_generation_error(_Status401("unauth"))
 
@@ -1099,21 +1116,32 @@ def test_openai_text_generation_provider_errors() -> None:
         import openai
 
         timeout_exc = openai.APITimeoutError(request=req)
-        ratelimit_exc = openai.RateLimitError("quota", response=httpx.Response(429, request=req), body=None)
+        ratelimit_exc = openai.RateLimitError(
+            "quota", response=httpx.Response(429, request=req), body=None
+        )
         conn_exc = openai.APIConnectionError(request=req)
-        auth_exc = openai.APIStatusError("unauth", response=httpx.Response(401, request=req), body=None)
-        server_exc = openai.APIStatusError("server error", response=httpx.Response(500, request=req), body=None)
+        auth_exc = openai.APIStatusError(
+            "unauth", response=httpx.Response(401, request=req), body=None
+        )
+        server_exc = openai.APIStatusError(
+            "server error", response=httpx.Response(500, request=req), body=None
+        )
     except (ImportError, AttributeError):
+
         class _APITimeoutError(Exception):
             pass
+
         class _RateLimitError(Exception):
             status_code = 429
+
         class _APIConnectionError(Exception):
             pass
+
         class _APIStatusError(Exception):
             def __init__(self, msg, status_code):
                 super().__init__(msg)
                 self.status_code = status_code
+
         timeout_exc = _APITimeoutError("timeout")
         ratelimit_exc = _RateLimitError("rate limit")
         conn_exc = _APIConnectionError("connection error")
@@ -1244,21 +1272,32 @@ def test_claude_text_generation_provider_errors() -> None:
         import anthropic
 
         timeout_exc = anthropic.APITimeoutError(request=req)
-        ratelimit_exc = anthropic.RateLimitError("quota", response=httpx.Response(429, request=req), body=None)
+        ratelimit_exc = anthropic.RateLimitError(
+            "quota", response=httpx.Response(429, request=req), body=None
+        )
         conn_exc = anthropic.APIConnectionError(request=req)
-        auth_exc = anthropic.APIStatusError("unauth", response=httpx.Response(401, request=req), body=None)
-        server_exc = anthropic.APIStatusError("server error", response=httpx.Response(500, request=req), body=None)
+        auth_exc = anthropic.APIStatusError(
+            "unauth", response=httpx.Response(401, request=req), body=None
+        )
+        server_exc = anthropic.APIStatusError(
+            "server error", response=httpx.Response(500, request=req), body=None
+        )
     except (ImportError, AttributeError):
+
         class _APITimeoutError(Exception):
             pass
+
         class _RateLimitError(Exception):
             status_code = 429
+
         class _APIConnectionError(Exception):
             pass
+
         class _APIStatusError(Exception):
             def __init__(self, msg, status_code):
                 super().__init__(msg)
                 self.status_code = status_code
+
         timeout_exc = _APITimeoutError("timeout")
         ratelimit_exc = _RateLimitError("rate limit")
         conn_exc = _APIConnectionError("connection error")

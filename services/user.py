@@ -360,4 +360,3 @@ class UserService:
         db.commit()
         db.refresh(user)
         return UserService.get_user_api_keys(db, user_id)
-

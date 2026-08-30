@@ -131,7 +131,9 @@ class UserApiKeysUpdateRequest(BaseModel):
         stripped = v.strip()
         if not stripped:
             return ""
-        if not stripped.startswith("sk-") or not re.match(r"^sk-[A-Za-z0-9_\-]+$", stripped):
+        if not stripped.startswith("sk-") or not re.match(
+            r"^sk-[A-Za-z0-9_\-]+$", stripped
+        ):
             raise ValueError("OpenAI API key must start with 'sk-'.")
         return stripped
 
@@ -143,7 +145,9 @@ class UserApiKeysUpdateRequest(BaseModel):
         stripped = v.strip()
         if not stripped:
             return ""
-        if not stripped.startswith("sk-ant-") or not re.match(r"^sk-ant-[A-Za-z0-9_\-]+$", stripped):
+        if not stripped.startswith("sk-ant-") or not re.match(
+            r"^sk-ant-[A-Za-z0-9_\-]+$", stripped
+        ):
             raise ValueError("Anthropic API key must start with 'sk-ant-'.")
         return stripped
 
@@ -169,4 +173,3 @@ class UserApiKeysResponse(BaseModel):
     has_openai_key: bool = False
     has_gemini_key: bool = False
     has_anthropic_key: bool = False
-

@@ -4,15 +4,12 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from backend.app.config import settings
 from backend.app.models import Role as RoleModel, User
 from schemas.user import mask_api_key
 from services.text_generation import (
     GeminiTextGenerationProvider,
-    OpenAITextGenerationProvider,
     PersonalKeyAuthError,
     TextGenerationAuthError,
-    get_available_models,
     get_text_generation_provider,
     resolve_user_api_key,
 )
@@ -43,9 +40,7 @@ def _create_admin_and_login(
         json={"name": "BYOK Admin", "email": email, "password": password},
     )
     with api_context.session_factory() as session:
-        admin_role = session.scalar(
-            select(RoleModel).where(RoleModel.name == "admin")
-        )
+        admin_role = session.scalar(select(RoleModel).where(RoleModel.name == "admin"))
         assert admin_role is not None
         user = session.scalar(select(User).where(User.email == email))
         assert user is not None
@@ -285,6 +280,7 @@ def test_dynamic_ai_models_and_routing_for_admin_keys(api_context, monkeypatch) 
         ollama_repeat_penalty=1.1,
     )
     import services.text_generation as tg
+
     monkeypatch.setattr(tg, "settings", fake_settings)
 
     headers = _create_admin_and_login(
@@ -379,7 +375,9 @@ def test_put_api_keys_strict_format_validation(api_context) -> None:
     assert "Gemini API key contains invalid characters." in str(res_gemini.json())
 
 
-def test_personal_key_auth_error_disables_silent_fallback(api_context, monkeypatch) -> None:
+def test_personal_key_auth_error_disables_silent_fallback(
+    api_context, monkeypatch
+) -> None:
     fake_settings = SimpleNamespace(
         ai_provider="ollama",
         ai_fallback_providers="",
@@ -417,6 +415,7 @@ def test_personal_key_auth_error_disables_silent_fallback(api_context, monkeypat
         ollama_repeat_penalty=1.1,
     )
     import services.text_generation as tg
+
     monkeypatch.setattr(tg, "settings", fake_settings)
 
     headers = _create_admin_and_login(
@@ -455,17 +454,20 @@ def test_personal_key_auth_error_disables_silent_fallback(api_context, monkeypat
             raise TextGenerationAuthError("OpenAI authentication failed.")
 
         monkeypatch.setattr(openai_provider, "generate_text", failing_generate_text)
-        monkeypatch.setattr(openai_provider, "generate_text_with_metadata", failing_generate_text)
+        monkeypatch.setattr(
+            openai_provider, "generate_text_with_metadata", failing_generate_text
+        )
 
         # Assert PersonalKeyAuthError is raised immediately and did NOT silently fallback to Ollama
         with pytest.raises(PersonalKeyAuthError) as exc_info:
             provider.generate_text("Test prompt")
 
-        assert "Your personal OpenAI API key is invalid or expired." in str(exc_info.value)
+        assert "Your personal OpenAI API key is invalid or expired." in str(
+            exc_info.value
+        )
 
         # Verify ai_generation_http_exception creates HTTP 401 with X-Error-Code: personal_key_invalid
         http_exc = ai_generation_http_exception(exc_info.value, feature="study_guide")
         assert http_exc.status_code == 401
         assert http_exc.detail == "Your personal OpenAI API key is invalid or expired."
         assert http_exc.headers.get("X-Error-Code") == "personal_key_invalid"
-

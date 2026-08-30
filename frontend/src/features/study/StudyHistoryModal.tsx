@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Archive, History } from 'lucide-react';
+import { Archive, Check, Copy, Download, History } from 'lucide-react';
 import { generatedOutputsAPI } from '@/api/generatedOutputs';
 import { queryKeys } from '@/api/queryKeys';
 import { useQuery } from '@/lib/query/useQuery';
@@ -8,6 +8,7 @@ import type {
   GeneratedOutputDetail,
   GeneratedOutputSummary,
   RetrievedContext,
+  StudyGuideGenerationResult,
   StudyGuideResponse,
 } from '@/api/types';
 import { Badge } from '@/ui/Badge';
@@ -24,6 +25,7 @@ import { ExamRoadmapView } from './ExamRoadmapView';
 import { FlashcardDeck } from './FlashcardDeck';
 import { StoredQuiz } from './quiz/StoredQuiz';
 import { StudyGuide } from './StudyGuide';
+import { studyGuideFileName, studyGuideToMarkdown } from './studyGuideMarkdown';
 import {
   extractFlashcards,
   extractQuiz,
@@ -86,6 +88,52 @@ function settingBadges(output: GeneratedOutputSummary): string[] {
   ].filter((value): value is string => Boolean(value));
 }
 
+function studyGuideContext(output: GeneratedOutputDetail): RetrievedContext | null {
+  const context = output.generation_context;
+  if (!context) {
+    return null;
+  }
+  return {
+    context_truncated: context.truncated,
+    chunks_used: context.chunks_used,
+    chunks_available: context.chunks_available,
+    retrieval_narrowed: context.chunks_used < context.chunks_available,
+    lowest_similarity: context.lowest_similarity ?? null,
+    highest_similarity: context.highest_similarity ?? null,
+    profile_knowledge_used: context.profile_knowledge_used ?? false,
+    profile_knowledge_items_used: context.profile_knowledge_items_used ?? null,
+  };
+}
+
+function asExportableStudyGuide(
+  output: GeneratedOutputDetail,
+): StudyGuideGenerationResult | null {
+  const { content } = output;
+  if (
+    (output.output_type !== 'study_guide' && output.output_type !== 'last_minute_review') ||
+    !isRenderableStudyGuide(content)
+  ) {
+    return null;
+  }
+  const guide =
+    typeof content === 'string'
+      ? (tryParseJson(content) as StudyGuideResponse)
+      : (content as StudyGuideResponse);
+  const context = studyGuideContext(output);
+  return {
+    study_guide: guide,
+    generated_output_id: output.id,
+    context_truncated: context?.context_truncated ?? false,
+    chunks_used: context?.chunks_used ?? 0,
+    chunks_available: context?.chunks_available ?? 0,
+    retrieval_narrowed: context?.retrieval_narrowed ?? false,
+    lowest_similarity: context?.lowest_similarity ?? null,
+    highest_similarity: context?.highest_similarity ?? null,
+    profile_knowledge_used: context?.profile_knowledge_used ?? false,
+    profile_knowledge_items_used: context?.profile_knowledge_items_used ?? null,
+  };
+}
+
 function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
   const { content } = output;
 
@@ -121,21 +169,7 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
       typeof content === 'string'
         ? (tryParseJson(content) as StudyGuideResponse)
         : (content as StudyGuideResponse);
-    const context = output.generation_context;
-    const reporting: RetrievedContext | null = context
-      ? {
-          context_truncated: context.truncated,
-          chunks_used: context.chunks_used,
-          chunks_available: context.chunks_available,
-          retrieval_narrowed: context.chunks_used < context.chunks_available,
-          lowest_similarity: context.lowest_similarity ?? null,
-          highest_similarity: context.highest_similarity ?? null,
-          profile_knowledge_used: context.profile_knowledge_used ?? false,
-          profile_knowledge_items_used: context.profile_knowledge_items_used ?? null,
-        }
-      : null;
-
-    return <StudyGuide guide={parsedGuide} context={reporting} />;
+    return <StudyGuide guide={parsedGuide} context={studyGuideContext(output)} />;
   }
 
   return (
@@ -153,6 +187,7 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
 
 export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onClose }: StudyHistoryModalProps) {
   const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId ?? null);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const listQuery = useQuery<GeneratedOutputSummary[]>({
     key: queryKeys.courseOutputs(courseId),
@@ -178,6 +213,18 @@ export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onC
     setSelectedId(initialSelectedId);
   }, [initialSelectedId]);
 
+  useEffect(() => {
+    if (copyState === 'idle') {
+      return;
+    }
+    const timer = setTimeout(() => setCopyState('idle'), 2000);
+    return () => clearTimeout(timer);
+  }, [copyState]);
+
+  useEffect(() => {
+    setCopyState('idle');
+  }, [selectedId]);
+
   // Reverse-quiz sessions have their own history and no viewer here, so they
   // are kept out of this list the same way they are kept out of the rail.
   const visibleOutputs = listQuery.data?.filter(
@@ -200,6 +247,40 @@ export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onC
           ? { phase: 'ready', output: detailQuery.data }
           : { phase: 'loading' };
 
+  // A study guide is the one output a reader takes away as a document, so it
+  // keeps the copy and download it had before generation moved to the queue.
+  const exportableGuide =
+    detailState.phase === 'ready' ? asExportableStudyGuide(detailState.output) : null;
+
+  const handleCopy = async () => {
+    if (!exportableGuide) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(studyGuideToMarkdown(exportableGuide, courseName));
+      setCopyState('copied');
+    } catch {
+      setCopyState('failed');
+    }
+  };
+
+  const handleDownload = () => {
+    if (!exportableGuide) {
+      return;
+    }
+    const blob = new Blob([studyGuideToMarkdown(exportableGuide, courseName)], {
+      type: 'text/markdown',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = studyGuideFileName(courseName);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
   return (
     <Dialog
       open
@@ -208,7 +289,40 @@ export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onC
       title="Made for you"
       description={`Everything generated for ${courseName}`}
       mark={<History aria-hidden="true" />}
-      footer={<Button onClick={onClose}>Done</Button>}
+      footer={
+        exportableGuide ? (
+          <>
+            <Button onClick={onClose}>Done</Button>
+            <div className={styles.footerRight}>
+              <Button
+                onClick={() => void handleCopy()}
+                icon={
+                  copyState === 'copied' ? (
+                    <Check aria-hidden="true" />
+                  ) : (
+                    <Copy aria-hidden="true" />
+                  )
+                }
+              >
+                {copyState === 'copied'
+                  ? 'Copied'
+                  : copyState === 'failed'
+                    ? 'Copy failed'
+                    : 'Copy'}
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleDownload}
+                icon={<Download aria-hidden="true" />}
+              >
+                Download
+              </Button>
+            </div>
+          </>
+        ) : (
+          <Button onClick={onClose}>Done</Button>
+        )
+      }
     >
       {listState.phase === 'loading' ? <DetailLoading label="Loading your history" /> : null}
 

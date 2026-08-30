@@ -830,6 +830,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                   setIsMadeForYouOpen(true);
                 }}
                 onOpenQuiz={(quizId) => navigate(`/courses/${workspace.id}/practice/${quizId}`)}
+                onOpenFlashcards={(outputId) => setOpenDeckId(outputId)}
               />
               <div className={styles.divider} />
             </>
@@ -872,7 +873,10 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           topics={workspace.topics}
           readyDocumentCount={readyCount}
           onQueued={() => void generationJobs.reload()}
-          onClose={() => setIsSummaryOpen(false)}
+          onClose={() => {
+            setIsSummaryOpen(false);
+            reloadArtifacts();
+          }}
         />
       ) : null}
 
@@ -934,6 +938,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           courseId={courseId}
           courseName={workspace.name}
           readyDocumentCount={readyCount}
+          onQueued={() => void generationJobs.reload()}
           onClose={() => {
             setIsFlashcardOpen(false);
             reloadArtifacts();

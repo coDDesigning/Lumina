@@ -150,6 +150,7 @@ def enqueue_generation_job(
     credit_source_type = {
         "generate_study_guide": "study_guide",
         "generate_quiz": "quiz",
+        "generate_flashcard": "flashcard",
     }[job_type]
     receipt = CreditService.charge(
         session,
@@ -231,6 +232,7 @@ def retry_generation_job(
     source_type = {
         "generate_study_guide": "study_guide",
         "generate_quiz": "quiz",
+        "generate_flashcard": "flashcard",
     }[original.job_type]
     receipt = CreditService.charge(
         session,

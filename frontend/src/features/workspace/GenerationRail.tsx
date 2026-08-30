@@ -15,21 +15,27 @@ interface GenerationRailProps {
   onRetry: (jobId: number) => void;
   onOpenGuide: (outputId: number) => void;
   onOpenQuiz: (quizId: number) => void;
+  onOpenFlashcards?: (outputId: number) => void;
 }
 
 const VISIBLE_JOBS = 5;
 
 function labelFor(job: GenerationJob): string {
-  return job.job_type === 'generate_quiz' ? 'Practice quiz' : 'Study guide';
+  if (job.job_type === 'generate_quiz') return 'Practice quiz';
+  if (job.job_type === 'generate_flashcard') return 'Flashcards';
+  return 'Study guide';
 }
 
 function openResult(
   job: GenerationJob,
   onOpenGuide: (outputId: number) => void,
   onOpenQuiz: (quizId: number) => void,
+  onOpenFlashcards?: (outputId: number) => void,
 ): void {
   if (job.quiz_id !== null) {
     onOpenQuiz(job.quiz_id);
+  } else if (job.job_type === 'generate_flashcard' && job.generated_output_id !== null && onOpenFlashcards) {
+    onOpenFlashcards(job.generated_output_id);
   } else if (job.generated_output_id !== null) {
     onOpenGuide(job.generated_output_id);
   }
@@ -44,6 +50,7 @@ export function GenerationRail({
   onRetry,
   onOpenGuide,
   onOpenQuiz,
+  onOpenFlashcards,
 }: GenerationRailProps) {
   if (isLoading) {
     return (
@@ -114,7 +121,7 @@ export function GenerationRail({
               <button
                 type="button"
                 className={styles.entry}
-                onClick={() => openResult(job, onOpenGuide, onOpenQuiz)}
+                onClick={() => openResult(job, onOpenGuide, onOpenQuiz, onOpenFlashcards)}
               >
                 {content}
               </button>

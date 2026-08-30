@@ -3,12 +3,9 @@ import type { FormEvent } from 'react';
 import {
   BarChart3,
   Calendar,
-  Check,
-  Copy,
   FileText,
   Layers3,
   MessageSquarePlus,
-  Reply,
   Settings2,
   Sparkles,
   Target,
@@ -255,20 +252,6 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   const [materialKind, setMaterialKind] = useState<DocumentMaterialKind>('unspecified');
   const [isPastThreadsOpen, setIsPastThreadsOpen] = useState(false);
   const [isPromptHelperOpen, setIsPromptHelperOpen] = useState(false);
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-
-  function handleCopy(index: number, text: string) {
-    void navigator.clipboard.writeText(text);
-    setCopiedIndex(index);
-    setTimeout(() => {
-      setCopiedIndex((current) => (current === index ? null : current));
-    }, 2000);
-  }
-
-  function handleReply(text: string) {
-    const quoteSnippet = text.length > 80 ? `${text.slice(0, 80).trim()}…` : text.trim();
-    setPrompt((prev) => (prev ? `${prev} ` : `Regarding "${quoteSnippet}": `));
-  }
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -680,23 +663,9 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
 
             {thread.messages.map((message, index) =>
               message.role === 'user' ? (
-                <div key={index} className={styles.turnUserWrapper}>
-                  <p className={styles.turnUser}>{message.content}</p>
-                  <div className={styles.userActions}>
-                    <IconButton
-                      size="sm"
-                      label={copiedIndex === index ? 'Copied' : 'Copy prompt'}
-                      icon={
-                        copiedIndex === index ? (
-                          <Check aria-hidden="true" />
-                        ) : (
-                          <Copy aria-hidden="true" />
-                        )
-                      }
-                      onClick={() => handleCopy(index, message.content)}
-                    />
-                  </div>
-                </div>
+                <p key={index} className={styles.turnUser}>
+                  {message.content}
+                </p>
               ) : (
                 <div key={index} className={styles.turnAssistant}>
                   <Markdown
@@ -704,36 +673,12 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                     text={message.content}
                     citations={message.citations}
                   />
-                  <div className={styles.messageFooter}>
-                    {message.context ? (
-                      <span className={styles.provenance}>
-                        <FileText className={styles.provenanceIcon} aria-hidden="true" />
-                        <span>{provenanceParts(message.context).join(' · ')}</span>
-                      </span>
-                    ) : null}
-                    <div className={styles.messageActions}>
-                      <IconButton
-                        size="sm"
-                        label={copiedIndex === index ? 'Copied' : 'Copy response'}
-                        icon={
-                          copiedIndex === index ? (
-                            <Check aria-hidden="true" />
-                          ) : (
-                            <Copy aria-hidden="true" />
-                          )
-                        }
-                        onClick={() => handleCopy(index, message.content)}
-                      />
-                      {!isSupportView ? (
-                        <IconButton
-                          size="sm"
-                          label="Reply"
-                          icon={<Reply aria-hidden="true" />}
-                          onClick={() => handleReply(message.content)}
-                        />
-                      ) : null}
-                    </div>
-                  </div>
+                  {message.context ? (
+                    <span className={styles.provenance}>
+                      <FileText className={styles.provenanceIcon} aria-hidden="true" />
+                      <span>{provenanceParts(message.context).join(' · ')}</span>
+                    </span>
+                  ) : null}
                 </div>
               ),
             )}

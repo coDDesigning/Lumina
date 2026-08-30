@@ -34,13 +34,11 @@ class ReverseQuizService:
         db: Session,
         *,
         course_id: int,
-        user_id: int | None = None,
-        user: User | None = None,
+        user: User,
         request: ReverseQuizRequest,
         provider: TextGenerationProvider,
     ) -> ReverseQuizResponse:
         """Evaluate a student's explanation and provide grounded misconception feedback."""
-        resolved_user_id = user_id or (user.id if user else None)
 
         course = db.get(Course, course_id)
         if not course:
@@ -54,7 +52,7 @@ class ReverseQuizService:
                 course_id,
                 query=query,
                 limit=REVERSE_QUIZ_MAX_CHUNKS,
-                min_similarity=settings.retrieval_min_similarity,
+                min_similarity=settings.RETRIEVAL_MIN_SIMILARITY,
                 max_characters=REVERSE_QUIZ_MAX_CHARS,
                 include_citations=True,
                 provider=None,  # uses default embeddings
@@ -84,9 +82,7 @@ class ReverseQuizService:
         )
 
         pending = [(0, question, request.explanation, answer)]
-        prompt_context = resolve_prompt_context(
-            db, course=course, user_id=resolved_user_id
-        )
+        prompt_context = resolve_prompt_context(db, course=course, user_id=user.id)
         prompt = QuizGradingService.build_prompt(pending, context=prompt_context)
 
         metadata = None
@@ -96,30 +92,28 @@ class ReverseQuizService:
             else:
                 result = provider.generate_json(prompt)
         except Exception as exc:
-            if resolved_user_id:
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.QUIZ_GRADING,
-                    error_category=getattr(
-                        exc, "error_category", ErrorCategory.PROVIDER_ERROR
-                    ),
-                )
+            AiUsageLogger.log_failure(
+                db,
+                user_id=user.id,
+                course_id=course_id,
+                generation_type=GenerationType.QUIZ_GRADING,
+                error_category=getattr(
+                    exc, "error_category", ErrorCategory.PROVIDER_ERROR
+                ),
+            )
             raise
 
         try:
             verdicts = OpenEndedGradingResponse.model_validate(result)
         except ValidationError:
-            if resolved_user_id:
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.QUIZ_GRADING,
-                    error_category=ErrorCategory.INVALID_STRUCTURE,
-                    latency_ms=metadata.latency_ms if metadata else None,
-                )
+            AiUsageLogger.log_failure(
+                db,
+                user_id=user.id,
+                course_id=course_id,
+                generation_type=GenerationType.QUIZ_GRADING,
+                error_category=ErrorCategory.INVALID_STRUCTURE,
+                latency_ms=metadata.latency_ms if metadata else None,
+            )
             raise ValueError("Provider returned an invalid grading structure")
 
         verdict = verdicts.verdicts[0]
@@ -136,14 +130,13 @@ class ReverseQuizService:
                 Misconception(concept=m.concept, status=m.status, detail=m_cited.text)
             )
 
-        if resolved_user_id:
-            AiUsageLogger.log_success(
-                db,
-                user_id=resolved_user_id,
-                course_id=course_id,
-                generation_type=GenerationType.QUIZ_GRADING,
-                metadata=metadata,
-            )
+        AiUsageLogger.log_success(
+            db,
+            user_id=user.id,
+            course_id=course_id,
+            generation_type=GenerationType.QUIZ_GRADING,
+            metadata=metadata,
+        )
 
         # 4. Save to GeneratedOutput for history and weak-topic aggregation
         response_model = ReverseQuizResponse(
@@ -158,7 +151,7 @@ class ReverseQuizService:
         output = GeneratedOutputService.record(
             db,
             course_id=course_id,
-            user_id=resolved_user_id,
+            user_id=user.id,
             model_used=provider.name,
             output_type="reverse_quiz",
             content=response_model.model_dump_json(),

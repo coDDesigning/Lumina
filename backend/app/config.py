@@ -156,8 +156,9 @@ DEFAULT_RATE_LIMIT_VERIFICATION_WINDOW_SECONDS = 3600
 DEFAULT_RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS = 5
 DEFAULT_RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS = 3600
 
-# Authentication hardening. See docs/authentication.md.
-DEFAULT_PASSWORD_MIN_LENGTH = 12
+# Authentication hardening. See docs/authentication.md. NIST SP 800-63B puts the
+# floor for a user-chosen secret at 8 characters.
+DEFAULT_PASSWORD_MIN_LENGTH = 8
 # bcrypt truncates at 72 bytes, so a longer minimum could not be enforced.
 MAX_PASSWORD_MIN_LENGTH = 64
 DEFAULT_EMAIL_VERIFICATION_TOKEN_TTL_HOURS = 24

@@ -93,9 +93,13 @@ export const coursesAPI = {
     courseId: number,
     documentId: string,
     options?: RequestInit,
+    force = false,
   ): Promise<void> => {
+    // force=true discards a document whose extraction is stuck (no worker, or a
+    // crashed one). The server still refuses a job a worker is actively holding.
+    const suffix = force ? '?force=true' : '';
     await apiClient.delete<unknown>(
-      `/courses/${courseId}/documents/${documentId}`,
+      `/courses/${courseId}/documents/${documentId}${suffix}`,
       options,
     );
   },

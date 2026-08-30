@@ -96,6 +96,27 @@
   line-height: var(--leading-snug);
 }
 
+.forceLink {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--destructive);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.forceLink:hover:not(:disabled) {
+  color: var(--destructive-hover);
+}
+
+.forceLink:disabled {
+  color: var(--text-subtle);
+  cursor: default;
+  text-decoration: none;
+}
+
 .reason {
   font-size: var(--text-xs);
   color: var(--destructive);

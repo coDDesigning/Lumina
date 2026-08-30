@@ -5,14 +5,14 @@ def test_course_settings_get_and_update(api_context) -> None:
         json={
             "email": "settings-owner@example.com",
             "name": "Settings Owner",
-            "password": "strong-password-123",
+            "password": "Strong-password-123!",
         },
     )
     login = api_context.client.post(
         "/api/auth/login",
         data={
             "username": "settings-owner@example.com",
-            "password": "strong-password-123",
+            "password": "Strong-password-123!",
         },
     )
     token = login.json()["access_token"]

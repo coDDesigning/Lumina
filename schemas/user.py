@@ -41,9 +41,7 @@ class UserCreate(UserBase):
 
     @model_validator(mode="after")
     def enforce_password_policy(self) -> "UserCreate":
-        # Validated here rather than on the field so the policy can see the
-        # name and address the password must not be built out of.
-        validate_password(self.password, identifiers=(self.name, self.email))
+        validate_password(self.password)
         return self
 
 

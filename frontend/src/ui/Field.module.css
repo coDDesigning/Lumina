@@ -76,6 +76,25 @@
   min-height: 6rem;
 }
 
+.inputShell {
+  position: relative;
+  display: block;
+}
+
+.inputWithAction {
+  padding-right: var(--space-7);
+}
+
+.inputAction {
+  position: absolute;
+  right: var(--space-1);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .selectShell {
   position: relative;
   display: block;

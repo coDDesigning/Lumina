@@ -14,6 +14,7 @@ from backend.app.models import (
 from services.embeddings import (
     EmbeddingDimensionMismatchError,
     EmbeddingTimeoutError,
+    configured_embedding_identity,
 )
 from services.semantic_retrieval import retrieve_course_chunks
 from services.vector_store import (
@@ -22,8 +23,7 @@ from services.vector_store import (
     VectorStoreError,
 )
 
-PROVIDER = "ollama"
-MODEL = "nomic-embed-text"
+PROVIDER, MODEL = configured_embedding_identity()
 
 
 def _directional(seed: float) -> list[float]:
@@ -119,6 +119,9 @@ def _replace(
     document: UploadedDocument,
     chunks: list[DocumentChunk],
     seed: float = 0.2,
+    *,
+    embedding_provider: str = PROVIDER,
+    embedding_model: str = MODEL,
 ) -> None:
     store.replace_document_vectors(
         session,
@@ -134,8 +137,8 @@ def _replace(
             )
             for index, chunk in enumerate(chunks)
         ],
-        embedding_provider=PROVIDER,
-        embedding_model=MODEL,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
     )
 
 
@@ -537,3 +540,36 @@ def test_omitting_the_selection_still_reads_the_whole_course(
         )
 
     assert {result.document_id for result in results} == {first.id, second.id}
+
+
+def test_vectors_from_another_model_are_not_searched(
+    retrieval_store, session_factory: sessionmaker[Session]
+) -> None:
+    """A different model is a different space, so its vectors are not answers."""
+    with session_factory() as session:
+        course, document, chunks = _seed_course(
+            session, email="other-model@example.com", chunk_count=3
+        )
+        _replace(
+            retrieval_store,
+            session,
+            document,
+            chunks,
+            embedding_provider="ollama",
+            embedding_model="nomic-embed-text",
+        )
+        session.commit()
+
+        # The vectors are present; they are simply not comparable.
+        assert retrieval_store.count_course_vectors(session, course.id) == len(chunks)
+        assert (
+            retrieve_course_chunks(
+                session,
+                course_id=course.id,
+                query="anything",
+                limit=5,
+                store=retrieval_store,
+                provider=StubEmbeddingProvider(),
+            )
+            == []
+        )

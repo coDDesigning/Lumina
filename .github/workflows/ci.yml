@@ -126,7 +126,7 @@ jobs:
       - name: Required .env.example keys present
         run: |
           missing=0
-          for key in APP_ENV APP_DEBUG DEPLOYMENT_MODE DATABASE_URL AI_PROVIDER; do
+          for key in APP_ENV APP_DEBUG DEPLOYMENT_MODE DATABASE_URL OLLAMA_BASE_URL; do
             if ! grep -qE "^${key}=" .env.example; then
               echo "::error::.env.example is missing required key: $key"
               missing=1
@@ -163,6 +163,7 @@ jobs:
     timeout-minutes: 15
     env:
       DEPLOYMENT_MODE: self_hosted
+      OLLAMA_BASE_URL: http://localhost:11434
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PIP_NO_INPUT: "1"
     steps:
@@ -367,6 +368,7 @@ jobs:
       JWT_SECRET_KEY: ci-only-jwt-secret-at-least-32-characters
       BOOTSTRAP_ADMIN_EMAIL: admin@example.com
       BOOTSTRAP_ADMIN_TOKEN: ci-only-bootstrap-token-at-least-32-characters
+      OLLAMA_BASE_URL: http://localhost:11434
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PIP_NO_INPUT: "1"
     services:
@@ -515,6 +517,15 @@ jobs:
           assert all(Path("/app", path).is_file() for path in required)
           assert not any(Path("/app", path).exists() for path in excluded)
           assert not Path("/app").stat().st_mode & 0o222
+          '
+          # The only check that proves a read-only UID-10001 container can load
+          # the baked weights without reaching the network.
+          docker run --rm --read-only             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m             --env OLLAMA_BASE_URL=http://localhost:11434             --entrypoint python "$LUMINA_IMAGE" -c '
+          from backend.app.embedding_models import EMBEDDING_MODEL
+          from services.embeddings import LocalEmbeddingProvider
+
+          vector = LocalEmbeddingProvider().embed_query("probe")
+          assert len(vector) == EMBEDDING_MODEL.dimensions, len(vector)
           '
 
       - name: Validate frontend image contract

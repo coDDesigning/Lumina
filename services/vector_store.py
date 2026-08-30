@@ -108,7 +108,7 @@ class VectorStore(Protocol):
     def delete_course_vectors(self, session: Session, course_id: int) -> None: ...
 
     def chunk_ids_with_vectors(
-        self, session: Session, document_id: UUID
+        self, session: Session, document_id: UUID, *, embedding_model: str
     ) -> set[int]: ...
 
     def count_document_vectors(self, session: Session, document_id: UUID) -> int: ...
@@ -122,6 +122,7 @@ class VectorStore(Protocol):
         course_id: int,
         query_embedding: list[float],
         limit: int,
+        embedding_model: str,
         document_ids: Sequence[UUID] | None = None,
     ) -> list[SearchResult]: ...
 
@@ -136,6 +137,10 @@ class VectorStore(Protocol):
         embedding_model: str,
     ) -> None: ...
 
+    def profile_chunk_ids_with_vectors(
+        self, session: Session, document_id: UUID, *, embedding_model: str
+    ) -> set[int]: ...
+
     def delete_profile_document_vectors(
         self, session: Session, document_id: UUID
     ) -> None: ...
@@ -149,6 +154,7 @@ class VectorStore(Protocol):
         user_id: int,
         query_embedding: list[float],
         limit: int,
+        embedding_model: str,
         document_ids: Sequence[UUID] | None = None,
     ) -> list[SearchResult]: ...
 
@@ -315,11 +321,26 @@ class PgVectorStore:
         )
         session.flush()
 
-    def chunk_ids_with_vectors(self, session: Session, document_id: UUID) -> set[int]:
+    def chunk_ids_with_vectors(
+        self, session: Session, document_id: UUID, *, embedding_model: str
+    ) -> set[int]:
         return set(
             session.scalars(
                 select(ChunkEmbedding.chunk_id).where(
-                    ChunkEmbedding.document_id == document_id
+                    ChunkEmbedding.document_id == document_id,
+                    ChunkEmbedding.embedding_model == embedding_model,
+                )
+            ).all()
+        )
+
+    def profile_chunk_ids_with_vectors(
+        self, session: Session, document_id: UUID, *, embedding_model: str
+    ) -> set[int]:
+        return set(
+            session.scalars(
+                select(ProfileChunkEmbedding.chunk_id).where(
+                    ProfileChunkEmbedding.document_id == document_id,
+                    ProfileChunkEmbedding.embedding_model == embedding_model,
                 )
             ).all()
         )
@@ -351,6 +372,7 @@ class PgVectorStore:
         course_id: int,
         query_embedding: list[float],
         limit: int,
+        embedding_model: str,
         document_ids: Sequence[UUID] | None = None,
     ) -> list[SearchResult]:
         if len(query_embedding) != EMBEDDING_DIMENSIONS:
@@ -377,13 +399,16 @@ class PgVectorStore:
             "SELECT chunk_id, document_id, course_id, chunk_index, "
             "1.0 - (embedding <=> CAST(:query AS vector)) AS similarity "
             "FROM chunk_embeddings "
-            "WHERE course_id = :course_id" + document_filter + " "
+            "WHERE course_id = :course_id AND embedding_model = :embedding_model"
+            + document_filter
+            + " "
             "ORDER BY embedding <=> CAST(:query AS vector) "
             "LIMIT :limit"
         )
         parameters: dict[str, object] = {
             "query": query,
             "course_id": course_id,
+            "embedding_model": embedding_model,
             "limit": limit,
         }
         if identifiers:
@@ -466,6 +491,7 @@ class PgVectorStore:
         user_id: int,
         query_embedding: list[float],
         limit: int,
+        embedding_model: str,
         document_ids: Sequence[UUID] | None = None,
     ) -> list[SearchResult]:
         if len(query_embedding) != EMBEDDING_DIMENSIONS:
@@ -490,13 +516,16 @@ class PgVectorStore:
             "SELECT chunk_id, document_id, user_id, chunk_index, "
             "1.0 - (embedding <=> CAST(:query AS vector)) AS similarity "
             "FROM profile_chunk_embeddings "
-            "WHERE user_id = :user_id" + document_filter + " "
+            "WHERE user_id = :user_id AND embedding_model = :embedding_model"
+            + document_filter
+            + " "
             "ORDER BY embedding <=> CAST(:query AS vector) "
             "LIMIT :limit"
         )
         parameters: dict[str, object] = {
             "query": query,
             "user_id": user_id,
+            "embedding_model": embedding_model,
             "limit": limit,
         }
         if identifiers:
@@ -721,8 +750,36 @@ class ChromaVectorStore:
             "The vector store could not be read.",
         )
 
-    def chunk_ids_with_vectors(self, session: Session, document_id: UUID) -> set[int]:
-        found = self._get_where({"document_id": str(document_id)})
+    def _get_profile_where(self, where: dict) -> dict:
+        return self._run_profile(
+            lambda collection: collection.get(where=where, include=["metadatas"]),
+            "The vector store could not be read.",
+        )
+
+    def chunk_ids_with_vectors(
+        self, session: Session, document_id: UUID, *, embedding_model: str
+    ) -> set[int]:
+        found = self._get_where(
+            {
+                "$and": [
+                    {"document_id": {"$eq": str(document_id)}},
+                    {"embedding_model": {"$eq": embedding_model}},
+                ]
+            }
+        )
+        return {int(identifier) for identifier in found.get("ids", [])}
+
+    def profile_chunk_ids_with_vectors(
+        self, session: Session, document_id: UUID, *, embedding_model: str
+    ) -> set[int]:
+        found = self._get_profile_where(
+            {
+                "$and": [
+                    {"document_id": {"$eq": str(document_id)}},
+                    {"embedding_model": {"$eq": embedding_model}},
+                ]
+            }
+        )
         return {int(identifier) for identifier in found.get("ids", [])}
 
     def count_document_vectors(self, session: Session, document_id: UUID) -> int:
@@ -738,6 +795,7 @@ class ChromaVectorStore:
         course_id: int,
         query_embedding: list[float],
         limit: int,
+        embedding_model: str,
         document_ids: Sequence[UUID] | None = None,
     ) -> list[SearchResult]:
         if len(query_embedding) != EMBEDDING_DIMENSIONS:
@@ -748,20 +806,17 @@ class ChromaVectorStore:
         if limit < 1:
             raise ValueError("Search limit must be a positive integer")
         identifiers = _narrowing_documents(document_ids)
-        if identifiers is None:
-            # Chroma rejects an "and" filter holding fewer than two clauses, so
-            # the unnarrowed case has to keep its bare single-clause form.
-            where: dict = {"course_id": course_id}
-        else:
-            where = {
-                "$and": [
-                    {"course_id": {"$eq": course_id}},
-                    # _metadata stores document_id as a string, so a UUID
-                    # operand would match nothing and be indistinguishable
-                    # from an honest empty result.
-                    {"document_id": {"$in": [str(value) for value in identifiers]}},
-                ]
-            }
+        clauses: list[dict] = [
+            {"course_id": {"$eq": course_id}},
+            {"embedding_model": {"$eq": embedding_model}},
+        ]
+        if identifiers is not None:
+            # _metadata stores document_id as a string, so a UUID operand would
+            # match nothing and be indistinguishable from an honest empty result.
+            clauses.append(
+                {"document_id": {"$in": [str(value) for value in identifiers]}}
+            )
+        where: dict = {"$and": clauses}
         found = self._run(
             lambda collection: collection.query(
                 query_embeddings=[query_embedding],
@@ -862,6 +917,7 @@ class ChromaVectorStore:
         user_id: int,
         query_embedding: list[float],
         limit: int,
+        embedding_model: str,
         document_ids: Sequence[UUID] | None = None,
     ) -> list[SearchResult]:
         if len(query_embedding) != EMBEDDING_DIMENSIONS:
@@ -872,15 +928,15 @@ class ChromaVectorStore:
         if limit < 1:
             raise ValueError("Search limit must be a positive integer")
         identifiers = _narrowing_documents(document_ids)
-        if identifiers is None:
-            where: dict = {"user_id": user_id}
-        else:
-            where = {
-                "$and": [
-                    {"user_id": {"$eq": user_id}},
-                    {"document_id": {"$in": [str(value) for value in identifiers]}},
-                ]
-            }
+        clauses: list[dict] = [
+            {"user_id": {"$eq": user_id}},
+            {"embedding_model": {"$eq": embedding_model}},
+        ]
+        if identifiers is not None:
+            clauses.append(
+                {"document_id": {"$in": [str(value) for value in identifiers]}}
+            )
+        where: dict = {"$and": clauses}
         found = self._run_profile(
             lambda collection: collection.query(
                 query_embeddings=[query_embedding],

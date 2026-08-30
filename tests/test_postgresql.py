@@ -55,6 +55,10 @@ from services.user import UserService
 from storage.local import LocalStorage
 from utils.exceptions import BadRequestException
 
+from services.embeddings import configured_embedding_identity
+
+EMBEDDING_PROVIDER_NAME, EMBEDDING_MODEL_NAME = configured_embedding_identity()
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_CONFIG = PROJECT_ROOT / "alembic.ini"
 EXPECTED_POSTGRESQL_MAJOR = 17
@@ -66,7 +70,7 @@ CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
 # When updating alembic versions, update this constant to the new head revision.
-HEAD_REVISION = "9f4c1d7b2e83"
+HEAD_REVISION = "a1f6c3b7d284"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -1746,6 +1750,7 @@ def test_postgresql_chunk_embeddings_round_trip_and_rank_by_cosine(
             course_id=course_id,
             query_embedding=[1.0] + [0.0] * (EMBEDDING_DIMENSIONS - 1),
             limit=2,
+            embedding_model=EMBEDDING_MODEL_NAME,
         )
         assert [result.chunk_index for result in ranked] == [0, 1]
         assert ranked[0].similarity == pytest.approx(1.0)

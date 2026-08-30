@@ -236,8 +236,8 @@ def test_resolve_user_api_key_and_dynamic_provider(api_context) -> None:
 
 def test_dynamic_ai_models_and_routing_for_admin_keys(api_context, monkeypatch) -> None:
     fake_settings = SimpleNamespace(
-        ai_provider="ollama",
-        ai_fallback_providers="",
+        ai_available_vendors=("ollama",),
+        ai_default_model="ollama:llama3.1",
         ai_model_catalog={
             "ollama": [
                 {
@@ -379,8 +379,8 @@ def test_personal_key_auth_error_disables_silent_fallback(
     api_context, monkeypatch
 ) -> None:
     fake_settings = SimpleNamespace(
-        ai_provider="ollama",
-        ai_fallback_providers="",
+        ai_available_vendors=("ollama",),
+        ai_default_model="ollama:llama3.1",
         ai_model_catalog={
             "ollama": [
                 {

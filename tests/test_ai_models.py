@@ -48,8 +48,8 @@ def test_list_models_unauthenticated():
 
 def test_resolve_effective_model_precedence(monkeypatch: pytest.MonkeyPatch):
     fake_settings = SimpleNamespace(
-        ai_provider="gemini",
-        ai_fallback_providers="ollama",
+        ai_available_vendors=("gemini", "ollama"),
+        ai_default_model="gemini:gemini-3.6-flash",
         ai_model_catalog={
             "gemini": [
                 {
@@ -120,8 +120,8 @@ def test_resolve_effective_model_capability_validation(
     monkeypatch: pytest.MonkeyPatch,
 ):
     fake_settings = SimpleNamespace(
-        ai_provider="gemini",
-        ai_fallback_providers="ollama",
+        ai_available_vendors=("gemini", "ollama"),
+        ai_default_model="gemini:gemini-3.6-flash",
         ai_model_catalog={
             "gemini": [
                 {
@@ -167,8 +167,8 @@ def test_resolve_effective_model_capability_validation(
 
 def test_get_text_generation_provider_honors_model(monkeypatch: pytest.MonkeyPatch):
     fake_settings = SimpleNamespace(
-        ai_provider="ollama",
-        ai_fallback_providers="gemini",
+        ai_available_vendors=("ollama", "gemini"),
+        ai_default_model="ollama:unknown",
         gemini_api_key="fake-key",
         openai_api_key=None,
         anthropic_api_key=None,
@@ -222,8 +222,8 @@ def test_available_models_distinguishes_multiple_models_for_same_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_settings = SimpleNamespace(
-        ai_provider="ollama",
-        ai_fallback_providers="",
+        ai_available_vendors=("ollama",),
+        ai_default_model="ollama:llama3.1",
         ai_model_catalog={
             "ollama": [
                 {
@@ -269,8 +269,8 @@ def test_selected_model_is_passed_to_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_settings = SimpleNamespace(
-        ai_provider="ollama",
-        ai_fallback_providers="",
+        ai_available_vendors=("ollama",),
+        ai_default_model="ollama:llama3.1",
         ai_model_catalog={
             "ollama": [
                 {
@@ -340,8 +340,8 @@ def test_stale_user_preference_falls_back_to_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_settings = SimpleNamespace(
-        ai_provider="ollama",
-        ai_fallback_providers="",
+        ai_available_vendors=("ollama",),
+        ai_default_model="ollama:llama3.1",
         ai_model_catalog={
             "ollama": [
                 {
@@ -369,8 +369,8 @@ def test_json_incompatible_model_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_settings = SimpleNamespace(
-        ai_provider="ollama",
-        ai_fallback_providers="",
+        ai_available_vendors=("ollama",),
+        ai_default_model="ollama:text-only-model",
         ai_model_catalog={
             "ollama": [
                 {

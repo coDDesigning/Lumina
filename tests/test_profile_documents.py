@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 
 from backend.app.models import (
+    EMBEDDING_DIMENSIONS,
     Course,
     ProfileDocument,
     ProfileDocumentChunk,
@@ -247,10 +248,10 @@ class DeterministicEmbeddingProvider:
     model = "fake-model"
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [[0.1] * 768 for _ in texts]
+        return [[0.1] * EMBEDDING_DIMENSIONS for _ in texts]
 
     def embed_query(self, text: str) -> list[float]:
-        return [0.1] * 768
+        return [0.1] * EMBEDDING_DIMENSIONS
 
 
 def test_worker_processes_profile_document_to_ready(authz_api):

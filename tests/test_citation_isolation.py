@@ -100,7 +100,7 @@ def _install_citing_provider(monkeypatch, answer: str):
             )
 
     monkeypatch.setattr(
-        course_qa_route, "get_text_generation_provider", lambda: CitingProvider()
+        course_qa_route, "get_text_generation_provider", lambda **_: CitingProvider()
     )
 
 

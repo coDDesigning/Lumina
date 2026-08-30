@@ -52,16 +52,10 @@ def ask_ai_tutor(
             current_user.preferred_model,
             required_capability="ai_tutor",
         )
-        try:
-            provider = get_text_generation_provider(
-                effective_model=effective_model,
-                user=db_user,
-            )
-        except TypeError:
-            try:
-                provider = get_text_generation_provider(effective_model=effective_model)
-            except TypeError:
-                provider = get_text_generation_provider()
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            user=db_user,
+        )
 
         generation = AiTutorService.generate(
             db,

@@ -41,15 +41,20 @@ AI_PROVIDER_GEMINI = "gemini"
 AI_PROVIDER_OLLAMA = "ollama"
 AI_PROVIDER_OPENAI = "openai"
 AI_PROVIDER_CLAUDE = "claude"
-RECOGNIZED_AI_PROVIDERS = ("ollama", "openai", "gemini", "claude")
 IMPLEMENTED_AI_PROVIDERS = (
     AI_PROVIDER_GEMINI,
     AI_PROVIDER_OLLAMA,
     AI_PROVIDER_OPENAI,
     AI_PROVIDER_CLAUDE,
 )
-DEFAULT_AI_PROVIDER = AI_PROVIDER_OLLAMA
-DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+# Preference order when AI_DEFAULT_MODEL pins nothing. Local first: it costs
+# nothing and sends no course material anywhere.
+AI_VENDOR_PREFERENCE_ORDER = (
+    AI_PROVIDER_OLLAMA,
+    AI_PROVIDER_GEMINI,
+    AI_PROVIDER_OPENAI,
+    AI_PROVIDER_CLAUDE,
+)
 DEFAULT_OLLAMA_MODEL = "llama3.1"
 DEFAULT_OLLAMA_TEMPERATURE = 0.2
 DEFAULT_OLLAMA_TOP_P = 0.9
@@ -61,12 +66,9 @@ DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-5"
 OLLAMA_MODEL_PATTERN = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
 
-IMPLEMENTED_EMBEDDING_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
-DEFAULT_EMBEDDING_PROVIDER = AI_PROVIDER_OLLAMA
-DEFAULT_OLLAMA_EMBEDDING_MODEL = "nomic-embed-text"
-DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_PROVIDER_LOCAL = "local"
 DEFAULT_EMBEDDING_BATCH_SIZE = 32
-DEFAULT_EMBEDDING_TIMEOUT_SECONDS = 60
+DEFAULT_EMBEDDING_MODEL_CACHE_DIRECTORY = "./data/embedding-models"
 
 DEFAULT_COURSE_PURGE_INTERVAL_SECONDS = 3600.0
 DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS = 3600.0
@@ -76,17 +78,10 @@ DEFAULT_AI_USAGE_RETENTION_DAYS = 90
 DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE = 1000
 
 IMAGE_PROVIDER_NONE = "none"
-IMAGE_PROVIDER_GEMINI = "gemini"
-IMAGE_PROVIDER_OLLAMA = "ollama"
-RECOGNIZED_IMAGE_PROVIDERS = ("none", "ollama", "openai", "gemini", "claude")
-IMPLEMENTED_IMAGE_PROVIDERS = (
-    IMAGE_PROVIDER_NONE,
-    IMAGE_PROVIDER_GEMINI,
-    IMAGE_PROVIDER_OLLAMA,
-)
-DEFAULT_IMAGE_PROVIDER = IMAGE_PROVIDER_NONE
-DEFAULT_OLLAMA_IMAGE_MODEL = "llama3.2-vision"
-DEFAULT_GEMINI_IMAGE_MODEL = "gemini-2.5-flash"
+# Vendors with an ImageUnderstandingProvider implementation. A catalog entry
+# may advertise vision for a vendor we cannot send an image to.
+IMPLEMENTED_IMAGE_VENDORS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
+DEFAULT_IMAGE_UNDERSTANDING_ENABLED = True
 DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS = 30
 DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES = 10 * 1024 * 1024
 
@@ -231,22 +226,23 @@ class Settings:
     bootstrap_admin_email: str | None
     bootstrap_admin_token: str | None
 
-    # AI provider configuration
-    ai_provider: str
+    # AI vendor availability, derived from configured credentials
+    ai_available_vendors: tuple[str, ...]
+    ai_default_model: str
+    ai_vision_model: str | None
     ai_model_catalog: dict[str, list[dict[str, object]]]
     ai_pricing_version: str | None
     ai_model_cost_rates: dict[str, dict[str, float]]
     gemini_api_key: str | None
     openai_api_key: str | None
     anthropic_api_key: str | None
-    ollama_base_url: str
+    ollama_base_url: str | None
     ollama_model: str
     ollama_temperature: float
     ollama_top_p: float
     ollama_num_ctx: int
     ollama_num_predict: int
     ollama_repeat_penalty: float
-    ai_fallback_providers: str
     ai_generation_timeout_seconds: int
     ai_generation_max_attempts: int
     ai_generation_backoff_base_seconds: float
@@ -255,18 +251,12 @@ class Settings:
     ai_generation_overall_timeout_seconds: int
     ai_grading_overall_timeout_seconds: int
 
-    # Embedding provider and durable vector storage configuration
-    embedding_provider: str
-    ollama_embedding_model: str
-    gemini_embedding_model: str
+    # Embeddings are computed in-process; only where the weights live varies
+    embedding_model_cache_directory: str
     embedding_batch_size: int
-    embedding_timeout_seconds: int
     vector_backend: str
 
-    # Visual understanding / image provider configuration
-    image_provider: str
-    ollama_image_model: str
-    gemini_image_model: str
+    # Visual understanding
     image_understanding_timeout_seconds: int
     image_understanding_max_bytes: int
 
@@ -526,59 +516,23 @@ def load_settings() -> Settings:
             "Hosted mode and production require BOOTSTRAP_ADMIN_TOKEN to be set."
         )
 
-    ai_provider = (
-        os.getenv("AI_PROVIDER", DEFAULT_AI_PROVIDER).strip().lower()
-        or DEFAULT_AI_PROVIDER
-    )
-
-    if ai_provider not in RECOGNIZED_AI_PROVIDERS:
-        raise ValueError(
-            f"AI_PROVIDER must be one of: {', '.join(RECOGNIZED_AI_PROVIDERS)}."
-        )
-    if ai_provider not in IMPLEMENTED_AI_PROVIDERS:
-        raise ValueError(
-            f"AI_PROVIDER '{ai_provider}' is recognized but not implemented yet. "
-            f"Implemented providers: {', '.join(IMPLEMENTED_AI_PROVIDERS)}."
-        )
     gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip() or None
     openai_api_key = os.getenv("OPENAI_API_KEY", "").strip() or None
     anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip() or None
 
-    ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
-    if ai_fallback_providers_raw:
-        for fallback_token in (
-            item.strip().lower()
-            for item in ai_fallback_providers_raw.split(",")
-            if item.strip()
-        ):
-            if fallback_token not in RECOGNIZED_AI_PROVIDERS:
-                raise ValueError(
-                    "AI_FALLBACK_PROVIDERS tokens must be one of: "
-                    f"{', '.join(RECOGNIZED_AI_PROVIDERS)}."
-                )
-            if fallback_token not in IMPLEMENTED_AI_PROVIDERS:
-                raise ValueError(
-                    f"AI_FALLBACK_PROVIDERS token '{fallback_token}' is recognized but "
-                    f"not implemented yet. Implemented providers: "
-                    f"{', '.join(IMPLEMENTED_AI_PROVIDERS)}."
-                )
+    ollama_base_url = (
+        _http_url_setting("OLLAMA_BASE_URL", "")
+        if os.getenv("OLLAMA_BASE_URL", "").strip()
+        else None
+    )
 
-    ai_fallback_providers = ai_fallback_providers_raw
+    ai_available_vendors = _available_ai_vendors(
+        gemini_api_key=gemini_api_key,
+        openai_api_key=openai_api_key,
+        anthropic_api_key=anthropic_api_key,
+        ollama_base_url=ollama_base_url,
+    )
 
-    def _require_key(provider: str, key: str | None, env_name: str) -> None:
-        if ai_provider == provider or (
-            ai_fallback_providers_raw and provider in ai_fallback_providers_raw
-        ):
-            if not key:
-                raise ValueError(
-                    f"{env_name} is required when {provider} is used as primary or fallback provider."
-                )
-
-    _require_key(AI_PROVIDER_GEMINI, gemini_api_key, "GEMINI_API_KEY")
-    _require_key(AI_PROVIDER_OPENAI, openai_api_key, "OPENAI_API_KEY")
-    _require_key(AI_PROVIDER_CLAUDE, anthropic_api_key, "ANTHROPIC_API_KEY")
-
-    ollama_base_url = _http_url_setting("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
     ollama_model = os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip()
     if not OLLAMA_MODEL_PATTERN.fullmatch(ollama_model):
         raise ValueError(
@@ -620,7 +574,25 @@ def load_settings() -> Settings:
             "OLLAMA_NUM_PREDICT must not exceed OLLAMA_NUM_CTX; the response shares "
             f"the context window with the prompt (got {ollama_num_predict} > {ollama_num_ctx})."
         )
-    ai_model_catalog = _ai_model_catalog_setting(ollama_model, ollama_num_ctx)
+    ai_model_catalog = _ai_model_catalog_setting(
+        ai_available_vendors, ollama_model, ollama_num_ctx
+    )
+    if not any(ai_model_catalog.get(vendor) for vendor in ai_available_vendors):
+        raise ValueError(
+            "No AI model is available. Configure at least one vendor: "
+            "GEMINI_API_KEY for Gemini, OPENAI_API_KEY for OpenAI, "
+            "ANTHROPIC_API_KEY for Claude, or OLLAMA_BASE_URL for a local "
+            "Ollama server."
+        )
+    ai_default_model = _ai_default_model_setting(ai_model_catalog, ai_available_vendors)
+    ai_vision_model = _ai_vision_model(
+        ai_model_catalog,
+        ai_available_vendors,
+        enabled=_boolean_setting(
+            "IMAGE_UNDERSTANDING_ENABLED",
+            default=DEFAULT_IMAGE_UNDERSTANDING_ENABLED,
+        ),
+    )
     ai_pricing_version, ai_model_cost_rates = _ai_model_cost_rates_setting()
 
     max_upload_size_bytes = _positive_integer_setting(
@@ -877,38 +849,12 @@ def load_settings() -> Settings:
         maximum=55,
     )
 
-    embedding_provider = (
-        os.getenv("EMBEDDING_PROVIDER", DEFAULT_EMBEDDING_PROVIDER).strip().lower()
-        or DEFAULT_EMBEDDING_PROVIDER
-    )
-    if embedding_provider not in RECOGNIZED_AI_PROVIDERS:
-        raise ValueError(
-            f"EMBEDDING_PROVIDER must be one of: {', '.join(RECOGNIZED_AI_PROVIDERS)}."
-        )
-    if embedding_provider not in IMPLEMENTED_EMBEDDING_PROVIDERS:
-        raise ValueError(
-            f"EMBEDDING_PROVIDER '{embedding_provider}' is recognized but not "
-            "implemented yet. Implemented providers: "
-            f"{', '.join(IMPLEMENTED_EMBEDDING_PROVIDERS)}."
-        )
-
-    ollama_embedding_model = os.getenv(
-        "OLLAMA_EMBEDDING_MODEL",
-        DEFAULT_OLLAMA_EMBEDDING_MODEL,
+    embedding_model_cache_directory = os.getenv(
+        "EMBEDDING_MODEL_CACHE_DIRECTORY",
+        DEFAULT_EMBEDDING_MODEL_CACHE_DIRECTORY,
     ).strip()
-    if not OLLAMA_MODEL_PATTERN.fullmatch(ollama_embedding_model):
-        raise ValueError(
-            "OLLAMA_EMBEDDING_MODEL must contain 1-128 characters limited to letters, "
-            "digits, dots, colons, slashes, dashes, or underscores."
-        )
-    gemini_embedding_model = os.getenv(
-        "GEMINI_EMBEDDING_MODEL",
-        DEFAULT_GEMINI_EMBEDDING_MODEL,
-    ).strip()
-    if not gemini_embedding_model or len(gemini_embedding_model) > 128:
-        raise ValueError(
-            "GEMINI_EMBEDDING_MODEL must contain 1-128 non-blank characters."
-        )
+    if not embedding_model_cache_directory:
+        raise ValueError("EMBEDDING_MODEL_CACHE_DIRECTORY must not be blank.")
 
     embedding_batch_size = _bounded_positive_integer_setting(
         "EMBEDDING_BATCH_SIZE",
@@ -916,96 +862,6 @@ def load_settings() -> Settings:
         minimum=1,
         maximum=256,
     )
-    embedding_timeout_seconds = _bounded_positive_integer_setting(
-        "EMBEDDING_TIMEOUT_SECONDS",
-        DEFAULT_EMBEDDING_TIMEOUT_SECONDS,
-        minimum=1,
-        maximum=300,
-    )
-
-    raw_image_provider = os.getenv("IMAGE_PROVIDER")
-    if raw_image_provider is not None and raw_image_provider.strip():
-        image_provider = raw_image_provider.strip().lower()
-    else:
-        if mode == MODE_HOSTED:
-            if ai_provider == AI_PROVIDER_GEMINI:
-                gemini_entries = ai_model_catalog.get(AI_PROVIDER_GEMINI, [])
-                if any(bool(entry.get("vision")) for entry in gemini_entries):
-                    image_provider = IMAGE_PROVIDER_GEMINI
-                else:
-                    image_provider = IMAGE_PROVIDER_NONE
-            else:
-                image_provider = IMAGE_PROVIDER_NONE
-        else:
-            ollama_entries = ai_model_catalog.get(AI_PROVIDER_OLLAMA, [])
-            configured_ollama_image_model = os.getenv(
-                "OLLAMA_IMAGE_MODEL",
-                DEFAULT_OLLAMA_IMAGE_MODEL,
-            ).strip()
-            has_advertised_vision = any(
-                entry.get("model") == configured_ollama_image_model
-                and bool(entry.get("vision"))
-                for entry in ollama_entries
-            )
-            if has_advertised_vision:
-                image_provider = IMAGE_PROVIDER_OLLAMA
-            else:
-                image_provider = IMAGE_PROVIDER_NONE
-                logger.info(
-                    "Visual analysis is disabled (IMAGE_PROVIDER='none'); visual content in uploaded documents will not be described or indexed for retrieval."
-                )
-
-    if image_provider not in RECOGNIZED_IMAGE_PROVIDERS:
-        raise ValueError(
-            f"IMAGE_PROVIDER must be one of: {', '.join(RECOGNIZED_IMAGE_PROVIDERS)}."
-        )
-    if image_provider not in IMPLEMENTED_IMAGE_PROVIDERS:
-        raise ValueError(
-            f"IMAGE_PROVIDER '{image_provider}' is recognized but not "
-            "implemented yet. Implemented providers: "
-            f"{', '.join(IMPLEMENTED_IMAGE_PROVIDERS)}."
-        )
-
-    ollama_image_model = os.getenv(
-        "OLLAMA_IMAGE_MODEL",
-        DEFAULT_OLLAMA_IMAGE_MODEL,
-    ).strip()
-    if not OLLAMA_MODEL_PATTERN.fullmatch(ollama_image_model):
-        raise ValueError(
-            "OLLAMA_IMAGE_MODEL must contain 1-128 characters limited to letters, "
-            "digits, dots, colons, slashes, dashes, or underscores."
-        )
-    gemini_image_model = os.getenv(
-        "GEMINI_IMAGE_MODEL",
-        DEFAULT_GEMINI_IMAGE_MODEL,
-    ).strip()
-    if not gemini_image_model or len(gemini_image_model) > 128:
-        raise ValueError("GEMINI_IMAGE_MODEL must contain 1-128 non-blank characters.")
-
-    if image_provider == IMAGE_PROVIDER_GEMINI:
-        if not gemini_api_key:
-            raise ValueError(
-                "GEMINI_API_KEY is required when gemini is configured as IMAGE_PROVIDER."
-            )
-        gemini_entries = ai_model_catalog.get(AI_PROVIDER_GEMINI, [])
-        for entry in gemini_entries:
-            if (
-                entry.get("model") == gemini_image_model
-                and entry.get("vision") is False
-            ):
-                raise ValueError(
-                    f"GEMINI_IMAGE_MODEL '{gemini_image_model}' is declared with vision=False in AI_MODEL_CATALOG."
-                )
-    elif image_provider == IMAGE_PROVIDER_OLLAMA:
-        ollama_entries = ai_model_catalog.get(AI_PROVIDER_OLLAMA, [])
-        for entry in ollama_entries:
-            if (
-                entry.get("model") == ollama_image_model
-                and entry.get("vision") is False
-            ):
-                raise ValueError(
-                    f"OLLAMA_IMAGE_MODEL '{ollama_image_model}' is declared with vision=False in AI_MODEL_CATALOG."
-                )
 
     image_understanding_timeout_seconds = _bounded_positive_integer_setting(
         "IMAGE_UNDERSTANDING_TIMEOUT_SECONDS",
@@ -1300,7 +1156,9 @@ def load_settings() -> Settings:
         encryption_key=encryption_key,
         bootstrap_admin_email=bootstrap_admin_email or None,
         bootstrap_admin_token=bootstrap_admin_token or None,
-        ai_provider=ai_provider,
+        ai_available_vendors=ai_available_vendors,
+        ai_default_model=ai_default_model,
+        ai_vision_model=ai_vision_model,
         ai_model_catalog=ai_model_catalog,
         ai_pricing_version=ai_pricing_version,
         ai_model_cost_rates=ai_model_cost_rates,
@@ -1314,7 +1172,6 @@ def load_settings() -> Settings:
         ollama_num_ctx=ollama_num_ctx,
         ollama_num_predict=ollama_num_predict,
         ollama_repeat_penalty=ollama_repeat_penalty,
-        ai_fallback_providers=ai_fallback_providers,
         ai_generation_timeout_seconds=ai_generation_timeout_seconds,
         ai_generation_max_attempts=ai_generation_max_attempts,
         ai_generation_backoff_base_seconds=ai_generation_backoff_base_seconds,
@@ -1322,15 +1179,9 @@ def load_settings() -> Settings:
         ai_generation_max_concurrency=ai_generation_max_concurrency,
         ai_generation_overall_timeout_seconds=ai_generation_overall_timeout_seconds,
         ai_grading_overall_timeout_seconds=ai_grading_overall_timeout_seconds,
-        embedding_provider=embedding_provider,
-        ollama_embedding_model=ollama_embedding_model,
-        gemini_embedding_model=gemini_embedding_model,
+        embedding_model_cache_directory=embedding_model_cache_directory,
         embedding_batch_size=embedding_batch_size,
-        embedding_timeout_seconds=embedding_timeout_seconds,
         vector_backend=vector_backend,
-        image_provider=image_provider,
-        ollama_image_model=ollama_image_model,
-        gemini_image_model=gemini_image_model,
         image_understanding_timeout_seconds=image_understanding_timeout_seconds,
         image_understanding_max_bytes=image_understanding_max_bytes,
         max_upload_size_bytes=max_upload_size_bytes,
@@ -1584,14 +1435,81 @@ def _cors_allowed_origins_setting() -> tuple[str, ...]:
     return tuple(origins)
 
 
+def _available_ai_vendors(
+    *,
+    gemini_api_key: str | None,
+    openai_api_key: str | None,
+    anthropic_api_key: str | None,
+    ollama_base_url: str | None,
+) -> tuple[str, ...]:
+    configured = {
+        AI_PROVIDER_GEMINI: bool(gemini_api_key),
+        AI_PROVIDER_OPENAI: bool(openai_api_key),
+        AI_PROVIDER_CLAUDE: bool(anthropic_api_key),
+        AI_PROVIDER_OLLAMA: bool(ollama_base_url),
+    }
+    return tuple(vendor for vendor in AI_VENDOR_PREFERENCE_ORDER if configured[vendor])
+
+
+def _catalog_model_ids(
+    catalog: dict[str, list[dict[str, object]]],
+    vendors: tuple[str, ...],
+) -> set[str]:
+    return {
+        f"{vendor}:{entry['model']}"
+        for vendor in vendors
+        for entry in catalog.get(vendor) or []
+    }
+
+
+def _ai_default_model_setting(
+    catalog: dict[str, list[dict[str, object]]],
+    available_vendors: tuple[str, ...],
+) -> str:
+    configured = os.getenv("AI_DEFAULT_MODEL", "").strip()
+    if configured:
+        available = _catalog_model_ids(catalog, available_vendors)
+        if configured not in available:
+            raise ValueError(
+                f"AI_DEFAULT_MODEL '{configured}' is not an available model. "
+                f"Available: {', '.join(sorted(available))}."
+            )
+        return configured
+    for vendor in available_vendors:
+        entries = catalog.get(vendor) or []
+        if entries:
+            return f"{vendor}:{entries[0]['model']}"
+    raise ValueError("No AI model is available.")
+
+
+def _ai_vision_model(
+    catalog: dict[str, list[dict[str, object]]],
+    available_vendors: tuple[str, ...],
+    *,
+    enabled: bool,
+) -> str | None:
+    # Describing an image is a paid call per visual, so a deployment must be
+    # able to decline it without giving up the vendor that would answer.
+    if not enabled:
+        return None
+    for vendor in available_vendors:
+        if vendor not in IMPLEMENTED_IMAGE_VENDORS:
+            continue
+        for entry in catalog.get(vendor) or []:
+            if entry.get("vision"):
+                return f"{vendor}:{entry['model']}"
+    return None
+
+
 def _ai_model_catalog_setting(
+    available_vendors: tuple[str, ...],
     ollama_model: str,
     ollama_num_ctx: int,
 ) -> dict[str, list[dict[str, object]]]:
     raw_value = os.getenv("AI_MODEL_CATALOG", "").strip()
 
     if not raw_value:
-        return {
+        builtin = {
             AI_PROVIDER_OLLAMA: [
                 {
                     "model": ollama_model,
@@ -1625,6 +1543,7 @@ def _ai_model_catalog_setting(
                 }
             ],
         }
+        return builtin
 
     try:
         parsed = json.loads(raw_value)
@@ -1712,6 +1631,14 @@ def _ai_model_catalog_setting(
                 )
 
             seen_models.add(model)
+
+    missing = [vendor for vendor in available_vendors if not parsed.get(vendor)]
+    if missing:
+        raise ValueError(
+            "AI_MODEL_CATALOG declares no models for configured vendor(s): "
+            f"{', '.join(missing)}. Add an entry, or unset the credential if "
+            "that vendor should not be offered."
+        )
 
     return parsed
 

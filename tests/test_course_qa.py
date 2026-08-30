@@ -457,7 +457,7 @@ def test_course_qa_api_success(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: FakeProvider(),
+        lambda **_: FakeProvider(),
     )
 
     response = upload_api.client.post(
@@ -520,7 +520,7 @@ def test_course_qa_api_curates_retrieval_failures(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: provider,
+        lambda **_: provider,
     )
 
     response = upload_api.client.post(
@@ -618,7 +618,7 @@ def test_course_qa_cross_course_isolation(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: InspectingProvider(),
+        lambda **_: InspectingProvider(),
     )
 
     # Query Course 2
@@ -660,7 +660,7 @@ def test_course_qa_provider_error_status_codes(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: UnreachableProvider(),
+        lambda **_: UnreachableProvider(),
     )
     res = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/qa",
@@ -677,7 +677,7 @@ def test_course_qa_provider_error_status_codes(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: TimeoutProvider(),
+        lambda **_: TimeoutProvider(),
     )
     res = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/qa",
@@ -694,7 +694,7 @@ def test_course_qa_provider_error_status_codes(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: RateLimitedProvider(),
+        lambda **_: RateLimitedProvider(),
     )
     res = upload_api.client.post(
         f"/api/courses/{upload_api.course_id}/qa",
@@ -739,7 +739,7 @@ def test_course_qa_creates_conversation_and_persists_messages(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: FakeProvider(),
+        lambda **_: FakeProvider(),
     )
 
     response = upload_api.client.post(
@@ -828,7 +828,7 @@ def test_course_qa_continues_existing_conversation_with_history(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: FakeProvider(),
+        lambda **_: FakeProvider(),
     )
 
     first_response = upload_api.client.post(
@@ -902,7 +902,7 @@ def test_course_qa_rejects_conversation_from_another_course(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: UncalledTextProvider(),
+        lambda **_: UncalledTextProvider(),
     )
 
     response = upload_api.client.post(
@@ -941,7 +941,7 @@ def test_course_qa_rejects_another_users_conversation(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: UncalledTextProvider(),
+        lambda **_: UncalledTextProvider(),
     )
 
     response = upload_api.client.post(
@@ -971,7 +971,7 @@ def test_course_qa_rejects_ai_tutor_conversation(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: UncalledTextProvider(),
+        lambda **_: UncalledTextProvider(),
     )
 
     response = upload_api.client.post(
@@ -1019,7 +1019,7 @@ def test_course_qa_provider_failure_does_not_create_conversation(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: FailingProvider(),
+        lambda **_: FailingProvider(),
     )
 
     response = upload_api.client.post(
@@ -1098,7 +1098,7 @@ def test_course_qa_with_profile_knowledge_opt_in(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: FakeProvider(),
+        lambda **_: FakeProvider(),
     )
 
     # 1. Opt-in True
@@ -1219,7 +1219,7 @@ def test_course_qa_response_diagnostics_never_expose_private_material_content(
     monkeypatch.setattr(
         course_qa_route,
         "get_text_generation_provider",
-        lambda: FakeProvider(),
+        lambda **_: FakeProvider(),
     )
 
     response = upload_api.client.post(

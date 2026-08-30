@@ -59,6 +59,17 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     configure_logging(service="api", environment=settings.app_env)
+    # Every configured vendor joins the fallback chain, so an operator must be
+    # able to see which ones an outage would bill without guessing.
+    logger.info(
+        "AI vendors available",
+        extra={
+            "event": "ai_vendors_available",
+            "ai_available_vendors": ",".join(settings.ai_available_vendors),
+            "ai_default_model": settings.ai_default_model,
+            "ai_vision_model": settings.ai_vision_model,
+        },
+    )
     yield
 
 

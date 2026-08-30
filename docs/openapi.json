@@ -6822,7 +6822,8 @@
           "job_type": {
             "enum": [
               "generate_study_guide",
-              "generate_quiz"
+              "generate_quiz",
+              "generate_flashcard"
             ],
             "title": "Job Type",
             "type": "string"
@@ -13164,8 +13165,7 @@
                 "title": "Request"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "202": {

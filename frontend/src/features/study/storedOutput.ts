@@ -1,7 +1,10 @@
 import type {
   FlashcardGenerationResponse,
   GeneratedFlashcard,
+  GeneratedOutputDetail,
   QuizView,
+  RetrievedContext,
+  StudyGuideGenerationResult,
   StudyGuideResponse,
 } from '@/api/types';
 
@@ -123,4 +126,50 @@ export function extractQuiz(content: unknown): QuizView | null {
     return parsed as QuizView;
   }
   return null;
+}
+
+export function studyGuideContext(output: GeneratedOutputDetail): RetrievedContext | null {
+  const context = output.generation_context;
+  if (!context) {
+    return null;
+  }
+  return {
+    context_truncated: context.truncated,
+    chunks_used: context.chunks_used,
+    chunks_available: context.chunks_available,
+    retrieval_narrowed: context.chunks_used < context.chunks_available,
+    lowest_similarity: context.lowest_similarity ?? null,
+    highest_similarity: context.highest_similarity ?? null,
+    profile_knowledge_used: context.profile_knowledge_used ?? false,
+    profile_knowledge_items_used: context.profile_knowledge_items_used ?? null,
+  };
+}
+
+export function asExportableStudyGuide(
+  output: GeneratedOutputDetail,
+): StudyGuideGenerationResult | null {
+  const { content } = output;
+  if (
+    (output.output_type !== 'study_guide' && output.output_type !== 'last_minute_review') ||
+    !isRenderableStudyGuide(content)
+  ) {
+    return null;
+  }
+  const guide =
+    typeof content === 'string'
+      ? (tryParseJson(content) as StudyGuideResponse)
+      : (content as StudyGuideResponse);
+  const context = studyGuideContext(output);
+  return {
+    study_guide: guide,
+    generated_output_id: output.id,
+    context_truncated: context?.context_truncated ?? false,
+    chunks_used: context?.chunks_used ?? 0,
+    chunks_available: context?.chunks_available ?? 0,
+    retrieval_narrowed: context?.retrieval_narrowed ?? false,
+    lowest_similarity: context?.lowest_similarity ?? null,
+    highest_similarity: context?.highest_similarity ?? null,
+    profile_knowledge_used: context?.profile_knowledge_used ?? false,
+    profile_knowledge_items_used: context?.profile_knowledge_items_used ?? null,
+  };
 }

@@ -2,9 +2,9 @@
 
 ## Overview
 
-Lumina routes text generation and embeddings to configured AI providers:
-* **Primary Providers:** `gemini` (hosted / cloud) or `ollama` (self-hosted / local).
-* **Fallback Providers:** Configured via `AI_FALLBACK_PROVIDERS` as a comma-separated list (e.g. `gemini,ollama` or empty).
+Lumina routes text generation to whichever vendors are configured:
+* **Availability:** a vendor is in play because its credential or endpoint is set (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_BASE_URL`). There is no provider or fallback setting to inspect; read the `ai_vendors_available` startup log line to see the derived chain.
+* **Embeddings are not affected by a vendor outage.** They are computed in-process, so retrieval and document indexing keep working even when every generation vendor is down.
 * **Resilience:** `ReliableTextGenerationProvider` automatically retries transient 5xx / connection errors up to `AI_GENERATION_MAX_ATTEMPTS` (default: 3) with exponential backoff before failing over or surfacing `provider_unavailable`.
 
 ---
@@ -44,8 +44,9 @@ Search for `exception_type` matching `TextGenerationConnectionError`, `TextGener
    ```bash
    ollama list
    ollama pull llama3.1
-   ollama pull nomic-embed-text
    ```
+   Only the generation model is needed. Embeddings are computed in-process and
+   do not depend on Ollama.
 
 3. **Restart the Ollama Host Service (if running as a system service on host):**
    ```bash
@@ -65,13 +66,13 @@ Search for `exception_type` matching `TextGenerationConnectionError`, `TextGener
    * Anthropic: <https://status.anthropic.com>
 
 2. **Automatic Multi-Provider Failover:**
-   When `AI_FALLBACK_PROVIDERS` is configured (e.g. `AI_PROVIDER=gemini`, `AI_FALLBACK_PROVIDERS=openai,claude`), `ReliableTextGenerationProvider` automatically attempts fallback providers upon transient failure or exhaustion of retries.
+   Every configured vendor is already in the chain; there is nothing to enable. `ReliableTextGenerationProvider` attempts the next vendor upon transient failure or exhaustion of retries, which also means an outage of one vendor bills the next — `GET /api/admin/ai-costs` reports that spend per vendor and model.
    Check CloudWatch EMF metric `Lumina/AI ProviderErrors` broken down by `Provider` dimension to identify which provider is degraded.
 
 3. **Manual Primary Provider Failover (during sustained primary outage):**
    If the primary provider suffers a prolonged outage or quota exhaustion:
-   * Switch the primary `AI_PROVIDER` to an available alternate provider (e.g. `openai` or `claude`).
-   * Update the fallback list (e.g. `AI_FALLBACK_PROVIDERS=claude` or `gemini`).
+   * Point `AI_DEFAULT_MODEL` at an available alternate, e.g. `openai:gpt-5.6-terra` or `claude:claude-sonnet-5`.
+   * To take a vendor out of the chain entirely, remove its API key; availability follows the credentials.
    * Verify corresponding API keys are populated in SSM Parameter Store:
      * `/<project>-<environment>/openai-api-key`
      * `/<project>-<environment>/anthropic-api-key`

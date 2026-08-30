@@ -23,6 +23,10 @@ vi.mock('./api/generatedOutputs', () => ({
   },
 }));
 
+vi.mock('./api/generationJobs', () => ({
+  generationJobsAPI: { list: vi.fn().mockResolvedValue([]), get: vi.fn(), retry: vi.fn() },
+}));
+
 vi.mock('./context/CreditContext', () => ({
   useCredits: () => ({
     status: null,
@@ -609,4 +613,3 @@ describe('Workspace conversations', () => {
     expect(await screen.findByRole('button', { name: 'Copied to clipboard' })).toBeInTheDocument();
   }, 15_000);
 });
-

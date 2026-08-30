@@ -4,12 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '@/api/client';
 import { flashcardsAPI } from '@/api/flashcards';
 import { userAPI } from '@/api/user';
-import type { CreditStatus, FlashcardGenerationResult } from '@/api/types';
+import type { CreditStatus } from '@/api/types';
 import { CreditProvider } from '@/context/CreditContext';
 import { FlashcardModal } from './FlashcardModal';
 
 vi.mock('@/api/flashcards', () => ({
-  flashcardsAPI: { generate: vi.fn() },
+  flashcardsAPI: { enqueue: vi.fn() },
 }));
 
 vi.mock('@/api/user', () => ({
@@ -20,7 +20,7 @@ vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({ isAuthenticated: true, user: { id: 1 } }),
 }));
 
-const mockGenerate = vi.mocked(flashcardsAPI.generate);
+const mockEnqueue = vi.mocked(flashcardsAPI.enqueue);
 const mockGetCredits = vi.mocked(userAPI.getCredits);
 
 const UNMETERED: CreditStatus = {
@@ -45,26 +45,9 @@ const BROKE: CreditStatus = {
   generation_costs: { flashcard: 1, quiz: 1, quiz_open_ended: 2, study_guide: 1 },
 };
 
-const DECK: FlashcardGenerationResult = {
-  flashcards: {
-    deck_title: 'Sorting, one card at a time',
-    card_count: 2,
-    flashcards: [
-      { card_number: 1, front: 'What is a stack?', back: 'Last in, first out.', difficulty: 'Easy' },
-      { card_number: 2, front: 'What is a heap?', back: 'A partly ordered tree.', difficulty: 'Hard' },
-    ],
-  },
-  generated_output_id: 12,
-  context_truncated: false,
-  chunks_used: 4,
-  chunks_available: 9,
-  retrieval_narrowed: true,
-  lowest_similarity: 0.41,
-  highest_similarity: 0.88,
-};
-
 function renderModal(readyDocumentCount = 2) {
   const onClose = vi.fn();
+  const onQueued = vi.fn();
   const view = render(
     <CreditProvider>
       <FlashcardModal
@@ -72,27 +55,26 @@ function renderModal(readyDocumentCount = 2) {
         courseName="Computer Systems"
         readyDocumentCount={readyDocumentCount}
         onClose={onClose}
+        onQueued={onQueued}
       />
     </CreditProvider>,
   );
-  return { ...view, onClose, person: userEvent.setup() };
+  return { ...view, onClose, onQueued, person: userEvent.setup() };
 }
 
-async function generate(readyDocumentCount = 2) {
+async function queue(readyDocumentCount = 2) {
   const rendered = renderModal(readyDocumentCount);
-  await rendered.person.click(
-    await screen.findByRole('button', { name: /make flashcards/i }),
-  );
+  await rendered.person.click(await screen.findByRole('button', { name: /make flashcards/i }));
   return rendered;
 }
 
 beforeEach(() => {
   mockGetCredits.mockResolvedValue(UNMETERED);
-  mockGenerate.mockResolvedValue(DECK);
+  mockEnqueue.mockResolvedValue({ job_id: 12, status: 'queued' });
 });
 
 describe('setting a deck up', () => {
-  it('says what a deck is before anything is generated', async () => {
+  it('says what a deck is before anything is queued', async () => {
     renderModal();
 
     expect(await screen.findByText(/question-and-answer cards/i)).toBeInTheDocument();
@@ -113,18 +95,18 @@ describe('setting a deck up', () => {
     await person.click(await screen.findByRole('checkbox', { name: /study profile/i }));
     await person.click(screen.getByRole('button', { name: /make flashcards/i }));
 
-    await waitFor(() => expect(mockGenerate).toHaveBeenCalled());
-    expect(mockGenerate.mock.calls[0][1]).toMatchObject({
+    await waitFor(() => expect(mockEnqueue).toHaveBeenCalled());
+    expect(mockEnqueue.mock.calls[0][1]).toMatchObject({
       use_profile_knowledge: true,
       include_profile_context: true,
     });
   });
 
   it('leaves the profile out by default', async () => {
-    await generate();
+    await queue();
 
-    await waitFor(() => expect(mockGenerate).toHaveBeenCalled());
-    expect(mockGenerate.mock.calls[0][1]).toMatchObject({
+    await waitFor(() => expect(mockEnqueue).toHaveBeenCalled());
+    expect(mockEnqueue.mock.calls[0][1]).toMatchObject({
       use_profile_knowledge: false,
       include_profile_context: false,
     });
@@ -135,7 +117,7 @@ describe('setting a deck up', () => {
     renderModal();
 
     expect(await screen.findByRole('button', { name: /make flashcards/i })).toBeDisabled();
-    expect(mockGenerate).not.toHaveBeenCalled();
+    expect(mockEnqueue).not.toHaveBeenCalled();
   });
 
   it('shows no credit interface at all for an unmetered account', async () => {
@@ -146,104 +128,51 @@ describe('setting a deck up', () => {
   });
 });
 
-describe('while the cards are being written', () => {
-  it('says what it is doing rather than leaving the dialog blank', async () => {
-    mockGenerate.mockReturnValue(new Promise(() => {}));
-    await generate();
-
-    expect(await screen.findByText('Writing your cards')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();
-  });
-
-  it('drops back to the setup when the student cancels', async () => {
-    mockGenerate.mockReturnValue(new Promise(() => {}));
-    const { person } = await generate();
-
-    await person.click(await screen.findByRole('button', { name: /cancel/i }));
+describe('handing the deck off to the queue', () => {
+  it('keeps the setup visible while the short enqueue request is pending', async () => {
+    mockEnqueue.mockReturnValue(new Promise(() => {}));
+    await queue();
 
     expect(await screen.findByText(/question-and-answer cards/i)).toBeInTheDocument();
-    expect(screen.queryByText('Writing your cards')).toBeNull();
+    expect(screen.getByRole('button', { name: /make flashcards/i })).toBeDisabled();
+  });
+
+  it('reports the accepted job and closes rather than waiting for cards', async () => {
+    const { onClose, onQueued } = await queue();
+
+    await waitFor(() => expect(onQueued).toHaveBeenCalledWith(12));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });
 
-describe('when the deck arrives', () => {
-  it('names the deck and deals the first card face up', async () => {
-    await generate();
-
-    expect(await screen.findByText('What is a stack?')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /make another set/i })).toBeInTheDocument();
-  });
-
-  it('reports which part of the course the cards came from', async () => {
-    await generate();
-
-    await screen.findByText('What is a stack?');
-    expect(screen.getByText(/Read 4 of 9 passages/)).toBeInTheDocument();
-  });
-
-  it('counts the profile notes it actually used', async () => {
-    mockGenerate.mockResolvedValue({
-      ...DECK,
-      profile_knowledge_used: true,
-      profile_knowledge_items_used: 3,
-    });
-    await generate();
-
-    await screen.findByText('What is a stack?');
-    expect(screen.getByText(/plus 3 notes from your profile/)).toBeInTheDocument();
-  });
-
-  it('claims no note count when the generation recorded none', async () => {
-    mockGenerate.mockResolvedValue({
-      ...DECK,
-      profile_knowledge_used: true,
-      profile_knowledge_items_used: 0,
-    });
-    await generate();
-
-    await screen.findByText('What is a stack?');
-    const report = screen.getByText(/notes from your profile/);
-    expect(report.textContent).not.toMatch(/plus 0 notes|undefined/);
-  });
-});
-
-describe('when the cards cannot be written', () => {
+describe('when the deck cannot be queued', () => {
   it('explains an unmapped failure in words rather than a bare label', async () => {
-    mockGenerate.mockRejectedValue(new APIError(500, { detail: '' }));
-    await generate();
+    mockEnqueue.mockRejectedValue(new APIError(500, { detail: '' }));
+    await queue();
 
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toMatch(/flashcards could not be written/i);
+    expect(alert.textContent).toMatch(/flashcards could not be queued/i);
     expect(alert.textContent).not.toBe('flashcard');
   });
 
   it('names a provider outage and says nothing was charged', async () => {
-    mockGenerate.mockRejectedValue(
-      new APIError(503, { detail: 'down' }, 'provider_unavailable'),
-    );
-    await generate();
+    mockEnqueue.mockRejectedValue(new APIError(503, { detail: 'down' }, 'provider_unavailable'));
+    await queue();
 
     expect(await screen.findByText('The AI service is down')).toBeInTheDocument();
     expect(screen.getByText(/Nothing was charged/)).toBeInTheDocument();
   });
 
-  it('tries again from the error rather than making the student start over', async () => {
-    mockGenerate.mockRejectedValueOnce(
+  it('keeps the dialog open on failure so the student can try again', async () => {
+    mockEnqueue.mockRejectedValueOnce(
       new APIError(503, { detail: 'down' }, 'provider_unavailable'),
     );
-    const { person } = await generate();
+    const { person, onClose } = await queue();
+    expect(onClose).not.toHaveBeenCalled();
 
     await person.click(await screen.findByRole('button', { name: /try again/i }));
 
-    expect(await screen.findByText('What is a stack?')).toBeInTheDocument();
-    expect(mockGenerate).toHaveBeenCalledTimes(2);
-  });
-
-  it('returns to the setup when the balance will not cover it', async () => {
-    mockGenerate.mockRejectedValue(new APIError(402, { detail: 'Not enough credits' }));
-    await generate();
-
-    expect(await screen.findByText(/question-and-answer cards/i)).toBeInTheDocument();
-    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() => expect(mockEnqueue).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });
 });

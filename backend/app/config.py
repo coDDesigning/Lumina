@@ -111,6 +111,21 @@ DEFAULT_PROCESSING_JOB_POLL_SECONDS = 1.0
 DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS = 300
 DEFAULT_PROCESSING_JOB_CONCURRENCY = 2
 MAX_PROCESSING_JOB_CONCURRENCY = 6
+# A generation is one provider call, not a pipeline, so its lease only has to
+# outlive a slow model rather than an extraction. The attempt timeout is the
+# ceiling the worker enforces on that call; a reasoning model on a free tier has
+# been measured past five minutes, so the default leaves room above it.
+DEFAULT_GENERATION_JOB_LEASE_SECONDS = 120
+DEFAULT_GENERATION_JOB_MAX_ATTEMPTS = 2
+DEFAULT_GENERATION_JOB_POLL_SECONDS = 1.0
+DEFAULT_GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS = 600
+DEFAULT_GENERATION_JOB_CONCURRENCY = 2
+MAX_GENERATION_JOB_CONCURRENCY = 6
+# How many generations one student may have in flight. It bounds what a single
+# account can hold of the shared provider quota, so it is a product limit rather
+# than a worker tuning knob and is deliberately small.
+DEFAULT_GENERATION_JOB_MAX_ACTIVE_PER_USER = 2
+MAX_GENERATION_JOB_MAX_ACTIVE_PER_USER = 10
 DEFAULT_MAX_EXTRACTED_CHARACTERS = 2_000_000
 DEFAULT_MAX_DOCUMENT_CHUNKS = 1_000
 DEFAULT_OCR_LANGUAGE = "eng"
@@ -156,7 +171,8 @@ DEFAULT_RATE_LIMIT_VERIFICATION_WINDOW_SECONDS = 3600
 DEFAULT_RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS = 5
 DEFAULT_RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS = 3600
 
-# Authentication hardening. See docs/authentication.md.
+# Authentication hardening. See docs/authentication.md. NIST SP 800-63B puts the
+# floor for a user-chosen secret at 8 characters.
 DEFAULT_PASSWORD_MIN_LENGTH = 8
 # bcrypt truncates at 72 bytes, so a longer minimum could not be enforced.
 MAX_PASSWORD_MIN_LENGTH = 64
@@ -270,6 +286,12 @@ class Settings:
     processing_job_poll_seconds: float
     processing_job_attempt_timeout_seconds: int
     processing_job_concurrency: int
+    generation_job_lease_seconds: int
+    generation_job_max_attempts: int
+    generation_job_poll_seconds: float
+    generation_job_attempt_timeout_seconds: int
+    generation_job_concurrency: int
+    generation_job_max_active_per_user: int
     max_extracted_characters: int
     max_document_chunks: int
     ocr_language: str
@@ -673,12 +695,50 @@ def load_settings() -> Settings:
         minimum=1,
         maximum=MAX_PROCESSING_JOB_CONCURRENCY,
     )
+    generation_job_lease_seconds = _bounded_positive_integer_setting(
+        "GENERATION_JOB_LEASE_SECONDS",
+        DEFAULT_GENERATION_JOB_LEASE_SECONDS,
+        minimum=5,
+        maximum=86_400,
+    )
+    generation_job_max_attempts = _bounded_positive_integer_setting(
+        "GENERATION_JOB_MAX_ATTEMPTS",
+        DEFAULT_GENERATION_JOB_MAX_ATTEMPTS,
+        minimum=1,
+        maximum=100,
+    )
+    generation_job_poll_seconds = _positive_float_setting(
+        "GENERATION_JOB_POLL_SECONDS",
+        DEFAULT_GENERATION_JOB_POLL_SECONDS,
+    )
+    generation_job_attempt_timeout_seconds = _bounded_positive_integer_setting(
+        "GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS",
+        DEFAULT_GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=86_400,
+    )
+    generation_job_concurrency = _bounded_positive_integer_setting(
+        "GENERATION_JOB_CONCURRENCY",
+        DEFAULT_GENERATION_JOB_CONCURRENCY,
+        minimum=1,
+        maximum=MAX_GENERATION_JOB_CONCURRENCY,
+    )
+    generation_job_max_active_per_user = _bounded_positive_integer_setting(
+        "GENERATION_JOB_MAX_ACTIVE_PER_USER",
+        DEFAULT_GENERATION_JOB_MAX_ACTIVE_PER_USER,
+        minimum=1,
+        maximum=MAX_GENERATION_JOB_MAX_ACTIVE_PER_USER,
+    )
     if mode == MODE_HOSTED:
-        peak_worker_connections = 2 * processing_job_concurrency + 1
+        # One worker process runs both pools. Every slot costs a job connection
+        # plus its heartbeat connection, and each pool has its own coordinator.
+        peak_worker_connections = (
+            2 * processing_job_concurrency + 2 * generation_job_concurrency + 2
+        )
         if peak_worker_connections > database_pool_size + database_max_overflow:
             raise ValueError(
-                "PROCESSING_JOB_CONCURRENCY requires "
-                f"{peak_worker_connections} database connections but "
+                "PROCESSING_JOB_CONCURRENCY and GENERATION_JOB_CONCURRENCY "
+                f"require {peak_worker_connections} database connections but "
                 "DATABASE_POOL_SIZE plus DATABASE_MAX_OVERFLOW allow only "
                 f"{database_pool_size + database_max_overflow}."
             )
@@ -1286,6 +1346,12 @@ def load_settings() -> Settings:
         processing_job_poll_seconds=processing_job_poll_seconds,
         processing_job_attempt_timeout_seconds=processing_job_attempt_timeout_seconds,
         processing_job_concurrency=processing_job_concurrency,
+        generation_job_lease_seconds=generation_job_lease_seconds,
+        generation_job_max_attempts=generation_job_max_attempts,
+        generation_job_poll_seconds=generation_job_poll_seconds,
+        generation_job_attempt_timeout_seconds=generation_job_attempt_timeout_seconds,
+        generation_job_concurrency=generation_job_concurrency,
+        generation_job_max_active_per_user=generation_job_max_active_per_user,
         max_extracted_characters=max_extracted_characters,
         max_document_chunks=max_document_chunks,
         ocr_language=ocr_language,

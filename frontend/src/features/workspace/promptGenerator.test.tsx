@@ -16,6 +16,10 @@ vi.mock('@/api/generatedOutputs', () => ({
   },
 }));
 
+vi.mock('@/api/generationJobs', () => ({
+  generationJobsAPI: { list: vi.fn().mockResolvedValue([]), get: vi.fn(), retry: vi.fn() },
+}));
+
 vi.mock('@/context/CreditContext', () => ({
   useCredits: () => ({
     status: null,

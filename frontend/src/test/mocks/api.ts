@@ -159,7 +159,7 @@ export const MockErrors = {
     }),
 
   unsupportedMediaType: (
-    message = 'Unsupported file type. Please upload a PDF, TXT, or Markdown file.',
+    message = 'Unsupported file type. Please upload a PDF, TXT, Markdown, or image (PNG or JPEG) file.',
     code = 'UPLOAD_UNSUPPORTED_FILE_TYPE',
   ) =>
     new APIError(415, {

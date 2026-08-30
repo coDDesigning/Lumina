@@ -11,7 +11,7 @@ import { MAX_ANSWER_TEXT_CHARS, OPEN_ENDED_ROWS, SHORT_ANSWER_ROWS } from './ans
 import { QuizModal } from './QuizModal';
 
 vi.mock('@/api/quiz', () => ({
-  quizAPI: { generate: vi.fn(), submitAttempt: vi.fn() },
+  quizAPI: { enqueue: vi.fn(), generate: vi.fn(), submitAttempt: vi.fn() },
 }));
 
 vi.mock('@/api/settings', () => ({
@@ -27,6 +27,7 @@ vi.mock('@/context/AuthContext', () => ({
 }));
 
 const mockGenerate = vi.mocked(quizAPI.generate);
+const mockEnqueue = vi.mocked(quizAPI.enqueue);
 const mockSettings = vi.mocked(settingsAPI.get);
 const mockGetCredits = vi.mocked(userAPI.getCredits);
 
@@ -80,7 +81,13 @@ function quizOf(...questions: QuizQuestionView[]) {
   return createMockQuizGenerationResult({ quiz: createMockQuiz({ questions }) });
 }
 
-function renderQuiz(props: Partial<{ onQuizReady: (quizId: number) => void }> = {}) {
+function renderQuiz(
+  props: Partial<{
+    onQuizReady: (quizId: number) => void;
+    onQueued: (jobId: number) => void;
+    onClose: () => void;
+  }> = {},
+) {
   const person = userEvent.setup();
   render(
     <CreditProvider>
@@ -97,6 +104,7 @@ function renderQuiz(props: Partial<{ onQuizReady: (quizId: number) => void }> = 
 }
 
 beforeEach(() => {
+  mockEnqueue.mockResolvedValue({ job_id: 23, status: 'queued' });
   mockGetCredits.mockResolvedValue(UNMETERED);
   mockSettings.mockResolvedValue(SETTINGS);
   mockGenerate.mockResolvedValue(quizOf(question({})));
@@ -270,6 +278,19 @@ describe('practising from somewhere else in the app', () => {
 
     await waitFor(() => expect(onQuizReady).toHaveBeenCalledWith(7));
     expect(screen.queryByText('Which sort is stable?')).toBeNull();
+  });
+
+  it('queues in the background when the course provides its generation rail', async () => {
+    const onQueued = vi.fn();
+    const onClose = vi.fn();
+    const person = renderQuiz({ onQueued, onClose });
+
+    await person.click(await screen.findByRole('button', { name: /start the quiz/i }));
+
+    await waitFor(() => expect(mockEnqueue).toHaveBeenCalled());
+    expect(onQueued).toHaveBeenCalledWith(23);
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(mockGenerate).not.toHaveBeenCalled();
   });
 });
 

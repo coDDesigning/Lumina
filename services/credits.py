@@ -137,6 +137,7 @@ class CreditService:
         *,
         source_type: str,
         source_id: int | None = None,
+        commit: bool = True,
     ) -> "ChargeReceipt | None":
         """Deduct credits, returning None when the balance cannot cover them.
 
@@ -180,14 +181,21 @@ class CreditService:
             source_type=source_type,
             source_id=source_id,
         )
+        db.flush()
         transaction_id = transaction.id
-        db.commit()
+        if commit:
+            db.commit()
         return ChargeReceipt(
             user_id=user_id, amount=amount, transaction_id=transaction_id
         )
 
     @staticmethod
-    def refund(db: Session, receipt: "ChargeReceipt | None") -> None:
+    def refund(
+        db: Session,
+        receipt: "ChargeReceipt | None",
+        *,
+        commit: bool = True,
+    ) -> None:
         """Reverse one charge, at most once.
 
         A refund is not trimmed to the balance ceiling: it returns credit the
@@ -226,7 +234,10 @@ class CreditService:
                 source_id=original.source_id if original else None,
                 refunds_transaction_id=receipt.transaction_id,
             )
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
         except IntegrityError:
             db.rollback()
 

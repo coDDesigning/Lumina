@@ -7,7 +7,11 @@ from sqlalchemy.orm import Session
 from backend.app.database import get_db
 from backend.app.models import GeneratedOutput
 from schemas.response import BaseResponse
-from schemas.reverse_quiz import ReverseQuizRequest, ReverseQuizResponse
+from schemas.reverse_quiz import (
+    ReverseQuizQuestionsResponse,
+    ReverseQuizRequest,
+    ReverseQuizResponse,
+)
 from schemas.user import UserResponse
 from services.reverse_quiz import ReverseQuizService
 from services.text_generation import (
@@ -78,6 +82,47 @@ def generate_reverse_quiz(
     return BaseResponse(
         success=True,
         message="Reverse quiz generated successfully",
+        data=response,
+    )
+
+
+@router.post(
+    "/{course_id}/reverse-quiz/questions",
+    response_model=BaseResponse[ReverseQuizQuestionsResponse],
+    dependencies=[Depends(rate_limit_generation("reverse_quiz"))],
+    responses={
+        401: {"description": "Authentication required"},
+        404: {"description": "Course not found"},
+        429: {"description": "AI provider or per-user generation rate limited"},
+        503: {"description": "AI provider unreachable"},
+        504: {"description": "AI provider timed out"},
+    },
+)
+def suggest_reverse_quiz_questions(
+    course: OwnedCourse,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    try:
+        provider = _provider_for(current_user.preferred_model)
+
+        response = ReverseQuizService.suggest_questions(
+            db=db,
+            course_id=course.id,
+            user=current_user,
+            provider=provider,
+        )
+
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise ai_generation_http_exception(exc, feature="reverse_quiz") from exc
+
+    return BaseResponse(
+        success=True,
+        message="Reverse quiz questions generated successfully",
         data=response,
     )
 

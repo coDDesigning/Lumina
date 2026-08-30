@@ -128,6 +128,7 @@ class FlashcardService:
         *,
         include_profile_context: bool = False,
         use_profile_knowledge: bool | None = None,
+        prepaid_charge: ChargeReceipt | None = None,
     ) -> FlashcardGeneration:
         if request is None:
             effective_request = FlashcardRequest()
@@ -173,8 +174,8 @@ class FlashcardService:
 
         query = cls.build_retrieval_query(course, effective_request)
 
-        receipt = None
-        if resolved_user_id:
+        receipt = prepaid_charge
+        if receipt is None and resolved_user_id:
             receipt = CreditService.charge(
                 db,
                 resolved_user_id,
@@ -184,6 +185,11 @@ class FlashcardService:
             if receipt is None:
                 log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
                 raise InsufficientCreditsError("Insufficient credits.")
+
+        # A prepaid generation's credit belongs to the job that queued it, and
+        # that job owns the retry decision. Refunding from here would hand the
+        # credit back for an attempt that is about to be run again.
+        refundable = receipt if prepaid_charge is None else None
 
         try:
             material = cls.get_course_material(db, course_id, query=query)
@@ -213,34 +219,34 @@ class FlashcardService:
                     result = provider.generate_json(prompt)
         except MaterialNotIndexedError:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
             raise
         except NoRelevantMaterialError:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
             raise
         except MaterialRetrievalError:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
         except TextGenerationError as exc:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
             raise FlashcardGenerationError("Text generation provider failed.") from exc
         except Exception:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             raise
 
         try:
             validated = FlashcardGenerationResponse.model_validate(result)
         except ValidationError as exc:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(
                 ErrorCategory.INVALID_STRUCTURE,
                 latency_ms=metadata.latency_ms if metadata else None,
@@ -277,6 +283,7 @@ class FlashcardService:
         model_used: str,
         generation_settings: str | None = None,
         generation_context: str | None = None,
+        commit: bool = True,
     ) -> GeneratedOutput:
         return GeneratedOutputService.record(
             db,
@@ -287,4 +294,5 @@ class FlashcardService:
             model_used=model_used,
             generation_settings=generation_settings,
             generation_context=generation_context,
+            commit=commit,
         )

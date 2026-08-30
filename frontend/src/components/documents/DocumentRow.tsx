@@ -23,7 +23,7 @@ import styles from './DocumentRow.module.css';
 export interface DocumentRowProps {
   entry: DocumentEntry;
   onRetry: (documentId: string) => void;
-  onDelete: (documentId: string) => void;
+  onDelete: (documentId: string, options?: { force?: boolean }) => void;
   readOnly?: boolean;
 }
 
@@ -40,6 +40,7 @@ function readyFacts(entry: DocumentEntry): string[] {
 
 export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: DocumentRowProps) {
   const [isConfirming, setIsConfirming] = useState(false);
+  const [isForcing, setIsForcing] = useState(false);
   const { document, job } = entry;
 
   const busy = isDocumentBusy(document.status);
@@ -107,7 +108,22 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
             />
           </div>
           {why ? <p className={styles.locked}>{why}</p> : null}
-          <p className={styles.locked}>It cannot be removed until this finishes.</p>
+          <p className={styles.locked}>
+            It cannot be removed until this finishes.
+            {!readOnly ? (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  className={styles.forceLink}
+                  onClick={() => setIsForcing(true)}
+                  disabled={entry.pending !== null}
+                >
+                  {entry.pending === 'delete' ? 'Removing…' : 'Remove it anyway'}
+                </button>
+              </>
+            ) : null}
+          </p>
         </>
       ) : null}
 
@@ -175,6 +191,22 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
       >
         Everything built from {document.original_file_name} stays, but nothing new can draw on
         it. Putting it back means uploading and processing it again.
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={isForcing}
+        onClose={() => setIsForcing(false)}
+        onConfirm={() => {
+          setIsForcing(false);
+          onDelete(document.id, { force: true });
+        }}
+        title="Force-remove this source?"
+        confirmLabel="Remove it anyway"
+        destructive
+      >
+        Reading {document.original_file_name} has not finished. If it is genuinely still being
+        read this will fail — try again in a minute. Otherwise this clears the stuck upload so
+        you can add the file again.
       </ConfirmDialog>
     </article>
   );

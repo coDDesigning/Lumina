@@ -25,6 +25,12 @@ x-lumina-environment: &lumina-environment
   PROCESSING_JOB_POLL_SECONDS: ${PROCESSING_JOB_POLL_SECONDS:-1.0}
   PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS: ${PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS:-300}
   PROCESSING_JOB_CONCURRENCY: ${PROCESSING_JOB_CONCURRENCY:-2}
+  GENERATION_JOB_LEASE_SECONDS: ${GENERATION_JOB_LEASE_SECONDS:-120}
+  GENERATION_JOB_MAX_ATTEMPTS: ${GENERATION_JOB_MAX_ATTEMPTS:-2}
+  GENERATION_JOB_POLL_SECONDS: ${GENERATION_JOB_POLL_SECONDS:-1.0}
+  GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS: ${GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS:-600}
+  GENERATION_JOB_CONCURRENCY: ${GENERATION_JOB_CONCURRENCY:-2}
+  GENERATION_JOB_MAX_ACTIVE_PER_USER: ${GENERATION_JOB_MAX_ACTIVE_PER_USER:-2}
   MAX_EXTRACTED_CHARACTERS: ${MAX_EXTRACTED_CHARACTERS:-2000000}
   MAX_DOCUMENT_CHUNKS: ${MAX_DOCUMENT_CHUNKS:-1000}
   OCR_LANGUAGE: ${OCR_LANGUAGE:-eng}
@@ -168,12 +174,12 @@ services:
       JWT_SECRET_KEY: worker-does-not-serve-authentication
       BOOTSTRAP_ADMIN_EMAIL: worker@example.com
       BOOTSTRAP_ADMIN_TOKEN: worker-does-not-accept-admin-bootstrap
-    command: ["python", "-m", "workers.document_processor"]
+    command: ["python", "-m", "workers.worker"]
     depends_on:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-m", "workers.document_processor", "--check"]
+      test: ["CMD", "python", "-m", "workers.worker", "--check"]
       interval: 30s
       timeout: 10s
       retries: 3

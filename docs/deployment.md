@@ -266,20 +266,19 @@ the next worker recovers its lease. Self-hosted SQLite/local/Chroma remains a
 single-host, single-process topology. Provider concurrency and upload limits are
 per process, so raising replica maxima multiplies upstream AI/embedding load.
 
-`PROCESSING_JOB_CONCURRENCY` (default 2, maximum 6) is how one worker process
-handles more than one document at a time, and it is qualified on every
-topology, self-hosted SQLite included: one worker process runs that many claim
-slots plus a single coordinator thread for lease recovery, queue metrics, course
-purge, and embedding backfill. Concurrent slots never claim the same job on
-either dialect -- the claim is a guarded `UPDATE ... WHERE status = 'queued'`
-whose loser sees `rowcount != 1`, rolls back, and moves on, which PostgreSQL
-`SKIP LOCKED` only makes cheaper. Each slot needs a job connection and a
-heartbeat connection, so a hosted deployment must keep
-`2 * PROCESSING_JOB_CONCURRENCY + 1` within `DATABASE_POOL_SIZE` plus
-`DATABASE_MAX_OVERFLOW`; configuration that cannot raises at startup rather than
-failing later on a five-second pool timeout. Raising it multiplies concurrent
-extraction subprocesses, PDF render memory, and AI/embedding load within the one
-process exactly as adding replicas does across them.
+`PROCESSING_JOB_CONCURRENCY` and `GENERATION_JOB_CONCURRENCY` (both default 2,
+maximum 6) control the document and AI-generation claim slots in one worker
+process. Both are qualified on every topology, self-hosted SQLite included.
+Each pool also has one coordinator for lease recovery and queue metrics; the
+document coordinator additionally runs course purge and embedding backfill.
+Concurrent slots never claim the same job on either dialect -- the claim is a
+guarded `UPDATE ... WHERE status = 'queued'` whose loser sees `rowcount != 1`,
+rolls back, and moves on, which PostgreSQL `SKIP LOCKED` only makes cheaper.
+Each slot needs a job connection and a heartbeat connection, so hosted startup
+requires `2 * PROCESSING_JOB_CONCURRENCY + 2 * GENERATION_JOB_CONCURRENCY + 2`
+to fit within `DATABASE_POOL_SIZE` plus `DATABASE_MAX_OVERFLOW`. Raising either
+setting multiplies its subprocess, memory, and provider load within one process
+exactly as adding replicas does across them.
 
 Deployments use one commit SHA for the backend image, frontend release, and
 sanitized task-definition documents. The workflow archives the frontend and

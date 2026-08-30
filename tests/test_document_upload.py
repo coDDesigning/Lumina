@@ -98,6 +98,24 @@ def test_first_upload_returns_201_uploaded_document_with_trusted_metadata(
     assert len(stored_files(upload_api.storage_root)) == 1
 
 
+def test_image_upload_is_accepted_and_awaits_visual_analysis(upload_api) -> None:
+    content = b"\x89PNG\r\n\x1a\n" + b"stub raster bytes for the upload layer"
+
+    response = upload_document(upload_api, "whiteboard.PNG", content, "image/png")
+
+    assert response.status_code == 201
+    document = response.json()["document"]
+    assert document["file_type"] == "png"
+    assert document["mime_type"] == "image/png"
+    # file_type is now visual-capable, so an unprocessed upload reports pending.
+    assert document["visual_analysis_status"] == "pending"
+
+    with upload_api.session_factory() as session:
+        persisted = session.get(UploadedDocument, UUID(document["id"]))
+        assert persisted is not None
+        assert persisted.file_type == "png"
+
+
 def test_same_bytes_in_same_course_including_renamed_file_are_deduplicated(
     upload_api,
 ) -> None:

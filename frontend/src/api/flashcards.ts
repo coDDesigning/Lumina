@@ -3,6 +3,7 @@ import type {
   BaseResponse,
   FlashcardGenerationResult,
   FlashcardRequest,
+  GenerationJobAccepted,
 } from './types';
 
 export const flashcardsAPI = {
@@ -17,5 +18,18 @@ export const flashcardsAPI = {
       options,
     );
     return unwrapData(res, 'Flashcard generation');
+  },
+
+  enqueue: async (
+    courseId: number,
+    request?: FlashcardRequest,
+    options?: RequestInit,
+  ): Promise<GenerationJobAccepted> => {
+    const res = await apiClient.post<BaseResponse<GenerationJobAccepted>>(
+      `/courses/${courseId}/flashcards/jobs`,
+      request ?? {},
+      options,
+    );
+    return unwrapData(res, 'Flashcard generation enqueue');
   },
 };

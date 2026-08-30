@@ -15,7 +15,6 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import func, select
@@ -176,45 +175,6 @@ DIFFICULTY_DIRECTIVES: dict[QuizDifficulty, str] = {
         "several parts of the course material."
     ),
 }
-
-
-def _normalize_quiz_result(result: Any, default_difficulty: str = "medium") -> Any:
-    """Normalize common LLM output variations into strict schema format."""
-    if not isinstance(result, dict):
-        return result
-    if not result.get("title") or not str(result["title"]).strip():
-        result["title"] = "Practice Quiz"
-    questions = result.get("questions")
-    if not isinstance(questions, list):
-        return result
-    for idx, q in enumerate(questions):
-        if not isinstance(q, dict):
-            continue
-        if not q.get("question_number"):
-            q["question_number"] = idx + 1
-        if not q.get("difficulty"):
-            q["difficulty"] = default_difficulty
-        q_type = q.get("question_type")
-        if q_type == "multiple_choice":
-            options = q.get("options")
-            if isinstance(options, list) and len(options) > 4:
-                c_idx = q.get("correct_option_index", 0)
-                if not isinstance(c_idx, int) or c_idx < 0 or c_idx >= len(options):
-                    c_idx = 0
-                if c_idx < 4:
-                    q["options"] = options[:4]
-                    q["correct_option_index"] = c_idx
-                else:
-                    q["options"] = options[:3] + [options[c_idx]]
-                    q["correct_option_index"] = 3
-        elif q_type == "true_false":
-            q.pop("options", None)
-            ans = q.get("correct_answer")
-            if isinstance(ans, str):
-                q["correct_answer"] = ans.strip().lower() == "true"
-        elif q_type in ("short_answer", "open_ended"):
-            q.pop("options", None)
-    return result
 
 
 class QuizGenerationError(RuntimeError):
@@ -510,10 +470,7 @@ class QuizService:
             raise
 
         try:
-            normalized_result = _normalize_quiz_result(
-                result, default_difficulty=effective_request.difficulty.value
-            )
-            validated = QuizGenerationResponse.model_validate(normalized_result)
+            validated = QuizGenerationResponse.model_validate(result)
             cls.assert_matches_request(validated, effective_request)
         except (ValidationError, ValueError) as exc:
             db.rollback()

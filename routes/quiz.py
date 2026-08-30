@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
-from backend.app.models import ANSWER_HIDDEN_QUIZ_PURPOSES
+from backend.app.models import ANSWER_HIDDEN_QUIZ_PURPOSES, User
 from backend.app.database import get_db
 from schemas.quiz import (
     QuizGenerationContext,
@@ -51,17 +51,25 @@ router = APIRouter(
 )
 
 
-def _provider_for(model: str | None, preferred_model: str | None):
+def _provider_for(
+    model: str | None,
+    preferred_model: str | None,
+    user: object | None = None,
+):
     effective_model = resolve_effective_model(
         model, preferred_model, required_capability="quiz"
     )
     return get_text_generation_provider(
         effective_model=effective_model,
+        user=user,
         require_json_mode=True,
     )
 
 
-def _grading_provider_for(preferred_model: str | None):
+def _grading_provider_for(
+    preferred_model: str | None,
+    user: object | None = None,
+):
     """A grader bounded to finish before the database closes the transaction.
 
     Grading runs inside the transaction that writes the attempt. The generation
@@ -74,6 +82,7 @@ def _grading_provider_for(preferred_model: str | None):
     )
     return get_text_generation_provider(
         effective_model=effective_model,
+        user=user,
         require_json_mode=True,
         overall_timeout_seconds=settings.ai_grading_overall_timeout_seconds,
     )
@@ -147,7 +156,12 @@ def generate_quiz(
 ):
     generation = None
     try:
-        provider = _provider_for(request.model, current_user.preferred_model)
+        db_user = db.get(User, current_user.id)
+        provider = _provider_for(
+            request.model,
+            current_user.preferred_model,
+            user=db_user,
+        )
 
         generation = QuizService.generate(
             db,
@@ -431,6 +445,7 @@ def submit_quiz_session(
     returns the same attempt rather than grading the paper again.
     """
     try:
+        db_user = db.get(User, current_user.id)
         attempt = QuizSessionService.submit_session(
             db,
             course.id,
@@ -438,7 +453,8 @@ def submit_quiz_session(
             session_id,
             user_id=current_user.id,
             provider_factory=lambda: _grading_provider_for(
-                current_user.preferred_model
+                current_user.preferred_model,
+                user=db_user,
             ),
         )
     except TimedSessionEmptyError as exc:

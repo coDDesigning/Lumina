@@ -279,6 +279,15 @@ class User(Base):
         default="gemini:gemini-3.6-flash",
         server_default="gemini:gemini-3.6-flash",
     )
+    encrypted_openai_api_key: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    encrypted_gemini_api_key: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    encrypted_anthropic_api_key: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )

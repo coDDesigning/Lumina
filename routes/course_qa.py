@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
+from backend.app.models import User
 from schemas.course_qa import CourseQAGenerationResult, CourseQARequest
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
@@ -45,15 +46,22 @@ def ask_course_question(
     db: Annotated[Session, Depends(get_db)],
 ):
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model,
             current_user.preferred_model,
             required_capability="course_qa",
         )
         try:
-            provider = get_text_generation_provider(effective_model=effective_model)
+            provider = get_text_generation_provider(
+                effective_model=effective_model,
+                user=db_user,
+            )
         except TypeError:
-            provider = get_text_generation_provider()
+            try:
+                provider = get_text_generation_provider(effective_model=effective_model)
+            except TypeError:
+                provider = get_text_generation_provider()
 
         generation = CourseQAService.generate(
             db,

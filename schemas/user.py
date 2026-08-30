@@ -101,3 +101,35 @@ class UserUpdate(BaseModel):
         if any(getattr(self, field) is None for field in explicitly_null):
             raise ValueError("Required user fields cannot be null")
         return self
+
+
+def mask_api_key(key: str | None) -> str | None:
+    """Mask an API key for safe presentation to the frontend (e.g. sk-...****)."""
+    if not key:
+        return None
+    clean = key.strip()
+    if not clean:
+        return None
+    if len(clean) <= 8:
+        return f"{clean[:2]}...****"
+    return f"{clean[:6]}...****"
+
+
+class UserApiKeysUpdateRequest(BaseModel):
+    """Payload for saving, updating, or clearing BYOK API keys."""
+
+    openai_api_key: str | None = Field(None, max_length=512)
+    gemini_api_key: str | None = Field(None, max_length=512)
+    anthropic_api_key: str | None = Field(None, max_length=512)
+
+
+class UserApiKeysResponse(BaseModel):
+    """Masked view of configured BYOK API keys."""
+
+    openai_api_key: str | None = None
+    gemini_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    has_openai_key: bool = False
+    has_gemini_key: bool = False
+    has_anthropic_key: bool = False
+

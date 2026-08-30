@@ -5,6 +5,8 @@ import type {
   CreditTransaction,
   EducationLevel,
   User,
+  UserApiKeys,
+  UserApiKeysUpdateRequest,
 } from './types';
 
 export const userAPI = {
@@ -52,5 +54,22 @@ export const userAPI = {
       options,
     );
     unwrapData(res, 'Change password');
+  },
+
+  getApiKeys: async (options?: RequestInit): Promise<UserApiKeys> => {
+    const res = await apiClient.get<BaseResponse<UserApiKeys>>('/users/me/api-keys', options);
+    return unwrapData(res, 'User API keys');
+  },
+
+  updateApiKeys: async (
+    keys: UserApiKeysUpdateRequest,
+    options?: RequestInit,
+  ): Promise<UserApiKeys> => {
+    const res = await apiClient.put<BaseResponse<UserApiKeys>>(
+      '/users/me/api-keys',
+      keys,
+      options,
+    );
+    return unwrapData(res, 'Update API keys');
   },
 };

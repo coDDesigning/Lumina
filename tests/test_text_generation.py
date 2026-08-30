@@ -15,6 +15,7 @@ from services.text_generation import (
     GeminiTextGenerationProvider,
     GenerationConcurrencyError,
     GenerationMetadata,
+    NvidiaNimTextGenerationProvider,
     OpenAITextGenerationProvider,
     ReliableTextGenerationProvider,
     TextGenerationAuthError,
@@ -48,6 +49,26 @@ OLLAMA_SETTINGS = SimpleNamespace(
     ollama_num_predict=4096,
     ollama_repeat_penalty=1.1,
 )
+
+
+def _nvidia_stream(content: str) -> list[SimpleNamespace]:
+    """Content split across deltas, with usage in a trailing choice-less chunk."""
+    return [
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(content=piece))],
+            usage=None,
+        )
+        for piece in (content[: len(content) // 2], content[len(content) // 2 :])
+    ] + [
+        SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(
+                prompt_tokens=12,
+                completion_tokens=8,
+                total_tokens=20,
+            ),
+        )
+    ]
 
 
 def _ollama_provider(monkeypatch, handler):
@@ -128,6 +149,99 @@ class StubProvider:
     def generate_json(self, prompt: str) -> dict[str, object]:
         data, _ = self.generate_json_with_metadata(prompt)
         return data
+
+
+def test_nvidia_nim_provider_uses_chat_completions_and_reports_usage() -> None:
+    requests: list[dict[str, object]] = []
+
+    class FakeCompletions:
+        def create(self, **kwargs: object) -> SimpleNamespace:
+            requests.append(kwargs)
+            return iter(_nvidia_stream('{"title": "Türkçe çalışma rehberi"}'))
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=FakeCompletions()),
+    )
+    provider = NvidiaNimTextGenerationProvider(
+        api_key="test-key",
+        model="nvidia/nemotron-3.5-lightning-30b-a3b",
+        client=client,
+        disable_thinking=True,
+        stream_deadline_seconds=30,
+    )
+
+    result, metadata = provider.generate_json_with_metadata("Bir rehber üret")
+
+    assert result == {"title": "Türkçe çalışma rehberi"}
+    assert requests == [
+        {
+            "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "messages": [{"role": "user", "content": "Bir rehber üret"}],
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "extra_body": {"chat_template_kwargs": {"thinking": False}},
+        }
+    ]
+    assert metadata == GenerationMetadata(
+        provider="nvidia_nim",
+        model="nvidia/nemotron-3.5-lightning-30b-a3b",
+        prompt_tokens=12,
+        completion_tokens=8,
+        total_tokens=20,
+        latency_ms=metadata.latency_ms,
+    )
+
+
+def test_nvidia_nim_provider_keeps_reasoning_when_thinking_is_enabled() -> None:
+    requests: list[dict[str, object]] = []
+
+    class FakeCompletions:
+        def create(self, **kwargs: object) -> SimpleNamespace:
+            requests.append(kwargs)
+            return iter(_nvidia_stream("Türkçe yanıt"))
+
+    provider = NvidiaNimTextGenerationProvider(
+        api_key="test-key",
+        model="nvidia/nemotron-3-ultra-550b-a55b",
+        client=SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+        disable_thinking=False,
+        stream_deadline_seconds=30,
+    )
+
+    provider.generate_text("Bir rehber üret")
+
+    assert "extra_body" not in requests[0]
+
+
+def test_nvidia_nim_provider_configures_openai_compatible_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    monkeypatch.setattr(
+        text_generation,
+        "settings",
+        SimpleNamespace(
+            nvidia_api_key="configured-key",
+            nvidia_nim_base_url="https://nim.example.com/v1",
+            nvidia_nim_disable_thinking=True,
+            ai_generation_timeout_seconds=45,
+            ai_generation_overall_timeout_seconds=110,
+        ),
+    )
+
+    NvidiaNimTextGenerationProvider()
+
+    assert captured == {
+        "api_key": "configured-key",
+        "base_url": "https://nim.example.com/v1",
+        "timeout": 45,
+    }
 
 
 def test_gemini_provider_parses_json_response(monkeypatch) -> None:
@@ -951,6 +1065,9 @@ def test_every_implemented_provider_is_constructible(monkeypatch) -> None:
                 gemini_api_key="test-key",
                 openai_api_key="test-key",
                 anthropic_api_key="test-key",
+                nvidia_api_key="test-key",
+                nvidia_nim_base_url="https://integrate.api.nvidia.com/v1",
+                nvidia_nim_disable_thinking=True,
                 ollama_base_url="http://ollama.test:11434",
                 ollama_model="llama3.1",
                 ai_generation_timeout_seconds=60,

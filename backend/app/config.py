@@ -41,12 +41,20 @@ AI_PROVIDER_GEMINI = "gemini"
 AI_PROVIDER_OLLAMA = "ollama"
 AI_PROVIDER_OPENAI = "openai"
 AI_PROVIDER_CLAUDE = "claude"
-RECOGNIZED_AI_PROVIDERS = ("ollama", "openai", "gemini", "claude")
+AI_PROVIDER_NVIDIA_NIM = "nvidia_nim"
+RECOGNIZED_AI_PROVIDERS = (
+    "ollama",
+    "openai",
+    "gemini",
+    "claude",
+    "nvidia_nim",
+)
 IMPLEMENTED_AI_PROVIDERS = (
     AI_PROVIDER_GEMINI,
     AI_PROVIDER_OLLAMA,
     AI_PROVIDER_OPENAI,
     AI_PROVIDER_CLAUDE,
+    AI_PROVIDER_NVIDIA_NIM,
 )
 DEFAULT_AI_PROVIDER = AI_PROVIDER_OLLAMA
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
@@ -59,6 +67,12 @@ DEFAULT_OLLAMA_REPEAT_PENALTY = 1.1
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-5"
+DEFAULT_NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
+DEFAULT_NVIDIA_NIM_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
+# Nemotron and DeepSeek endpoints emit chain-of-thought unless the chat template
+# is told otherwise, which costs an order of magnitude in latency for prompts
+# whose answer is a short JSON document.
+DEFAULT_NVIDIA_NIM_DISABLE_THINKING = True
 OLLAMA_MODEL_PATTERN = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
 
 IMPLEMENTED_EMBEDDING_PROVIDERS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
@@ -223,6 +237,9 @@ class Settings:
     gemini_api_key: str | None
     openai_api_key: str | None
     anthropic_api_key: str | None
+    nvidia_api_key: str | None
+    nvidia_nim_base_url: str
+    nvidia_nim_disable_thinking: bool
     ollama_base_url: str
     ollama_model: str
     ollama_temperature: float
@@ -520,6 +537,7 @@ def load_settings() -> Settings:
     gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip() or None
     openai_api_key = os.getenv("OPENAI_API_KEY", "").strip() or None
     anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip() or None
+    nvidia_api_key = os.getenv("NVIDIA_API_KEY", "").strip() or None
 
     ai_fallback_providers_raw = os.getenv("AI_FALLBACK_PROVIDERS", "").strip()
     if ai_fallback_providers_raw:
@@ -554,7 +572,15 @@ def load_settings() -> Settings:
     _require_key(AI_PROVIDER_GEMINI, gemini_api_key, "GEMINI_API_KEY")
     _require_key(AI_PROVIDER_OPENAI, openai_api_key, "OPENAI_API_KEY")
     _require_key(AI_PROVIDER_CLAUDE, anthropic_api_key, "ANTHROPIC_API_KEY")
+    _require_key(AI_PROVIDER_NVIDIA_NIM, nvidia_api_key, "NVIDIA_API_KEY")
 
+    nvidia_nim_base_url = _http_url_setting(
+        "NVIDIA_NIM_BASE_URL", DEFAULT_NVIDIA_NIM_BASE_URL
+    )
+    nvidia_nim_disable_thinking = _boolean_setting(
+        "NVIDIA_NIM_DISABLE_THINKING",
+        default=DEFAULT_NVIDIA_NIM_DISABLE_THINKING,
+    )
     ollama_base_url = _http_url_setting("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
     ollama_model = os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip()
     if not OLLAMA_MODEL_PATTERN.fullmatch(ollama_model):
@@ -1245,6 +1271,9 @@ def load_settings() -> Settings:
         gemini_api_key=gemini_api_key,
         openai_api_key=openai_api_key,
         anthropic_api_key=anthropic_api_key,
+        nvidia_api_key=nvidia_api_key,
+        nvidia_nim_base_url=nvidia_nim_base_url,
+        nvidia_nim_disable_thinking=nvidia_nim_disable_thinking,
         ollama_base_url=ollama_base_url,
         ollama_model=ollama_model,
         ollama_temperature=ollama_temperature,
@@ -1555,6 +1584,32 @@ def _ai_model_catalog_setting(
                     "context_window": 1_048_576,
                     "vision": True,
                 }
+            ],
+            AI_PROVIDER_NVIDIA_NIM: [
+                {
+                    "model": DEFAULT_NVIDIA_NIM_MODEL,
+                    "json_mode": True,
+                    "context_window": 1_000_000,
+                    "vision": False,
+                },
+                {
+                    "model": "nvidia/nemotron-3-ultra-550b-a55b",
+                    "json_mode": True,
+                    "context_window": 262_144,
+                    "vision": False,
+                },
+                {
+                    "model": "deepseek-ai/deepseek-v4-flash-0731",
+                    "json_mode": True,
+                    "context_window": 1_000_000,
+                    "vision": False,
+                },
+                {
+                    "model": "deepseek-ai/deepseek-v4-pro-0813",
+                    "json_mode": True,
+                    "context_window": 1_000_000,
+                    "vision": False,
+                },
             ],
         }
 

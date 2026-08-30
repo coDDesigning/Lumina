@@ -11,6 +11,7 @@ locals {
     gemini_api_key        = "${local.ssm_base}/gemini-api-key"
     openai_api_key        = "${local.ssm_base}/openai-api-key"
     anthropic_api_key     = "${local.ssm_base}/anthropic-api-key"
+    nvidia_api_key        = "${local.ssm_base}/nvidia-api-key"
     smtp_password         = "${local.ssm_base}/smtp-password"
   }
 
@@ -96,6 +97,7 @@ locals {
     { name = "GEMINI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.gemini_api_key}" },
     { name = "OPENAI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.openai_api_key}" },
     { name = "ANTHROPIC_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.anthropic_api_key}" },
+    { name = "NVIDIA_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.nvidia_api_key}" },
   ], local.smtp_secrets)
 
   migrate_secrets = concat([
@@ -105,6 +107,7 @@ locals {
     { name = "GEMINI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.gemini_api_key}" },
     { name = "OPENAI_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.openai_api_key}" },
     { name = "ANTHROPIC_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.anthropic_api_key}" },
+    { name = "NVIDIA_API_KEY", valueFrom = "arn:aws:ssm:${var.region}:${local.account_id}:parameter${local.ssm_paths.nvidia_api_key}" },
   ], local.smtp_secrets)
 
   restore_secrets = [

@@ -59,6 +59,9 @@ x-lumina-environment: &lumina-environment
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+  NVIDIA_NIM_BASE_URL: ${NVIDIA_NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
+  NVIDIA_NIM_DISABLE_THINKING: ${NVIDIA_NIM_DISABLE_THINKING:-true}
   # Hosted mode verifies an address before granting credits, so it needs a way
   # to send the link. These are passed through rather than demanded here: the
   # application states exactly which one is missing, and an operator who sets

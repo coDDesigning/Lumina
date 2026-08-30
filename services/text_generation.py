@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -21,9 +22,11 @@ from backend.app.config import (
     AI_PROVIDER_GEMINI,
     AI_PROVIDER_OPENAI,
     AI_PROVIDER_OLLAMA,
+    AI_PROVIDER_NVIDIA_NIM,
     DEFAULT_CLAUDE_MODEL,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_OPENAI_MODEL,
+    DEFAULT_NVIDIA_NIM_MODEL,
     settings,
 )
 from schemas.ai_usage import ErrorCategory
@@ -307,6 +310,15 @@ class TextGenerationConnectionError(TextGenerationProviderError):
 
 def _strip_markdown_fence(text: str) -> str:
     stripped = text.strip()
+    
+    json_match = re.search(r"```(?:json)?\s*\n(.*?)\n```", stripped, re.DOTALL | re.IGNORECASE)
+    if json_match:
+        return json_match.group(1).strip()
+        
+    any_match = re.search(r"```[a-zA-Z]*\s*\n(.*?)\n```", stripped, re.DOTALL)
+    if any_match:
+        return any_match.group(1).strip()
+
     if not stripped.startswith("```"):
         return stripped
 
@@ -904,6 +916,173 @@ class ClaudeTextGenerationProvider:
         return result
 
 
+class NvidiaNimTextGenerationProvider:
+    MODEL = DEFAULT_NVIDIA_NIM_MODEL
+    PROVIDER_NAME = AI_PROVIDER_NVIDIA_NIM
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        timeout_seconds: int | None = None,
+        model: str | None = None,
+        client: object | None = None,
+        disable_thinking: bool | None = None,
+        stream_deadline_seconds: float | None = None,
+    ) -> None:
+        key = api_key or settings.nvidia_api_key
+        if not key and client is None:
+            raise TextGenerationAuthError("NVIDIA_API_KEY is not configured.")
+
+        # Streaming turns `timeout` into a gap-between-chunks budget, so the whole
+        # generation needs its own ceiling. The request budget is the right one:
+        # a response that outlives it can no longer be delivered anyway.
+        self._stream_deadline_seconds = (
+            stream_deadline_seconds
+            if stream_deadline_seconds is not None
+            else settings.ai_generation_overall_timeout_seconds
+        )
+
+        self._model = model or self.MODEL
+        self._disable_thinking = (
+            disable_thinking
+            if disable_thinking is not None
+            else settings.nvidia_nim_disable_thinking
+        )
+        timeout = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else settings.ai_generation_timeout_seconds
+        )
+        if client is not None:
+            self._client = client
+        else:
+            from openai import OpenAI
+
+            self._client = OpenAI(
+                api_key=key,
+                base_url=settings.nvidia_nim_base_url,
+                timeout=timeout,
+            )
+
+    def _extract_metadata(self, usage: object, latency_ms: int) -> GenerationMetadata:
+        return GenerationMetadata(
+            provider=self.PROVIDER_NAME,
+            model=self._model,
+            prompt_tokens=getattr(usage, "prompt_tokens", None),
+            completion_tokens=getattr(usage, "completion_tokens", None),
+            total_tokens=getattr(usage, "total_tokens", None),
+            latency_ms=latency_ms,
+        )
+
+    def _handle_client_error(self, exc: Exception) -> None:
+        if isinstance(exc, TextGenerationError):
+            raise exc
+
+        from openai import (
+            APIConnectionError,
+            APIStatusError,
+            APITimeoutError,
+            RateLimitError,
+        )
+
+        if isinstance(exc, APITimeoutError):
+            raise TextGenerationTimeoutError("NVIDIA NIM request timed out.") from exc
+        if isinstance(exc, RateLimitError):
+            raise TextGenerationRateLimitError(
+                "NVIDIA NIM rate limit exceeded."
+            ) from exc
+        if isinstance(exc, APIStatusError):
+            if exc.status_code in {401, 403}:
+                raise TextGenerationAuthError(
+                    "NVIDIA NIM authentication failed."
+                ) from exc
+            if exc.status_code == 429:
+                raise TextGenerationRateLimitError(
+                    "NVIDIA NIM rate limit exceeded."
+                ) from exc
+            if exc.status_code in {500, 502, 503, 504}:
+                raise TextGenerationProviderError(
+                    "NVIDIA NIM service unavailable."
+                ) from exc
+            raise TextGenerationProviderError(
+                "NVIDIA NIM text generation failed."
+            ) from exc
+        if isinstance(exc, APIConnectionError):
+            raise TextGenerationConnectionError(
+                "NVIDIA NIM could not be reached."
+            ) from exc
+        raise TextGenerationProviderError("NVIDIA NIM text generation failed.") from exc
+
+    def _generate(self, prompt: str) -> tuple[str, GenerationMetadata]:
+        # The API Trial tier is shared, so a study-guide-sized completion can take
+        # anywhere from seconds to over a minute. A buffered request would charge
+        # all of that to the client's read timeout and fail a generation that was
+        # progressing fine; streaming makes the timeout a per-chunk budget.
+        request: dict[str, object] = {
+            "model": self._model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if self._disable_thinking:
+            # Reasoning models on NVIDIA NIM emit chain-of-thought into
+            # `reasoning_content` before answering. Lumina never reads that field
+            # and the wait is charged to the request deadline, so the chat
+            # template suppresses it. `chat_template_kwargs` is an NVIDIA
+            # extension to the OpenAI schema, so it travels in `extra_body`;
+            # the client rejects unknown top-level arguments.
+            request["extra_body"] = {"chat_template_kwargs": {"thinking": False}}
+
+        start_time = time.perf_counter()
+        deadline = start_time + self._stream_deadline_seconds
+        pieces: list[str] = []
+        usage: object | None = None
+        try:
+            for chunk in self._client.chat.completions.create(**request):
+                if time.perf_counter() >= deadline:
+                    raise TextGenerationTimeoutError(
+                        "NVIDIA NIM response exceeded the request deadline."
+                    )
+                chunk_usage = getattr(chunk, "usage", None)
+                if chunk_usage is not None:
+                    usage = chunk_usage
+                choices = getattr(chunk, "choices", None)
+                if not choices:
+                    continue
+                piece = getattr(getattr(choices[0], "delta", None), "content", None)
+                if piece:
+                    pieces.append(piece)
+        except Exception as exc:
+            self._handle_client_error(exc)
+
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+        content = "".join(pieces)
+        if not content.strip():
+            raise TextGenerationEmptyResponseError(
+                "NVIDIA NIM returned an empty response."
+            )
+        return content, self._extract_metadata(usage, latency_ms)
+
+    def generate_text_with_metadata(
+        self, prompt: str
+    ) -> tuple[str, GenerationMetadata]:
+        return self._generate(prompt)
+
+    def generate_text(self, prompt: str) -> str:
+        text, _ = self.generate_text_with_metadata(prompt)
+        return text
+
+    def generate_json_with_metadata(
+        self, prompt: str
+    ) -> tuple[dict[str, object], GenerationMetadata]:
+        text, metadata = self._generate(prompt)
+        return _parse_json_object(text, "NVIDIA NIM"), metadata
+
+    def generate_json(self, prompt: str) -> dict[str, object]:
+        result, _ = self.generate_json_with_metadata(prompt)
+        return result
+
+
 # Register all providers
 ProviderRegistry.register(
     AI_PROVIDER_GEMINI,
@@ -939,6 +1118,15 @@ ProviderRegistry.register(
     requires_key=True,
     vendor="Anthropic",
     description="Anthropic Claude · Strong reasoning & reliable JSON generation",
+    is_local=False,
+)
+ProviderRegistry.register(
+    AI_PROVIDER_NVIDIA_NIM,
+    constructor=NvidiaNimTextGenerationProvider,
+    default_model=DEFAULT_NVIDIA_NIM_MODEL,
+    requires_key=True,
+    vendor="NVIDIA NIM",
+    description="NVIDIA API Catalog · Hosted open models under API Trial terms",
     is_local=False,
 )
 

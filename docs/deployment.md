@@ -242,7 +242,7 @@ record's full hostname through the Terraform state move so Route53 does not
 replace the record. External DNS follows the same sequence.
 
 Apply order matters once, on the first rollout: the ECS tasks read
-`JWT_SECRET_KEY`, `BOOTSTRAP_ADMIN_TOKEN`, and `GEMINI_API_KEY` from SSM
+`JWT_SECRET_KEY`, `BOOTSTRAP_ADMIN_TOKEN`, and hosted provider API keys from SSM
 parameter paths under `/<project>-<environment>/` (see `terraform/README.md`),
 and the runtime `DATABASE_URL` from Secrets Manager. The secrets module (SCRUM-94)
 creates those parameters, so run the full Terraform apply before the first

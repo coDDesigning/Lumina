@@ -3,7 +3,7 @@ variable "name_prefix" {
 }
 
 variable "ssm_parameters" {
-  description = "Runtime secrets as SSM SecureString parameters. Keys must match the ECS task definition references (jwt-secret-key, bootstrap-admin-token, gemini-api-key). Values come from terraform.tfvars; never commit them."
+  description = "Runtime secrets as SSM SecureString parameters. Keys must match the ECS task definition references (jwt-secret-key, bootstrap-admin-token, gemini-api-key, openai-api-key, anthropic-api-key, nvidia-api-key). Values come from terraform.tfvars; never commit them."
   type        = map(string)
   default     = {}
 }

@@ -57,12 +57,13 @@ Search for `exception_type` matching `TextGenerationConnectionError`, `TextGener
    curl -f http://127.0.0.1:8000/health/ready   # or http://127.0.0.1:8080/api/health/ready through the frontend
    ```
 
-### Hosted Environment Multi-Provider Failover (Gemini / OpenAI / Claude)
+### Hosted Environment Multi-Provider Failover (Gemini / OpenAI / Claude / NVIDIA NIM)
 
 1. **Check Upstream Provider Status:**
    * Google Cloud: <https://status.cloud.google.com>
    * OpenAI: <https://status.openai.com>
    * Anthropic: <https://status.anthropic.com>
+   * NVIDIA NGC: <https://status.ngc.nvidia.com>
 
 2. **Automatic Multi-Provider Failover:**
    When `AI_FALLBACK_PROVIDERS` is configured (e.g. `AI_PROVIDER=gemini`, `AI_FALLBACK_PROVIDERS=openai,claude`), `ReliableTextGenerationProvider` automatically attempts fallback providers upon transient failure or exhaustion of retries.
@@ -76,6 +77,7 @@ Search for `exception_type` matching `TextGenerationConnectionError`, `TextGener
      * `/<project>-<environment>/openai-api-key`
      * `/<project>-<environment>/anthropic-api-key`
      * `/<project>-<environment>/gemini-api-key`
+     * `/<project>-<environment>/nvidia-api-key`
    * Update task definition environment variables or redeploy ECS services:
      ```bash
      aws ecs update-service --cluster <CLUSTER_NAME> --service <API_SERVICE> --force-new-deployment

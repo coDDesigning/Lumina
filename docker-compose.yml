@@ -54,6 +54,9 @@ x-lumina-environment: &lumina-environment
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+  NVIDIA_NIM_BASE_URL: ${NVIDIA_NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
+  NVIDIA_NIM_DISABLE_THINKING: ${NVIDIA_NIM_DISABLE_THINKING:-true}
   # Self-hosted deployments do not verify addresses by default: there are no
   # introductory credits to farm, so demanding a relay would be a cost with no
   # benefit. An operator running a shared instance turns it on and supplies the

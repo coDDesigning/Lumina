@@ -13,6 +13,7 @@ never on a specific vendor.
 | `gemini` | Implemented | `GEMINI_API_KEY` |
 | `openai` | Implemented | `OPENAI_API_KEY` |
 | `claude` | Implemented | `ANTHROPIC_API_KEY` |
+| `nvidia_nim` | Implemented | `NVIDIA_API_KEY`; optional `NVIDIA_NIM_BASE_URL` |
 
 `IMPLEMENTED_AI_PROVIDERS` in `backend/app/config.py` is the authoritative list.
 The provider factory reads it rather than restating provider names, so the two
@@ -64,6 +65,104 @@ AI_FALLBACK_PROVIDERS=openai,claude
 During transient network drops, rate limits, or upstream 5xx outages, `ReliableTextGenerationProvider`
 will automatically retry with exponential backoff and transparently fail over to the next configured
 provider. Output attribution truthfully records the provider and model that generated each artifact.
+
+## Hosted NVIDIA NIM Setup
+
+1. Create an API key in the [NVIDIA API Catalog](https://build.nvidia.com/).
+2. Configure the environment:
+
+   ```bash
+   AI_PROVIDER=nvidia_nim
+   NVIDIA_API_KEY=nvapi-...
+   NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
+   NVIDIA_NIM_DISABLE_THINKING=true
+   ```
+
+   Compose reads these values from the root `.env` file. Python launchers do not
+   load `.env` automatically, so direct host runs must inject the same variables
+   into the process environment.
+
+The default catalog is intentionally narrow:
+
+| Model | Context window | Measured latency | Selection basis |
+| --- | ---: | ---: | --- |
+| `nvidia/nemotron-3.5-lightning-30b-a3b` | 1,000,000 | ~2s | Default. Fast 30B-A3B agentic model, comfortably inside the request deadline |
+| `nvidia/nemotron-3-ultra-550b-a55b` | 262,144 | ~35-60s | NVIDIA's strongest open reasoning model; use when answer quality outweighs a long wait |
+| `deepseek-ai/deepseek-v4-flash-0731` | 1,000,000 | ~96s | Structured JSON output, but too slow on the trial tier for interactive generation |
+| `deepseek-ai/deepseek-v4-pro-0813` | 1,000,000 | not qualified | Stronger reasoning profile; qualify before selecting |
+
+Latencies are single-sample measurements against the shared API Trial tier for a
+short Turkish JSON prompt, taken with reasoning suppressed. Treat them as
+orders of magnitude, not an SLA: the trial endpoints are shared and answer
+`503 Service temporarily overloaded` under load, and only the default model has
+margin against `AI_GENERATION_TIMEOUT_SECONDS` (60s per attempt) and
+`AI_GENERATION_OVERALL_TIMEOUT_SECONDS` (110s for the whole request).
+
+### Reasoning traces and latency
+
+Every curated model is a reasoning model. Left alone it emits chain-of-thought
+into the response's `reasoning_content` field before writing the answer.
+Lumina reads only `message.content`, so that work is discarded — but the caller
+still waits for it, and the wait is charged to the request deadline. Measured on
+`nemotron-3.5-lightning-30b-a3b` with the same prompt: 624 completion tokens and
+27.9s with reasoning, 68 tokens and 1.9s without.
+
+The provider therefore sends `chat_template_kwargs={"thinking": false}` on every
+request. `NVIDIA_NIM_DISABLE_THINKING=false` restores the default behaviour, for
+a self-hosted NIM whose chat template rejects the argument. Note that
+`chat_template_kwargs` is an NVIDIA extension to the OpenAI schema: it has to be
+passed through `extra_body`, because the OpenAI client raises `TypeError` on
+unknown top-level arguments. Suppressing reasoning makes some models wrap the
+JSON in a Markdown fence; `_parse_json_object` already strips fences, so no
+prompt change is needed.
+
+### Why this provider streams
+
+Unlike the other hosted providers, the NVIDIA provider requests
+`stream=True`. The trial tier is shared and its throughput varies by an order of
+magnitude between calls — a study guide of roughly 1,200 output tokens was
+measured at 22s and 36s on back-to-back runs, and a 113-token answer once took
+26s. A buffered request charges that entire wait to the client's read timeout,
+so `AI_GENERATION_TIMEOUT_SECONDS` (60s) was failing generations that were
+progressing normally. Streaming makes that setting a budget for the gap between
+chunks instead of a cap on the whole completion.
+
+Because a stream has no natural total ceiling, the provider enforces its own:
+`ai_generation_overall_timeout_seconds` (110s), the same budget the request as a
+whole is held to. A generation that outlives it raises
+`TextGenerationTimeoutError` rather than holding the connection past the ALB's
+120s idle timeout. `stream_options={"include_usage": True}` keeps token counts
+flowing for cost reporting; NVIDIA sends them in a final choice-less chunk.
+
+NVIDIA publishes Nemotron 3 Ultra with a 1M-token architectural maximum, but the
+hosted endpoint serves its native 262,144-token window; the larger window
+requires a self-hosted NIM started with an explicit `--max-model-len`. There is
+no model named "Nemotron 3.5 Flash" in the catalog — the fast member of the 3.5
+family is Lightning, listed above.
+
+Catalog IDs are dated and retire. NVIDIA answers a retired ID with HTTP 410
+`Gone` rather than a fallback, so confirm every entry against the live listing
+before shipping a catalog change:
+
+```bash
+curl -s -H "Authorization: Bearer $NVIDIA_API_KEY"   https://integrate.api.nvidia.com/v1/models | jq -r '.data[].id'
+```
+
+These hosted endpoints are governed by NVIDIA API Trial terms. Trial quota,
+model availability, and rate limits may change and are not a permanent free-tier
+or production-SLA guarantee. The provider uses NVIDIA's OpenAI-compatible
+`/chat/completions` endpoint. The endpoint schema does not advertise a portable
+forced-JSON request field for every curated model, so Lumina relies on its
+versioned JSON prompts and still validates every response against the feature's
+Pydantic schema.
+
+Before promoting or changing this list, run the opt-in Turkish text and JSON
+qualification suite with real credentials:
+
+```bash
+RUN_LIVE_AI_QUALIFICATION=true NVIDIA_API_KEY=nvapi-... \
+  python -m pytest -q tests/test_ai_qualification_live.py -k nvidia
+```
 
 ## Self-Hosted Ollama Setup
 
@@ -586,7 +685,7 @@ in `services/embeddings.py` is not a variant of `TextGenerationProvider`.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `EMBEDDING_PROVIDER` | `ollama` | Implemented: `ollama`, `gemini`. `openai` and `claude` are recognized and fail at startup, exactly as they do for `AI_PROVIDER`. |
+| `EMBEDDING_PROVIDER` | `ollama` | Implemented: `ollama`, `gemini`. `openai`, `claude`, and `nvidia_nim` are recognized but unsupported for embeddings and fail at startup. |
 | `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Used with the shared `OLLAMA_BASE_URL`. |
 | `GEMINI_EMBEDDING_MODEL` | `text-embedding-004` | Used with the shared `GEMINI_API_KEY`. |
 | `EMBEDDING_BATCH_SIZE` | `32` | Texts per provider request, 1-256. |

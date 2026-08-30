@@ -130,6 +130,9 @@ parameters exist; they retry automatically, so run the secrets step
 | `/<prefix>/bootstrap-admin-token` | `BOOTSTRAP_ADMIN_TOKEN`, min 32 visible ASCII |
 | `/<prefix>/smtp-password` | `SMTP_PASSWORD`, only when `smtp_username` is set |
 | `/<prefix>/gemini-api-key` | `GEMINI_API_KEY` for hosted AI and embeddings |
+| `/<prefix>/openai-api-key` | `OPENAI_API_KEY` for hosted text generation |
+| `/<prefix>/anthropic-api-key` | `ANTHROPIC_API_KEY` for hosted text generation |
+| `/<prefix>/nvidia-api-key` | `NVIDIA_API_KEY` for NVIDIA NIM hosted text generation |
 
 Database values are stored in three Secrets Manager entries:
 

@@ -40,6 +40,7 @@ from backend.app.config import (
     DEFAULT_OCR_DPI,
     DEFAULT_OCR_LANGUAGE,
     DEFAULT_OCR_MIN_TEXT_CHARACTERS,
+    DEFAULT_NVIDIA_NIM_BASE_URL,
     DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_OLLAMA_EMBEDDING_MODEL,
     DEFAULT_OLLAMA_IMAGE_MODEL,
@@ -100,6 +101,9 @@ CONFIGURATION_KEYS = (
     "BOOTSTRAP_ADMIN_EMAIL",
     "BOOTSTRAP_ADMIN_TOKEN",
     "GEMINI_API_KEY",
+    "NVIDIA_API_KEY",
+    "NVIDIA_NIM_BASE_URL",
+    "NVIDIA_NIM_DISABLE_THINKING",
     "AI_FALLBACK_PROVIDERS",
     "AI_GENERATION_TIMEOUT_SECONDS",
     "AI_GENERATION_MAX_ATTEMPTS",
@@ -979,6 +983,28 @@ def test_gemini_api_key_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None
     assert load_settings().gemini_api_key == "test-gemini-key"
 
 
+def test_nvidia_nim_settings_are_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NVIDIA_API_KEY", "test-nvidia-key")
+    monkeypatch.setenv("NVIDIA_NIM_BASE_URL", "https://nim.example.com/v1")
+
+    loaded = load_settings()
+
+    assert loaded.nvidia_api_key == "test-nvidia-key"
+    assert loaded.nvidia_nim_base_url == "https://nim.example.com/v1"
+
+
+def test_nvidia_nim_suppresses_reasoning_traces_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert load_settings().nvidia_nim_disable_thinking is True
+
+    monkeypatch.setenv("NVIDIA_NIM_DISABLE_THINKING", "false")
+
+    assert load_settings().nvidia_nim_disable_thinking is False
+
+
 def test_ai_provider_defaults_to_ollama() -> None:
     assert load_settings().ai_provider == "ollama"
 
@@ -992,7 +1018,7 @@ def test_ai_provider_rejects_unsupported_value(
         load_settings()
 
 
-@pytest.mark.parametrize("provider", ["openai", "claude"])
+@pytest.mark.parametrize("provider", ["openai", "claude", "nvidia_nim"])
 def test_recognized_provider_requires_api_key(
     monkeypatch: pytest.MonkeyPatch,
     provider: str,
@@ -1003,7 +1029,9 @@ def test_recognized_provider_requires_api_key(
         load_settings()
 
 
-@pytest.mark.parametrize("fallback", ["openai", "gemini,claude", " claude "])
+@pytest.mark.parametrize(
+    "fallback", ["openai", "gemini,claude", " claude ", "nvidia_nim"]
+)
 def test_fallback_provider_requires_api_key(
     monkeypatch: pytest.MonkeyPatch,
     fallback: str,
@@ -1033,8 +1061,46 @@ def test_implemented_fallback_providers_load(
 
 
 def test_implemented_providers_are_the_authoritative_list() -> None:
-    assert IMPLEMENTED_AI_PROVIDERS == ("gemini", "ollama", "openai", "claude")
+    assert IMPLEMENTED_AI_PROVIDERS == (
+        "gemini",
+        "ollama",
+        "openai",
+        "claude",
+        "nvidia_nim",
+    )
     assert set(IMPLEMENTED_AI_PROVIDERS) <= set(RECOGNIZED_AI_PROVIDERS)
+
+
+def test_nvidia_nim_defaults_include_curated_api_trial_models() -> None:
+    loaded = load_settings()
+
+    assert loaded.nvidia_nim_base_url == DEFAULT_NVIDIA_NIM_BASE_URL
+    assert loaded.ai_model_catalog["nvidia_nim"] == [
+        {
+            "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "json_mode": True,
+            "context_window": 1_000_000,
+            "vision": False,
+        },
+        {
+            "model": "nvidia/nemotron-3-ultra-550b-a55b",
+            "json_mode": True,
+            "context_window": 262_144,
+            "vision": False,
+        },
+        {
+            "model": "deepseek-ai/deepseek-v4-flash-0731",
+            "json_mode": True,
+            "context_window": 1_000_000,
+            "vision": False,
+        },
+        {
+            "model": "deepseek-ai/deepseek-v4-pro-0813",
+            "json_mode": True,
+            "context_window": 1_000_000,
+            "vision": False,
+        },
+    ]
 
 
 def test_ollama_settings_default_to_a_working_local_endpoint() -> None:

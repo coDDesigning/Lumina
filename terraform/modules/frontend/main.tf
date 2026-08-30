@@ -2,22 +2,28 @@ locals {
   s3_origin_id  = "frontend-s3"
   api_origin_id = "api-alb"
 
-  # The SPA and the API are served from this one distribution, so the page has
-  # nowhere else it needs to reach and connect-src is its own origin. Anything
-  # further is named host by host: a scheme wildcard such as `https:` would
-  # permit every host on the internet, which is not a policy.
+  # The SPA and the API are served from this one distribution, so the page
+  # reaches its own origin plus the ad networks named below. Anything further is
+  # named host by host: a scheme wildcard such as `https:` would permit every
+  # host on the internet, which is not a policy.
+  ad_connect_src = "https://server.ethicalads.io https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net"
+  ad_frame_src   = "https://googleads.g.doubleclick.net https://tpc.googlesyndication.com"
+  ad_img_src     = "https://media.ethicalads.io https://server.ethicalads.io https://pagead2.googlesyndication.com https://tpc.googlesyndication.com"
+  ad_script_src  = "https://media.ethicalads.io https://server.ethicalads.io https://pagead2.googlesyndication.com https://adservice.google.com https://www.googletagservices.com https://tpc.googlesyndication.com"
+
   connect_src = join(" ", concat(["'self'"], var.additional_connect_src))
 
   content_security_policy = join(" ", [
     "default-src 'self';",
     "base-uri 'self';",
-    "connect-src ${local.connect_src};",
+    "connect-src ${local.connect_src} ${local.ad_connect_src};",
     "font-src 'self';",
     "form-action 'self';",
     "frame-ancestors 'none';",
-    "img-src 'self' data: blob:;",
+    "frame-src 'self' ${local.ad_frame_src};",
+    "img-src 'self' data: blob: ${local.ad_img_src};",
     "object-src 'none';",
-    "script-src 'self';",
+    "script-src 'self' ${local.ad_script_src} 'unsafe-inline';",
     "style-src 'self' 'unsafe-inline';",
     "upgrade-insecure-requests",
   ])

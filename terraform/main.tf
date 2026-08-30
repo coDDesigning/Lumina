@@ -132,6 +132,9 @@ module "ecs" {
   smtp_port                           = var.smtp_port
   smtp_username                       = var.smtp_username
   smtp_use_tls                        = var.smtp_use_tls
+  enable_hosted_ads                   = var.enable_hosted_ads
+  hosted_ads_provider                 = var.hosted_ads_provider
+  hosted_ads_publisher_id             = var.hosted_ads_publisher_id
   vpc_cidr_block                      = var.vpc_cidr
   tags                                = local.tags
 }

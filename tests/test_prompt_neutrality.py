@@ -235,6 +235,11 @@ TEMPLATE_EXTRA_VARIABLES: dict[str, dict[str, str]] = {
         "SUBMISSION_COUNT": "1",
         "SUBMISSIONS": "Submitted answers body",
     },
+    "reverse_quiz": {
+        "TOPIC": "Photosynthesis",
+        "STUDENT_EXPLANATION": "Plants make food from sunlight and water.",
+        "COURSE_MATERIAL": "Course material body",
+    },
     "exam_topic_analysis": {
         "TOPIC_FOCUS": "All Topics",
         "DECLARED_TOPICS": "Declared topics body",

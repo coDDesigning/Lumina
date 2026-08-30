@@ -23,6 +23,7 @@ const ACTION_LABELS: Record<string, string> = {
   quiz: 'Practice quiz',
   flashcards: 'Flashcards',
   quiz_attempt: 'Quiz attempt',
+  reverse_quiz: 'Reverse quiz',
   exam_topic_analysis: 'Exam source analysis',
   exam_plan: 'Exam plan',
 };

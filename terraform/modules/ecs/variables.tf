@@ -161,6 +161,29 @@ variable "smtp_use_tls" {
   default     = true
 }
 
+variable "enable_hosted_ads" {
+  description = "Whether the hosted deployment serves advertising. False keeps /api/ads/config reporting disabled and every ad slot unrendered."
+  type        = bool
+  default     = true
+}
+
+variable "hosted_ads_provider" {
+  description = "Advertising provider the SPA loads. adsense loads the Google adsbygoogle library; the frontend distribution's Content-Security-Policy already admits both supported providers."
+  type        = string
+  default     = "adsense"
+
+  validation {
+    condition     = contains(["adsense", "ethicalads"], var.hosted_ads_provider)
+    error_message = "hosted_ads_provider must be adsense or ethicalads."
+  }
+}
+
+variable "hosted_ads_publisher_id" {
+  description = "Publisher identifier passed to the provider. AdSense expects the ca-pub- prefixed form, which must match the pub- entry served at /ads.txt."
+  type        = string
+  default     = "ca-pub-3125212202463432"
+}
+
 variable "tags" {
   type = map(string)
 }

@@ -14,6 +14,7 @@ import { Button } from '@/ui/Button';
 import { Dialog } from '@/ui/Dialog';
 import { EmptyState } from '@/ui/EmptyState';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
+import { CopyButton } from '@/ui/CopyButton';
 import { DetailError, DetailLoading, DetailPlaceholder, MasterDetail } from '@/ui/MasterDetail';
 import styles from './ConversationHistoryModal.module.css';
 
@@ -236,11 +237,16 @@ export function ConversationHistoryModal({
                           {message.role === 'user' ? 'You' : 'Lumina'}
                         </span>
                         {message.role === 'assistant' ? (
-                          <Markdown
-                            className={styles.body}
-                            text={message.content}
-                            citations={message.citations}
-                          />
+                          <>
+                            <Markdown
+                              className={styles.body}
+                              text={message.content}
+                              citations={message.citations}
+                            />
+                            <div className={styles.turnActions}>
+                              <CopyButton text={message.content} />
+                            </div>
+                          </>
                         ) : (
                           <p className={styles.body}>{message.content}</p>
                         )}

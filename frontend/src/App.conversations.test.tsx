@@ -574,5 +574,39 @@ describe('Workspace conversations', () => {
       }),
     );
   }, 15_000);
+
+  it('renders a copy button for active assistant responses and copies response text', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    });
+
+    mockQaAsk.mockResolvedValue(
+      qaResult('Dijkstra finds the shortest path in a weighted graph.', 105),
+    );
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+    const input = screen.getByLabelText('Enter prompt');
+    await user.type(input, 'How does Dijkstra algorithm work?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(
+      await screen.findByText('Dijkstra finds the shortest path in a weighted graph.'),
+    ).toBeInTheDocument();
+
+    const copyBtn = await screen.findByRole('button', { name: 'Copy response' });
+    expect(copyBtn).toBeInTheDocument();
+
+    await user.click(copyBtn);
+
+    expect(writeText).toHaveBeenCalledWith(
+      'Dijkstra finds the shortest path in a weighted graph.',
+    );
+    expect(await screen.findByRole('button', { name: 'Copied to clipboard' })).toBeInTheDocument();
+  }, 15_000);
 });
 

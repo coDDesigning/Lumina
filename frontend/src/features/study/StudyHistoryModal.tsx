@@ -178,11 +178,17 @@ export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onC
     setSelectedId(initialSelectedId);
   }, [initialSelectedId]);
 
+  // Reverse-quiz sessions have their own history and no viewer here, so they
+  // are kept out of this list the same way they are kept out of the rail.
+  const visibleOutputs = listQuery.data?.filter(
+    (output) => output.output_type !== 'reverse_quiz',
+  );
+
   const listState: ListState =
     listQuery.status === 'error'
       ? { phase: 'error', message: listQuery.error?.message ?? 'The history could not be loaded.' }
-      : listQuery.data
-        ? { phase: 'ready', outputs: listQuery.data }
+      : visibleOutputs
+        ? { phase: 'ready', outputs: visibleOutputs }
         : { phase: 'loading' };
 
   const detailState: DetailState =

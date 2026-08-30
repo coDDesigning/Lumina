@@ -109,6 +109,8 @@ DEFAULT_PROCESSING_JOB_LEASE_SECONDS = 60
 DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS = 3
 DEFAULT_PROCESSING_JOB_POLL_SECONDS = 1.0
 DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS = 300
+DEFAULT_PROCESSING_JOB_CONCURRENCY = 2
+MAX_PROCESSING_JOB_CONCURRENCY = 6
 DEFAULT_MAX_EXTRACTED_CHARACTERS = 2_000_000
 DEFAULT_MAX_DOCUMENT_CHUNKS = 1_000
 DEFAULT_OCR_LANGUAGE = "eng"
@@ -267,6 +269,7 @@ class Settings:
     processing_job_max_attempts: int
     processing_job_poll_seconds: float
     processing_job_attempt_timeout_seconds: int
+    processing_job_concurrency: int
     max_extracted_characters: int
     max_document_chunks: int
     ocr_language: str
@@ -664,6 +667,21 @@ def load_settings() -> Settings:
         minimum=1,
         maximum=86_400,
     )
+    processing_job_concurrency = _bounded_positive_integer_setting(
+        "PROCESSING_JOB_CONCURRENCY",
+        DEFAULT_PROCESSING_JOB_CONCURRENCY,
+        minimum=1,
+        maximum=MAX_PROCESSING_JOB_CONCURRENCY,
+    )
+    if mode == MODE_HOSTED:
+        peak_worker_connections = 2 * processing_job_concurrency + 1
+        if peak_worker_connections > database_pool_size + database_max_overflow:
+            raise ValueError(
+                "PROCESSING_JOB_CONCURRENCY requires "
+                f"{peak_worker_connections} database connections but "
+                "DATABASE_POOL_SIZE plus DATABASE_MAX_OVERFLOW allow only "
+                f"{database_pool_size + database_max_overflow}."
+            )
     max_extracted_characters = _positive_integer_setting(
         "MAX_EXTRACTED_CHARACTERS",
         DEFAULT_MAX_EXTRACTED_CHARACTERS,
@@ -1267,6 +1285,7 @@ def load_settings() -> Settings:
         processing_job_max_attempts=processing_job_max_attempts,
         processing_job_poll_seconds=processing_job_poll_seconds,
         processing_job_attempt_timeout_seconds=processing_job_attempt_timeout_seconds,
+        processing_job_concurrency=processing_job_concurrency,
         max_extracted_characters=max_extracted_characters,
         max_document_chunks=max_document_chunks,
         ocr_language=ocr_language,

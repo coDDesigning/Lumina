@@ -97,6 +97,7 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "study_guide": "2.3.0",
     "quiz": "3.3.0",
     "quiz_grading": "2.0.0",
+    "reverse_quiz": "1.0.0",
     "flashcard": "2.2.0",
     "ai_tutor": "2.3.0",
     "course_qa": "2.3.0",
@@ -514,6 +515,12 @@ SAMPLE_TEMPLATE_INPUTS = {
         "SUBMISSION_COUNT": "1",
         "SUBMISSIONS": "Submissions text",
     },
+    "reverse_quiz": {
+        **SHARED_PROMPT_VARIABLES,
+        "TOPIC": "Photosynthesis",
+        "STUDENT_EXPLANATION": "Plants turn sunlight into food.",
+        "COURSE_MATERIAL": "Course material text",
+    },
     "exam_topic_analysis": {
         **SHARED_PROMPT_VARIABLES,
         "TOPIC_FOCUS": "All Topics",
@@ -900,6 +907,10 @@ ACTIVE_TEMPLATE_OWNERS = {
     "quiz_grading": (
         "services.quiz_grading",
         "QuizGradingService.PROMPT_TEMPLATE_NAME",
+    ),
+    "reverse_quiz": (
+        "services.reverse_quiz",
+        "ReverseQuizService.PROMPT_TEMPLATE_NAME",
     ),
     "flashcard": ("services.flashcard", "FlashcardService.PROMPT_TEMPLATE_NAME"),
     "ai_tutor": ("services.ai_tutor", "AiTutorService.PROMPT_TEMPLATE_NAME"),

@@ -81,13 +81,19 @@
   margin: 0;
 }
 
-.studentExplanation,
-.feedback {
+.studentExplanation {
   color: var(--text-muted);
   font-size: var(--text-base);
   line-height: 1.6;
   margin: 0;
   white-space: pre-wrap;
+}
+
+/* Wraps the <Markdown> prose block; children inherit these. */
+.feedback {
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  line-height: 1.6;
 }
 
 .misconceptionList {

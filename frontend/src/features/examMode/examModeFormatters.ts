@@ -18,17 +18,6 @@ export function formatCreatedAt(iso: string): string {
   return Number.isNaN(parsed) ? iso : DATE_TIME.format(parsed);
 }
 
-/**
- * A roadmap day is shown as "Day 1", not as a calendar date.
- *
- * The schedule's length comes from a real horizon, but a student who falls a
- * day behind has not invalidated their plan -- naming the date would tell them
- * they had.
- */
-export function formatRoadmapDay(dayIndex: number): string {
-  return `Day ${dayIndex}`;
-}
-
 /** Plain words for the reasons a stored plan no longer matches the course. */
 const STALE_REASONS: Record<string, string> = {
   exam_date_changed: 'the exam date moved',

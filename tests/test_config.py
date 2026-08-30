@@ -45,6 +45,7 @@ from backend.app.config import (
     DEFAULT_OLLAMA_IMAGE_MODEL,
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
+    DEFAULT_PROCESSING_JOB_CONCURRENCY,
     DEFAULT_PROCESSING_JOB_LEASE_SECONDS,
     DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS,
     DEFAULT_PROCESSING_JOB_POLL_SECONDS,
@@ -127,6 +128,7 @@ CONFIGURATION_KEYS = (
     "PROCESSING_JOB_MAX_ATTEMPTS",
     "PROCESSING_JOB_POLL_SECONDS",
     "PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS",
+    "PROCESSING_JOB_CONCURRENCY",
     "MAX_EXTRACTED_CHARACTERS",
     "MAX_DOCUMENT_CHUNKS",
     "OCR_LANGUAGE",
@@ -266,6 +268,7 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
         loaded.processing_job_attempt_timeout_seconds
         == DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS
     )
+    assert loaded.processing_job_concurrency == DEFAULT_PROCESSING_JOB_CONCURRENCY
     assert loaded.max_extracted_characters == DEFAULT_MAX_EXTRACTED_CHARACTERS
     assert loaded.max_document_chunks == DEFAULT_MAX_DOCUMENT_CHUNKS
     assert loaded.ocr_language == DEFAULT_OCR_LANGUAGE
@@ -737,6 +740,7 @@ def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROCESSING_JOB_MAX_ATTEMPTS", "5")
     monkeypatch.setenv("PROCESSING_JOB_POLL_SECONDS", "0.25")
     monkeypatch.setenv("PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("PROCESSING_JOB_CONCURRENCY", "4")
     monkeypatch.setenv("MAX_EXTRACTED_CHARACTERS", "6000")
     monkeypatch.setenv("MAX_DOCUMENT_CHUNKS", "7")
     monkeypatch.setenv("OCR_LANGUAGE", "eng+deu")
@@ -760,6 +764,7 @@ def test_upload_limit_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     assert load_settings().processing_job_max_attempts == 5
     assert load_settings().processing_job_poll_seconds == 0.25
     assert load_settings().processing_job_attempt_timeout_seconds == 120
+    assert load_settings().processing_job_concurrency == 4
     assert load_settings().max_extracted_characters == 6000
     assert load_settings().max_document_chunks == 7
     assert load_settings().ocr_language == "eng+deu"
@@ -2209,3 +2214,51 @@ def test_invalid_authentication_hardening_settings_are_rejected(
 
     with pytest.raises(ValueError):
         load_settings()
+
+
+@pytest.mark.parametrize("value", ["0", "7", "-1"])
+def test_processing_job_concurrency_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("PROCESSING_JOB_CONCURRENCY", value)
+
+    with pytest.raises(ValueError):
+        load_settings()
+
+
+def test_hosted_concurrency_beyond_the_connection_pool_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+    monkeypatch.setenv("DATABASE_POOL_SIZE", "2")
+    monkeypatch.setenv("DATABASE_MAX_OVERFLOW", "0")
+    monkeypatch.setenv("PROCESSING_JOB_CONCURRENCY", "4")
+
+    with pytest.raises(ValueError, match="PROCESSING_JOB_CONCURRENCY"):
+        load_settings()
+
+
+def test_hosted_concurrency_within_the_connection_pool_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    _configure_hosted_s3(monkeypatch)
+    monkeypatch.setenv("DATABASE_POOL_SIZE", "5")
+    monkeypatch.setenv("DATABASE_MAX_OVERFLOW", "5")
+    monkeypatch.setenv("PROCESSING_JOB_CONCURRENCY", "4")
+
+    assert load_settings().processing_job_concurrency == 4
+
+
+def test_self_hosted_concurrency_is_not_gated_on_the_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_POOL_SIZE", "1")
+    monkeypatch.setenv("DATABASE_MAX_OVERFLOW", "0")
+    monkeypatch.setenv("PROCESSING_JOB_CONCURRENCY", "6")
+
+    assert load_settings().processing_job_concurrency == 6

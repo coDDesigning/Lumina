@@ -999,7 +999,7 @@ def _validate_pdf_locked(content: bytes, options: PipelineOptions) -> None:
 
             total_render_pixels = total_image_pixels
             for page, content_xrefs in zip(pages, page_content_xrefs, strict=True):
-                image_info = page.get_image_info()
+                image_info = page.get_image_info(xrefs=True)
                 page_pixels = int(page.rect.width * page.rect.height)
                 image_pixels = sum(
                     image["width"] * image["height"]
@@ -1156,14 +1156,7 @@ def _extract_pdf_document(
                             PipelineStage.EXTRACTING_TEXT,
                             retryable=False,
                         )
-                    image_info = page.get_image_info()
-                    image_xrefs = page.get_images(full=True)
-                    for image in image_info:
-                        image_bbox = pymupdf.Rect(image.get("bbox"))
-                        for image_xref in image_xrefs:
-                            if page.get_image_bbox(image_xref) == image_bbox:
-                                image["xref"] = image_xref[0]
-                                break
+                    image_info = page.get_image_info(xrefs=True)
                     text_blocks, header_candidates, footer_candidates = (
                         _pdf_layout_content(page)
                     )
@@ -1296,19 +1289,17 @@ def _detect_visual_candidates(
             )
 
     for image in image_info:
+        fingerprint = _image_fingerprint(image)
+        if fingerprint is not None and fingerprint in image_fingerprints:
+            continue
         candidate = _make_visual_candidate(
             image.get("bbox"),
             page_rect,
             visual_type=VisualType.FIGURE,
             source=VisualSource.IMAGE,
-            fingerprint=_image_fingerprint(image),
+            fingerprint=fingerprint,
         )
         if candidate is not None:
-            if (
-                candidate.fingerprint is not None
-                and candidate.fingerprint in image_fingerprints
-            ):
-                continue
             if candidate.fingerprint is not None:
                 image_fingerprints.add(candidate.fingerprint)
             overflowed = (

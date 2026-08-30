@@ -31,7 +31,7 @@ from tests.conftest import assert_balance_is_derivable, rows
 REGISTRATION = {
     "name": "Ada Lovelace",
     "email": "ada@example.com",
-    "password": "analytical-engine-1843",
+    "password": "Analytical-engine-1843!",
 }
 
 # The modules that read ``email_verification_required``. Patching every one of

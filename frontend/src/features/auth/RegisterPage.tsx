@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authAPI } from '@/api/auth';
 import { describeError } from '@/api/errors';
 import { useAuth } from '@/context/AuthContext';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
+import { IconButton } from '@/ui/IconButton';
 import { Input } from '@/ui/Input';
 import { AuthLayout } from './AuthLayout';
 import { ResendVerification } from './ResendVerification';
@@ -15,7 +17,8 @@ const MAX_PASSWORD_BYTES = 72;
 // The server owns the policy and states it in full when it refuses; this is the
 // floor the form can check before anybody waits for a round trip.
 // See docs/authentication.md.
-const MIN_PASSWORD_LENGTH = 12;
+const MIN_PASSWORD_LENGTH = 8;
+const SPECIAL_CHAR_REGEX = /[!@#$%^&*(),.?":{}|<>_\-+=[\]\\/;'`~]/;
 
 function passwordByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
@@ -26,6 +29,8 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -50,6 +55,17 @@ export default function RegisterPage() {
 
     if (passwordByteLength(password) > MAX_PASSWORD_BYTES) {
       setPasswordError('That password is too long. Keep it under 72 bytes.');
+      return;
+    }
+
+    if (
+      password.length < MIN_PASSWORD_LENGTH ||
+      !/[A-Z]/.test(password) ||
+      !SPECIAL_CHAR_REGEX.test(password)
+    ) {
+      setPasswordError(
+        'Password must be at least 8 characters, with at least one uppercase letter and one special character.',
+      );
       return;
     }
 
@@ -143,19 +159,28 @@ export default function RegisterPage() {
 
         <Input
           label="Password"
-          type="password"
+          type={showPassword ? 'text' : 'password'}
           autoComplete="new-password"
           required
           minLength={MIN_PASSWORD_LENGTH}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           disabled={isSubmitting}
-          hint="At least 12 characters, up to 72 bytes. A passphrase beats a short password with a digit on the end, and it cannot contain your name or email address."
+          hint="At least 8 characters, with at least one uppercase letter and one special character."
+          action={
+            <IconButton
+              label={showPassword ? 'Hide password' : 'Show password'}
+              icon={showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+              size="sm"
+              onClick={() => setShowPassword((prev) => !prev)}
+              disabled={isSubmitting}
+            />
+          }
         />
 
         <Input
           label="Confirm password"
-          type="password"
+          type={showConfirmPassword ? 'text' : 'password'}
           autoComplete="new-password"
           required
           minLength={MIN_PASSWORD_LENGTH}
@@ -163,6 +188,15 @@ export default function RegisterPage() {
           onChange={(event) => setConfirmPassword(event.target.value)}
           disabled={isSubmitting}
           error={passwordError ?? undefined}
+          action={
+            <IconButton
+              label={showConfirmPassword ? 'Hide password' : 'Show password'}
+              icon={showConfirmPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+              size="sm"
+              onClick={() => setShowConfirmPassword((prev) => !prev)}
+              disabled={isSubmitting}
+            />
+          }
         />
 
         <Button

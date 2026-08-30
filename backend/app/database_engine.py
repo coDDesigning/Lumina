@@ -1,5 +1,6 @@
 """Shared SQLAlchemy engine configuration for runtime and migrations."""
 
+import time
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -110,10 +111,17 @@ def _configure_sqlite_connection(
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute(f"PRAGMA busy_timeout={busy_timeout_milliseconds}")
     if enable_wal:
-        journal_mode = cursor.execute("PRAGMA journal_mode=WAL").fetchone()[0]
-        if str(journal_mode).lower() != "wal":
-            cursor.close()
-            raise RuntimeError("File-backed SQLite requires WAL journal mode.")
+        current_mode = cursor.execute("PRAGMA journal_mode").fetchone()[0]
+        if str(current_mode).lower() != "wal":
+            deadline = time.monotonic() + (busy_timeout_milliseconds / 1000.0)
+            while True:
+                journal_mode = cursor.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+                if str(journal_mode).lower() == "wal":
+                    break
+                if time.monotonic() >= deadline:
+                    cursor.close()
+                    raise RuntimeError("File-backed SQLite requires WAL journal mode.")
+                time.sleep(0.05)
         cursor.execute("PRAGMA synchronous=FULL")
         cursor.execute(f"PRAGMA wal_autocheckpoint={SQLITE_WAL_AUTOCHECKPOINT_PAGES}")
         cursor.execute(

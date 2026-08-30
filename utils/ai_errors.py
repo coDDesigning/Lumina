@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 from schemas.ai_usage import ErrorCategory
 from services.text_generation import (
     IncompatibleModelError,
+    PersonalKeyAuthError,
     TextGenerationConnectionError,
     UnavailableModelError,
 )
@@ -146,6 +147,7 @@ class AiErrorCode(str, Enum):
     EXAM_DATE_REQUIRED = "exam_date_required"
     EXAM_DATE_PASSED = "exam_date_passed"
     EXAM_TOPICS_REQUIRED = "exam_topics_required"
+    PERSONAL_KEY_INVALID = "personal_key_invalid"
     GENERATION_FAILED = "generation_failed"
 
 
@@ -228,6 +230,9 @@ PUBLIC_MESSAGES: dict[AiErrorCode, str] = {
     AiErrorCode.EXAM_DATE_REQUIRED: EXAM_DATE_REQUIRED_MESSAGE,
     AiErrorCode.EXAM_DATE_PASSED: EXAM_DATE_PASSED_MESSAGE,
     AiErrorCode.EXAM_TOPICS_REQUIRED: EXAM_TOPICS_REQUIRED_MESSAGE,
+    AiErrorCode.PERSONAL_KEY_INVALID: (
+        "Your personal API key is invalid or expired."
+    ),
     AiErrorCode.GENERATION_FAILED: (
         "The request could not be completed. Please try again later."
     ),
@@ -255,6 +260,7 @@ STATUS_CODES: dict[AiErrorCode, int] = {
     AiErrorCode.EXAM_DATE_REQUIRED: status.HTTP_409_CONFLICT,
     AiErrorCode.EXAM_DATE_PASSED: status.HTTP_409_CONFLICT,
     AiErrorCode.EXAM_TOPICS_REQUIRED: status.HTTP_409_CONFLICT,
+    AiErrorCode.PERSONAL_KEY_INVALID: status.HTTP_401_UNAUTHORIZED,
     AiErrorCode.GENERATION_FAILED: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }
 
@@ -270,6 +276,8 @@ def _exception_chain(exc: BaseException) -> Iterator[BaseException]:
 
 def classify_generation_error(exc: BaseException) -> AiErrorCode:
     for error in _exception_chain(exc):
+        if isinstance(error, PersonalKeyAuthError):
+            return AiErrorCode.PERSONAL_KEY_INVALID
         if isinstance(error, IncompatibleModelError):
             return AiErrorCode.INCOMPATIBLE_MODEL
         if isinstance(error, UnavailableModelError):
@@ -335,8 +343,14 @@ def ai_generation_http_exception(exc: BaseException, *, feature: str) -> HTTPExc
     else:
         logger.warning("%s generation rejected with %s", feature, code.value)
 
+    detail = PUBLIC_MESSAGES[code]
+    for error in _exception_chain(exc):
+        if isinstance(error, PersonalKeyAuthError) and str(error):
+            detail = str(error)
+            break
+
     return HTTPException(
         status_code=status_code,
-        detail=PUBLIC_MESSAGES[code],
+        detail=detail,
         headers={ERROR_CODE_HEADER: code.value},
     )

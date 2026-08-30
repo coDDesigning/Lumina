@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.database import get_db
-from backend.app.models import JOB_TYPE_GENERATE_FLASHCARD
+from backend.app.models import JOB_TYPE_GENERATE_FLASHCARD, User
 from schemas.flashcard import (
     FlashcardGenerationContext,
     FlashcardGenerationResult,
@@ -61,6 +61,7 @@ def generate_flashcards(
 ):
     generation = None
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model if request else None,
             current_user.preferred_model,
@@ -68,6 +69,7 @@ def generate_flashcards(
         )
         provider = get_text_generation_provider(
             effective_model=effective_model,
+            user=db_user,
             require_json_mode=True,
         )
 

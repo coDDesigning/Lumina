@@ -227,6 +227,7 @@ class Settings:
 
     # Authentication and initial hosted administrator configuration
     jwt_secret_key: str
+    encryption_key: str | None
     bootstrap_admin_email: str | None
     bootstrap_admin_token: str | None
 
@@ -489,6 +490,7 @@ def load_settings() -> Settings:
     if app_env == APP_ENV_PRODUCTION and not configured_secret:
         raise ValueError("Production requires JWT_SECRET_KEY to be set.")
     jwt_secret_key = configured_secret or secrets.token_urlsafe(32)
+    encryption_key = os.getenv("ENCRYPTION_KEY", "").strip() or None
 
     bootstrap_admin_email = os.getenv("BOOTSTRAP_ADMIN_EMAIL", "").strip().lower()
     if bootstrap_admin_email:
@@ -1295,6 +1297,7 @@ def load_settings() -> Settings:
         s3_secret_access_key=s3_secret_access_key,
         s3_force_path_style=s3_force_path_style,
         jwt_secret_key=jwt_secret_key,
+        encryption_key=encryption_key,
         bootstrap_admin_email=bootstrap_admin_email or None,
         bootstrap_admin_token=bootstrap_admin_token or None,
         ai_provider=ai_provider,

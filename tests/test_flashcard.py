@@ -5,9 +5,11 @@ from sqlalchemy import select
 
 import routes.flashcard as flashcard_route
 from backend.app.models import (
+    JOB_TYPE_GENERATE_FLASHCARD,
     Course,
     DocumentChunk,
     GeneratedOutput,
+    GenerationJob,
     ProfileKnowledge,
     UploadedDocument,
 )
@@ -772,8 +774,8 @@ def test_generate_flashcards_rejects_json_incompatible_model(
     from utils.ai_errors import ERROR_CODE_HEADER, PUBLIC_MESSAGES, AiErrorCode
 
     fake_settings = SimpleNamespace(
-        ai_provider="ollama",
-        ai_fallback_providers="",
+        ai_available_vendors=("ollama",),
+        ai_default_model="ollama:text-only",
         ai_model_catalog={
             "ollama": [
                 {
@@ -798,3 +800,31 @@ def test_generate_flashcards_rejects_json_incompatible_model(
         response.headers.get(ERROR_CODE_HEADER) == AiErrorCode.INCOMPATIBLE_MODEL.value
     )
     assert response.json()["detail"] == PUBLIC_MESSAGES[AiErrorCode.INCOMPATIBLE_MODEL]
+
+
+def test_enqueue_flashcards_endpoint_queues_a_background_job(upload_api) -> None:
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/flashcards/jobs",
+        json={"topic_focus": "Memory Hierarchy", "include_profile_context": True},
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 202, response.text
+
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["data"]["status"] == "queued"
+
+    with upload_api.session_factory() as session:
+        job = session.get(GenerationJob, payload["data"]["job_id"])
+        assert job is not None
+        assert job.job_type == JOB_TYPE_GENERATE_FLASHCARD
+        assert job.course_id == upload_api.course_id
+        assert job.user_id == upload_api.user_id
+
+        # The queued payload carries the model the request resolved to, because
+        # the worker runs without the student's preferences in hand.
+        queued_request = json.loads(job.request_payload)
+        assert queued_request["topic_focus"] == "Memory Hierarchy"
+        assert queued_request["use_profile_knowledge"] is True
+        assert queued_request["model"]

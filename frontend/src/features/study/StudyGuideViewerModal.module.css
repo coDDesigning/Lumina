@@ -1,0 +1,17 @@
+.footerRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-8) 0;
+}
+
+.unsupported {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}

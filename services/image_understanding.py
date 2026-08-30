@@ -21,6 +21,7 @@ from backend.app.config import (
 )
 from schemas.prompt_context import PromptContext
 from schemas.prompt_template import PromptTemplateError
+from services.ollama import resolve_ollama_base_url
 from services.document_pipeline import (
     DisabledImageUnderstandingProvider,
     ImageUnderstandingProvider,
@@ -93,6 +94,7 @@ class GeminiImageUnderstandingProvider:
     """Cloud-hosted visual analysis using Google Gemini multimodal models."""
 
     PROVIDER_NAME = AI_PROVIDER_GEMINI
+    MODEL = "gemini-2.5-flash"
     enabled = True
 
     def __init__(
@@ -109,7 +111,7 @@ class GeminiImageUnderstandingProvider:
             raise VisualAnalysisError(
                 "GEMINI_API_KEY is not configured for visual understanding."
             )
-        self._model = model or settings.gemini_image_model
+        self._model = model or self.MODEL
         self._timeout_seconds = (
             timeout_seconds
             if timeout_seconds is not None
@@ -196,6 +198,7 @@ class OllamaImageUnderstandingProvider:
     """Self-hosted visual analysis using Ollama multimodal/vision models."""
 
     PROVIDER_NAME = AI_PROVIDER_OLLAMA
+    MODEL = "llama3.2-vision"
     enabled = True
     GENERATE_PATH = "/api/generate"
 
@@ -208,8 +211,8 @@ class OllamaImageUnderstandingProvider:
         client: httpx.Client | None = None,
         prompt_context: PromptContext | None = None,
     ) -> None:
-        self._base_url = (base_url or settings.ollama_base_url).rstrip("/")
-        self._model = model or settings.ollama_image_model
+        self._base_url = resolve_ollama_base_url(base_url or settings.ollama_base_url)
+        self._model = model or self.MODEL
         self._timeout_seconds = (
             timeout_seconds
             if timeout_seconds is not None
@@ -290,24 +293,27 @@ class OllamaImageUnderstandingProvider:
 
 def configured_image_understanding_identity() -> tuple[str, str | None]:
     """Report the provider and model attributed to visual descriptions."""
-    if settings.image_provider == AI_PROVIDER_GEMINI:
-        return AI_PROVIDER_GEMINI, settings.gemini_image_model
-    if settings.image_provider == AI_PROVIDER_OLLAMA:
-        return AI_PROVIDER_OLLAMA, settings.ollama_image_model
-    return IMAGE_PROVIDER_NONE, None
+    if not settings.ai_vision_model:
+        return IMAGE_PROVIDER_NONE, None
+    provider_name, model_name = settings.ai_vision_model.split(":", 1)
+    return provider_name, model_name
 
 
 def get_image_understanding_provider(
     *, prompt_context: PromptContext | None = None
 ) -> ImageUnderstandingProvider:
     """Construct the configured ImageUnderstandingProvider instance."""
-    provider_name = settings.image_provider
-    if provider_name in (IMAGE_PROVIDER_NONE, "disabled", ""):
+    if not settings.ai_vision_model:
         return DisabledImageUnderstandingProvider()
+    provider_name, model_name = settings.ai_vision_model.split(":", 1)
     if provider_name == AI_PROVIDER_GEMINI:
-        return GeminiImageUnderstandingProvider(prompt_context=prompt_context)
+        return GeminiImageUnderstandingProvider(
+            model=model_name, prompt_context=prompt_context
+        )
     if provider_name == AI_PROVIDER_OLLAMA:
-        return OllamaImageUnderstandingProvider(prompt_context=prompt_context)
+        return OllamaImageUnderstandingProvider(
+            model=model_name, prompt_context=prompt_context
+        )
     raise ValueError(
         f"Image understanding provider '{provider_name}' is not implemented."
     )

@@ -3,17 +3,19 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '@/api/client';
-import { generateReverseQuiz } from '@/api/reverseQuiz';
+import { generateReverseQuiz, suggestReverseQuizQuestions } from '@/api/reverseQuiz';
 import type { ReverseQuizResponse } from '@/api/types';
 import type { Workspace } from '@/data/workspaces';
 import ReverseQuizPage from './ReverseQuizPage';
 
 vi.mock('@/api/reverseQuiz', () => ({
   generateReverseQuiz: vi.fn(),
+  suggestReverseQuizQuestions: vi.fn(),
   getReverseQuizzes: vi.fn(),
 }));
 
 const mockGenerateReverseQuiz = vi.mocked(generateReverseQuiz);
+const mockSuggestQuestions = vi.mocked(suggestReverseQuizQuestions);
 
 const WORKSPACE: Workspace = {
   id: '10',
@@ -145,6 +147,63 @@ describe('ReverseQuizPage', () => {
       expect(screen.getByText('Analysis for: Eigenvalues')).toBeInTheDocument();
     });
     expect(mockGenerateReverseQuiz).toHaveBeenCalledTimes(2);
+  });
+
+  it('suggests source-derived questions and starts a session from one', async () => {
+    const user = userEvent.setup();
+    mockSuggestQuestions.mockResolvedValueOnce({
+      course_id: 10,
+      questions: [
+        {
+          topic: 'Eigenvalue equation',
+          question: 'Explain in your own words what Av = λv means geometrically.',
+        },
+        {
+          topic: 'Diagonalisation',
+          question: 'Describe when a matrix can be diagonalised.',
+        },
+      ],
+    });
+    mockGenerateReverseQuiz.mockResolvedValueOnce({
+      ...SAMPLE_RESPONSE,
+      topic: 'Eigenvalue equation',
+      question: 'Explain in your own words what Av = λv means geometrically.',
+    });
+
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Suggest questions' }));
+
+    const card = await screen.findByRole('button', {
+      name: /what Av = λv means geometrically/i,
+    });
+    await user.click(card);
+
+    expect(
+      screen.getByRole('heading', { level: 2, name: 'Explain: Eigenvalue equation' }),
+    ).toBeInTheDocument();
+
+    await user.type(screen.getByRole('textbox'), 'It scales the vector by lambda.');
+    await user.click(screen.getByRole('button', { name: 'Submit Explanation' }));
+
+    await waitFor(() => expect(mockGenerateReverseQuiz).toHaveBeenCalled());
+    expect(mockGenerateReverseQuiz.mock.calls[0][1]).toMatchObject({
+      topic: 'Eigenvalue equation',
+      question: 'Explain in your own words what Av = λv means geometrically.',
+    });
+  });
+
+  it('explains a failure when questions cannot be drafted', async () => {
+    const user = userEvent.setup();
+    mockSuggestQuestions.mockRejectedValueOnce(
+      new APIError(503, { detail: 'down' }, 'provider_unavailable'),
+    );
+
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Suggest questions' }));
+
+    expect(await screen.findByText('The AI service is down')).toBeInTheDocument();
   });
 
   it('allows restarting to explain another topic', async () => {

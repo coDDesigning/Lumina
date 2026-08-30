@@ -149,6 +149,16 @@ describe('form controls', () => {
     expect(screen.getByLabelText('Term')).not.toHaveAttribute('aria-invalid');
   });
 
+  it('renders an action slot beside the input', () => {
+    render(
+      <Input
+        label="Password"
+        action={<button type="button">Toggle</button>}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Toggle' })).toBeInTheDocument();
+  });
+
   it('labels textareas and selects the same way', () => {
     render(
       <>

@@ -42,6 +42,10 @@ from services.vector_store import PgVectorStore, VectorRecord, VectorStoreError
 from storage.local import LocalStorage
 from workers.document_processor import process_next_job
 
+from services.embeddings import configured_embedding_identity
+
+EMBEDDING_PROVIDER_NAME, EMBEDDING_MODEL_NAME = configured_embedding_identity()
+
 pytestmark = pytest.mark.database_contract
 
 
@@ -201,9 +205,9 @@ def test_processing_stores_one_vector_per_chunk_with_full_metadata(
         assert chunks
 
         assert store.count_document_vectors(session, queued.document_id) == len(chunks)
-        assert store.chunk_ids_with_vectors(session, queued.document_id) == {
-            chunk.id for chunk in chunks
-        }
+        assert store.chunk_ids_with_vectors(
+            session, queued.document_id, embedding_model=EMBEDDING_MODEL_NAME
+        ) == {chunk.id for chunk in chunks}
 
         for chunk in chunks:
             record = chunk.embedding_record
@@ -408,7 +412,9 @@ def test_reprocessing_replaces_stale_vectors(session_factory, tmp_path) -> None:
     _assert_succeeded(session_factory, queued)
 
     with session_factory() as session:
-        original_chunk_ids = store.chunk_ids_with_vectors(session, queued.document_id)
+        original_chunk_ids = store.chunk_ids_with_vectors(
+            session, queued.document_id, embedding_model=EMBEDDING_MODEL_NAME
+        )
         assert original_chunk_ids
 
         # A vector left behind by an older chunk set must not survive reprocessing.
@@ -465,7 +471,9 @@ def test_reprocessing_replaces_stale_vectors(session_factory, tmp_path) -> None:
             )
         )
         current_ids = {chunk.id for chunk in chunks}
-        stored_ids = store.chunk_ids_with_vectors(session, queued.document_id)
+        stored_ids = store.chunk_ids_with_vectors(
+            session, queued.document_id, embedding_model=EMBEDDING_MODEL_NAME
+        )
 
         assert stored_ids == current_ids
         assert store.count_document_vectors(session, queued.document_id) == len(chunks)

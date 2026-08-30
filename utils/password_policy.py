@@ -84,10 +84,9 @@ def minimum_length() -> int:
 def policy_description() -> str:
     """The rule, phrased for a user, derived from the rule actually enforced."""
     return (
-        f"Passwords must be at least {minimum_length()} characters and at most "
-        f"{MAX_PASSWORD_BYTES} bytes, must not be a commonly used password or a "
-        "simple repeated or sequential pattern, and must not contain your name "
-        "or email address."
+        f"Passwords must be at least {minimum_length()} characters, must not be "
+        "a commonly used password or a simple repeated or sequential pattern, "
+        "and must not contain your name or email address."
     )
 
 
@@ -135,7 +134,10 @@ def validate_password(password: str, *, identifiers: Iterable[str] = ()) -> str:
     if len(password) < minimum_length():
         raise PasswordPolicyError(policy_description())
     if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
-        raise PasswordPolicyError(policy_description())
+        # bcrypt would hash only the first 72 bytes, so a longer password is a
+        # claim the server cannot check. This ceiling is not part of the
+        # user-facing policy sentence.
+        raise PasswordPolicyError("That password is too long.")
 
     normalized = _normalize(password)
     if normalized.strip() == "":

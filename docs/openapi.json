@@ -1354,6 +1354,62 @@
         "title": "BaseResponse[GeneratedOutputDetail]",
         "type": "object"
       },
+      "BaseResponse_GenerationJobAccepted_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GenerationJobAccepted"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[GenerationJobAccepted]",
+        "type": "object"
+      },
+      "BaseResponse_GenerationJobView_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GenerationJobView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[GenerationJobView]",
+        "type": "object"
+      },
       "BaseResponse_NoneType_": {
         "properties": {
           "data": {
@@ -1628,6 +1684,34 @@
         "title": "BaseResponse[QuizView]",
         "type": "object"
       },
+      "BaseResponse_ReverseQuizQuestionsResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReverseQuizQuestionsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ReverseQuizQuestionsResponse]",
+        "type": "object"
+      },
       "BaseResponse_ReverseQuizResponse_": {
         "properties": {
           "data": {
@@ -1710,6 +1794,34 @@
           "message"
         ],
         "title": "BaseResponse[UploadErrorData]",
+        "type": "object"
+      },
+      "BaseResponse_UserApiKeysResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserApiKeysResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[UserApiKeysResponse]",
         "type": "object"
       },
       "BaseResponse_UserResponse_": {
@@ -2056,6 +2168,38 @@
           "message"
         ],
         "title": "BaseResponse[list[GeneratedOutputSummary]]",
+        "type": "object"
+      },
+      "BaseResponse_list_GenerationJobView__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/GenerationJobView"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[list[GenerationJobView]]",
         "type": "object"
       },
       "BaseResponse_list_ProfileDocumentResponse__": {
@@ -6588,6 +6732,151 @@
         "title": "GeneratedOutputSummary",
         "type": "object"
       },
+      "GenerationJobAccepted": {
+        "description": "The handle returned the moment work is queued, before anything runs.",
+        "properties": {
+          "job_id": {
+            "description": "Poll this through the generation job read.",
+            "title": "Job Id",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "GenerationJobAccepted",
+        "type": "object"
+      },
+      "GenerationJobView": {
+        "description": "One row of the generation panel.\n\nThe result identifiers are deliberately separate rather than one polymorphic\nfield: the client opens a study guide and a quiz through different reads,\nand a single ``result_id`` would make it guess which.",
+        "properties": {
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "generated_output_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated Output Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "job_type": {
+            "enum": [
+              "generate_study_guide",
+              "generate_quiz",
+              "generate_flashcard"
+            ],
+            "title": "Job Type",
+            "type": "string"
+          },
+          "max_attempts": {
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "quiz_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiz Id"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "job_type",
+          "status",
+          "attempt_count",
+          "max_attempts",
+          "created_at"
+        ],
+        "title": "GenerationJobView",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -8388,6 +8677,48 @@
         "title": "RegistrationResponse",
         "type": "object"
       },
+      "ReverseQuizQuestion": {
+        "properties": {
+          "question": {
+            "maxLength": 600,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          },
+          "topic": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "question"
+        ],
+        "title": "ReverseQuizQuestion",
+        "type": "object"
+      },
+      "ReverseQuizQuestionsResponse": {
+        "properties": {
+          "course_id": {
+            "title": "Course Id",
+            "type": "integer"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/ReverseQuizQuestion"
+            },
+            "title": "Questions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "course_id"
+        ],
+        "title": "ReverseQuizQuestionsResponse",
+        "type": "object"
+      },
       "ReverseQuizRequest": {
         "properties": {
           "explanation": {
@@ -8395,6 +8726,18 @@
             "minLength": 1,
             "title": "Explanation",
             "type": "string"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "maxLength": 600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
           },
           "topic": {
             "maxLength": 100,
@@ -8434,6 +8777,17 @@
             },
             "title": "Misconceptions",
             "type": "array"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
           },
           "topic": {
             "title": "Topic",
@@ -9123,6 +9477,104 @@
           "code"
         ],
         "title": "UploadErrorData",
+        "type": "object"
+      },
+      "UserApiKeysResponse": {
+        "description": "Masked view of configured BYOK API keys.",
+        "properties": {
+          "anthropic_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anthropic Api Key"
+          },
+          "gemini_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gemini Api Key"
+          },
+          "has_anthropic_key": {
+            "default": false,
+            "title": "Has Anthropic Key",
+            "type": "boolean"
+          },
+          "has_gemini_key": {
+            "default": false,
+            "title": "Has Gemini Key",
+            "type": "boolean"
+          },
+          "has_openai_key": {
+            "default": false,
+            "title": "Has Openai Key",
+            "type": "boolean"
+          },
+          "openai_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openai Api Key"
+          }
+        },
+        "title": "UserApiKeysResponse",
+        "type": "object"
+      },
+      "UserApiKeysUpdateRequest": {
+        "description": "Payload for saving, updating, or clearing BYOK API keys.",
+        "properties": {
+          "anthropic_api_key": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anthropic Api Key"
+          },
+          "gemini_api_key": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gemini Api Key"
+          },
+          "openai_api_key": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openai Api Key"
+          }
+        },
+        "title": "UserApiKeysUpdateRequest",
         "type": "object"
       },
       "UserCreate": {
@@ -10870,6 +11322,18 @@
             "schema": {
               "title": "Course Id",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Discard a document whose extraction is stuck (queued with no worker, or running with an expired worker lease). A job a worker is actively holding is still rejected.",
+            "in": "query",
+            "name": "force",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Discard a document whose extraction is stuck (queued with no worker, or running with an expired worker lease). A job a worker is actively holding is still rejected.",
+              "title": "Force",
+              "type": "boolean"
             }
           }
         ],
@@ -12671,6 +13135,76 @@
         ]
       }
     },
+    "/api/courses/{course_id}/flashcards/jobs": {
+      "post": {
+        "description": "Queue flashcard generation and return immediately with a handle to poll.",
+        "operationId": "enqueue_flashcards_api_courses__course_id__flashcards_jobs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/FlashcardRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_GenerationJobAccepted_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "description": "Invalid flashcard request"
+          },
+          "429": {
+            "description": "Per-user generation rate limited"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Enqueue Flashcards",
+        "tags": [
+          "Flashcard"
+        ]
+      }
+    },
     "/api/courses/{course_id}/generated-outputs": {
       "get": {
         "description": "List the generated outputs of a course the caller is allowed to read.",
@@ -12791,6 +13325,194 @@
         "summary": "Get Generated Output",
         "tags": [
           "Generated Outputs"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/generation-jobs": {
+      "get": {
+        "description": "The caller's unfinished and recently finished generations for a course.\n\nThis is what rebuilds the panel after a reload, so it is the reason closing\nthe tab no longer loses a running generation. It is scoped to the caller,\nnever the course, because a generation belongs to whoever paid for it.",
+        "operationId": "list_generation_jobs_api_courses__course_id__generation_jobs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_list_GenerationJobView__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Generation Jobs",
+        "tags": [
+          "Generation Jobs"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/generation-jobs/{job_id}": {
+      "get": {
+        "description": "One generation's current state, which is what the client polls.",
+        "operationId": "get_generation_job_status_api_courses__course_id__generation_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_GenerationJobView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or generation job not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Generation Job Status",
+        "tags": [
+          "Generation Jobs"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/generation-jobs/{job_id}/retry": {
+      "post": {
+        "operationId": "retry_failed_generation_job_api_courses__course_id__generation_jobs__job_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_GenerationJobAccepted_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course or generation job not found"
+          },
+          "409": {
+            "description": "Generation job is not retryable"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Per-user generation rate limited"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Retry Failed Generation Job",
+        "tags": [
+          "Generation Jobs"
         ]
       }
     },
@@ -12997,6 +13719,69 @@
           }
         ],
         "summary": "Generate Quiz",
+        "tags": [
+          "Quiz"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/quiz/jobs": {
+      "post": {
+        "description": "Queue a quiz and return immediately with a handle to poll.\n\nThe price is settled here rather than in the worker, because it depends on\nthe question types the student asked for and those are known now; a quiz\nthat turns out to be open-ended has already been charged as one.",
+        "operationId": "enqueue_quiz_api_courses__course_id__quiz_jobs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuizRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_GenerationJobAccepted_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "description": "Invalid quiz request"
+          },
+          "429": {
+            "description": "Per-user generation rate limited"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Enqueue Quiz",
         "tags": [
           "Quiz"
         ]
@@ -13705,6 +14490,68 @@
         ]
       }
     },
+    "/api/courses/{course_id}/reverse-quiz/questions": {
+      "post": {
+        "operationId": "suggest_reverse_quiz_questions_api_courses__course_id__reverse_quiz_questions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ReverseQuizQuestionsResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "AI provider or per-user generation rate limited"
+          },
+          "503": {
+            "description": "AI provider unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Suggest Reverse Quiz Questions",
+        "tags": [
+          "Reverse Quiz"
+        ]
+      }
+    },
     "/api/courses/{course_id}/reverse-quizzes": {
       "get": {
         "operationId": "list_reverse_quizzes_api_courses__course_id__reverse_quizzes_get",
@@ -13943,6 +14790,69 @@
           }
         ],
         "summary": "Generate Study Guide",
+        "tags": [
+          "Study Guide"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/study-guide/jobs": {
+      "post": {
+        "description": "Queue a study guide and return immediately with a handle to poll.\n\nNothing about the generation is decided here except the model, which is\nresolved now and written into the stored request: the worker runs the job\nlong after the caller's session is gone, so a preference read at run time\nwould be reading it from nobody.",
+        "operationId": "enqueue_study_guide_api_courses__course_id__study_guide_jobs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudyGuideRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_GenerationJobAccepted_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "description": "Invalid study guide request"
+          },
+          "429": {
+            "description": "Per-user generation rate limited"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Enqueue Study Guide",
         "tags": [
           "Study Guide"
         ]
@@ -14600,6 +15510,78 @@
         "summary": "Generate Prompt",
         "tags": [
           "Prompt Generator"
+        ]
+      }
+    },
+    "/api/users/me/api-keys": {
+      "get": {
+        "description": "Retrieve masked BYOK API keys for the authenticated administrator.",
+        "operationId": "get_my_api_keys_api_users_me_api_keys_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_UserApiKeysResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get My Api Keys",
+        "tags": [
+          "Users"
+        ]
+      },
+      "put": {
+        "description": "Save, update, or clear BYOK API keys for the authenticated administrator.",
+        "operationId": "update_my_api_keys_api_users_me_api_keys_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserApiKeysUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_UserApiKeysResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update My Api Keys",
+        "tags": [
+          "Users"
         ]
       }
     },

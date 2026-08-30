@@ -245,4 +245,72 @@ describe('citation markers', () => {
 
     expect(screen.getByText(/See \[figure 2\] for details\./)).toBeInTheDocument();
   });
+
+  describe('LaTeX math', () => {
+    it('typesets an inline $…$ expression instead of printing the dollars', () => {
+      const { container } = render(
+        <Markdown text="The identity $e^{i\\pi} + 1 = 0$ is elegant." />,
+      );
+
+      expect(container.querySelector('.katex')).toBeInTheDocument();
+      expect(container.textContent).not.toContain('$');
+    });
+
+    it('typesets \\( … \\) inline delimiters', () => {
+      const { container } = render(<Markdown text={'Let \\(x^2 + y^2 = r^2\\) hold.'} />);
+
+      expect(container.querySelector('.katex')).toBeInTheDocument();
+      expect(container.textContent).not.toContain('\\(');
+    });
+
+    it('renders a $$…$$ block as its own centered, scrollable equation', () => {
+      const { container } = render(
+        <Markdown text={'Then:\n$$\n\\int_0^1 x \\, dx = \\frac{1}{2}\n$$\nwhich is small.'} />,
+      );
+
+      expect(container.querySelector('.katex-display')).toBeInTheDocument();
+      // the surrounding prose still renders as its own paragraphs
+      expect(screen.getByText('Then:')).toBeInTheDocument();
+      expect(screen.getByText('which is small.')).toBeInTheDocument();
+      expect(container.textContent).not.toContain('$$');
+    });
+
+    it('renders a single-line $$…$$ block', () => {
+      const { container } = render(<Markdown text={'$$a^2 + b^2 = c^2$$'} />);
+
+      expect(container.querySelector('.katex-display')).toBeInTheDocument();
+    });
+
+    it('renders a \\[ … \\] display block', () => {
+      const { container } = render(<Markdown text={'\\[ \\sum_{k=1}^n k = \\frac{n(n+1)}{2} \\]'} />);
+
+      expect(container.querySelector('.katex-display')).toBeInTheDocument();
+    });
+
+    it('does not mistake prices for math', () => {
+      render(<Markdown text="It costs $5 and then $10 more." />);
+
+      expect(screen.getByText('It costs $5 and then $10 more.')).toBeInTheDocument();
+    });
+
+    it('keeps a dollar sign inside a code span literal', () => {
+      const { container } = render(<Markdown text="Write `$x$` verbatim." />);
+
+      expect(container.querySelector('.katex')).not.toBeInTheDocument();
+      expect(screen.getByText('$x$')).toBeInTheDocument();
+    });
+
+    it('leaves an unterminated $$ opener as plain text', () => {
+      render(<Markdown text={'$$ x = y\nand the rest of the sentence.'} />);
+
+      expect(screen.getByText(/\$\$ x = y/)).toBeInTheDocument();
+    });
+
+    it('renders a malformed expression without throwing', () => {
+      const { container } = render(<Markdown text={'Broken: $\\frac{1}{$ here.'} />);
+
+      expect(container).toBeInTheDocument();
+      expect(screen.getByText(/Broken:/)).toBeInTheDocument();
+    });
+  });
 });

@@ -377,6 +377,7 @@ class QuizService:
         provider: TextGenerationProvider,
         *,
         user_id: int | None = None,
+        prepaid_charge: ChargeReceipt | None = None,
     ) -> QuizGeneration:
         effective_request = cls.resolve_effective_request(db, course_id, request)
         course = db.get(Course, course_id)
@@ -406,8 +407,8 @@ class QuizService:
 
         query = cls.build_retrieval_query(course, effective_request)
 
-        receipt = None
-        if resolved_user_id:
+        receipt = prepaid_charge
+        if receipt is None and resolved_user_id:
             receipt = CreditService.charge(
                 db,
                 resolved_user_id,
@@ -417,6 +418,11 @@ class QuizService:
             if receipt is None:
                 log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
                 raise InsufficientCreditsError("Insufficient credits.")
+
+        # A prepaid generation's credit belongs to the job that queued it, and
+        # that job owns the retry decision. Refunding from here would hand the
+        # credit back for an attempt that is about to be run again.
+        refundable = receipt if prepaid_charge is None else None
 
         try:
             material = cls.get_course_material(db, course_id, query=query)
@@ -446,27 +452,27 @@ class QuizService:
                     result = provider.generate_json(prompt)
         except MaterialNotIndexedError:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
             raise
         except NoRelevantMaterialError:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
             raise
         except MaterialRetrievalError:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
         except TextGenerationError as exc:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
             raise QuizGenerationError("Text generation provider failed.") from exc
         except Exception:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             raise
 
         try:
@@ -474,7 +480,7 @@ class QuizService:
             cls.assert_matches_request(validated, effective_request)
         except (ValidationError, ValueError) as exc:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(
                 ErrorCategory.INVALID_STRUCTURE,
                 latency_ms=metadata.latency_ms if metadata else None,

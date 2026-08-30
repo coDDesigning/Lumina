@@ -417,7 +417,7 @@ def test_ai_tutor_endpoint_persists_typed_conversation_and_history(
     monkeypatch.setattr(
         ai_tutor_route,
         "get_text_generation_provider",
-        lambda: FakeProvider(),
+        lambda **_: FakeProvider(),
     )
 
     response = upload_api.client.post(
@@ -523,7 +523,7 @@ def test_ai_tutor_endpoint_curates_retrieval_failures(
     monkeypatch.setattr(
         ai_tutor_route,
         "get_text_generation_provider",
-        lambda: provider,
+        lambda **_: provider,
     )
 
     response = upload_api.client.post(
@@ -571,7 +571,7 @@ def test_ai_tutor_continues_conversation_with_history(
     monkeypatch.setattr(
         ai_tutor_route,
         "get_text_generation_provider",
-        lambda: provider,
+        lambda **_: provider,
     )
 
     first = upload_api.client.post(
@@ -640,7 +640,7 @@ def test_ai_tutor_rejects_course_qa_conversation(
     monkeypatch.setattr(
         ai_tutor_route,
         "get_text_generation_provider",
-        lambda: UncalledProvider(),
+        lambda **_: UncalledProvider(),
     )
 
     response = upload_api.client.post(
@@ -714,7 +714,7 @@ def test_ai_tutor_with_profile_knowledge_opt_in(
     monkeypatch.setattr(
         ai_tutor_route,
         "get_text_generation_provider",
-        lambda: FakeProvider(),
+        lambda **_: FakeProvider(),
     )
 
     # 1. Opt-in True
@@ -836,7 +836,7 @@ def test_ai_tutor_response_diagnostics_never_expose_private_material_content(
     monkeypatch.setattr(
         ai_tutor_route,
         "get_text_generation_provider",
-        lambda: FakeProvider(),
+        lambda **_: FakeProvider(),
     )
 
     response = upload_api.client.post(
@@ -880,7 +880,7 @@ def test_ai_tutor_rejects_conversation_from_another_course(
     monkeypatch.setattr(
         ai_tutor_route,
         "get_text_generation_provider",
-        lambda: UncalledTextProvider(),
+        lambda **_: UncalledTextProvider(),
     )
 
     response = upload_api.client.post(
@@ -919,7 +919,7 @@ def test_ai_tutor_rejects_another_users_conversation(
     monkeypatch.setattr(
         ai_tutor_route,
         "get_text_generation_provider",
-        lambda: UncalledTextProvider(),
+        lambda **_: UncalledTextProvider(),
     )
 
     response = upload_api.client.post(
@@ -967,7 +967,7 @@ def test_ai_tutor_provider_failure_does_not_create_conversation(
     monkeypatch.setattr(
         ai_tutor_route,
         "get_text_generation_provider",
-        lambda: FailingProvider(),
+        lambda **_: FailingProvider(),
     )
 
     response = upload_api.client.post(

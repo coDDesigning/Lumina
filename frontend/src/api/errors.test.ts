@@ -148,13 +148,13 @@ describe('error description helpers', () => {
 
     it('handles 415 unsupported file type', () => {
       const err = MockErrors.unsupportedMediaType(
-        'Unsupported file type. Please upload a PDF, TXT, or Markdown file.',
+        'Unsupported file type. Please upload a PDF, TXT, Markdown, or image (PNG or JPEG) file.',
       );
       const described = describeUploadError(err);
       expect(described.status).toBe(415);
       expect(described.code).toBe('UPLOAD_UNSUPPORTED_FILE_TYPE');
       expect(described.message).toBe(
-        'Unsupported file type. Please upload a PDF, TXT, or Markdown file.',
+        'Unsupported file type. Please upload a PDF, TXT, Markdown, or image (PNG or JPEG) file.',
       );
     });
 
@@ -279,6 +279,21 @@ describe('error description helpers', () => {
       expect(described.message).toBe(
         'Too many generation requests were made. Try again shortly. No credit was charged.',
       );
+    });
+
+    it('describes personal key invalid errors clearly with server message', () => {
+      const described = describeGenerationError(
+        new APIError(
+          401,
+          { detail: 'Your personal OpenAI API key is invalid or expired.' },
+          'personal_key_invalid',
+        ),
+        'Generation failed',
+      );
+
+      expect(described.title).toBe('Invalid API key');
+      expect(described.message).toBe('Your personal OpenAI API key is invalid or expired.');
+      expect(described.retryable).toBe(false);
     });
 
     it('keeps whatever the server said for a code it has never seen', () => {

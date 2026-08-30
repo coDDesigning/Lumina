@@ -14,7 +14,9 @@ type FieldShellProps = {
 };
 
 export type InputProps = FieldShellProps &
-  Omit<InputHTMLAttributes<HTMLInputElement>, 'id' | 'aria-describedby' | 'aria-invalid'>;
+  Omit<InputHTMLAttributes<HTMLInputElement>, 'id' | 'aria-describedby' | 'aria-invalid'> & {
+    action?: ReactNode;
+  };
 
 export function Input({
   label,
@@ -24,6 +26,7 @@ export function Input({
   hideLabel,
   fieldClassName,
   className,
+  action,
   ...rest
 }: InputProps) {
   return (
@@ -35,15 +38,28 @@ export function Input({
       hideLabel={hideLabel}
       className={fieldClassName}
     >
-      {({ id, describedBy, invalid, className: controlClass }) => (
-        <input
-          {...rest}
-          id={id}
-          aria-describedby={describedBy}
-          aria-invalid={invalid || undefined}
-          className={cx(controlClass, className)}
-        />
-      )}
+      {({ id, describedBy, invalid, className: controlClass }) =>
+        action ? (
+          <span className={styles.inputShell}>
+            <input
+              {...rest}
+              id={id}
+              aria-describedby={describedBy}
+              aria-invalid={invalid || undefined}
+              className={cx(controlClass, styles.inputWithAction, className)}
+            />
+            <span className={styles.inputAction}>{action}</span>
+          </span>
+        ) : (
+          <input
+            {...rest}
+            id={id}
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
+            className={cx(controlClass, className)}
+          />
+        )
+      }
     </Field>
   );
 }

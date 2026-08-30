@@ -16,8 +16,9 @@ not apply.
 The policy is length-led rather than composition-led, following NIST SP 800-63B.
 A password is rejected when it:
 
-- is shorter than `PASSWORD_MIN_LENGTH` (default 12),
-- exceeds 72 bytes, which is where bcrypt truncates and stops hashing,
+- is shorter than `PASSWORD_MIN_LENGTH` (default 8),
+- exceeds 72 bytes, which is where bcrypt truncates and stops hashing (reported
+  only as "That password is too long", not as part of the policy sentence),
 - contains a NUL character or is entirely whitespace,
 - appears in the small embedded list of passwords credential stuffing tries
   first,
@@ -256,7 +257,7 @@ All of these are documented with their defaults in `.env.example` and read in
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PASSWORD_MIN_LENGTH` | `12` | Minimum length, capped at 64 by bcrypt's 72-byte limit |
+| `PASSWORD_MIN_LENGTH` | `8` | Minimum length (NIST SP 800-63B floor), capped at 64 by bcrypt's 72-byte limit |
 | `EMAIL_VERIFICATION_REQUIRED` | hosted: `true`, self-hosted: `false` | Whether credits wait for a proven address |
 | `EMAIL_VERIFICATION_TOKEN_TTL_HOURS` | `24` | Link lifetime, 1–168 |
 | `APP_PUBLIC_BASE_URL` | unset | Origin verification links point at (the SPA, not the API) |

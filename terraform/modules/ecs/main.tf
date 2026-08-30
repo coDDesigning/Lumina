@@ -30,12 +30,9 @@ locals {
     { name = "S3_BUCKET", value = var.s3_bucket },
     { name = "S3_REGION", value = var.region },
     { name = "VECTOR_BACKEND", value = "pgvector" },
-    { name = "EMBEDDING_PROVIDER", value = "gemini" },
-    { name = "GEMINI_EMBEDDING_MODEL", value = "gemini-embedding-001" },
-    { name = "AI_PROVIDER", value = "gemini" },
+    { name = "AI_DEFAULT_MODEL", value = "gemini:gemini-3.6-flash" },
     { name = "AI_MODEL_COST_RATES", value = var.ai_model_cost_rates },
     { name = "EMBEDDING_BATCH_SIZE", value = "32" },
-    { name = "EMBEDDING_TIMEOUT_SECONDS", value = "10" },
     { name = "MAX_UPLOAD_SIZE_BYTES", value = "52428800" },
     { name = "MAX_REQUEST_SIZE_BYTES", value = "1048576" },
     { name = "MAX_CONCURRENT_DOCUMENT_VALIDATIONS", value = "2" },
@@ -52,6 +49,12 @@ locals {
     { name = "PROCESSING_JOB_POLL_SECONDS", value = "1.0" },
     { name = "PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS", value = "300" },
     { name = "PROCESSING_JOB_CONCURRENCY", value = "2" },
+    { name = "GENERATION_JOB_LEASE_SECONDS", value = "120" },
+    { name = "GENERATION_JOB_MAX_ATTEMPTS", value = "2" },
+    { name = "GENERATION_JOB_POLL_SECONDS", value = "1.0" },
+    { name = "GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS", value = "600" },
+    { name = "GENERATION_JOB_CONCURRENCY", value = "2" },
+    { name = "GENERATION_JOB_MAX_ACTIVE_PER_USER", value = "2" },
     { name = "MAX_EXTRACTED_CHARACTERS", value = "2000000" },
     { name = "MAX_DOCUMENT_CHUNKS", value = "1000" },
     { name = "OCR_LANGUAGE", value = "eng" },
@@ -165,7 +168,7 @@ locals {
     name        = "worker"
     environment = local.worker_env
     secrets     = local.app_secrets
-    command     = ["python", "-m", "workers.document_processor"]
+    command     = ["python", "-m", "workers.worker"]
     stopTimeout = 120
   })
 

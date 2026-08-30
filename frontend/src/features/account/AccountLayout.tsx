@@ -13,6 +13,7 @@ const SECTIONS = [
   { to: '/account', label: 'You', end: true },
   { to: '/account/background', label: 'Your background', end: false },
   { to: '/account/ai', label: 'AI', end: false },
+  { to: '/account/api-keys', label: 'API keys', end: false },
   { to: '/account/appearance', label: 'Appearance', end: false },
   { to: '/account/security', label: 'Security', end: false },
 ];
@@ -38,6 +39,11 @@ export default function AccountLayout() {
     navigate('/login');
   }
 
+  const isAdmin = user?.role?.toLowerCase() === 'admin';
+  const visibleSections = SECTIONS.filter(
+    (section) => section.to !== '/account/api-keys' || isAdmin,
+  );
+
   return (
     <div className={styles.page}>
       <PageHeader crumbs={[{ label: 'Account' }]} />
@@ -62,7 +68,7 @@ export default function AccountLayout() {
         </Card>
 
         <nav className={styles.sectionNav} aria-label="Account sections">
-          {SECTIONS.map((section) => (
+          {visibleSections.map((section) => (
             <NavLink
               key={section.to}
               to={section.to}

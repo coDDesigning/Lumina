@@ -44,6 +44,7 @@ import { QuizModal } from '@/features/study/quiz/QuizModal';
 import { StudyHistoryModal } from '@/features/study/StudyHistoryModal';
 import { SavedDeckModal } from '@/features/study/SavedDeckModal';
 import { StudyGuideModal } from '@/features/study/StudyGuideModal';
+import { StudyGuideViewerModal } from '@/features/study/StudyGuideViewerModal';
 import { useCredits } from '@/context/CreditContext';
 import { useAuth } from '@/context/AuthContext';
 import type {
@@ -246,6 +247,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
 
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isRoadmapOpen, setIsRoadmapOpen] = useState(false);
+  const [viewerGuideId, setViewerGuideId] = useState<number | null>(null);
   const [isQuizOpen, setIsQuizOpen] = useState(false);
   const [isFlashcardOpen, setIsFlashcardOpen] = useState(false);
   const [isMadeForYouOpen, setIsMadeForYouOpen] = useState(requestedArtifactId !== null);
@@ -826,10 +828,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                   retryingId={generationJobs.retryingId}
                   onReload={() => void generationJobs.reload()}
                   onRetry={(jobId) => void generationJobs.retry(jobId)}
-                  onOpenGuide={(outputId) => {
-                    setMadeForYouInitialId(outputId);
-                    setIsMadeForYouOpen(true);
-                  }}
+                  onOpenGuide={(outputId) => setViewerGuideId(outputId)}
                   onOpenQuiz={(quizId) => navigate(`/courses/${workspace.id}/practice/${quizId}`)}
                   onOpenFlashcards={(outputId) => setOpenDeckId(outputId)}
                 />
@@ -867,6 +866,15 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           </div>
         </section>
       </div>
+
+      {viewerGuideId !== null ? (
+        <StudyGuideViewerModal
+          courseId={courseId}
+          courseName={workspace.name}
+          outputId={viewerGuideId}
+          onClose={() => setViewerGuideId(null)}
+        />
+      ) : null}
 
       {isSummaryOpen ? (
         <StudyGuideModal

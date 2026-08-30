@@ -615,9 +615,55 @@ def test_search_honours_the_limit(
         assert ranked[0].chunk_id == chunks[0].id
 
 
-def test_search_returns_nothing_for_a_course_without_vectors(
+def test_search_refreshes_a_stale_index_that_returns_nothing(
     chroma_store, session_factory: sessionmaker[Session]
 ) -> None:
+    """A reader whose in-memory HNSW index lags a writer must not report a
+    populated course as unindexed: an empty hit triggers one reopen."""
+
+    class StaleCollection:
+        def __init__(self, ids: list[str]) -> None:
+            self._ids = ids
+            self.queries = 0
+
+        def query(self, **_kwargs):
+            self.queries += 1
+            return {"ids": [[]], "metadatas": [[]], "distances": [[]]}
+
+        def get(self, **_kwargs):
+            # count_course_vectors reads the metadata segment, which stays fresh.
+            return {"ids": list(self._ids), "metadatas": [{} for _ in self._ids]}
+
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-search-stale@example.com", chunk_count=3
+        )
+        _replace_directional(chroma_store, session, document, chunks)
+        session.commit()
+
+        stale = StaleCollection([str(chunk.id) for chunk in chunks])
+        chroma_store._collection = stale
+
+        ranked = chroma_store.search(
+            session, course_id=document.course_id, query_embedding=QUERY, limit=3
+        )
+
+    assert stale.queries == 1  # the stale handle answered once, then was dropped
+    assert {result.chunk_id for result in ranked} == {chunk.id for chunk in chunks}
+
+
+def test_search_returns_nothing_for_a_course_without_vectors(
+    chroma_store, session_factory: sessionmaker[Session], monkeypatch
+) -> None:
+    reopened = 0
+
+    def count_reopen() -> None:
+        nonlocal reopened
+        reopened += 1
+        ChromaVectorStore.close(chroma_store)
+
+    monkeypatch.setattr(chroma_store, "_discard_client", count_reopen)
+
     with session_factory() as session:
         course, _, _ = _seed_document(
             session, email="vs-search-empty@example.com", chunk_count=1
@@ -630,6 +676,9 @@ def test_search_returns_nothing_for_a_course_without_vectors(
             )
             == []
         )
+
+    # A truly unindexed course must not pay a client reopen on every miss.
+    assert reopened == 0
 
 
 def test_search_rejects_a_wrong_width_embedding(

@@ -32,6 +32,7 @@ function renderRail(jobs: GenerationJob[], overrides: Record<string, unknown> = 
     onRetry: vi.fn(),
     onOpenGuide: vi.fn(),
     onOpenQuiz: vi.fn(),
+    onOpenFlashcards: vi.fn(),
     ...overrides,
   };
   render(<GenerationRail {...props} />);
@@ -66,7 +67,7 @@ describe('GenerationRail', () => {
         generated_output_id: 99,
         finished_at: '2026-08-30T12:03:00Z',
       }),
-    ], { onOpenFlashcards: vi.fn() });
+    ]);
     const person = userEvent.setup();
 
     await person.click(screen.getByRole('button', { name: /Study guide/ }));

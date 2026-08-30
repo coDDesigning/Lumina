@@ -3,16 +3,13 @@ import { Layers, Sparkles } from 'lucide-react';
 import { describeGenerationError, isAbortError, isInsufficientCredits } from '@/api/errors';
 import type { GenerationFailure } from '@/api/errors';
 import { flashcardsAPI } from '@/api/flashcards';
-import type { GenerationJobAccepted } from '@/api/types';
 import CreditBalance from '@/components/credits/CreditBalance';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { useCredits } from '@/context/CreditContext';
 import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';
 import { Dialog } from '@/ui/Dialog';
-import { FlashcardDeck } from './FlashcardDeck';
 import { GenerationError, NoMaterialNotice, SetupPanel } from './GenerationStates';
-import { Provenance } from './Provenance';
 
 export interface FlashcardModalProps {
   courseId: number;

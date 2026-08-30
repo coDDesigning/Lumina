@@ -148,13 +148,13 @@ describe('error description helpers', () => {
 
     it('handles 415 unsupported file type', () => {
       const err = MockErrors.unsupportedMediaType(
-        'Unsupported file type. Please upload a PDF, TXT, or Markdown file.',
+        'Unsupported file type. Please upload a PDF, TXT, Markdown, or image (PNG or JPEG) file.',
       );
       const described = describeUploadError(err);
       expect(described.status).toBe(415);
       expect(described.code).toBe('UPLOAD_UNSUPPORTED_FILE_TYPE');
       expect(described.message).toBe(
-        'Unsupported file type. Please upload a PDF, TXT, or Markdown file.',
+        'Unsupported file type. Please upload a PDF, TXT, Markdown, or image (PNG or JPEG) file.',
       );
     });
 

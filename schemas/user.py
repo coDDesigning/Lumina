@@ -42,7 +42,7 @@ class UserCreate(UserBase):
 
     @model_validator(mode="after")
     def enforce_password_policy(self) -> "UserCreate":
-        validate_password(self.password)
+        validate_password(self.password, identifiers=(self.name, self.email))
         return self
 
 

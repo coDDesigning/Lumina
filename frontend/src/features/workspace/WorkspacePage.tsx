@@ -57,6 +57,7 @@ import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';
+import { CopyButton } from '@/ui/CopyButton';
 import { ErrorState } from '@/ui/ErrorState';
 import { IconButton } from '@/ui/IconButton';
 import { Input } from '@/ui/Input';
@@ -680,6 +681,9 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                       <span>{provenanceParts(message.context).join(' · ')}</span>
                     </span>
                   ) : null}
+                  <div className={styles.turnActions}>
+                    <CopyButton text={message.content} />
+                  </div>
                 </div>
               ),
             )}

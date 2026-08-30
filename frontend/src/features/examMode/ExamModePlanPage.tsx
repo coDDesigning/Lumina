@@ -16,6 +16,7 @@ import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { useAuth } from '@/context/AuthContext';
 import type { Workspace } from '@/data/workspaces';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
+import { ExamRoadmapView } from '@/features/study/ExamRoadmapView';
 import { GeneratingState, GenerationError } from '@/features/study/GenerationStates';
 import { useQuery } from '@/lib/query/useQuery';
 import { Alert } from '@/ui/Alert';
@@ -28,7 +29,6 @@ import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
 import { ExamMockExamBuilder } from './ExamMockExamBuilder';
 import { ExamReviewSheet } from './ExamReviewSheet';
-import { ExamRoadmapPanel } from './ExamRoadmapPanel';
 import { RankedTopicList } from './RankedTopicList';
 import {
   describePlanWarning,
@@ -313,11 +313,7 @@ export default function ExamModePlanPage({ workspace }: ExamModePlanPageProps) {
           ) : savedRoadmap.isLoading ? (
             <Skeleton variant="block" height="10rem" />
           ) : savedRoadmap.roadmap ? (
-            <ExamRoadmapPanel
-              courseId={courseId}
-              planId={current.generated_output_id}
-              roadmap={savedRoadmap.roadmap}
-            />
+            <ExamRoadmapView roadmap={savedRoadmap.roadmap} />
           ) : (
             <EmptyState
               icon={<CalendarRange aria-hidden="true" />}

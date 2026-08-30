@@ -27,6 +27,8 @@ COPY frontend/tsconfig.json frontend/tsconfig.app.json frontend/tsconfig.node.js
 # file even though it never compiles the Playwright suite that owns it.
 COPY frontend/e2e/tsconfig.json ./e2e/tsconfig.json
 COPY frontend/vite.config.ts frontend/index.html ./
+COPY frontend/public/favicon.ico frontend/public/favicon-32x32.png \
+     frontend/public/icon-192.png frontend/public/apple-touch-icon.png ./public/
 COPY frontend/src ./src
 
 # Inlined by Vite at build time, so changing it needs a rebuild rather than a
@@ -43,6 +45,7 @@ ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 # the Frontend quality and build CI job already runs on every push.
 RUN npx --no-install vite build \
     && test -f dist/index.html \
+    && test -f dist/favicon.ico \
     && test -d dist/assets
 
 

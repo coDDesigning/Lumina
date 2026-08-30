@@ -515,3 +515,135 @@ def test_record_failure_emits_permanent_failure_alert_and_stage_metrics(
     finally:
         logger.removeHandler(handler)
         metrics_logger.removeHandler(metrics_handler)
+
+
+def test_worker_runs_jobs_concurrently_across_slots(monkeypatch) -> None:
+    stop = threading.Event()
+    barrier = threading.Barrier(2, timeout=5)
+    lock = threading.Lock()
+    worker_ids: list[str] = []
+
+    def process_job(*, session_factory, storage, worker_id, shutdown_requested):
+        with lock:
+            worker_ids.append(worker_id)
+        barrier.wait()
+        stop.set()
+        return True
+
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **k: None)
+    monkeypatch.setattr(document_processor, "_default_worker_id", lambda: "stable-id")
+    monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
+    monkeypatch.setattr(document_processor, "run_purge", lambda **k: None)
+    monkeypatch.setattr(document_processor, "run_backfill", lambda **k: None)
+    monkeypatch.setattr(document_processor, "process_next_job", process_job)
+
+    worker = threading.Thread(
+        target=document_processor.run_worker,
+        kwargs={
+            "once": False,
+            "stop_event": stop,
+            "session_factory": fake_session_factory,
+            "storage": ReadyStorage(),
+            "concurrency": 2,
+        },
+    )
+    worker.start()
+    worker.join(timeout=10)
+
+    assert not worker.is_alive()
+    assert sorted(set(worker_ids)) == ["stable-id:slot-0", "stable-id:slot-1"]
+
+
+def test_worker_slots_share_one_maintenance_cycle(monkeypatch) -> None:
+    stop = threading.Event()
+    barrier = threading.Barrier(3, timeout=5)
+    purge_done = threading.Event()
+    purge_calls = 0
+
+    def mock_purge(**kwargs):
+        nonlocal purge_calls
+        purge_calls += 1
+        purge_done.set()
+
+    def process_job(**kwargs):
+        barrier.wait()
+        purge_done.wait(timeout=5)
+        stop.set()
+        return True
+
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **k: None)
+    monkeypatch.setattr(document_processor, "_default_worker_id", lambda: "stable-id")
+    monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
+    monkeypatch.setattr(document_processor, "run_purge", mock_purge)
+    monkeypatch.setattr(document_processor, "run_backfill", lambda **k: None)
+    monkeypatch.setattr(document_processor, "process_next_job", process_job)
+
+    worker = threading.Thread(
+        target=document_processor.run_worker,
+        kwargs={
+            "once": False,
+            "stop_event": stop,
+            "session_factory": fake_session_factory,
+            "storage": ReadyStorage(),
+            "concurrency": 3,
+        },
+    )
+    worker.start()
+    worker.join(timeout=10)
+
+    assert not worker.is_alive()
+    assert purge_calls == 1
+
+
+def test_worker_slot_fatal_error_stops_every_slot_and_propagates(monkeypatch) -> None:
+    stop = threading.Event()
+
+    def process_job(**kwargs):
+        raise document_processor.WorkerProcessFatalError("unreapable subprocess")
+
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **k: None)
+    monkeypatch.setattr(document_processor, "_default_worker_id", lambda: "stable-id")
+    monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
+    monkeypatch.setattr(document_processor, "run_purge", lambda **k: None)
+    monkeypatch.setattr(document_processor, "run_backfill", lambda **k: None)
+    monkeypatch.setattr(document_processor, "process_next_job", process_job)
+
+    with pytest.raises(document_processor.WorkerProcessFatalError):
+        document_processor.run_worker(
+            once=False,
+            stop_event=stop,
+            session_factory=fake_session_factory,
+            storage=ReadyStorage(),
+            concurrency=2,
+        )
+
+
+def test_once_forces_a_single_slot_and_the_bare_identity(monkeypatch) -> None:
+    stop = threading.Event()
+    worker_ids: list[str] = []
+
+    def process_job(*, session_factory, storage, worker_id, shutdown_requested):
+        worker_ids.append(worker_id)
+        return True
+
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **k: None)
+    monkeypatch.setattr(document_processor, "_default_worker_id", lambda: "stable-id")
+    monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
+    monkeypatch.setattr(document_processor, "run_purge", lambda **k: None)
+    monkeypatch.setattr(document_processor, "run_backfill", lambda **k: None)
+    monkeypatch.setattr(document_processor, "process_next_job", process_job)
+
+    document_processor.run_worker(
+        once=True,
+        stop_event=stop,
+        session_factory=fake_session_factory,
+        storage=ReadyStorage(),
+        concurrency=4,
+    )
+
+    assert worker_ids == ["stable-id"]
+
+
+def test_run_worker_rejects_non_positive_concurrency() -> None:
+    with pytest.raises(ValueError):
+        document_processor.run_worker(once=False, concurrency=0)

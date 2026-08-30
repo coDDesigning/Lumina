@@ -149,20 +149,31 @@ def generate_flashcards(
 )
 def enqueue_flashcards(
     course: OwnedCourse,
-    request: FlashcardRequest | None,
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
+    request: FlashcardRequest | None = None,
 ):
     """Queue flashcard generation and return immediately with a handle to poll."""
-    payload = request.model_dump_json() if request else "{}"
-    job = enqueue_generation_job(
-        db,
-        course_id=course.id,
-        user_id=current_user.id,
-        job_type=JOB_TYPE_GENERATE_FLASHCARD,
-        request_payload=payload,
-        credit_cost=GENERATION_CREDIT_COSTS["flashcard"],
-    )
+    try:
+        req = request or FlashcardRequest()
+        effective_model = resolve_effective_model(
+            req.model,
+            current_user.preferred_model,
+            required_capability="flashcard",
+        )
+        queued_request = req.model_copy(update={"model": effective_model})
+        job = enqueue_generation_job(
+            db,
+            course_id=course.id,
+            user_id=current_user.id,
+            job_type=JOB_TYPE_GENERATE_FLASHCARD,
+            request_payload=queued_request.model_dump_json(),
+            credit_cost=GENERATION_CREDIT_COSTS["flashcard"],
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise ai_generation_http_exception(exc, feature="flashcard") from exc
 
     return BaseResponse(
         success=True,

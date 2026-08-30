@@ -5,6 +5,7 @@ what an abandoned run costs the student, and what a client rebuilding its panel
 is allowed to see.
 """
 
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -12,19 +13,29 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.models import (
+    GENERATION_JOB_TYPES,
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
     JOB_STATUS_SUCCEEDED,
     JOB_TYPE_GENERATE_QUIZ,
     JOB_TYPE_GENERATE_STUDY_GUIDE,
+    JOB_TYPE_GENERATE_FLASHCARD,
     Course,
     GeneratedOutput,
     GenerationJob,
+    Quiz,
     Role,
     User,
 )
+from generation_fixtures import (
+    GENERATION_FEATURES,
+    RecordingProvider,
+    seed_ready_material,
+)
+from services.credits import GENERATION_CREDIT_COSTS
 from services.generation_jobs import (
+    CREDIT_SOURCE_TYPES,
     GenerationJobStateError,
     InsufficientCreditsForGenerationError,
     claim_next_generation_job,
@@ -36,12 +47,19 @@ from services.generation_jobs import (
     heartbeat_generation_job,
     list_course_generation_jobs,
     recover_expired_generation_jobs,
+    retry_generation_job,
 )
 
 from tests.conftest import assert_balance_is_derivable, seed_registration_grant
 from workers import generation_processor
 
 LEASE_SECONDS = 60
+
+JOB_TYPE_BY_FEATURE = {
+    "quiz": JOB_TYPE_GENERATE_QUIZ,
+    "study_guide": JOB_TYPE_GENERATE_STUDY_GUIDE,
+    "flashcards": JOB_TYPE_GENERATE_FLASHCARD,
+}
 
 
 def _make_user(session: Session, email: str, credits: float | None) -> User:
@@ -172,6 +190,62 @@ def test_worker_persists_the_result_and_completion_atomically(
     assert completed.status == JOB_STATUS_SUCCEEDED
     assert completed.generated_output_id is not None
     assert db_session.get(GeneratedOutput, completed.generated_output_id) is not None
+
+
+@pytest.mark.parametrize("feature", GENERATION_FEATURES, ids=str)
+def test_worker_runs_the_shipped_runner_and_links_what_it_wrote(
+    feature,
+    db_session: Session,
+    session_factory: sessionmaker[Session],
+    owner: User,
+    course: Course,
+    retrieval_env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run the runner the worker actually ships, not a stub standing in for it.
+
+    A runner that misreads the result its own service returns fails every
+    generation of that type at the last step, after the model has been paid for,
+    and no test that replaces the runner can see it.
+    """
+    seed_ready_material(
+        db_session,
+        course.id,
+        ["Sorting compares elements pairwise until the list is ordered."],
+        file_hash=hashlib.sha256(f"runner-{feature.name}".encode()).hexdigest(),
+        retrieval_env=retrieval_env,
+    )
+    monkeypatch.setattr(
+        generation_processor,
+        "get_text_generation_provider",
+        lambda *args, **kwargs: RecordingProvider(feature.provider_payload()),
+    )
+    queued = _enqueue(
+        db_session,
+        course,
+        owner,
+        job_type=JOB_TYPE_BY_FEATURE[feature.name],
+        payload=feature.build_request(use_profile_knowledge=False).model_dump_json(),
+    )
+
+    assert generation_processor.process_next_generation_job(
+        session_factory=session_factory,
+        worker_id="generation-test-worker",
+        lease_seconds=LEASE_SECONDS,
+    )
+
+    db_session.expire_all()
+    finished = db_session.get(GenerationJob, queued.id)
+    assert finished is not None
+    assert finished.status == JOB_STATUS_SUCCEEDED, finished.last_error_message
+    if feature.output_type == "quiz":
+        assert finished.generated_output_id is None
+        assert db_session.get(Quiz, finished.quiz_id) is not None
+    else:
+        assert finished.quiz_id is None
+        output = db_session.get(GeneratedOutput, finished.generated_output_id)
+        assert output is not None
+        assert output.output_type == feature.output_type
 
 
 def test_worker_rolls_back_an_artifact_when_completion_fails(
@@ -624,3 +698,46 @@ def test_queue_metrics_report_depth(
     assert metrics.queued == 1
     assert metrics.running == 1
     assert metrics.oldest_queued_age_seconds >= 0.0
+
+
+def test_enqueue_and_retry_flashcard_generation_job(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    job = _enqueue(
+        db_session,
+        course,
+        owner,
+        job_type=JOB_TYPE_GENERATE_FLASHCARD,
+        payload="{}",
+    )
+    assert job.job_type == JOB_TYPE_GENERATE_FLASHCARD
+    assert job.status == JOB_STATUS_QUEUED
+
+    claimed = claim_next_generation_job(db_session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+    assert claimed.id == job.id
+
+    fail_generation_job(
+        db_session,
+        claimed.id,
+        claimed.claim_token,
+        error_code="provider_unavailable",
+        error_message="Unavailable",
+        retryable=False,
+    )
+    retried = retry_generation_job(
+        db_session,
+        course_id=course.id,
+        user_id=owner.id,
+        job_id=job.id,
+    )
+    assert retried is not None
+    assert retried.job_type == JOB_TYPE_GENERATE_FLASHCARD
+    assert retried.status == JOB_STATUS_QUEUED
+
+
+def test_every_generation_job_type_has_a_priced_credit_source() -> None:
+    """A queue-able job type with no ledger name is a 500 at enqueue."""
+    assert set(CREDIT_SOURCE_TYPES) == set(GENERATION_JOB_TYPES)
+    for source_type in CREDIT_SOURCE_TYPES.values():
+        assert source_type in GENERATION_CREDIT_COSTS

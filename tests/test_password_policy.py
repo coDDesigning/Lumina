@@ -36,10 +36,14 @@ def test_a_long_passphrase_is_accepted_without_character_classes() -> None:
     assert validate_password("correct battery paperclip", identifiers=IDENTIFIERS)
 
 
+def test_an_eight_character_password_is_at_the_floor() -> None:
+    assert validate_password("br8kfast", identifiers=IDENTIFIERS)
+
+
 @pytest.mark.parametrize(
     ("password", "why"),
     [
-        ("short1234", "shorter than the minimum"),
+        ("short1", "shorter than the minimum"),
         ("a" * (MAX_PASSWORD_BYTES + 1), "past the bytes bcrypt hashes"),
         ("é" * 40, "past the bytes bcrypt hashes once encoded"),
         ("aaaaaaaaaaaaaa", "one repeated character"),
@@ -143,7 +147,7 @@ def _authorize(client, password: str = GOOD_PASSWORD) -> dict[str, str]:
 
 
 WEAK_PASSWORDS = [
-    "short1234",
+    "short1",
     "aaaaaaaaaaaaaa",
     "password1234",
     "lovelace-is-my-password",

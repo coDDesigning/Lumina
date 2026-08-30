@@ -160,7 +160,7 @@ describe('RegisterPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     expect(
-      await screen.findByText('That password is too long. Keep it under 72 bytes.'),
+      await screen.findByText('That password is too long.'),
     ).toBeInTheDocument();
     expect(mockedRegister).not.toHaveBeenCalled();
   });
@@ -195,7 +195,7 @@ describe('RegisterPage', () => {
   it('states the password rules before the user submits', () => {
     renderAt(<RegisterPage />, '/register');
     expect(
-      screen.getByText(/At least 12 characters, up to 72 bytes\./),
+      screen.getByText(/At least 8 characters\./),
     ).toBeInTheDocument();
   });
 

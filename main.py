@@ -40,6 +40,7 @@ from routes import (
     exam_roadmap,
     flashcard,
     generated_output,
+    generation_job,
     profile_document,
     profile_knowledge,
     progress,
@@ -98,6 +99,7 @@ app.include_router(document.router)
 app.include_router(study_guide.router)
 app.include_router(exam_roadmap.router)
 app.include_router(generated_output.router)
+app.include_router(generation_job.router)
 app.include_router(exam_mode.router)
 app.include_router(conversation.router)
 app.include_router(quiz.router)

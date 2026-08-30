@@ -10,6 +10,17 @@ export const queryKeys = {
   courseProgress: (courseId: number): QueryKey => ['course', courseId, 'progress'],
   courseOutputs: (courseId: number): QueryKey => ['course', courseId, 'outputs'],
   courseQuizzes: (courseId: number): QueryKey => ['course', courseId, 'quizzes'],
+  courseGenerationJobs: (courseId: number): QueryKey => [
+    'course',
+    courseId,
+    'generationJobs',
+  ],
+  courseGenerationJob: (courseId: number, jobId: number): QueryKey => [
+    'course',
+    courseId,
+    'generationJob',
+    jobId,
+  ],
   courseReverseQuizzes: (courseId: number): QueryKey => ['course', courseId, 'reverseQuizzes'],
   courseOutput: (courseId: number, outputId: number): QueryKey => [
     'course',

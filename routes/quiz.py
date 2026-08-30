@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
-from backend.app.models import ANSWER_HIDDEN_QUIZ_PURPOSES
+from backend.app.models import ANSWER_HIDDEN_QUIZ_PURPOSES, JOB_TYPE_GENERATE_QUIZ
 from backend.app.database import get_db
 from schemas.quiz import (
     QuizGenerationContext,
@@ -23,9 +23,11 @@ from schemas.quiz_attempt import (
     QuizAttemptResponse,
     QuizHistoryItem,
 )
+from schemas.generation_job import GenerationJobAccepted
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.credits import CreditService
+from services.generation_jobs import enqueue_generation_job
 from services.quiz import QuizService
 from services.quiz_attempt import QuizAttemptService
 from services.quiz_session import (
@@ -533,4 +535,52 @@ def get_course_progress(
         success=True,
         message="Course progress retrieved successfully",
         data=progress,
+    )
+
+
+@router.post(
+    "/{course_id}/quiz/jobs",
+    response_model=BaseResponse[GenerationJobAccepted],
+    status_code=202,
+    dependencies=[Depends(rate_limit_generation("quiz"))],
+    responses={
+        401: {"description": "Authentication required"},
+        402: {"description": "Insufficient credits"},
+        404: {"description": "Course not found"},
+        422: {"description": "Invalid quiz request"},
+        429: {"description": "Per-user generation rate limited"},
+    },
+)
+def enqueue_quiz(
+    course: OwnedCourse,
+    request: QuizRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Queue a quiz and return immediately with a handle to poll.
+
+    The price is settled here rather than in the worker, because it depends on
+    the question types the student asked for and those are known now; a quiz
+    that turns out to be open-ended has already been charged as one.
+    """
+    try:
+        effective_model = resolve_effective_model(
+            request.model, current_user.preferred_model, required_capability="quiz"
+        )
+        queued_request = request.model_copy(update={"model": effective_model})
+        job = enqueue_generation_job(
+            db,
+            course_id=course.id,
+            user_id=current_user.id,
+            job_type=JOB_TYPE_GENERATE_QUIZ,
+            request_payload=queued_request.model_dump_json(),
+            credit_cost=QuizService.credit_cost(request),
+        )
+    except Exception as exc:
+        raise ai_generation_http_exception(exc, feature="quiz") from exc
+
+    return BaseResponse(
+        success=True,
+        message="Quiz generation queued",
+        data=GenerationJobAccepted(job_id=job.id, status=job.status),
     )

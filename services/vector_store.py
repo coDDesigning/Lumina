@@ -823,15 +823,33 @@ class ChromaVectorStore:
                 {"document_id": {"$in": [str(value) for value in identifiers]}}
             )
         where: dict = {"$and": clauses}
-        found = self._run(
-            lambda collection: collection.query(
-                query_embeddings=[query_embedding],
-                where=where,
-                n_results=limit,
-                include=["metadatas", "distances"],
-            ),
-            "The vector store could not be searched.",
-        )
+
+        def run_query() -> dict:
+            return self._run(
+                lambda collection: collection.query(
+                    query_embeddings=[query_embedding],
+                    where=where,
+                    n_results=limit,
+                    include=["metadatas", "distances"],
+                ),
+                "The vector store could not be searched.",
+            )
+
+        found = run_query()
+        if (
+            not found.get("ids", [[]])[0]
+            and self.count_course_vectors(session, course_id) > 0
+        ):
+            # A long-running reader's in-memory HNSW index goes stale when the
+            # worker process appends vectors to the same embedded store: the
+            # query then returns nothing, with no error, so `_run`'s
+            # reopen-on-error path never fires. The metadata segment (read fresh
+            # from SQLite every call) says this course does have vectors, and an
+            # indexed course always ranks something, so the index is behind.
+            # Drop the client and query once more against a freshly loaded one.
+            self._discard_client()
+            found = run_query()
+
         ids = found.get("ids", [[]])[0]
         metadatas = found.get("metadatas", [[]])[0] or []
         distances = found.get("distances", [[]])[0] or []

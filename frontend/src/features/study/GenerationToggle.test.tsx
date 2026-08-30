@@ -12,7 +12,7 @@ import { userAPI } from '@/api/user';
 import type { CreditStatus } from '@/api/types';
 
 vi.mock('@/api/studyGuide', () => ({
-  studyGuideAPI: { generate: vi.fn() },
+  studyGuideAPI: { generate: vi.fn(), enqueue: vi.fn() },
 }));
 
 vi.mock('@/api/quiz', () => ({
@@ -20,7 +20,7 @@ vi.mock('@/api/quiz', () => ({
 }));
 
 vi.mock('@/api/flashcards', () => ({
-  flashcardsAPI: { generate: vi.fn() },
+  flashcardsAPI: { enqueue: vi.fn() },
 }));
 
 vi.mock('@/api/user', () => ({
@@ -31,9 +31,9 @@ vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({ isAuthenticated: true, user: { id: 1 } }),
 }));
 
-const mockStudyGuideGenerate = vi.mocked(studyGuideAPI.generate);
+const mockStudyGuideEnqueue = vi.mocked(studyGuideAPI.enqueue);
 const mockQuizGenerate = vi.mocked(quizAPI.generate);
-const mockFlashcardGenerate = vi.mocked(flashcardsAPI.generate);
+const mockFlashcardEnqueue = vi.mocked(flashcardsAPI.enqueue);
 const mockGetCredits = vi.mocked(userAPI.getCredits);
 
 function status(credits: number | null = 50): CreditStatus {
@@ -58,34 +58,12 @@ describe('Generation surfaces profile context toggle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetCredits.mockResolvedValue(status(50));
+    mockStudyGuideEnqueue.mockResolvedValue({ job_id: 1, status: 'queued' });
+    mockFlashcardEnqueue.mockResolvedValue({ job_id: 2, status: 'queued' });
   });
 
   describe('StudyGuideModal', () => {
     it('defaults toggle to false, explains course material primacy, and submits false when untouched', async () => {
-      mockStudyGuideGenerate.mockResolvedValueOnce({
-        generated_output_id: 1,
-        context_truncated: false,
-        retrieval_narrowed: false,
-        lowest_similarity: 0.5,
-        highest_similarity: 0.9,
-        chunks_used: 2,
-        chunks_available: 5,
-        study_guide: {
-          title: 'Guide Title',
-          summary: 'Guide Summary',
-          key_points: [],
-          important_terms: [],
-          common_mistakes: [],
-          exam_tips: { lecture_based: [], ai_suggestions: [] },
-          difficulty: { level: 'Easy', reason: 'Basic' },
-          estimated_study_time: '15m',
-          prerequisites: [],
-          learning_objectives: [],
-          coverage: { status: 'Complete', estimated_completeness: 100 },
-          confidence_notes: '',
-        },
-      });
-
       render(
         <CreditProvider>
           <StudyGuideModal
@@ -110,7 +88,7 @@ describe('Generation surfaces profile context toggle', () => {
       );
 
       await waitFor(() => {
-        expect(mockStudyGuideGenerate).toHaveBeenCalledWith(
+        expect(mockStudyGuideEnqueue).toHaveBeenCalledWith(
           1,
           expect.objectContaining({
             use_profile_knowledge: false,
@@ -122,30 +100,6 @@ describe('Generation surfaces profile context toggle', () => {
     });
 
     it('submits use_profile_knowledge: true when toggle is checked', async () => {
-      mockStudyGuideGenerate.mockResolvedValueOnce({
-        generated_output_id: 2,
-        context_truncated: false,
-        retrieval_narrowed: false,
-        lowest_similarity: 0.6,
-        highest_similarity: 0.95,
-        chunks_used: 3,
-        chunks_available: 5,
-        study_guide: {
-          title: 'Guide Title 2',
-          summary: 'Guide Summary 2',
-          key_points: [],
-          important_terms: [],
-          common_mistakes: [],
-          exam_tips: { lecture_based: [], ai_suggestions: [] },
-          difficulty: { level: 'Medium', reason: 'Moderate' },
-          estimated_study_time: '30m',
-          prerequisites: [],
-          learning_objectives: [],
-          coverage: { status: 'Complete', estimated_completeness: 100 },
-          confidence_notes: '',
-        },
-      });
-
       render(
         <CreditProvider>
           <StudyGuideModal
@@ -167,7 +121,7 @@ describe('Generation surfaces profile context toggle', () => {
       );
 
       await waitFor(() => {
-        expect(mockStudyGuideGenerate).toHaveBeenCalledWith(
+        expect(mockStudyGuideEnqueue).toHaveBeenCalledWith(
           1,
           expect.objectContaining({
             use_profile_knowledge: true,
@@ -304,27 +258,6 @@ describe('Generation surfaces profile context toggle', () => {
 
   describe('FlashcardModal', () => {
     it('defaults toggle to false, explains course material primacy, and submits false when untouched', async () => {
-      mockFlashcardGenerate.mockResolvedValueOnce({
-        context_truncated: false,
-        retrieval_narrowed: true,
-        lowest_similarity: 0.45,
-        highest_similarity: 0.85,
-        chunks_used: 2,
-        chunks_available: 5,
-        flashcards: {
-          deck_title: 'Data Structures Flashcards',
-          card_count: 1,
-          flashcards: [
-            {
-              card_number: 1,
-              front: 'What is a stack?',
-              back: 'LIFO structure',
-              difficulty: 'Easy',
-            },
-          ],
-        },
-      });
-
       render(
         <CreditProvider>
           <FlashcardModal
@@ -346,7 +279,7 @@ describe('Generation surfaces profile context toggle', () => {
       await userEvent.click(screen.getByRole('button', { name: /make flashcards/i }));
 
       await waitFor(() => {
-        expect(mockFlashcardGenerate).toHaveBeenCalledWith(
+        expect(mockFlashcardEnqueue).toHaveBeenCalledWith(
           1,
           expect.objectContaining({
             use_profile_knowledge: false,
@@ -358,27 +291,6 @@ describe('Generation surfaces profile context toggle', () => {
     });
 
     it('submits use_profile_knowledge: true when toggle is checked in FlashcardModal', async () => {
-      mockFlashcardGenerate.mockResolvedValueOnce({
-        context_truncated: false,
-        retrieval_narrowed: true,
-        lowest_similarity: 0.45,
-        highest_similarity: 0.85,
-        chunks_used: 2,
-        chunks_available: 5,
-        flashcards: {
-          deck_title: 'Data Structures Flashcards',
-          card_count: 1,
-          flashcards: [
-            {
-              card_number: 1,
-              front: 'What is a queue?',
-              back: 'FIFO structure',
-              difficulty: 'Easy',
-            },
-          ],
-        },
-      });
-
       render(
         <CreditProvider>
           <FlashcardModal
@@ -397,7 +309,7 @@ describe('Generation surfaces profile context toggle', () => {
       await userEvent.click(screen.getByRole('button', { name: /make flashcards/i }));
 
       await waitFor(() => {
-        expect(mockFlashcardGenerate).toHaveBeenCalledWith(
+        expect(mockFlashcardEnqueue).toHaveBeenCalledWith(
           1,
           expect.objectContaining({
             use_profile_knowledge: true,

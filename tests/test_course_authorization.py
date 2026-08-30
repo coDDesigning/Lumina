@@ -482,7 +482,7 @@ def test_every_course_route_requires_authentication_in_openapi():
         for method, operation in methods.items()
     ]
 
-    assert len(operations) == 56
+    assert len(operations) == 62
     for method, path, operation in operations:
         assert operation["security"] == [{"OAuth2PasswordBearer": []}], (
             f"{method.upper()} {path} is not documented as authenticated"
@@ -552,7 +552,7 @@ def test_course_scoped_routes_cannot_bypass_the_boundary():
     course_routes = [
         route for route in api_routes(app) if route.path.startswith("/api/courses")
     ]
-    assert len(course_routes) == 56
+    assert len(course_routes) == 62
 
     for route in course_routes:
         names = dependency_names(route.dependant)

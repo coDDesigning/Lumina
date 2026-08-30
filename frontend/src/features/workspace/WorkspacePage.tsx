@@ -71,7 +71,9 @@ import { Markdown } from '@/lib/markdown';
 import type { DocumentMaterialKind } from '@/api/types';
 import { MATERIAL_KIND_CHOICES } from '@/components/documents/documentLabels';
 import { ArtifactRail } from './ArtifactRail';
+import { GenerationRail } from './GenerationRail';
 import { useCourseArtifacts } from './useCourseArtifacts';
+import { useGenerationJobs } from './useGenerationJobs';
 import { useCourseProgress } from './useCourseProgress';
 import styles from './WorkspacePage.module.css';
 
@@ -297,6 +299,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
     error: artifactsError,
     reload: reloadArtifacts,
   } = useCourseArtifacts(courseId, progress);
+  const generationJobs = useGenerationJobs(courseId);
 
   useEffect(() => {
     if (!onUpdateProgress || !progress) {
@@ -809,6 +812,29 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             </>
           ) : null}
 
+          {!isSupportView &&
+          (generationJobs.isLoading || generationJobs.error || generationJobs.jobs.length > 0) ? (
+            <>
+              <div className={styles.panelHead}>
+                <span className={styles.panelLabel}>Generation activity</span>
+              </div>
+              <GenerationRail
+                jobs={generationJobs.jobs}
+                isLoading={generationJobs.isLoading}
+                error={generationJobs.error}
+                retryingId={generationJobs.retryingId}
+                onReload={() => void generationJobs.reload()}
+                onRetry={(jobId) => void generationJobs.retry(jobId)}
+                onOpenGuide={(outputId) => {
+                  setMadeForYouInitialId(outputId);
+                  setIsMadeForYouOpen(true);
+                }}
+                onOpenQuiz={(quizId) => navigate(`/courses/${workspace.id}/practice/${quizId}`)}
+              />
+              <div className={styles.divider} />
+            </>
+          ) : null}
+
           <div className={styles.panelHead}>
             <span className={styles.panelLabel}>
               Made for you{artifacts.length > 0 ? ` · ${artifacts.length}` : ''}
@@ -845,11 +871,8 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           courseName={workspace.name}
           topics={workspace.topics}
           readyDocumentCount={readyCount}
-          onGenerated={reloadArtifacts}
-          onClose={() => {
-            setIsSummaryOpen(false);
-            reloadArtifacts();
-          }}
+          onQueued={() => void generationJobs.reload()}
+          onClose={() => setIsSummaryOpen(false)}
         />
       ) : null}
 
@@ -897,10 +920,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
 
       {isQuizOpen ? (
         <QuizModal
-          onQuizReady={(quizId) => {
-            setIsQuizOpen(false);
-            navigate(`/courses/${workspace.id}/practice/${quizId}`);
-          }}
+          onQueued={() => void generationJobs.reload()}
           courseId={courseId}
           topics={workspace.topics}
           readyDocumentCount={readyCount}

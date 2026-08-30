@@ -605,7 +605,10 @@ def test_route_inventory_generation_rate_limiting() -> None:
 
     expected_generation_paths = {
         "/api/courses/{course_id}/study-guide",
+        "/api/courses/{course_id}/study-guide/jobs",
         "/api/courses/{course_id}/quiz",
+        "/api/courses/{course_id}/quiz/jobs",
+        "/api/courses/{course_id}/generation-jobs/{job_id}/retry",
         "/api/courses/{course_id}/flashcards",
         "/api/courses/{course_id}/ai-tutor",
         "/api/courses/{course_id}/qa",
@@ -643,7 +646,7 @@ def test_route_inventory_generation_rate_limiting() -> None:
     }
 
     assert found_generation_paths == expected_generation_paths
-    assert len(found_generation_paths) == 18
+    assert len(found_generation_paths) == 21
 
     # Ensure deterministic plan creation is not in generation rate limit
     plan_route = next(

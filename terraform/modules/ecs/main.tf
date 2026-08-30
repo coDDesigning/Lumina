@@ -51,6 +51,7 @@ locals {
     { name = "PROCESSING_JOB_MAX_ATTEMPTS", value = "3" },
     { name = "PROCESSING_JOB_POLL_SECONDS", value = "1.0" },
     { name = "PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS", value = "300" },
+    { name = "PROCESSING_JOB_CONCURRENCY", value = "2" },
     { name = "MAX_EXTRACTED_CHARACTERS", value = "2000000" },
     { name = "MAX_DOCUMENT_CHUNKS", value = "1000" },
     { name = "OCR_LANGUAGE", value = "eng" },

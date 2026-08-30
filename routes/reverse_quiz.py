@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
-from backend.app.models import GeneratedOutput
+from backend.app.models import GeneratedOutput, User
 from schemas.response import BaseResponse
 from schemas.reverse_quiz import (
     ReverseQuizQuestionsResponse,
@@ -29,12 +29,13 @@ router = APIRouter(
 )
 
 
-def _provider_for(preferred_model: str | None):
+def _provider_for(preferred_model: str | None, user: object | None = None):
     effective_model = resolve_effective_model(
         None, preferred_model, required_capability="quiz"
     )
     return get_text_generation_provider(
         effective_model=effective_model,
+        user=user,
         require_json_mode=True,
     )
 
@@ -62,7 +63,8 @@ def generate_reverse_quiz(
     db: Annotated[Session, Depends(get_db)],
 ):
     try:
-        provider = _provider_for(current_user.preferred_model)
+        db_user = db.get(User, current_user.id)
+        provider = _provider_for(current_user.preferred_model, user=db_user)
 
         response = ReverseQuizService.generate(
             db=db,

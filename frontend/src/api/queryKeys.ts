@@ -132,6 +132,7 @@ export const queryKeys = {
     limit,
   ],
   models: (): QueryKey => ['models'],
+  userApiKeys: (): QueryKey => ['user', 'apiKeys'],
   profileKnowledge: (): QueryKey => ['profileKnowledge'],
   profileDocuments: (): QueryKey => ['profileDocuments'],
   profileDocument: (id: string): QueryKey => ['profileDocuments', id],

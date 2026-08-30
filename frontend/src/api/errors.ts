@@ -264,6 +264,12 @@ const GENERATION_FAILURES: Record<string, FailureCopy> = {
     retryable: true,
     remedy: null,
   },
+  personal_key_invalid: {
+    title: 'Invalid API key',
+    message: 'Your personal API key is invalid or expired. Check your key in Account Settings.',
+    retryable: false,
+    remedy: null,
+  },
   generation_failed: {
     title: 'That did not work',
     message: 'The request could not be completed. Nothing was saved.',
@@ -291,7 +297,9 @@ export function describeGenerationError(error: unknown, fallback: string): Gener
       message:
         described.code === 'generation_rate_limited'
           ? describeGenerationRateLimit(error instanceof APIError ? error.retryAfterSeconds : null)
-          : known.message,
+          : described.code === 'personal_key_invalid' && error instanceof APIError && error.message
+            ? error.message
+            : known.message,
       retryable: known.retryable,
       remedy: known.remedy,
     };

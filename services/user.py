@@ -10,7 +10,15 @@ from backend.app.config import settings
 from backend.app.models import Role as RoleModel
 from backend.app.models import User
 from schemas.prompt_context import EducationLevel
-from schemas.user import Role, UserCreate, UserResponse, UserUpdate
+from schemas.user import (
+    Role,
+    UserApiKeysResponse,
+    UserApiKeysUpdateRequest,
+    UserCreate,
+    UserResponse,
+    UserUpdate,
+    mask_api_key,
+)
 from services.credits import CreditService
 from services.text_generation import get_available_models
 from utils.exceptions import BadRequestException, NotFoundException
@@ -265,7 +273,7 @@ class UserService:
 
         pref_model = update_dict.get("preferred_model")
         if pref_model is not None:
-            available_model_ids = {m["id"] for m in get_available_models()}
+            available_model_ids = {m["id"] for m in get_available_models(user=user)}
             if pref_model not in available_model_ids:
                 raise BadRequestException(f"Unsupported AI model: {pref_model}")
 
@@ -275,3 +283,81 @@ class UserService:
         db.commit()
         db.refresh(user)
         return UserService.to_response(user)
+
+    @staticmethod
+    def get_user_api_keys(db: Session, user_id: int) -> UserApiKeysResponse:
+        """Fetch and return masked BYOK API keys for a user."""
+        user = db.get(User, user_id)
+        if user is None:
+            raise NotFoundException("User not found")
+
+        from utils.crypto import decrypt_value
+
+        decrypted_openai = None
+        if user.encrypted_openai_api_key:
+            try:
+                decrypted_openai = decrypt_value(user.encrypted_openai_api_key)
+            except Exception:
+                decrypted_openai = None
+
+        decrypted_gemini = None
+        if user.encrypted_gemini_api_key:
+            try:
+                decrypted_gemini = decrypt_value(user.encrypted_gemini_api_key)
+            except Exception:
+                decrypted_gemini = None
+
+        decrypted_anthropic = None
+        if user.encrypted_anthropic_api_key:
+            try:
+                decrypted_anthropic = decrypt_value(user.encrypted_anthropic_api_key)
+            except Exception:
+                decrypted_anthropic = None
+
+        return UserApiKeysResponse(
+            openai_api_key=mask_api_key(decrypted_openai),
+            gemini_api_key=mask_api_key(decrypted_gemini),
+            anthropic_api_key=mask_api_key(decrypted_anthropic),
+            has_openai_key=bool(decrypted_openai),
+            has_gemini_key=bool(decrypted_gemini),
+            has_anthropic_key=bool(decrypted_anthropic),
+        )
+
+    @staticmethod
+    def update_user_api_keys(
+        db: Session, user_id: int, payload: UserApiKeysUpdateRequest
+    ) -> UserApiKeysResponse:
+        """Update or clear encrypted BYOK API keys for a user."""
+        user = db.scalar(
+            select(User).where(User.id == user_id).with_for_update(of=User)
+        )
+        if user is None:
+            raise NotFoundException("User not found")
+
+        from utils.crypto import encrypt_value
+
+        if "openai_api_key" in payload.model_fields_set:
+            val = payload.openai_api_key
+            if val is None or not val.strip():
+                user.encrypted_openai_api_key = None
+            else:
+                user.encrypted_openai_api_key = encrypt_value(val.strip())
+
+        if "gemini_api_key" in payload.model_fields_set:
+            val = payload.gemini_api_key
+            if val is None or not val.strip():
+                user.encrypted_gemini_api_key = None
+            else:
+                user.encrypted_gemini_api_key = encrypt_value(val.strip())
+
+        if "anthropic_api_key" in payload.model_fields_set:
+            val = payload.anthropic_api_key
+            if val is None or not val.strip():
+                user.encrypted_anthropic_api_key = None
+            else:
+                user.encrypted_anthropic_api_key = encrypt_value(val.strip())
+
+        db.commit()
+        db.refresh(user)
+        return UserService.get_user_api_keys(db, user_id)
+

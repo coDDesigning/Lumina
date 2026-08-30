@@ -1,3 +1,4 @@
+import re
 from enum import Enum
 
 from pydantic import (
@@ -101,3 +102,71 @@ class UserUpdate(BaseModel):
         if any(getattr(self, field) is None for field in explicitly_null):
             raise ValueError("Required user fields cannot be null")
         return self
+
+
+def mask_api_key(key: str | None) -> str | None:
+    """Mask an API key for safe presentation to the frontend (e.g. sk-...****)."""
+    if not key:
+        return None
+    clean = key.strip()
+    if not clean:
+        return None
+    if len(clean) <= 8:
+        return f"{clean[:2]}...****"
+    return f"{clean[:6]}...****"
+
+
+class UserApiKeysUpdateRequest(BaseModel):
+    """Payload for saving, updating, or clearing BYOK API keys."""
+
+    openai_api_key: str | None = Field(None, max_length=512)
+    gemini_api_key: str | None = Field(None, max_length=512)
+    anthropic_api_key: str | None = Field(None, max_length=512)
+
+    @field_validator("openai_api_key")
+    @classmethod
+    def validate_openai_key(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        if not stripped:
+            return ""
+        if not stripped.startswith("sk-") or not re.match(r"^sk-[A-Za-z0-9_\-]+$", stripped):
+            raise ValueError("OpenAI API key must start with 'sk-'.")
+        return stripped
+
+    @field_validator("anthropic_api_key")
+    @classmethod
+    def validate_anthropic_key(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        if not stripped:
+            return ""
+        if not stripped.startswith("sk-ant-") or not re.match(r"^sk-ant-[A-Za-z0-9_\-]+$", stripped):
+            raise ValueError("Anthropic API key must start with 'sk-ant-'.")
+        return stripped
+
+    @field_validator("gemini_api_key")
+    @classmethod
+    def validate_gemini_key(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        if not stripped:
+            return ""
+        if not re.match(r"^[A-Za-z0-9_\-]+$", stripped):
+            raise ValueError("Gemini API key contains invalid characters.")
+        return stripped
+
+
+class UserApiKeysResponse(BaseModel):
+    """Masked view of configured BYOK API keys."""
+
+    openai_api_key: str | None = None
+    gemini_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    has_openai_key: bool = False
+    has_gemini_key: bool = False
+    has_anthropic_key: bool = False
+

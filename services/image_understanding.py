@@ -210,7 +210,9 @@ class OllamaImageUnderstandingProvider:
         client: httpx.Client | None = None,
         prompt_context: PromptContext | None = None,
     ) -> None:
-        self._base_url = (base_url or settings.ollama_base_url).rstrip("/")
+        from services.embeddings import resolve_ollama_base_url
+
+        self._base_url = resolve_ollama_base_url(base_url or settings.ollama_base_url)
         self._model = model or self.MODEL
         self._timeout_seconds = (
             timeout_seconds

@@ -33,8 +33,8 @@ test.describe('signing in', () => {
 
     await page.getByLabel(/^name/i).fill('Ada Lovelace')
     await page.getByLabel(/email/i).fill('ada@example.com')
-    await page.getByLabel(/^password$/i).fill('correct-horse-battery')
-    await page.getByLabel(/confirm/i).fill('something-else')
+    await page.getByLabel(/^password$/i).fill('Correct-horse-battery!')
+    await page.getByLabel(/confirm/i).fill('Something-else!')
     await page.getByRole('button', { name: /create|register|sign up/i }).click()
 
     await expect(page).toHaveURL(/\/register$/)

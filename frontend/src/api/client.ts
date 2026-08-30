@@ -171,10 +171,37 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   const url = buildApiUrl(endpoint);
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  const maxRetries = 2;
+  let response: Response | undefined;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+      });
+
+      if (
+        response.status === 503 &&
+        response.headers?.get(RETRY_AFTER_HEADER) === '1' &&
+        attempt < maxRetries
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        continue;
+      }
+      break;
+    } catch (networkError) {
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        continue;
+      }
+      throw networkError;
+    }
+  }
+
+  if (!response) {
+    throw new TypeError('Failed to fetch');
+  }
 
   if (!response.ok) {
     let errorData: unknown = null;

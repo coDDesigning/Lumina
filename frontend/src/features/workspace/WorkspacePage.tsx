@@ -71,7 +71,9 @@ import { Markdown } from '@/lib/markdown';
 import type { DocumentMaterialKind } from '@/api/types';
 import { MATERIAL_KIND_CHOICES } from '@/components/documents/documentLabels';
 import { ArtifactRail } from './ArtifactRail';
+import { GenerationRail } from './GenerationRail';
 import { useCourseArtifacts } from './useCourseArtifacts';
+import { useGenerationJobs } from './useGenerationJobs';
 import { useCourseProgress } from './useCourseProgress';
 import styles from './WorkspacePage.module.css';
 
@@ -297,6 +299,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
     error: artifactsError,
     reload: reloadArtifacts,
   } = useCourseArtifacts(courseId, progress);
+  const generationJobs = useGenerationJobs(courseId);
 
   useEffect(() => {
     if (!onUpdateProgress || !progress) {
@@ -564,7 +567,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                   className={styles.uploadInput}
                   type="file"
                   multiple
-                  accept=".pdf,.txt,.md,.markdown"
+                  accept=".pdf,.txt,.md,.markdown,.png,.jpg,.jpeg"
                   onChange={(event) => {
                     void addSources(event.target.files);
                     event.target.value = '';
@@ -619,7 +622,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             )}
           </div>
 
-          <p className={styles.sourceHint}>PDF, TXT and Markdown</p>
+          <p className={styles.sourceHint}>PDF, TXT, Markdown, and images (PNG, JPEG)</p>
         </section>
 
         <section className={`${styles.panel} ${styles.conversation}`} aria-label="Conversation">
@@ -752,90 +755,116 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
         </section>
 
         <section className={`${styles.panel} ${styles.outputs}`} aria-label="Study tools">
-          {!isSupportView ? (
-            <>
-              <div className={styles.panelHead}>
-                <span className={styles.panelLabel}>Make something</span>
-              </div>
-              <div className={styles.actionList}>
-                <Button
-                  alignStart
-                  fullWidth
-                  size="sm"
-                  icon={<Sparkles aria-hidden="true" />}
-                  onClick={() => setIsSummaryOpen(true)}
-                >
-                  Study guide
-                </Button>
-                <Button
-                  alignStart
-                  fullWidth
-                  size="sm"
-                  icon={<Calendar aria-hidden="true" />}
-                  onClick={() => setIsRoadmapOpen(true)}
-                >
-                  Exam roadmap
-                </Button>
-                <Button
-                  alignStart
-                  fullWidth
-                  size="sm"
-                  icon={<Target aria-hidden="true" />}
-                  onClick={() => setIsQuizOpen(true)}
-                >
-                  Practice quiz
-                </Button>
-                <Button
-                  alignStart
-                  fullWidth
-                  size="sm"
-                  icon={<Layers3 aria-hidden="true" />}
-                  onClick={() => setIsFlashcardOpen(true)}
-                >
-                  Flashcards
-                </Button>
-                <Button
-                  alignStart
-                  fullWidth
-                  size="sm"
-                  icon={<HelpCircle aria-hidden="true" />}
-                  onClick={() => navigate(`/courses/${workspace.id}/reverse-quiz`)}
-                >
-                  Reverse quiz
-                </Button>
-              </div>
+          <div className={styles.outputsScroll}>
+            {!isSupportView ? (
+              <>
+                <div className={styles.panelHead}>
+                  <span className={styles.panelLabel}>Make something</span>
+                </div>
+                <div className={styles.actionList}>
+                  <Button
+                    alignStart
+                    fullWidth
+                    size="sm"
+                    icon={<Sparkles aria-hidden="true" />}
+                    onClick={() => setIsSummaryOpen(true)}
+                  >
+                    Study guide
+                  </Button>
+                  <Button
+                    alignStart
+                    fullWidth
+                    size="sm"
+                    icon={<Calendar aria-hidden="true" />}
+                    onClick={() => setIsRoadmapOpen(true)}
+                  >
+                    Exam roadmap
+                  </Button>
+                  <Button
+                    alignStart
+                    fullWidth
+                    size="sm"
+                    icon={<Target aria-hidden="true" />}
+                    onClick={() => setIsQuizOpen(true)}
+                  >
+                    Practice quiz
+                  </Button>
+                  <Button
+                    alignStart
+                    fullWidth
+                    size="sm"
+                    icon={<Layers3 aria-hidden="true" />}
+                    onClick={() => setIsFlashcardOpen(true)}
+                  >
+                    Flashcards
+                  </Button>
+                  <Button
+                    alignStart
+                    fullWidth
+                    size="sm"
+                    icon={<HelpCircle aria-hidden="true" />}
+                    onClick={() => navigate(`/courses/${workspace.id}/reverse-quiz`)}
+                  >
+                    Reverse quiz
+                  </Button>
+                </div>
 
-              <div className={styles.divider} />
-            </>
-          ) : null}
+                <div className={styles.divider} />
+              </>
+            ) : null}
 
-          <div className={styles.panelHead}>
-            <span className={styles.panelLabel}>
-              Made for you{artifacts.length > 0 ? ` · ${artifacts.length}` : ''}
-            </span>
+            {!isSupportView &&
+            (generationJobs.isLoading || generationJobs.error || generationJobs.jobs.length > 0) ? (
+              <>
+                <div className={styles.panelHead}>
+                  <span className={styles.panelLabel}>Generation activity</span>
+                </div>
+                <GenerationRail
+                  jobs={generationJobs.jobs}
+                  isLoading={generationJobs.isLoading}
+                  error={generationJobs.error}
+                  retryingId={generationJobs.retryingId}
+                  onReload={() => void generationJobs.reload()}
+                  onRetry={(jobId) => void generationJobs.retry(jobId)}
+                  onOpenGuide={(outputId) => {
+                    setMadeForYouInitialId(outputId);
+                    setIsMadeForYouOpen(true);
+                  }}
+                  onOpenQuiz={(quizId) => navigate(`/courses/${workspace.id}/practice/${quizId}`)}
+                  onOpenFlashcards={(outputId) => setOpenDeckId(outputId)}
+                />
+                <div className={styles.divider} />
+              </>
+            ) : null}
+
+            <div className={styles.panelHead}>
+              <span className={styles.panelLabel}>
+                Made for you{artifacts.length > 0 ? ` · ${artifacts.length}` : ''}
+              </span>
+            </div>
+            <ArtifactRail
+              artifacts={artifacts}
+              isLoading={areArtifactsLoading}
+              error={artifactsError}
+              onRetry={reloadArtifacts}
+              onOpenAll={() => setIsMadeForYouOpen(true)}
+              onOpen={(artifact) => {
+                if (artifact.kind === 'flashcards') {
+                  setOpenDeckId(artifact.outputId);
+                  return;
+                }
+                setMadeForYouInitialId(artifact.outputId);
+                setIsMadeForYouOpen(true);
+              }}
+              onOpenProgress={() => navigate(`/courses/${workspace.id}/progress`)}
+            />
+
+            <p className={styles.sourceHint}>
+              {canGenerate
+                ? `${readyCount} ${readyCount === 1 ? 'source is' : 'sources are'} ready to generate from.`
+                : 'Nothing is ready to generate from yet.'}
+            </p>
           </div>
-          <ArtifactRail
-            artifacts={artifacts}
-            isLoading={areArtifactsLoading}
-            error={artifactsError}
-            onRetry={reloadArtifacts}
-            onOpenAll={() => setIsMadeForYouOpen(true)}
-            onOpen={(artifact) => {
-              if (artifact.kind === 'flashcards') {
-                setOpenDeckId(artifact.outputId);
-                return;
-              }
-              setMadeForYouInitialId(artifact.outputId);
-              setIsMadeForYouOpen(true);
-            }}
-            onOpenProgress={() => navigate(`/courses/${workspace.id}/progress`)}
-          />
-
-          <p className={styles.sourceHint}>
-            {canGenerate
-              ? `${readyCount} ${readyCount === 1 ? 'source is' : 'sources are'} ready to generate from.`
-              : 'Nothing is ready to generate from yet.'}
-          </p>
         </section>
       </div>
 
@@ -845,7 +874,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           courseName={workspace.name}
           topics={workspace.topics}
           readyDocumentCount={readyCount}
-          onGenerated={reloadArtifacts}
+          onQueued={() => void generationJobs.reload()}
           onClose={() => {
             setIsSummaryOpen(false);
             reloadArtifacts();
@@ -897,10 +926,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
 
       {isQuizOpen ? (
         <QuizModal
-          onQuizReady={(quizId) => {
-            setIsQuizOpen(false);
-            navigate(`/courses/${workspace.id}/practice/${quizId}`);
-          }}
+          onQueued={() => void generationJobs.reload()}
           courseId={courseId}
           topics={workspace.topics}
           readyDocumentCount={readyCount}
@@ -914,6 +940,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           courseId={courseId}
           courseName={workspace.name}
           readyDocumentCount={readyCount}
+          onQueued={() => void generationJobs.reload()}
           onClose={() => {
             setIsFlashcardOpen(false);
             reloadArtifacts();

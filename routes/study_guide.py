@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.database import get_db
+from backend.app.models import JOB_TYPE_GENERATE_STUDY_GUIDE, User
+from schemas.generation_job import GenerationJobAccepted
 from schemas.response import BaseResponse
 from schemas.study_guide import (
     StudyGuideGenerationContext,
@@ -13,7 +15,8 @@ from schemas.study_guide import (
     StudyGuideRequest,
 )
 from schemas.user import UserResponse
-from services.credits import CreditService
+from services.credits import GENERATION_CREDIT_COSTS, CreditService
+from services.generation_jobs import enqueue_generation_job
 from services.study_guide import StudyGuideService
 from services.text_generation import (
     get_text_generation_provider,
@@ -56,12 +59,16 @@ def generate_study_guide(
 ):
     generation = None
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model,
             current_user.preferred_model,
             required_capability="study_guide",
         )
-        provider = get_text_generation_provider(effective_model=effective_model)
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            user=db_user,
+        )
         generation = StudyGuideService.generate(
             db,
             course.id,
@@ -117,4 +124,55 @@ def generate_study_guide(
                 else 0
             ),
         ),
+    )
+
+
+@router.post(
+    "/{course_id}/study-guide/jobs",
+    response_model=BaseResponse[GenerationJobAccepted],
+    status_code=202,
+    dependencies=[Depends(rate_limit_generation("study_guide"))],
+    responses={
+        401: {"description": "Authentication required"},
+        402: {"description": "Insufficient credits"},
+        404: {"description": "Course not found"},
+        422: {"description": "Invalid study guide request"},
+        429: {"description": "Per-user generation rate limited"},
+    },
+)
+def enqueue_study_guide(
+    course: OwnedCourse,
+    request: StudyGuideRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Queue a study guide and return immediately with a handle to poll.
+
+    Nothing about the generation is decided here except the model, which is
+    resolved now and written into the stored request: the worker runs the job
+    long after the caller's session is gone, so a preference read at run time
+    would be reading it from nobody.
+    """
+    try:
+        effective_model = resolve_effective_model(
+            request.model,
+            current_user.preferred_model,
+            required_capability="study_guide",
+        )
+        queued_request = request.model_copy(update={"model": effective_model})
+        job = enqueue_generation_job(
+            db,
+            course_id=course.id,
+            user_id=current_user.id,
+            job_type=JOB_TYPE_GENERATE_STUDY_GUIDE,
+            request_payload=queued_request.model_dump_json(),
+            credit_cost=GENERATION_CREDIT_COSTS["study_guide"],
+        )
+    except Exception as exc:
+        raise ai_generation_http_exception(exc, feature="study_guide") from exc
+
+    return BaseResponse(
+        success=True,
+        message="Study guide generation queued",
+        data=GenerationJobAccepted(job_id=job.id, status=job.status),
     )

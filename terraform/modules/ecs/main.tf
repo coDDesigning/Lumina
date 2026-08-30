@@ -49,6 +49,12 @@ locals {
     { name = "PROCESSING_JOB_POLL_SECONDS", value = "1.0" },
     { name = "PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS", value = "300" },
     { name = "PROCESSING_JOB_CONCURRENCY", value = "2" },
+    { name = "GENERATION_JOB_LEASE_SECONDS", value = "120" },
+    { name = "GENERATION_JOB_MAX_ATTEMPTS", value = "2" },
+    { name = "GENERATION_JOB_POLL_SECONDS", value = "1.0" },
+    { name = "GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS", value = "600" },
+    { name = "GENERATION_JOB_CONCURRENCY", value = "2" },
+    { name = "GENERATION_JOB_MAX_ACTIVE_PER_USER", value = "2" },
     { name = "MAX_EXTRACTED_CHARACTERS", value = "2000000" },
     { name = "MAX_DOCUMENT_CHUNKS", value = "1000" },
     { name = "OCR_LANGUAGE", value = "eng" },
@@ -162,7 +168,7 @@ locals {
     name        = "worker"
     environment = local.worker_env
     secrets     = local.app_secrets
-    command     = ["python", "-m", "workers.document_processor"]
+    command     = ["python", "-m", "workers.worker"]
     stopTimeout = 120
   })
 

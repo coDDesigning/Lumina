@@ -26,6 +26,7 @@ from services.document_lock import is_document_locked_for_generation
 from services.document_validation import validate_basic_upload
 from services.processing_jobs import (
     ProcessingJobStateError,
+    _database_now,
     enqueue_document_job,
     retry_failed_job,
 )
@@ -309,8 +310,17 @@ class DocumentService:
         document_id: UUID,
         course_id: int,
         vector_store: VectorStore | None = None,
+        *,
+        force: bool = False,
     ) -> None:
-        """Tombstone a terminal document, remove its source, then delete metadata."""
+        """Tombstone a terminal document, remove its source, then delete metadata.
+
+        ``force`` lets a caller discard a document whose extraction is stuck:
+        a queued job nothing is working on, or a running job whose worker lease
+        has expired (the worker crashed or was stopped). A job with a live lease
+        is genuinely being read right now and is never force-deleted; nor is a
+        document a generation is actively reading.
+        """
         try:
             db.rollback()
             begin_serialized_write(db)
@@ -349,9 +359,15 @@ class DocumentService:
             db.rollback()
             raise NotFoundException("Document not found")
         document, job = row
-        if job.status in {"queued", "running"} or is_document_locked_for_generation(
-            document_id
-        ):
+        job_is_active = job.status in {"queued", "running"}
+        if job_is_active and force:
+            lease_is_live = (
+                job.status == "running"
+                and job.lease_expires_at is not None
+                and job.lease_expires_at > _database_now(db)
+            )
+            job_is_active = lease_is_live
+        if job_is_active or is_document_locked_for_generation(document_id):
             db.rollback()
             raise DocumentActiveError
         if document.storage_provider != storage.provider:

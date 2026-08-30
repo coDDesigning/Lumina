@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from threading import Barrier
 from uuid import UUID
 
@@ -183,6 +183,96 @@ def test_active_document_delete_is_rejected_and_failed_document_can_be_deleted(
     with upload_api.session_factory() as session:
         assert session.get(UploadedDocument, document_id) is None
         assert session.get(ProcessingJob, claim.id) is None
+
+
+def test_force_delete_discards_a_queued_document_no_worker_has_claimed(upload_api):
+    uploaded = _upload(upload_api, b"Stuck in the queue")
+    document_id = UUID(uploaded.json()["document"]["id"])
+    path = f"/api/courses/{upload_api.course_id}/documents/{document_id}"
+
+    # The plain Remove is still refused for an active job...
+    assert (
+        upload_api.client.delete(path, headers=upload_api.authorization).status_code
+        == 409
+    )
+
+    # ...but force clears a queued job that nothing is working on.
+    forced = upload_api.client.delete(
+        f"{path}?force=true", headers=upload_api.authorization
+    )
+    assert forced.status_code == 204
+    with upload_api.session_factory() as session:
+        assert session.get(UploadedDocument, document_id) is None
+        assert (
+            session.scalar(
+                select(ProcessingJob).where(ProcessingJob.document_id == document_id)
+            )
+            is None
+        )
+
+
+def test_force_delete_discards_a_running_document_whose_worker_lease_expired(
+    upload_api,
+):
+    uploaded = _upload(upload_api, b"Worker crashed mid-read")
+    document_id = UUID(uploaded.json()["document"]["id"])
+    path = f"/api/courses/{upload_api.course_id}/documents/{document_id}"
+
+    with upload_api.session_factory() as session:
+        queued_job = session.scalar(
+            select(ProcessingJob).where(ProcessingJob.document_id == document_id)
+        )
+        claim_at = queued_job.available_at + timedelta(seconds=1)
+    with upload_api.session_factory() as session:
+        claim = claim_next_job(
+            session, "gone-worker", upload_api.storage.provider, 60, now=claim_at
+        )
+    assert claim is not None
+
+    # Simulate a worker that claimed the job, reported the first stage, then died
+    # five minutes ago: the lease is well in the past.
+    stale = datetime.now(timezone.utc) - timedelta(minutes=5)
+    with upload_api.session_factory() as session:
+        job = session.get(ProcessingJob, claim.id)
+        job.claimed_at = stale
+        job.heartbeat_at = stale + timedelta(seconds=1)
+        job.lease_expires_at = stale + timedelta(seconds=2)
+        job.processing_stage = "validating"
+        session.commit()
+
+    forced = upload_api.client.delete(
+        f"{path}?force=true", headers=upload_api.authorization
+    )
+    assert forced.status_code == 204
+    with upload_api.session_factory() as session:
+        assert session.get(UploadedDocument, document_id) is None
+        assert session.get(ProcessingJob, claim.id) is None
+
+
+def test_force_delete_is_still_refused_while_a_worker_actively_holds_the_lease(
+    upload_api,
+):
+    uploaded = _upload(upload_api, b"A worker is really on it")
+    document_id = UUID(uploaded.json()["document"]["id"])
+    path = f"/api/courses/{upload_api.course_id}/documents/{document_id}"
+
+    with upload_api.session_factory() as session:
+        queued_job = session.scalar(
+            select(ProcessingJob).where(ProcessingJob.document_id == document_id)
+        )
+        claim_at = queued_job.available_at + timedelta(seconds=1)
+    with upload_api.session_factory() as session:
+        claim = claim_next_job(
+            session, "busy-worker", upload_api.storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+
+    forced = upload_api.client.delete(
+        f"{path}?force=true", headers=upload_api.authorization
+    )
+    assert forced.status_code == 409
+    with upload_api.session_factory() as session:
+        assert session.get(UploadedDocument, document_id) is not None
 
 
 def test_storage_delete_failure_retains_tombstone_for_retry(

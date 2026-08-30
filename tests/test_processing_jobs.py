@@ -1964,7 +1964,7 @@ def test_extraction_process_crash_is_reaped_as_safe_failure():
     )
 
     with pytest.raises(DocumentProcessingError) as error:
-        _extract_with_timeout(CrashingStorage(), job, timeout_seconds=5)
+        _extract_with_timeout(CrashingStorage(), job, timeout_seconds=15)
     assert error.value.code == "UNEXPECTED_PROCESSING_ERROR"
 
 

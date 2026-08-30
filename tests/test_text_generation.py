@@ -29,8 +29,8 @@ from services.text_generation import (
 )
 
 OLLAMA_SETTINGS = SimpleNamespace(
-    ai_provider="ollama",
-    ai_fallback_providers="",
+    ai_available_vendors=("ollama",),
+    ai_default_model="ollama:llama3.1",
     gemini_api_key=None,
     openai_api_key=None,
     anthropic_api_key=None,
@@ -182,8 +182,8 @@ def test_get_text_generation_provider_returns_reliable_gemini(
         text_generation,
         "settings",
         SimpleNamespace(
-            ai_provider="gemini",
-            ai_fallback_providers="",
+            ai_available_vendors=("gemini",),
+            ai_default_model="gemini:gemini-3.6-flash",
             gemini_api_key="test-key",
             openai_api_key=None,
             anthropic_api_key=None,
@@ -236,8 +236,8 @@ def test_get_text_generation_provider_rejects_unimplemented_provider(
         text_generation,
         "settings",
         SimpleNamespace(
-            ai_provider="openai",
-            ai_fallback_providers="",
+            ai_available_vendors=("openai",),
+            ai_default_model="openai:gpt-5.6-terra",
             gemini_api_key=None,
             openai_api_key=None,
             anthropic_api_key=None,
@@ -527,7 +527,8 @@ def test_configured_provider_identity_follows_settings(monkeypatch) -> None:
         text_generation,
         "settings",
         SimpleNamespace(
-            ai_provider="gemini",
+            ai_available_vendors=("gemini",),
+            ai_default_model=f"gemini:{GeminiTextGenerationProvider.MODEL}",
             gemini_api_key="key",
             openai_api_key=None,
             anthropic_api_key=None,
@@ -892,7 +893,7 @@ def test_reliable_provider_concurrency_protection() -> None:
     thread.join()
 
 
-def test_fallback_providers_configuration_parsing(monkeypatch) -> None:
+def test_derived_chain_lists_each_available_vendor_once(monkeypatch) -> None:
     class DummyGemini:
         PROVIDER_NAME = "gemini"
         MODEL = "gemini-2.5-flash"
@@ -901,8 +902,8 @@ def test_fallback_providers_configuration_parsing(monkeypatch) -> None:
         text_generation,
         "settings",
         SimpleNamespace(
-            ai_provider="gemini",
-            ai_fallback_providers="gemini",
+            ai_available_vendors=("gemini",),
+            ai_default_model="gemini:gemini-2.5-flash",
             gemini_api_key="test-key",
             openai_api_key=None,
             anthropic_api_key=None,
@@ -986,8 +987,8 @@ def test_every_implemented_provider_is_constructible(monkeypatch) -> None:
             text_generation,
             "settings",
             SimpleNamespace(
-                ai_provider=provider_name,
-                ai_fallback_providers="",
+                ai_available_vendors=(provider_name,),
+                ai_default_model=f"{provider_name}:model",
                 gemini_api_key="test-key",
                 openai_api_key="test-key",
                 anthropic_api_key="test-key",

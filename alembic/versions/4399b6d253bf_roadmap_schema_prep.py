@@ -18,6 +18,20 @@ down_revision: str | Sequence[str] | None = "a6e2c8f41b90"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+_EMBEDDING_DIMENSIONS = 768
+
+
+def _embedding_column() -> sa.Column:
+    if op.get_bind().dialect.name == "postgresql":
+        from pgvector.sqlalchemy import Vector
+
+        return sa.Column("embedding", Vector(_EMBEDDING_DIMENSIONS), nullable=False)
+    return sa.Column(
+        "embedding",
+        sa.LargeBinary(_EMBEDDING_DIMENSIONS * 4),
+        nullable=False,
+    )
+
 
 def upgrade() -> None:
     """Upgrade schema."""
@@ -96,7 +110,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("knowledge_id", sa.Integer(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("embedding", backend.app.models.EmbeddingVector(), nullable=False),
+        _embedding_column(),
         sa.Column("embedding_provider", sa.String(length=50), nullable=False),
         sa.Column("embedding_model", sa.String(length=128), nullable=False),
         sa.Column("dimensions", sa.Integer(), nullable=False),

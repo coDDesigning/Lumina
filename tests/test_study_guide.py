@@ -108,7 +108,7 @@ def _install_provider(monkeypatch, provider: CountingProvider) -> CountingProvid
     monkeypatch.setattr(
         study_guide_route,
         "get_text_generation_provider",
-        lambda: provider,
+        lambda **_: provider,
     )
     return provider
 
@@ -1457,8 +1457,8 @@ def _ollama_provider_returning(monkeypatch, generated: str):
         text_generation,
         "settings",
         SimpleNamespace(
-            ai_provider="ollama",
-            ai_fallback_providers="",
+            ai_available_vendors=("ollama",),
+            ai_default_model="ollama:qwen3:8b",
             gemini_api_key=None,
             ollama_base_url="http://ollama.test:11434",
             ollama_model="qwen3:8b",

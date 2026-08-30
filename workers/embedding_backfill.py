@@ -25,7 +25,13 @@ from backend.app.config import (
     settings,
 )
 from backend.app.database import SessionLocal
-from backend.app.models import Course, DocumentChunk, UploadedDocument
+from backend.app.models import (
+    Course,
+    DocumentChunk,
+    ProfileDocument,
+    ProfileDocumentChunk,
+    UploadedDocument,
+)
 from backend.app.observability import configure_logging, emit_emf_metrics
 from backend.app.readiness import ReadinessError, check_readiness
 from services.embeddings import (
@@ -75,12 +81,16 @@ class BackfillReport:
     vectors_missing: int = 0
     vectors_written: int = 0
     vectors_pruned: int = 0
+    profile_documents_examined: int = 0
+    profile_documents_updated: int = 0
 
     def summary(self) -> str:
         return (
             f"examined={self.documents_examined} updated={self.documents_updated} "
             f"missing={self.vectors_missing} written={self.vectors_written} "
-            f"pruned={self.vectors_pruned}"
+            f"pruned={self.vectors_pruned} "
+            f"profile_examined={self.profile_documents_examined} "
+            f"profile_updated={self.profile_documents_updated}"
         )
 
 
@@ -103,6 +113,21 @@ def _ready_document_ids(
         statement = statement.where(UploadedDocument.course_id == course_id)
     if document_id is not None:
         statement = statement.where(UploadedDocument.id == document_id)
+    return list(session.scalars(statement).all())
+
+
+def _ready_profile_document_ids(
+    session: Session,
+    *,
+    document_id: UUID | None,
+) -> list[UUID]:
+    statement = (
+        select(ProfileDocument.id)
+        .where(ProfileDocument.status == "ready")
+        .order_by(ProfileDocument.created_at, ProfileDocument.id)
+    )
+    if document_id is not None:
+        statement = statement.where(ProfileDocument.id == document_id)
     return list(session.scalars(statement).all())
 
 
@@ -144,7 +169,9 @@ def _backfill_document(
     if not chunks:
         return
 
-    stored_ids = vector_store.chunk_ids_with_vectors(session, document.id)
+    stored_ids = vector_store.chunk_ids_with_vectors(
+        session, document.id, embedding_model=configured_embedding_identity()[1]
+    )
     current_ids = {chunk.id for chunk in chunks}
     missing = [chunk for chunk in chunks if chunk.id not in stored_ids]
     orphans = stored_ids - current_ids
@@ -192,6 +219,75 @@ def _backfill_document(
     report.vectors_written += len(records)
     if records or (prune_orphans and orphans):
         report.documents_updated += 1
+
+
+def _backfill_profile_document(
+    session: Session,
+    document: ProfileDocument,
+    *,
+    vector_store: VectorStore,
+    embedding_provider: EmbeddingProvider,
+    batch_size: int,
+    dry_run: bool,
+    report: BackfillReport,
+) -> None:
+    """Re-embed a profile document whose vectors are absent or another model's.
+
+    The whole document is replaced rather than patched: profile documents are
+    small and rare, so a full replacement is cheaper than a second upsert path
+    that would have to stay in step with the course one.
+    """
+    chunks = list(
+        session.scalars(
+            select(ProfileDocumentChunk)
+            .where(ProfileDocumentChunk.document_id == document.id)
+            .order_by(ProfileDocumentChunk.chunk_index)
+        ).all()
+    )
+    if not chunks:
+        return
+
+    provider_name, model_name = configured_embedding_identity()
+    stored_ids = vector_store.profile_chunk_ids_with_vectors(
+        session, document.id, embedding_model=model_name
+    )
+    missing = [chunk for chunk in chunks if chunk.id not in stored_ids]
+    report.vectors_missing += len(missing)
+    if not missing:
+        return
+    if dry_run:
+        return
+
+    vectors: list[list[float]] = []
+    for start in range(0, len(chunks), batch_size):
+        batch = chunks[start : start + batch_size]
+        produced = embedding_provider.embed_documents([chunk.text for chunk in batch])
+        if len(produced) != len(batch):
+            raise RuntimeError(
+                f"Embedding provider returned {len(produced)} vectors for "
+                f"{len(batch)} chunks"
+            )
+        vectors.extend(produced)
+
+    vector_store.replace_profile_document_vectors(
+        session,
+        document_id=document.id,
+        user_id=document.user_id,
+        records=[
+            VectorRecord(
+                chunk_id=chunk.id,
+                document_id=document.id,
+                course_id=document.user_id,
+                chunk_index=chunk.chunk_index,
+                embedding=vector,
+            )
+            for chunk, vector in zip(chunks, vectors, strict=True)
+        ],
+        embedding_provider=provider_name,
+        embedding_model=model_name,
+    )
+    report.vectors_written += len(vectors)
+    report.profile_documents_updated += 1
 
 
 def run_backfill(
@@ -244,6 +340,34 @@ def run_backfill(
                 session.rollback()
             else:
                 session.commit()
+
+    # A course filter has no profile meaning, so profile documents are only
+    # reconciled on an unscoped run.
+    if course_id is None:
+        with session_factory() as session:
+            profile_ids = _ready_profile_document_ids(session, document_id=document_id)
+
+        for identifier in profile_ids:
+            if stop_event is not None and stop_event.is_set():
+                break
+            with session_factory() as session:
+                profile_document = session.get(ProfileDocument, identifier)
+                if profile_document is None or profile_document.status != "ready":
+                    continue
+                report.profile_documents_examined += 1
+                _backfill_profile_document(
+                    session,
+                    profile_document,
+                    vector_store=vector_store,
+                    embedding_provider=embedding_provider,
+                    batch_size=batch_size,
+                    dry_run=dry_run,
+                    report=report,
+                )
+                if dry_run:
+                    session.rollback()
+                else:
+                    session.commit()
 
     emit_emf_metrics(
         {

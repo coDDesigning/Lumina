@@ -65,16 +65,10 @@ def generate_study_guide(
             current_user.preferred_model,
             required_capability="study_guide",
         )
-        try:
-            provider = get_text_generation_provider(
-                effective_model=effective_model,
-                user=db_user,
-            )
-        except TypeError:
-            try:
-                provider = get_text_generation_provider(effective_model=effective_model)
-            except TypeError:
-                provider = get_text_generation_provider()
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            user=db_user,
+        )
         generation = StudyGuideService.generate(
             db,
             course.id,

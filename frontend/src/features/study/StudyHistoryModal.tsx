@@ -7,7 +7,6 @@ import type {
   ExamRoadmap,
   GeneratedOutputDetail,
   GeneratedOutputSummary,
-  RetrievedContext,
   StudyGuideResponse,
 } from '@/api/types';
 import { Badge } from '@/ui/Badge';
@@ -24,10 +23,13 @@ import { ExamRoadmapView } from './ExamRoadmapView';
 import { FlashcardDeck } from './FlashcardDeck';
 import { StoredQuiz } from './quiz/StoredQuiz';
 import { StudyGuide } from './StudyGuide';
+import { StudyGuideExportActions } from './studyGuideExport';
 import {
+  asExportableStudyGuide,
   extractFlashcards,
   extractQuiz,
   isRenderableStudyGuide,
+  studyGuideContext,
   tryParseJson,
 } from './storedOutput';
 import styles from './StudyHistoryModal.module.css';
@@ -121,21 +123,7 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
       typeof content === 'string'
         ? (tryParseJson(content) as StudyGuideResponse)
         : (content as StudyGuideResponse);
-    const context = output.generation_context;
-    const reporting: RetrievedContext | null = context
-      ? {
-          context_truncated: context.truncated,
-          chunks_used: context.chunks_used,
-          chunks_available: context.chunks_available,
-          retrieval_narrowed: context.chunks_used < context.chunks_available,
-          lowest_similarity: context.lowest_similarity ?? null,
-          highest_similarity: context.highest_similarity ?? null,
-          profile_knowledge_used: context.profile_knowledge_used ?? false,
-          profile_knowledge_items_used: context.profile_knowledge_items_used ?? null,
-        }
-      : null;
-
-    return <StudyGuide guide={parsedGuide} context={reporting} />;
+    return <StudyGuide guide={parsedGuide} context={studyGuideContext(output)} />;
   }
 
   return (
@@ -200,6 +188,11 @@ export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onC
           ? { phase: 'ready', output: detailQuery.data }
           : { phase: 'loading' };
 
+  // A study guide is the one output a reader takes away as a document, so it
+  // keeps the copy and download it had before generation moved to the queue.
+  const exportableGuide =
+    detailState.phase === 'ready' ? asExportableStudyGuide(detailState.output) : null;
+
   return (
     <Dialog
       open
@@ -208,7 +201,16 @@ export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onC
       title="Made for you"
       description={`Everything generated for ${courseName}`}
       mark={<History aria-hidden="true" />}
-      footer={<Button onClick={onClose}>Done</Button>}
+      footer={
+        <>
+          <Button onClick={onClose}>Done</Button>
+          {exportableGuide ? (
+            <div className={styles.footerRight}>
+              <StudyGuideExportActions guide={exportableGuide} courseName={courseName} />
+            </div>
+          ) : null}
+        </>
+      }
     >
       {listState.phase === 'loading' ? <DetailLoading label="Loading your history" /> : null}
 

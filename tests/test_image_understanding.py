@@ -47,31 +47,25 @@ VALID_PNG_BYTES = (
 )
 
 OLLAMA_VISION_SETTINGS = SimpleNamespace(
-    image_provider="ollama",
+    ai_vision_model="ollama:llama3.2-vision",
     gemini_api_key=None,
     ollama_base_url="http://ollama.test:11434",
-    ollama_image_model="llama3.2-vision",
-    gemini_image_model="gemini-2.5-flash",
     image_understanding_timeout_seconds=30,
     image_understanding_max_bytes=10 * 1024 * 1024,
 )
 
 GEMINI_VISION_SETTINGS = SimpleNamespace(
-    image_provider="gemini",
+    ai_vision_model="gemini:gemini-2.5-flash",
     gemini_api_key="test-key",
     ollama_base_url="http://ollama.test:11434",
-    ollama_image_model="llama3.2-vision",
-    gemini_image_model="gemini-2.5-flash",
     image_understanding_timeout_seconds=30,
     image_understanding_max_bytes=10 * 1024 * 1024,
 )
 
 DISABLED_VISION_SETTINGS = SimpleNamespace(
-    image_provider="none",
+    ai_vision_model=None,
     gemini_api_key=None,
     ollama_base_url="http://ollama.test:11434",
-    ollama_image_model="llama3.2-vision",
-    gemini_image_model="gemini-2.5-flash",
     image_understanding_timeout_seconds=30,
     image_understanding_max_bytes=10 * 1024 * 1024,
 )
@@ -495,7 +489,10 @@ def test_factory_rejects_unimplemented_provider(monkeypatch) -> None:
         image_understanding,
         "settings",
         SimpleNamespace(
-            **{**OLLAMA_VISION_SETTINGS.__dict__, "image_provider": "openai"}
+            **{
+                **OLLAMA_VISION_SETTINGS.__dict__,
+                "ai_vision_model": "openai:gpt-5.6-terra",
+            }
         ),
     )
     with pytest.raises(ValueError, match="not implemented"):

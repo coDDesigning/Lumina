@@ -10,7 +10,7 @@ by the database the deployment runs on.
 
 | Deployment | Relational store | Vector store |
 | --- | --- | --- |
-| Hosted, or any PostgreSQL `DATABASE_URL` | PostgreSQL | `chunk_embeddings` table with a pgvector `vector(768)` column and an HNSW cosine index |
+| Hosted, or any PostgreSQL `DATABASE_URL` | PostgreSQL | `chunk_embeddings` table with a pgvector `vector(1024)` column and an HNSW cosine index |
 | Self-hosted (SQLite default) | SQLite | ChromaDB `PersistentClient` rooted at `CHROMA_PERSIST_DIRECTORY` |
 
 `VECTOR_BACKEND` selects the store. It defaults to `pgvector` on a PostgreSQL
@@ -125,9 +125,11 @@ bound that, and the shortfall is reported truthfully through `chunks_ranked` and
 
 ## Dimensions
 
-`EMBEDDING_DIMENSIONS = 768`, fixed in `backend/app/models.py`. It is a schema
-constant, not a setting: a pgvector column and its index are declared at one width.
-`nomic-embed-text` and Gemini `text-embedding-004` both produce 768.
+`EMBEDDING_DIMENSIONS = 1024`, taken from the pinned embedding model in
+`backend/app/embedding_models.py`. It is a schema fact, not a preference:
+three `dimensions` CHECK constraints and two HNSW indexes are built at that
+width, so a model of another width needs an Alembic revision rather than a
+configuration change. `intfloat/multilingual-e5-large` produces 1024.
 
 A provider returning a different width fails permanently with
 `EMBEDDING_DIMENSION_MISMATCH` rather than storing something unusable.

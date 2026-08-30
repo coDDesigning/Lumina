@@ -62,14 +62,18 @@ export function useCourseArtifacts(
   const history = progress?.quiz_history;
 
   const artifacts = useMemo(() => {
-    const outputs: CourseArtifact[] = (rows ?? []).map((row) => ({
-      kind: outputKind(row.output_type),
-      key: `output-${row.id}`,
-      outputId: row.id,
-      outputType: row.output_type,
-      topic: MEANINGFUL_TOPIC(row.generation_settings?.topic_focus),
-      createdAt: row.created_at,
-    }));
+    const outputs: CourseArtifact[] = (rows ?? [])
+      // Reverse-quiz sessions have their own history endpoint and no artifact
+      // viewer, so they stay out of the "Made for you" rail.
+      .filter((row) => row.output_type !== 'reverse_quiz')
+      .map((row) => ({
+        kind: outputKind(row.output_type),
+        key: `output-${row.id}`,
+        outputId: row.id,
+        outputType: row.output_type,
+        topic: MEANINGFUL_TOPIC(row.generation_settings?.topic_focus),
+        createdAt: row.created_at,
+      }));
 
     const attempts: CourseArtifact[] = (history ?? []).map((item) => ({
       kind: 'quiz',

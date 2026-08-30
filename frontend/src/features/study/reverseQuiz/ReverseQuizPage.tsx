@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
 import type { Workspace } from '@/data/workspaces';
+import { useDocumentTitle } from '@/app/useDocumentTitle';
 import { PageHeader } from '@/ui/PageHeader';
 import { Button } from '@/ui/Button';
 import { ReverseQuizSession } from './ReverseQuizSession';
@@ -11,7 +11,8 @@ export interface ReverseQuizPageProps {
 }
 
 export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
-  const { courseId } = useParams();
+  const courseId = Number(workspace.id);
+  useDocumentTitle(`${workspace.name} · Reverse Quiz`);
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [customTopic, setCustomTopic] = useState('');
 
@@ -26,7 +27,7 @@ export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
       <PageHeader
         courseId={workspace.id}
         crumbs={[
-          { label: workspace.name, to: `/courses/${courseId}` },
+          { label: workspace.name, to: `/courses/${workspace.id}` },
           { label: 'Reverse Quiz' },
         ]}
       />

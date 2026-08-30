@@ -45,6 +45,9 @@ Thumbs.db
 *.tmp
 *.bak
 
+# ── Manual deploy scratch (deploy_local.py) ──────────────
+deploy_state.json
+
 .user/
 
 # Terraform (AWS infrastructure)

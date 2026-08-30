@@ -38,7 +38,7 @@ def test_registration_login_and_admin_course_creation_persist(api_context) -> No
         json={
             "name": "First User",
             "email": "first@example.com",
-            "password": "strong-password",
+            "password": "Strong-password!",
         },
     )
     second_registration = api_context.client.post(
@@ -46,7 +46,7 @@ def test_registration_login_and_admin_course_creation_persist(api_context) -> No
         json={
             "name": "Second User",
             "email": "second@example.com",
-            "password": "strong-password",
+            "password": "Strong-password!",
         },
     )
 
@@ -75,7 +75,7 @@ def test_registration_login_and_admin_course_creation_persist(api_context) -> No
 
     login = api_context.client.post(
         "/api/auth/login",
-        data={"username": "first@example.com", "password": "strong-password"},
+        data={"username": "first@example.com", "password": "Strong-password!"},
     )
 
     assert login.status_code == 200
@@ -197,7 +197,7 @@ def test_course_creation_recovers_lost_commit_acknowledgement(
             UserCreate(
                 name="Owner",
                 email="owner@example.com",
-                password="strong-password",
+                password="Strong-password!",
             ),
         )
         original_commit = session.commit
@@ -230,13 +230,13 @@ def test_database_length_and_nullability_rules_are_validated_by_api(
         json={
             "name": "Admin",
             "email": "admin@example.com",
-            "password": "strong-password",
+            "password": "Strong-password!",
         },
     )
     assert registered.status_code == 200
     login = api_context.client.post(
         "/api/auth/login",
-        data={"username": "admin@example.com", "password": "strong-password"},
+        data={"username": "admin@example.com", "password": "Strong-password!"},
     )
     authorization = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
@@ -286,7 +286,7 @@ def test_registration_rejects_nul_name(api_context) -> None:
         json={
             "name": "Unsafe\x00name",
             "email": "name@example.com",
-            "password": "strong-password",
+            "password": "Strong-password!",
         },
     )
 
@@ -321,13 +321,13 @@ def test_course_writes_reject_nul_text(api_context, field: str) -> None:
         json={
             "name": "Admin",
             "email": f"{field}@example.com",
-            "password": "strong-password",
+            "password": "Strong-password!",
         },
     )
     assert registered.status_code == 200
     login = api_context.client.post(
         "/api/auth/login",
-        data={"username": f"{field}@example.com", "password": "strong-password"},
+        data={"username": f"{field}@example.com", "password": "Strong-password!"},
     )
     authorization = {"Authorization": f"Bearer {login.json()['access_token']}"}
     payload = {
@@ -367,7 +367,7 @@ def test_preferred_model_rejects_nul_text(api_context) -> None:
         json={
             "name": "Admin",
             "email": "model-nul@example.com",
-            "password": "strong-password",
+            "password": "Strong-password!",
         },
     )
     assert registered.status_code == 200
@@ -375,7 +375,7 @@ def test_preferred_model_rejects_nul_text(api_context) -> None:
         "/api/auth/login",
         data={
             "username": "model-nul@example.com",
-            "password": "strong-password",
+            "password": "Strong-password!",
         },
     )
 
@@ -439,7 +439,7 @@ def test_email_identity_is_canonicalized_case_insensitively(api_context) -> None
         json={
             "name": "Mixed Case",
             "email": "Mixed.Case@Example.COM",
-            "password": "strong-password",
+            "password": "Strong-password!",
         },
     )
     duplicate = api_context.client.post(
@@ -447,12 +447,12 @@ def test_email_identity_is_canonicalized_case_insensitively(api_context) -> None
         json={
             "name": "Duplicate",
             "email": "mixed.case@example.com",
-            "password": "another-password",
+            "password": "Another-password!",
         },
     )
     login = api_context.client.post(
         "/api/auth/login",
-        data={"username": "MIXED.CASE@EXAMPLE.COM", "password": "strong-password"},
+        data={"username": "MIXED.CASE@EXAMPLE.COM", "password": "Strong-password!"},
     )
 
     assert created.status_code == 200
@@ -469,12 +469,12 @@ def test_idna_email_lookup_uses_same_canonical_form_as_registration(
         json={
             "name": "IDNA User",
             "email": "user@xn--bcher-kva.de",
-            "password": "strong-password",
+            "password": "Strong-password!",
         },
     )
     login = api_context.client.post(
         "/api/auth/login",
-        data={"username": "user@xn--bcher-kva.de", "password": "strong-password"},
+        data={"username": "user@xn--bcher-kva.de", "password": "Strong-password!"},
     )
 
     assert created.status_code == 200
@@ -499,13 +499,13 @@ def test_admin_can_manage_email_with_encoded_path_separator(api_context) -> None
     ):
         response = api_context.client.post(
             "/api/auth/register",
-            json={"name": name, "email": email, "password": "strong-password"},
+            json={"name": name, "email": email, "password": "Strong-password!"},
         )
         assert response.status_code == 200
 
     login = api_context.client.post(
         "/api/auth/login",
-        data={"username": "admin@example.com", "password": "strong-password"},
+        data={"username": "admin@example.com", "password": "Strong-password!"},
     )
     encoded_email = quote("foo/bar@example.com", safe="")
     banned = api_context.client.put(
@@ -569,7 +569,7 @@ def test_losing_initial_admin_race_retries_as_normal_user(
                 UserCreate(
                     name=f"User {index}",
                     email=f"user-{index}@example.com",
-                    password="strong-password",
+                    password="Strong-password!",
                 ),
             )
             return user.role.name, user.is_initial_admin
@@ -602,7 +602,7 @@ def test_hosted_mode_only_configured_email_becomes_initial_admin(
             UserCreate(
                 name="Regular",
                 email="regular@example.com",
-                password="strong-password",
+                password="Strong-password!",
             ),
         )
         bootstrap = UserService.create_user(
@@ -610,7 +610,7 @@ def test_hosted_mode_only_configured_email_becomes_initial_admin(
             UserCreate(
                 name="Bootstrap",
                 email="bootstrap@example.com",
-                password="strong-password",
+                password="Strong-password!",
             ),
             bootstrap_token="b" * 32,
         )
@@ -643,7 +643,7 @@ def test_hosted_bootstrap_email_requires_secret_token(
                 UserCreate(
                     name="Attacker",
                     email="bootstrap@example.com",
-                    password="strong-password",
+                    password="Strong-password!",
                 ),
                 bootstrap_token="wrong-token",
             )
@@ -672,7 +672,7 @@ def test_production_self_hosted_admin_requires_bootstrap_credentials(
             UserCreate(
                 name="Regular",
                 email="regular@example.com",
-                password="strong-password",
+                password="Strong-password!",
             ),
         )
         with pytest.raises(BadRequestException, match="Invalid bootstrap"):
@@ -681,7 +681,7 @@ def test_production_self_hosted_admin_requires_bootstrap_credentials(
                 UserCreate(
                     name="Attacker",
                     email="bootstrap@example.com",
-                    password="strong-password",
+                    password="Strong-password!",
                 ),
                 bootstrap_token="wrong-token",
             )
@@ -690,7 +690,7 @@ def test_production_self_hosted_admin_requires_bootstrap_credentials(
             UserCreate(
                 name="Bootstrap",
                 email="bootstrap@example.com",
-                password="strong-password",
+                password="Strong-password!",
             ),
             bootstrap_token="b" * 32,
         )
@@ -707,13 +707,13 @@ def test_admin_cannot_self_lock_and_role_changes_keep_credit_invariant(
     for name, email in (("Admin", "admin@example.com"), ("User", "user@example.com")):
         response = api_context.client.post(
             "/api/auth/register",
-            json={"name": name, "email": email, "password": "strong-password"},
+            json={"name": name, "email": email, "password": "Strong-password!"},
         )
         assert response.status_code == 200
 
     login = api_context.client.post(
         "/api/auth/login",
-        data={"username": "admin@example.com", "password": "strong-password"},
+        data={"username": "admin@example.com", "password": "Strong-password!"},
     )
     authorization = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
@@ -740,7 +740,7 @@ def test_admin_cannot_self_lock_and_role_changes_keep_credit_invariant(
 
     second_login = api_context.client.post(
         "/api/auth/login",
-        data={"username": "user@example.com", "password": "strong-password"},
+        data={"username": "user@example.com", "password": "Strong-password!"},
     )
     second_authorization = {
         "Authorization": f"Bearer {second_login.json()['access_token']}"

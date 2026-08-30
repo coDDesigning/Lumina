@@ -49,7 +49,7 @@ def test_registration_grants_credits_and_records_why(authz_api):
         json={
             "name": "New Learner",
             "email": "new-learner@example.com",
-            "password": "correct horse battery",
+            "password": "Correct-horse-battery!",
         },
     )
     assert response.status_code == 200
@@ -77,7 +77,7 @@ def test_a_new_account_does_not_also_collect_that_months_grant(authz_api):
         json={
             "name": "Same Month",
             "email": "same-month@example.com",
-            "password": "correct horse battery",
+            "password": "Correct-horse-battery!",
         },
     )
 

@@ -1,13 +1,11 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authAPI } from '@/api/auth';
 import { describeError } from '@/api/errors';
 import { useAuth } from '@/context/AuthContext';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
-import { IconButton } from '@/ui/IconButton';
 import { Input } from '@/ui/Input';
 import { AuthLayout } from './AuthLayout';
 import { ResendVerification } from './ResendVerification';
@@ -18,7 +16,6 @@ const MAX_PASSWORD_BYTES = 72;
 // floor the form can check before anybody waits for a round trip.
 // See docs/authentication.md.
 const MIN_PASSWORD_LENGTH = 8;
-const SPECIAL_CHAR_REGEX = /[!@#$%^&*(),.?":{}|<>_\-+=[\]\\/;'`~]/;
 
 function passwordByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
@@ -29,8 +26,6 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -54,18 +49,7 @@ export default function RegisterPage() {
     setPasswordError(null);
 
     if (passwordByteLength(password) > MAX_PASSWORD_BYTES) {
-      setPasswordError('That password is too long. Keep it under 72 bytes.');
-      return;
-    }
-
-    if (
-      password.length < MIN_PASSWORD_LENGTH ||
-      !/[A-Z]/.test(password) ||
-      !SPECIAL_CHAR_REGEX.test(password)
-    ) {
-      setPasswordError(
-        'Password must be at least 8 characters, with at least one uppercase letter and one special character.',
-      );
+      setPasswordError('That password is too long.');
       return;
     }
 
@@ -103,8 +87,12 @@ export default function RegisterPage() {
         documentTitle="Check your inbox"
         title="Check your inbox."
         subtitle={`We sent a confirmation link to ${awaitingVerification.email}.`}
-        footer={<Link to="/dashboard">Skip for now and look around</Link>}
-        note="Your account is ready to sign in to. The starting credits are added once you open the link, which is what keeps one person from opening fifty accounts."
+        footer={
+          <>
+            Already have an account? <Link to="/login">Sign in</Link>
+          </>
+        }
+        note="Open the link to finish setting up your account and receive your starting credits. That step is what keeps one person from opening fifty accounts."
       >
         <Alert tone="info" live="status">
           {awaitingVerification.message}
@@ -159,28 +147,19 @@ export default function RegisterPage() {
 
         <Input
           label="Password"
-          type={showPassword ? 'text' : 'password'}
+          type="password"
           autoComplete="new-password"
           required
           minLength={MIN_PASSWORD_LENGTH}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           disabled={isSubmitting}
-          hint="At least 8 characters, with at least one uppercase letter and one special character."
-          action={
-            <IconButton
-              label={showPassword ? 'Hide password' : 'Show password'}
-              icon={showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-              size="sm"
-              onClick={() => setShowPassword((prev) => !prev)}
-              disabled={isSubmitting}
-            />
-          }
+          hint="At least 8 characters. A passphrase beats a short password with a digit on the end, and it cannot contain your name or email address."
         />
 
         <Input
           label="Confirm password"
-          type={showConfirmPassword ? 'text' : 'password'}
+          type="password"
           autoComplete="new-password"
           required
           minLength={MIN_PASSWORD_LENGTH}
@@ -188,15 +167,6 @@ export default function RegisterPage() {
           onChange={(event) => setConfirmPassword(event.target.value)}
           disabled={isSubmitting}
           error={passwordError ?? undefined}
-          action={
-            <IconButton
-              label={showConfirmPassword ? 'Hide password' : 'Show password'}
-              icon={showConfirmPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-              size="sm"
-              onClick={() => setShowConfirmPassword((prev) => !prev)}
-              disabled={isSubmitting}
-            />
-          }
         />
 
         <Button

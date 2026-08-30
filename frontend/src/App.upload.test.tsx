@@ -142,6 +142,39 @@ describe('Document Upload UI in Workspace', () => {
     });
   });
 
+  it('accepts image uploads (PNG/JPEG) and sends them to the upload endpoint', async () => {
+    const user = userEvent.setup();
+    const doc = createMockDocument({
+      id: 'doc-img',
+      original_file_name: 'whiteboard.png',
+      status: 'uploaded',
+    });
+
+    mockUploadDocument.mockResolvedValueOnce(
+      createMockUploadResponse({ document: doc, duplicate: false }),
+    );
+
+    const { container } = render(
+      <MemoryRouter initialEntries={['/courses/1']}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Add Sources' })).toBeInTheDocument();
+    });
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(fileInput.accept).toContain('.png');
+    expect(fileInput.accept).toContain('.jpg');
+    expect(fileInput.accept).toContain('.jpeg');
+
+    const file = new File(['\x89PNG dummy'], 'whiteboard.png', { type: 'image/png' });
+    await user.upload(fileInput, file);
+
+    expect(mockUploadDocument).toHaveBeenCalledWith(1, file, 'unspecified');
+  });
+
   it('displays duplicate notice when uploaded file already exists in the course', async () => {
     const user = userEvent.setup();
     const doc = createMockDocument({
@@ -237,7 +270,7 @@ describe('Document Upload UI in Workspace', () => {
     const user = userEvent.setup();
     mockUploadDocument.mockRejectedValueOnce(
       MockErrors.unsupportedMediaType(
-        'Unsupported file type. Please upload a PDF, TXT, or Markdown file.',
+        'Unsupported file type. Please upload a PDF, TXT, Markdown, or image (PNG or JPEG) file.',
       ),
     );
 
@@ -257,7 +290,7 @@ describe('Document Upload UI in Workspace', () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(uploadAlertFor('unsupported.pdf')).toHaveTextContent('Unsupported file type. Please upload a PDF, TXT, or Markdown file.');
+      expect(uploadAlertFor('unsupported.pdf')).toHaveTextContent('Unsupported file type. Please upload a PDF, TXT, Markdown, or image (PNG or JPEG) file.');
     });
   });
 

@@ -237,7 +237,13 @@ TEMPLATE_EXTRA_VARIABLES: dict[str, dict[str, str]] = {
     },
     "reverse_quiz": {
         "TOPIC": "Photosynthesis",
+        "QUESTION": "Explain how plants convert light into chemical energy.",
         "STUDENT_EXPLANATION": "Plants make food from sunlight and water.",
+        "COURSE_MATERIAL": "Course material body",
+    },
+    "reverse_quiz_questions": {
+        "QUESTION_COUNT": "5",
+        "CONVERSATION_HISTORY": "",
         "COURSE_MATERIAL": "Course material body",
     },
     "exam_topic_analysis": {

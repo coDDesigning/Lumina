@@ -9,13 +9,12 @@ import { userAPI } from '@/api/user';
 import type { CreditStatus } from '@/api/types';
 import type { Workspace } from '@/data/workspaces';
 import { CreditProvider } from '@/context/CreditContext';
-import { createMockQuiz, createMockQuizGenerationResult } from '@/test/mocks/api';
 import ProgressPage from './ProgressPage';
 
 vi.mock('@/api/progress', () => ({ progressAPI: { get: vi.fn(), listAll: vi.fn() } }));
 
 vi.mock('@/api/quiz', () => ({
-  quizAPI: { list: vi.fn(), generate: vi.fn(), submitAttempt: vi.fn() },
+  quizAPI: { list: vi.fn(), generate: vi.fn(), enqueue: vi.fn(), submitAttempt: vi.fn() },
 }));
 
 vi.mock('@/api/settings', () => ({
@@ -43,7 +42,7 @@ vi.mock('@/hooks/useCourseDocuments', () => ({
 
 const mockProgress = vi.mocked(progressAPI.get);
 const mockQuizList = vi.mocked(quizAPI.list);
-const mockGenerate = vi.mocked(quizAPI.generate);
+const mockEnqueue = vi.mocked(quizAPI.enqueue);
 const mockGetCredits = vi.mocked(userAPI.getCredits);
 
 const STATUS: CreditStatus = {
@@ -117,9 +116,7 @@ describe('ProgressPage', () => {
   });
 
   it('generates the quiz against the weak topic it was opened for', async () => {
-    mockGenerate.mockResolvedValue(
-      createMockQuizGenerationResult({ quiz: createMockQuiz({ course_id: 10 }) }),
-    );
+    mockEnqueue.mockResolvedValue({ job_id: 10, status: 'queued' });
 
     renderPage();
 
@@ -128,9 +125,9 @@ describe('ProgressPage', () => {
     );
     await userEvent.click(await screen.findByRole('button', { name: /start the quiz/i }));
 
-    await waitFor(() => expect(mockGenerate).toHaveBeenCalled());
-    expect(mockGenerate.mock.calls[0][0]).toBe(10);
-    expect(mockGenerate.mock.calls[0][1]).toMatchObject({
+    await waitFor(() => expect(mockEnqueue).toHaveBeenCalled());
+    expect(mockEnqueue.mock.calls[0][0]).toBe(10);
+    expect(mockEnqueue.mock.calls[0][1]).toMatchObject({
       topic_focus: 'Graph Algorithms',
     });
   });

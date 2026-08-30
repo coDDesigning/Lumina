@@ -37,6 +37,11 @@ QUESTION_TYPE_MULTIPLE_CHOICE = "multiple_choice"
 CONVERSATION_TYPES = ("course_qa", "ai_tutor")
 _CONVERSATION_TYPES_SQL = ", ".join(f"'{kind}'" for kind in CONVERSATION_TYPES)
 
+# File types whose pages can carry visual content the vision provider describes.
+# Image uploads are transcoded to a one-page PDF by the processing pipeline;
+# kept in sync with `_VISUAL_CAPABLE_FILE_TYPES` in services/document_pipeline.py.
+VISUAL_CAPABLE_FILE_TYPES = ("pdf", "png", "jpg", "jpeg")
+
 EDUCATION_LEVELS = (
     "high_school",
     "undergraduate",
@@ -148,6 +153,15 @@ JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_RUNNING = "running"
 JOB_STATUS_SUCCEEDED = "succeeded"
 JOB_STATUS_FAILED = "failed"
+JOB_TYPE_GENERATE_STUDY_GUIDE = "generate_study_guide"
+JOB_TYPE_GENERATE_QUIZ = "generate_quiz"
+JOB_TYPE_GENERATE_FLASHCARD = "generate_flashcard"
+GENERATION_JOB_TYPES = (
+    JOB_TYPE_GENERATE_STUDY_GUIDE,
+    JOB_TYPE_GENERATE_QUIZ,
+    JOB_TYPE_GENERATE_FLASHCARD,
+)
+_GENERATION_JOB_TYPES_SQL = ", ".join(f"'{kind}'" for kind in GENERATION_JOB_TYPES)
 DOCUMENT_PROCESSING_STAGES = (
     "validating",
     "extracting_text",
@@ -707,7 +721,7 @@ class UploadedDocument(Base):
             pages = getattr(self, "__dict__", {}).get("pages")
 
         if not pages:
-            if self.file_type != "pdf":
+            if self.file_type not in VISUAL_CAPABLE_FILE_TYPES:
                 return "not_applicable"
             if self.status in ("uploaded", "processing"):
                 return "pending"
@@ -1211,6 +1225,173 @@ class GeneratedOutput(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="ExamTopicCandidate.position",
+    )
+
+
+class GenerationJob(Base):
+    """One backgrounded AI generation run for a course.
+
+    A generation used to be the request that asked for it, so closing the tab
+    lost the work and the credit. The row is the durable record instead: it
+    outlives the request that enqueued it, carries the charge so a failure in a
+    worker can still reverse it, and points at whatever the run persisted.
+
+    The lease columns are the fenced-claim pattern ``processing_jobs`` already
+    uses, so a worker that dies mid-run is recovered by the same expiry sweep
+    rather than leaving a run that never finishes.
+    """
+
+    __tablename__ = "generation_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            f"job_type IN ({_GENERATION_JOB_TYPES_SQL})", name="job_type_valid"
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
+            name="status_valid",
+        ),
+        CheckConstraint("attempt_count >= 0", name="attempt_count_nonnegative"),
+        CheckConstraint("max_attempts > 0", name="max_attempts_positive"),
+        CheckConstraint(
+            "attempt_count <= max_attempts", name="attempt_count_within_limit"
+        ),
+        CheckConstraint(
+            "status <> 'queued' OR attempt_count < max_attempts",
+            name="queued_attempts_available",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND attempt_count > 0 "
+            "AND lease_owner IS NOT NULL AND claim_token IS NOT NULL "
+            "AND claimed_at IS NOT NULL AND heartbeat_at IS NOT NULL "
+            "AND lease_expires_at IS NOT NULL "
+            "AND heartbeat_at >= claimed_at "
+            "AND lease_expires_at > heartbeat_at AND finished_at IS NULL) OR "
+            "(status <> 'running' AND lease_owner IS NULL "
+            "AND claim_token IS NULL AND claimed_at IS NULL "
+            "AND heartbeat_at IS NULL AND lease_expires_at IS NULL)",
+            name="lease_state_valid",
+        ),
+        CheckConstraint(
+            "(status IN ('succeeded', 'failed') AND finished_at IS NOT NULL) OR "
+            "(status IN ('queued', 'running') AND finished_at IS NULL)",
+            name="finished_state_valid",
+        ),
+        CheckConstraint(
+            "status <> 'failed' OR (last_error_code IS NOT NULL AND "
+            f"length(trim(last_error_code, '{_ASCII_WHITESPACE}')) > 0)",
+            name="failed_error_code_nonblank",
+        ),
+        CheckConstraint(
+            "status <> 'running' OR (lease_owner IS NOT NULL AND "
+            f"length(trim(lease_owner, '{_ASCII_WHITESPACE}')) > 0)",
+            name="running_lease_owner_nonblank",
+        ),
+        CheckConstraint(
+            "status <> 'running' OR (claim_token IS NOT NULL AND "
+            "length(claim_token) = 36)",
+            name="running_claim_token_length",
+        ),
+        # A charge is recorded by amount. The transaction id stays null for an
+        # exempt account, where no credit moved and a refund has nothing to
+        # reverse, so the amount is what tells "charged" from "never charged".
+        CheckConstraint(
+            "charge_amount IS NULL OR charge_amount > 0",
+            name="charge_amount_positive",
+        ),
+        CheckConstraint(
+            "charge_transaction_id IS NULL OR charge_amount IS NOT NULL",
+            name="charge_transaction_needs_amount",
+        ),
+        CheckConstraint(
+            "charge_refunded = false OR charge_amount IS NOT NULL",
+            name="refund_needs_charge",
+        ),
+        # A run persists exactly the artifact its own type produces, so a
+        # study guide job can never hand the client a quiz id to open.
+        CheckConstraint(
+            f"job_type <> '{JOB_TYPE_GENERATE_STUDY_GUIDE}' OR quiz_id IS NULL",
+            name="study_guide_result_shape",
+        ),
+        CheckConstraint(
+            f"job_type <> '{JOB_TYPE_GENERATE_QUIZ}' OR generated_output_id IS NULL",
+            name="quiz_result_shape",
+        ),
+        CheckConstraint(
+            f"job_type <> '{JOB_TYPE_GENERATE_FLASHCARD}' OR generated_output_id IS NULL",
+            name="flashcard_result_shape",
+        ),
+        CheckConstraint(
+            "status <> 'succeeded' OR generated_output_id IS NOT NULL "
+            "OR quiz_id IS NOT NULL",
+            name="succeeded_has_result",
+        ),
+        Index("ix_generation_jobs_claimable", "status", "available_at", "id"),
+        Index("ix_generation_jobs_recoverable", "status", "lease_expires_at", "id"),
+        Index("ix_generation_jobs_course_created", "course_id", "created_at", "id"),
+        Index("ix_generation_jobs_user_status", "user_id", "status"),
+        UniqueConstraint("retry_of_job_id", name="uq_generation_jobs_retry_of_job_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True
+    )
+
+    # The job outlives the request but not the account: a deleted user's
+    # queued generations have nobody to charge, refund, or show them to.
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+
+    job_type: Mapped[str] = mapped_column(String(50))
+    correlation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # The validated request, serialised by the feature's own schema, so the
+    # worker rebuilds exactly what the caller asked for.
+    request_payload: Mapped[str] = mapped_column(Text)
+
+    status: Mapped[str] = mapped_column(
+        String(20), default=JOB_STATUS_QUEUED, server_default=JOB_STATUS_QUEUED
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    max_attempts: Mapped[int] = mapped_column(Integer)
+    available_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
+    lease_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    charge_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    charge_transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("credit_transactions.id", ondelete="SET NULL"), nullable=True
+    )
+    charge_refunded: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+
+    generated_output_id: Mapped[int | None] = mapped_column(
+        ForeignKey("generated_outputs.id", ondelete="SET NULL"), nullable=True
+    )
+    quiz_id: Mapped[int | None] = mapped_column(
+        ForeignKey("quizzes.id", ondelete="SET NULL"), nullable=True
+    )
+    retry_of_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
     )
 
 

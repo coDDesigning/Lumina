@@ -104,7 +104,7 @@ const FAILURES: Record<string, DocumentFailure> = {
   UNSUPPORTED_FILE_TYPE: {
     headline: 'Not a supported file',
     what: 'This kind of file cannot be read.',
-    fix: 'PDF, plain text and Markdown all work.',
+    fix: 'PDF, plain text, Markdown, and PNG or JPEG images all work.',
   },
   DOCUMENT_TOO_LARGE: {
     headline: 'Too big',

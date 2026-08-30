@@ -31,12 +31,12 @@ describe('APIError', () => {
   it('reads the curated upload envelope and exposes its code', () => {
     const error = new APIError(415, {
       success: false,
-      message: 'Unsupported file type. Please upload a PDF, TXT, or Markdown file.',
+      message: 'Unsupported file type. Please upload a PDF, TXT, Markdown, or image (PNG or JPEG) file.',
       data: { code: 'UPLOAD_UNSUPPORTED_FILE_TYPE' },
     });
 
     expect(error.message).toBe(
-      'Unsupported file type. Please upload a PDF, TXT, or Markdown file.',
+      'Unsupported file type. Please upload a PDF, TXT, Markdown, or image (PNG or JPEG) file.',
     );
     expect(error.code).toBe('UPLOAD_UNSUPPORTED_FILE_TYPE');
   });

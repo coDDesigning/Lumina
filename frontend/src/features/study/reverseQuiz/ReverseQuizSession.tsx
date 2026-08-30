@@ -13,10 +13,17 @@ import styles from './ReverseQuizSession.module.css';
 export interface ReverseQuizSessionProps {
   courseId: number;
   topic: string;
+  /** Set when the student picked a source-derived question rather than a topic. */
+  question?: string;
   onRestart: () => void;
 }
 
-export function ReverseQuizSession({ courseId, topic, onRestart }: ReverseQuizSessionProps) {
+export function ReverseQuizSession({
+  courseId,
+  topic,
+  question,
+  onRestart,
+}: ReverseQuizSessionProps) {
   const [explanation, setExplanation] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [failure, setFailure] = useState<GenerationFailure | null>(null);
@@ -38,7 +45,7 @@ export function ReverseQuizSession({ courseId, topic, onRestart }: ReverseQuizSe
     try {
       const response = await generateReverseQuiz(
         courseId,
-        { topic, explanation: explanation.trim() },
+        { topic, question: question ?? null, explanation: explanation.trim() },
         controller.signal,
       );
       if (controller.signal.aborted) return;
@@ -61,6 +68,13 @@ export function ReverseQuizSession({ courseId, topic, onRestart }: ReverseQuizSe
             Explain Another Topic
           </Button>
         </div>
+
+        {question ? (
+          <div className={styles.section}>
+            <h3>Question</h3>
+            <p className={styles.studentExplanation}>{question}</p>
+          </div>
+        ) : null}
 
         <div className={styles.section}>
           <h3>Your Explanation</h3>
@@ -110,8 +124,19 @@ export function ReverseQuizSession({ courseId, topic, onRestart }: ReverseQuizSe
       </div>
 
       <div className={styles.instructions}>
-        Explain the topic in your own words. Lumina compares your explanation against the
-        course material and identifies any missing key points or misconceptions.
+        {question ? (
+          <>
+            <strong>{question}</strong>
+            <br />
+            Answer in your own words. Lumina checks it against the course material and flags
+            any missing points or misconceptions.
+          </>
+        ) : (
+          <>
+            Explain the topic in your own words. Lumina compares your explanation against the
+            course material and identifies any missing key points or misconceptions.
+          </>
+        )}
       </div>
 
       {failure ? <GenerationError failure={failure} onRetry={handleSubmit} /> : null}

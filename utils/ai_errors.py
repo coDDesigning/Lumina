@@ -230,9 +230,7 @@ PUBLIC_MESSAGES: dict[AiErrorCode, str] = {
     AiErrorCode.EXAM_DATE_REQUIRED: EXAM_DATE_REQUIRED_MESSAGE,
     AiErrorCode.EXAM_DATE_PASSED: EXAM_DATE_PASSED_MESSAGE,
     AiErrorCode.EXAM_TOPICS_REQUIRED: EXAM_TOPICS_REQUIRED_MESSAGE,
-    AiErrorCode.PERSONAL_KEY_INVALID: (
-        "Your personal API key is invalid or expired."
-    ),
+    AiErrorCode.PERSONAL_KEY_INVALID: ("Your personal API key is invalid or expired."),
     AiErrorCode.GENERATION_FAILED: (
         "The request could not be completed. Please try again later."
     ),

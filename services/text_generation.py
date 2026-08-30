@@ -746,10 +746,14 @@ class OpenAITextGenerationProvider:
             if isinstance(exc, APITimeoutError):
                 raise TextGenerationTimeoutError("OpenAI request timed out.") from exc
             if isinstance(exc, OpenAIRateLimitError):
-                raise TextGenerationRateLimitError("OpenAI rate limit exceeded.") from exc
+                raise TextGenerationRateLimitError(
+                    "OpenAI rate limit exceeded."
+                ) from exc
             if isinstance(exc, APIStatusError):
                 if exc.status_code in {401, 403}:
-                    raise TextGenerationAuthError("OpenAI authentication failed.") from exc
+                    raise TextGenerationAuthError(
+                        "OpenAI authentication failed."
+                    ) from exc
                 if exc.status_code in {429}:
                     raise TextGenerationRateLimitError(
                         "OpenAI rate limit exceeded."
@@ -758,9 +762,13 @@ class OpenAITextGenerationProvider:
                     raise TextGenerationProviderError(
                         "OpenAI service unavailable."
                     ) from exc
-                raise TextGenerationProviderError("OpenAI text generation failed.") from exc
+                raise TextGenerationProviderError(
+                    "OpenAI text generation failed."
+                ) from exc
             if isinstance(exc, APIConnectionError):
-                raise TextGenerationConnectionError("OpenAI could not be reached.") from exc
+                raise TextGenerationConnectionError(
+                    "OpenAI could not be reached."
+                ) from exc
         except (ImportError, ModuleNotFoundError, AttributeError):
             pass
 
@@ -914,10 +922,14 @@ class ClaudeTextGenerationProvider:
             if isinstance(exc, APITimeoutError):
                 raise TextGenerationTimeoutError("Claude request timed out.") from exc
             if isinstance(exc, AnthropicRateLimitError):
-                raise TextGenerationRateLimitError("Claude rate limit exceeded.") from exc
+                raise TextGenerationRateLimitError(
+                    "Claude rate limit exceeded."
+                ) from exc
             if isinstance(exc, APIStatusError):
                 if exc.status_code in {401, 403}:
-                    raise TextGenerationAuthError("Claude authentication failed.") from exc
+                    raise TextGenerationAuthError(
+                        "Claude authentication failed."
+                    ) from exc
                 if exc.status_code in {429}:
                     raise TextGenerationRateLimitError(
                         "Claude rate limit exceeded."
@@ -926,9 +938,13 @@ class ClaudeTextGenerationProvider:
                     raise TextGenerationProviderError(
                         "Claude service unavailable."
                     ) from exc
-                raise TextGenerationProviderError("Claude text generation failed.") from exc
+                raise TextGenerationProviderError(
+                    "Claude text generation failed."
+                ) from exc
             if isinstance(exc, APIConnectionError):
-                raise TextGenerationConnectionError("Claude could not be reached.") from exc
+                raise TextGenerationConnectionError(
+                    "Claude could not be reached."
+                ) from exc
         except (ImportError, ModuleNotFoundError, AttributeError):
             pass
 
@@ -1271,7 +1287,9 @@ class ReliableTextGenerationProvider:
                 is_auth_error = isinstance(last_exception, TextGenerationAuthError)
                 if not is_auth_error and last_exception is not None:
                     status_code = getattr(
-                        last_exception, "status_code", getattr(last_exception, "code", None)
+                        last_exception,
+                        "status_code",
+                        getattr(last_exception, "code", None),
                     )
                     if status_code in {401, 403}:
                         is_auth_error = True
@@ -1654,4 +1672,3 @@ def get_text_generation_provider(
         max_concurrency=settings.ai_generation_max_concurrency,
         overall_timeout_seconds=overall_timeout_seconds,
     )
-

@@ -50,6 +50,17 @@
   min-height: 0;
 }
 
+/* The study tools panel grows with every generation and artifact it lists, so
+   its body scrolls inside the panel instead of overflowing a column the page
+   itself never scrolls. */
+.outputsScroll {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .sourceHint {
   font-size: var(--text-2xs);
   color: var(--text-muted);

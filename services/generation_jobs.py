@@ -28,6 +28,9 @@ from backend.app.models import (
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
     JOB_STATUS_SUCCEEDED,
+    JOB_TYPE_GENERATE_FLASHCARD,
+    JOB_TYPE_GENERATE_QUIZ,
+    JOB_TYPE_GENERATE_STUDY_GUIDE,
     Course,
     GenerationJob,
     User,
@@ -47,6 +50,21 @@ from utils.ai_errors import InsufficientCreditsError
 RECENT_WINDOW_SECONDS = 24 * 60 * 60
 MAX_LISTED_JOBS = 50
 ResultWriter = Callable[[], tuple[int | None, int | None]]
+
+# The ledger name every job type is charged under. It is one table rather than a
+# literal at each charge site, and it is asserted complete at import: a job type
+# the queue accepts but cannot price is a failed enqueue for work the student
+# asked for, and that must surface at startup instead of per request.
+CREDIT_SOURCE_TYPES: dict[str, str] = {
+    JOB_TYPE_GENERATE_STUDY_GUIDE: "study_guide",
+    JOB_TYPE_GENERATE_QUIZ: "quiz",
+    JOB_TYPE_GENERATE_FLASHCARD: "flashcard",
+}
+if set(CREDIT_SOURCE_TYPES) != set(GENERATION_JOB_TYPES):
+    raise RuntimeError(
+        "Every generation job type needs a credit source: missing "
+        f"{sorted(set(GENERATION_JOB_TYPES) - set(CREDIT_SOURCE_TYPES))}"
+    )
 
 
 class GenerationJobStateError(RuntimeError):
@@ -147,15 +165,11 @@ def enqueue_generation_job(
     # serialized transaction that must contain both the charge and the job.
     CreditService.ensure_current_period_grant(session, user_id)
     _start_transition(session)
-    credit_source_type = {
-        "generate_study_guide": "study_guide",
-        "generate_quiz": "quiz",
-    }[job_type]
     receipt = CreditService.charge(
         session,
         user_id,
         credit_cost,
-        source_type=credit_source_type,
+        source_type=CREDIT_SOURCE_TYPES[job_type],
         commit=False,
     )
     if receipt is None:
@@ -228,15 +242,11 @@ def retry_generation_job(
             "The original generation has no reusable price."
         )
 
-    source_type = {
-        "generate_study_guide": "study_guide",
-        "generate_quiz": "quiz",
-    }[original.job_type]
     receipt = CreditService.charge(
         session,
         user_id,
         original.charge_amount,
-        source_type=source_type,
+        source_type=CREDIT_SOURCE_TYPES[original.job_type],
         commit=False,
     )
     if receipt is None:

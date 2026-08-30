@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { generationJobsAPI } from '@/api/generationJobs';
-import { afterQuizGenerated, afterStudyGuideGenerated } from '@/api/invalidations';
+import {
+  afterFlashcardsGenerated,
+  afterQuizGenerated,
+  afterStudyGuideGenerated,
+} from '@/api/invalidations';
 import { queryKeys } from '@/api/queryKeys';
 import type { GenerationJob } from '@/api/types';
 import { useCredits } from '@/context/CreditContext';
@@ -35,6 +39,8 @@ export function useGenerationJobs(courseId: number) {
       completed.current.add(job.id);
       if (job.job_type === 'generate_quiz') {
         afterQuizGenerated(courseId);
+      } else if (job.job_type === 'generate_flashcard') {
+        afterFlashcardsGenerated(courseId);
       } else {
         afterStudyGuideGenerated(courseId);
       }

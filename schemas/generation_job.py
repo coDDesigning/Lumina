@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 from backend.app.models import GenerationJob
 
 GenerationJobStatus = Literal["queued", "running", "succeeded", "failed"]
-GenerationJobType = Literal["generate_study_guide", "generate_quiz"]
+GenerationJobType = Literal[
+    "generate_study_guide", "generate_quiz", "generate_flashcard"
+]
 
 
 class GenerationJobView(BaseModel):

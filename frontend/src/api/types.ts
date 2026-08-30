@@ -207,7 +207,7 @@ export type DocumentStatus =
 export type ProcessingJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 
 export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
-export type GenerationJobType = 'generate_study_guide' | 'generate_quiz';
+export type GenerationJobType = 'generate_study_guide' | 'generate_quiz' | 'generate_flashcard';
 
 export interface GenerationJobAccepted {
   job_id: number;

@@ -19,6 +19,13 @@ export function afterFlashcardsGenerated(courseId: number): void {
   void queryCache.invalidate(queryKeys.activityAll());
 }
 
+export function afterReverseQuizGenerated(courseId: number): void {
+  void queryCache.invalidate(queryKeys.courseReverseQuizzes(courseId));
+  void queryCache.invalidate(queryKeys.courseProgress(courseId));
+  void queryCache.invalidate(queryKeys.coursesProgress());
+  void queryCache.invalidate(queryKeys.activityAll());
+}
+
 export function afterQuizGenerated(courseId: number): void {
   void queryCache.invalidate(queryKeys.courseOutputs(courseId));
   void queryCache.invalidate(queryKeys.courseQuizzes(courseId));

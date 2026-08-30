@@ -20,6 +20,11 @@ class ReverseQuizRequest(BaseModel):
     explanation: str = Field(..., min_length=1, max_length=5000)
 
 
+class ReverseQuizEvaluation(BaseModel):
+    feedback: str
+    misconceptions: list[Misconception] = Field(default_factory=list)
+
+
 class ReverseQuizResponse(BaseModel):
     id: int
     course_id: int

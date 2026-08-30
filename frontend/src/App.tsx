@@ -14,6 +14,7 @@ import ExamModeTopicPage from './features/examMode/ExamModeTopicPage'
 import QuizAttemptPage from './features/study/quiz/QuizAttemptPage'
 import QuizSessionPage from './features/study/quiz/QuizSessionPage'
 import QuizResultsPage from './features/study/quiz/QuizResultsPage'
+import ReverseQuizPage from './features/study/reverseQuiz/ReverseQuizPage'
 import WorkspacePage from './features/workspace/WorkspacePage'
 import AccountLayout from './features/account/AccountLayout'
 import AccountYouPage from './features/account/AccountYouPage'
@@ -475,6 +476,16 @@ function App() {
               workspaces={workspaces}
               onSelect={selectWorkspace}
               render={(workspace) => <QuizAttemptPage workspace={workspace} />}
+            />
+          }
+        />
+        <Route
+          path="/courses/:courseId/reverse-quiz"
+          element={
+            <CourseScopedRoute
+              workspaces={workspaces}
+              onSelect={selectWorkspace}
+              render={(workspace) => <ReverseQuizPage workspace={workspace} />}
             />
           }
         />

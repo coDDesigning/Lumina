@@ -4,6 +4,7 @@ import {
   BarChart3,
   Calendar,
   FileText,
+  HelpCircle,
   Layers3,
   MessageSquarePlus,
   Settings2,
@@ -788,6 +789,15 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                   onClick={() => setIsFlashcardOpen(true)}
                 >
                   Flashcards
+                </Button>
+                <Button
+                  alignStart
+                  fullWidth
+                  size="sm"
+                  icon={<HelpCircle aria-hidden="true" />}
+                  onClick={() => navigate(`/courses/${workspace.id}/reverse-quiz`)}
+                >
+                  Reverse quiz
                 </Button>
               </div>
 

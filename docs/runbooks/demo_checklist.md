@@ -31,23 +31,18 @@ Verify that the primary and fallback providers are reachable and configured with
    # Verify Ollama service is running and models are downloaded
    curl -s http://localhost:11434/api/tags
    ollama pull llama3.1
-   ollama pull nomic-embed-text
    ```
    Ensure `.env` sets:
-   * `AI_PROVIDER=ollama`
+   * `OLLAMA_BASE_URL=http://localhost:11434` (this is what makes `ollama:*` models available)
    * `OLLAMA_MODEL=llama3.1`
-   * `EMBEDDING_PROVIDER=ollama`
-   * `OLLAMA_EMBEDDING_MODEL=nomic-embed-text`
-   * `AI_FALLBACK_PROVIDERS=` (or configured secondary provider)
+
+   Embeddings need nothing here: they are computed in-process.
 
 2. **Hosted Setup (Gemini / Multi-Provider Cloud)**:
    Ensure environment variables or AWS SSM Parameter Store parameters are populated:
-   * `AI_PROVIDER=gemini`
-   * `GEMINI_API_KEY=<valid-gemini-api-key>`
-   * `GEMINI_MODEL=gemini-3.6-flash`
-   * `EMBEDDING_PROVIDER=gemini`
-   * `GEMINI_EMBEDDING_MODEL=text-embedding-004`
-   * `AI_FALLBACK_PROVIDERS=openai,claude` (if failover providers are provisioned)
+   * `GEMINI_API_KEY=<valid-gemini-api-key>` (this alone makes `gemini:*` models available)
+   * `AI_DEFAULT_MODEL=gemini:gemini-3.6-flash` (optional; otherwise the first available vendor wins)
+   * `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` only if you accept that a Gemini outage bills them
 
 ### 1.3 Raise Generation Timeout Defaults for Local Models
 
@@ -280,7 +275,7 @@ Procedures to handle live edge cases and presenter device standards.
 
 If the primary AI provider experiences degradation or rate limiting during a live presentation:
 
-1. **Automatic Failover**: Lumina's `ReliableTextGenerationProvider` automatically attempts configured `AI_FALLBACK_PROVIDERS`.
+1. **Automatic Failover**: Lumina's `ReliableTextGenerationProvider` automatically attempts every other vendor whose credential is configured.
 2. **Pre-Seeded Content**: If all live AI generation fails, navigate to pre-generated study guides, flashcards, and quizzes created during Phase 1 (`python -m scripts.seed_demo`).
 3. **Operational Runbook**: Follow the detailed recovery instructions in [AI Provider Outage Runbook](provider_outage.md).
 

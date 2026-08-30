@@ -88,12 +88,10 @@ resource "aws_iam_role" "task" {
         {
           Effect = "Allow"
           Action = [
-            "s3:GetObject",
-            "s3:PutObject",
-            "s3:DeleteObject",
-            "s3:DeleteObjectVersion",
+            "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion",
+            "s3:ListBucket", "s3:GetBucketLocation",
           ]
-          Resource = ["${var.s3_bucket_arn}/*"]
+          Resource = [var.s3_bucket_arn, "${var.s3_bucket_arn}/*"]
         }
       ]
     })

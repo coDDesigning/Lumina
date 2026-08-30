@@ -46,9 +46,9 @@ variable "api_cpu" {
 }
 
 variable "api_memory" {
-  description = "Fargate memory (MiB) for the API service."
+  description = "Fargate memory (MiB) for the API service. The embedding model is resident in every task."
   type        = number
-  default     = 1024
+  default     = 4096
 }
 
 variable "api_min_instances" {
@@ -64,15 +64,15 @@ variable "api_max_instances" {
 }
 
 variable "worker_cpu" {
-  description = "Fargate CPU units for the document processor service."
+  description = "Fargate CPU units for the document processor service. Embedding a whole document is CPU bound."
   type        = number
-  default     = 512
+  default     = 1024
 }
 
 variable "worker_memory" {
-  description = "Fargate memory (MiB) for the document processor service."
+  description = "Fargate memory (MiB) for the document processor service. The embedding model is resident in every task."
   type        = number
-  default     = 1024
+  default     = 4096
 }
 
 variable "worker_min_instances" {

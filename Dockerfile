@@ -31,6 +31,21 @@ RUN python -m pip install \
         --requirement requirements.txt \
     && python -m pip check
 
+# Baked at build time because the runtime container is read-only and must
+# not reach the network for weights. Only the registry module is copied so
+# a backend change does not re-download the weights.
+ENV EMBEDDING_MODEL_CACHE_DIRECTORY=/opt/lumina/embedding-models
+ENV HF_HUB_OFFLINE=1
+
+COPY backend/__init__.py ./backend/__init__.py
+COPY backend/app/__init__.py ./backend/app/__init__.py
+COPY backend/app/embedding_models.py ./backend/app/embedding_models.py
+COPY scripts/fetch_embedding_model.py ./scripts/fetch_embedding_model.py
+RUN HF_HUB_OFFLINE=0 python scripts/fetch_embedding_model.py \
+    && rm -rf ./scripts \
+    && find /opt/lumina -type d -exec chmod 0555 {} + \
+    && find /opt/lumina -type f -exec chmod 0444 {} +
+
 COPY alembic.ini main.py entrypoint.sh ./
 COPY alembic ./alembic
 COPY app ./app

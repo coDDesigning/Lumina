@@ -772,8 +772,8 @@ def test_generate_flashcards_rejects_json_incompatible_model(
     from utils.ai_errors import ERROR_CODE_HEADER, PUBLIC_MESSAGES, AiErrorCode
 
     fake_settings = SimpleNamespace(
-        ai_provider="ollama",
-        ai_fallback_providers="",
+        ai_available_vendors=("ollama",),
+        ai_default_model="ollama:text-only",
         ai_model_catalog={
             "ollama": [
                 {

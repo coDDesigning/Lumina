@@ -23,6 +23,7 @@ from backend.app.models import (
 )
 from services.course_material import CHUNK_SEPARATOR, CourseMaterial
 from services.embeddings import (
+    configured_embedding_identity,
     EmbeddingAuthError,
     EmbeddingConfigurationError,
     EmbeddingConnectionError,
@@ -49,8 +50,7 @@ from services.vector_store import (
     VectorStoreError,
 )
 
-PROVIDER = "ollama"
-MODEL = "nomic-embed-text"
+PROVIDER, MODEL = configured_embedding_identity()
 
 BUDGET = 100_000
 
@@ -97,9 +97,23 @@ class StubVectorStore:
         self._error = error
         self.search_calls: list[dict] = []
 
-    def search(self, session, *, course_id, query_embedding, limit, document_ids=None):
+    def search(
+        self,
+        session,
+        *,
+        course_id,
+        query_embedding,
+        limit,
+        embedding_model,
+        document_ids=None,
+    ):
         self.search_calls.append(
-            {"course_id": course_id, "limit": limit, "document_ids": document_ids}
+            {
+                "course_id": course_id,
+                "limit": limit,
+                "embedding_model": embedding_model,
+                "document_ids": document_ids,
+            }
         )
         if self._error is not None:
             raise self._error
@@ -486,7 +500,12 @@ def test_passes_the_configured_limit_and_course_scope_to_the_store(
     _load(db_session, course.id, store=store, limit=7)
 
     assert store.search_calls == [
-        {"course_id": course.id, "limit": 7, "document_ids": None}
+        {
+            "course_id": course.id,
+            "limit": 7,
+            "embedding_model": MODEL,
+            "document_ids": None,
+        }
     ]
 
 

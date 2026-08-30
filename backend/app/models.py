@@ -37,6 +37,11 @@ QUESTION_TYPE_MULTIPLE_CHOICE = "multiple_choice"
 CONVERSATION_TYPES = ("course_qa", "ai_tutor")
 _CONVERSATION_TYPES_SQL = ", ".join(f"'{kind}'" for kind in CONVERSATION_TYPES)
 
+# File types whose pages can carry visual content the vision provider describes.
+# Image uploads are transcoded to a one-page PDF by the processing pipeline;
+# kept in sync with `_VISUAL_CAPABLE_FILE_TYPES` in services/document_pipeline.py.
+VISUAL_CAPABLE_FILE_TYPES = ("pdf", "png", "jpg", "jpeg")
+
 EDUCATION_LEVELS = (
     "high_school",
     "undergraduate",
@@ -716,7 +721,7 @@ class UploadedDocument(Base):
             pages = getattr(self, "__dict__", {}).get("pages")
 
         if not pages:
-            if self.file_type != "pdf":
+            if self.file_type not in VISUAL_CAPABLE_FILE_TYPES:
                 return "not_applicable"
             if self.status in ("uploaded", "processing"):
                 return "pending"

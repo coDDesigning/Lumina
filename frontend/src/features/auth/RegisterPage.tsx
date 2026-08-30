@@ -87,8 +87,12 @@ export default function RegisterPage() {
         documentTitle="Check your inbox"
         title="Check your inbox."
         subtitle={`We sent a confirmation link to ${awaitingVerification.email}.`}
-        footer={<Link to="/dashboard">Skip for now and look around</Link>}
-        note="Your account is ready to sign in to. The starting credits are added once you open the link, which is what keeps one person from opening fifty accounts."
+        footer={
+          <>
+            Already have an account? <Link to="/login">Sign in</Link>
+          </>
+        }
+        note="Open the link to finish setting up your account and receive your starting credits. That step is what keeps one person from opening fifty accounts."
       >
         <Alert tone="info" live="status">
           {awaitingVerification.message}

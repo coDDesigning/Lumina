@@ -105,3 +105,30 @@
   text-decoration: underline;
   text-underline-offset: 0.15em;
 }
+
+/* A standalone display equation: its own row, and it scrolls sideways rather
+   than forcing the page to. */
+.mathDisplay {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: var(--space-1);
+}
+
+.mathDisplay :global(.katex-display) {
+  margin: 0;
+}
+
+.mathBlock {
+  display: block;
+}
+
+/* Inline math should not break across lines mid-expression. */
+.mathInline :global(.katex) {
+  white-space: nowrap;
+}
+
+.mathError {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--destructive);
+}

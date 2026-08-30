@@ -567,7 +567,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                   className={styles.uploadInput}
                   type="file"
                   multiple
-                  accept=".pdf,.txt,.md,.markdown"
+                  accept=".pdf,.txt,.md,.markdown,.png,.jpg,.jpeg"
                   onChange={(event) => {
                     void addSources(event.target.files);
                     event.target.value = '';
@@ -622,7 +622,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             )}
           </div>
 
-          <p className={styles.sourceHint}>PDF, TXT and Markdown</p>
+          <p className={styles.sourceHint}>PDF, TXT, Markdown, and images (PNG, JPEG)</p>
         </section>
 
         <section className={`${styles.panel} ${styles.conversation}`} aria-label="Conversation">

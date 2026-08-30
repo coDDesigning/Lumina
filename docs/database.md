@@ -420,7 +420,7 @@ admit files without CPU-expensive inspection:
 
 | Condition | Status | Error Code | Description |
 | --- | --- | --- | --- |
-| Unsupported extension | `415` | `UPLOAD_UNSUPPORTED_FILE_TYPE` | Not `.pdf`, `.txt`, `.md`, or `.markdown` |
+| Unsupported extension | `415` | `UPLOAD_UNSUPPORTED_FILE_TYPE` | Not `.pdf`, `.txt`, `.md`, `.markdown`, `.png`, `.jpg`, or `.jpeg` |
 | Invalid / long filename | `422` | `UPLOAD_INVALID_FILE_NAME` | Name > 255 chars or contains NUL bytes |
 | File exceeds limit | `413` | `UPLOAD_FILE_TOO_LARGE` | Stream exceeds `MAX_UPLOAD_SIZE_BYTES` |
 | Empty file | `422` | `UPLOAD_EMPTY_FILE` | 0-byte upload |
@@ -814,11 +814,13 @@ It also reuses upload page and byte limits, bounds extracted text and chunk
 count, and stores only curated public errors. Extraction runs in a killable
 subprocess with a hard per-attempt timeout.
 
-PDF, TXT, and Markdown files first produce a common raw extraction result. PDF
-content is retained per physical page with one-based page numbers; TXT and
-Markdown produce one content unit with a null page number. Decoded Markdown
-source is retained before cleaning so headings, code fences, indentation, and
-hard line breaks remain available to later stages.
+PDF, TXT, Markdown, and image (PNG/JPEG) uploads first produce a common raw
+extraction result. PDF content is retained per physical page with one-based page
+numbers; TXT and Markdown produce one content unit with a null page number. An
+image upload is transcoded to a one-page PDF and then follows the PDF path: one
+page (page number `1`) carrying a single full-page visual that also needs OCR.
+Decoded Markdown source is retained before cleaning so headings, code fences,
+indentation, and hard line breaks remain available to later stages.
 
 The worker claim-fences an atomic raw checkpoint in `document_pages` before OCR,
 visual analysis, cleaning, or chunking continues. Successful completion then

@@ -233,4 +233,36 @@ describe('sources in a past thread', () => {
     expect(await screen.findByText('Lecture 4 · p. 12')).toBeInTheDocument();
     expect(screen.queryByText('[S1]')).not.toBeInTheDocument();
   });
+
+  it('renders a copy button for assistant messages and copies response text', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    });
+
+    mockGet.mockResolvedValue(TUTOR_DETAIL);
+
+    render(
+      <ConversationHistoryModal
+        courseId={7}
+        courseName="Algorithms"
+        onClose={vi.fn()}
+        onResume={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: /Tutoring 18/ }));
+
+    const copyBtn = await screen.findByRole('button', { name: 'Copy response' });
+    expect(copyBtn).toBeInTheDocument();
+
+    await userEvent.click(copyBtn);
+
+    expect(writeText).toHaveBeenCalledWith(
+      'Start with breadth-first and depth-first search.',
+    );
+    expect(await screen.findByRole('button', { name: 'Copied to clipboard' })).toBeInTheDocument();
+  });
 });

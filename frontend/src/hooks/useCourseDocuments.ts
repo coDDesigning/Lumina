@@ -29,7 +29,7 @@ export interface UseCourseDocumentsResult {
   reload: () => void;
   addUploaded: (document: DocumentResponse) => void;
   retryDocument: (documentId: string) => Promise<void>;
-  deleteDocument: (documentId: string) => Promise<void>;
+  deleteDocument: (documentId: string, options?: { force?: boolean }) => Promise<void>;
 }
 
 interface PollControl {
@@ -361,7 +361,7 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
   );
 
   const deleteDocument = useCallback(
-    async (documentId: string) => {
+    async (documentId: string, options?: { force?: boolean }) => {
       const control = controlRef.current;
       const entry = entriesRef.current.find((row) => row.document.id === documentId);
       if (!control || !entry || entry.pending) return;
@@ -369,9 +369,12 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
       setPending(documentId, 'delete');
 
       try {
-        await coursesAPI.deleteDocument(courseId, documentId, {
-          signal: control.signal,
-        });
+        await coursesAPI.deleteDocument(
+          courseId,
+          documentId,
+          { signal: control.signal },
+          options?.force ?? false,
+        );
         control.stop(documentId);
         queryCache.setData<DocumentResponse[]>(
           queryKeys.courseDocuments(courseId),

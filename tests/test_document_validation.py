@@ -17,13 +17,19 @@ EXPECTED_FILE_TYPES = {
     "txt": {"validator": "text", "content_type": "text/plain"},
     "md": {"validator": "text", "content_type": "text/markdown"},
     "markdown": {"validator": "text", "content_type": "text/markdown"},
+    "png": {"validator": "image", "content_type": "image/png"},
+    "jpg": {"validator": "image", "content_type": "image/jpeg"},
+    "jpeg": {"validator": "image", "content_type": "image/jpeg"},
 }
 
 EXPECTED_ERRORS = {
     "unsupported_file_type": {
         "status_code": 415,
         "code": "UPLOAD_UNSUPPORTED_FILE_TYPE",
-        "message": "Unsupported file type. Please upload a PDF, TXT, or Markdown file.",
+        "message": (
+            "Unsupported file type. Please upload a PDF, TXT, Markdown, "
+            "or image (PNG or JPEG) file."
+        ),
     },
     "invalid_file_name": {
         "status_code": 422,
@@ -165,6 +171,9 @@ def test_message_catalog_accepts_another_error(
         ("course.pdf", b"not actually a PDF", "pdf", "application/pdf"),
         ("binary.txt", bytes(range(256)), "txt", "text/plain"),
         ("blank.md", b" \r\n\t", "md", "text/markdown"),
+        ("diagram.png", b"not actually a PNG", "png", "image/png"),
+        ("photo.jpg", b"not actually a JPEG", "jpg", "image/jpeg"),
+        ("SCAN.JPEG", b"uppercase image extension", "jpeg", "image/jpeg"),
     ],
 )
 def test_basic_validation_returns_metadata_without_inspecting_content(

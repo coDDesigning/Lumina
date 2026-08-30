@@ -206,6 +206,29 @@ export type DocumentStatus =
 
 export type ProcessingJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 
+export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+export type GenerationJobType = 'generate_study_guide' | 'generate_quiz' | 'generate_flashcard';
+
+export interface GenerationJobAccepted {
+  job_id: number;
+  status: GenerationJobStatus;
+}
+
+export interface GenerationJob {
+  id: number;
+  job_type: GenerationJobType;
+  status: GenerationJobStatus;
+  attempt_count: number;
+  max_attempts: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  generated_output_id: number | null;
+  quiz_id: number | null;
+}
+
 export type ProcessingStage =
   | 'validating'
   | 'extracting_text'
@@ -1353,4 +1376,19 @@ export interface AdTelemetryRequest {
 
 export interface AdTelemetryResponse {
   recorded: boolean;
+}
+
+export interface UserApiKeys {
+  openai_api_key: string | null;
+  gemini_api_key: string | null;
+  anthropic_api_key: string | null;
+  has_openai_key: boolean;
+  has_gemini_key: boolean;
+  has_anthropic_key: boolean;
+}
+
+export interface UserApiKeysUpdateRequest {
+  openai_api_key?: string | null;
+  gemini_api_key?: string | null;
+  anthropic_api_key?: string | null;
 }

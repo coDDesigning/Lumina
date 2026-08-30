@@ -2182,3 +2182,151 @@ def test_shared_image_xref_is_counted_once_against_the_render_budget() -> None:
     extracted = extract_raw_document("pdf", content, options=options)
 
     assert len(extracted.contents) == 3
+
+
+# --- image uploads (PNG / JPEG) --------------------------------------------
+
+
+def image_bytes(
+    fmt: str,
+    *,
+    text: str | None = None,
+    width: int = 480,
+    height: int = 360,
+) -> bytes:
+    document = pymupdf.open()
+    page = document.new_page(width=width, height=height)
+    page.draw_rect(page.rect, color=(0.2, 0.2, 0.2), fill=(1, 1, 1))
+    page.draw_circle(
+        (width / 2, height / 2), min(width, height) / 3, color=(0, 0, 0), width=3
+    )
+    if text:
+        page.insert_text((24, 40), text, fontsize=18)
+    pixel = page.get_pixmap(alpha=False)
+    document.close()
+    return pixel.tobytes("png" if fmt == "png" else "jpg")
+
+
+class _StubVision:
+    enabled = True
+
+    def __init__(self, description: str = "A circle centred on a white field.") -> None:
+        self._description = description
+        self.calls: list[tuple[int, int, VisualType]] = []
+
+    def describe_visual(
+        self,
+        visual_png: bytes,
+        *,
+        page_number: int,
+        visual_index: int,
+        suggested_type: VisualType,
+    ) -> VisualDescription:
+        self.calls.append((page_number, visual_index, suggested_type))
+        return VisualDescription(
+            visual_type=VisualType.FIGURE, description=self._description
+        )
+
+
+@pytest.mark.parametrize("fmt", ["png", "jpg"])
+def test_image_upload_is_one_visual_page_that_needs_ocr(fmt: str) -> None:
+    extracted = extract_raw_document(fmt, image_bytes(fmt), options=pipeline_options())
+
+    assert len(extracted.contents) == 1
+    page = extracted.contents[0]
+    assert page.page_number == 1
+    assert page.text == ""
+    assert page.has_visual_content is True
+    assert page.needs_ocr is True
+    image_visuals = [v for v in page.visuals if v.source == VisualSource.IMAGE]
+    assert len(image_visuals) == 1
+    # The transcoded PDF travels back for the render stages.
+    assert isinstance(extracted.render_content, bytes)
+    assert extracted.render_content.startswith(b"%PDF-")
+
+
+@pytest.mark.parametrize("fmt", ["png", "jpg"])
+def test_image_upload_is_described_and_chunked(fmt: str) -> None:
+    vision = _StubVision("A labelled circle diagram.")
+    stages: list[PipelineStage] = []
+
+    result = process_document(
+        fmt,
+        image_bytes(fmt),
+        options=pipeline_options(),
+        stage_callback=stages.append,
+        image_provider=vision,
+    )
+
+    page = result.pages[0]
+    assert page.visual_analysis_status == PageVisualAnalysisStatus.COMPLETED
+    assert page.visuals[0].analysis_status == VisualAnalysisStatus.SUCCEEDED
+    assert page.text == "[Figure]\nA labelled circle diagram."
+    assert vision.calls == [(1, 0, VisualType.FIGURE)]
+    assert any("A labelled circle diagram." in chunk.text for chunk in result.chunks)
+    assert PipelineStage.UNDERSTANDING_IMAGES in stages
+
+
+def test_image_upload_survives_a_missing_local_ocr_engine() -> None:
+    class UnavailableOCR:
+        def extract_text(self, page: pymupdf.Page, *, language: str, dpi: int) -> str:
+            raise OCRUnavailableError
+
+    result = process_document(
+        "png",
+        image_bytes("png", text="printed words the OCR engine cannot read"),
+        options=pipeline_options(ocr_enabled=True),
+        ocr_provider=UnavailableOCR(),
+        image_provider=_StubVision("A page of printed text."),
+    )
+
+    page = result.pages[0]
+    assert page.ocr_status == OCRStatus.NO_TEXT
+    assert page.needs_ocr is False
+    assert page.text == "[Figure]\nA page of printed text."
+
+
+def test_image_upload_with_no_text_and_no_vision_has_no_processable_text() -> None:
+    class DisabledVision:
+        enabled = False
+
+        def describe_visual(self, *args: object, **kwargs: object) -> None:
+            return None
+
+    error = assert_pipeline_error(
+        "jpg",
+        image_bytes("jpg"),
+        ProcessingErrorCode.NO_PROCESSABLE_TEXT,
+        PipelineStage.CLEANING_TEXT,
+        options=pipeline_options(ocr_enabled=False),
+        image_provider=DisabledVision(),
+    )
+    assert error.retryable is False
+
+
+@pytest.mark.parametrize(
+    "blob",
+    [b"not really an image", b"", b"\x89PNG\r\n\x1a\ntruncated"],
+)
+def test_corrupt_image_bytes_are_rejected(blob: bytes) -> None:
+    assert_pipeline_error(
+        "png",
+        blob,
+        ProcessingErrorCode.CORRUPTED_IMAGE
+        if blob
+        else ProcessingErrorCode.NO_PROCESSABLE_TEXT,
+        PipelineStage.VALIDATING,
+    )
+
+
+def test_oversized_image_is_downscaled_within_the_render_budget() -> None:
+    # 7000 x 6000 = 42M px, past the 40M `max_pdf_page_pixels` ceiling.
+    result = process_document(
+        "png",
+        image_bytes("png", width=7000, height=6000),
+        options=pipeline_options(),
+        image_provider=_StubVision("A very large scanned poster."),
+    )
+
+    assert len(result.pages) == 1
+    assert result.pages[0].text == "[Figure]\nA very large scanned poster."

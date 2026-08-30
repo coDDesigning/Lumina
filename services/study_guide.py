@@ -302,6 +302,7 @@ class StudyGuideService:
         provider: TextGenerationProvider,
         *,
         user_id: int | None = None,
+        prepaid_charge: ChargeReceipt | None = None,
     ) -> StudyGuideGeneration:
         effective_request = cls.resolve_effective_request(db, course_id, request)
         course = db.get(Course, course_id)
@@ -331,8 +332,8 @@ class StudyGuideService:
 
         query = cls.build_retrieval_query(course, effective_request)
 
-        receipt = None
-        if resolved_user_id:
+        receipt = prepaid_charge
+        if receipt is None and resolved_user_id:
             receipt = CreditService.charge(
                 db,
                 resolved_user_id,
@@ -343,30 +344,35 @@ class StudyGuideService:
                 log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
                 raise InsufficientCreditsError("Insufficient credits.")
 
+        # A prepaid generation's credit belongs to the job that queued it, and
+        # that job owns the retry decision. Refunding from here would hand the
+        # credit back for an attempt that is about to be run again.
+        refundable = receipt if prepaid_charge is None else None
+
         try:
             material = cls.get_course_material(db, course_id, query=query)
         except MaterialNotIndexedError:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(ErrorCategory.MATERIAL_NOT_INDEXED)
             raise
         except NoRelevantMaterialError:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(ErrorCategory.NO_RELEVANT_MATERIAL)
             raise
         except MaterialRetrievalError:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             log_failure(ErrorCategory.RETRIEVAL_ERROR)
             raise
         except Exception:
             db.rollback()
-            CreditService.refund(db, receipt)
+            CreditService.refund(db, refundable)
             raise
 
         with (
-            CreditService.refund_on_error(db, receipt),
+            CreditService.refund_on_error(db, refundable),
             acquire_generation_locks(material.document_ids),
         ):
             generation_ctx = assemble_generation_context(
@@ -395,7 +401,7 @@ class StudyGuideService:
                     result = provider.generate_json(prompt)
             except TextGenerationError as exc:
                 if resolved_user_id:
-                    CreditService.refund(db, receipt)
+                    CreditService.refund(db, refundable)
                 log_failure(
                     getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
                 )
@@ -404,7 +410,7 @@ class StudyGuideService:
                 ) from exc
             except Exception:
                 if resolved_user_id:
-                    CreditService.refund(db, receipt)
+                    CreditService.refund(db, refundable)
                 raise
 
             try:
@@ -414,7 +420,7 @@ class StudyGuideService:
                 )
             except ValidationError as exc:
                 if resolved_user_id:
-                    CreditService.refund(db, receipt)
+                    CreditService.refund(db, refundable)
                 log_failure(
                     ErrorCategory.INVALID_STRUCTURE,
                     latency_ms=metadata.latency_ms if metadata else None,
@@ -497,6 +503,7 @@ class StudyGuideService:
         summary_mode: SummaryMode = SummaryMode.GENERAL,
         generation_settings: str | None = None,
         generation_context: str | None = None,
+        commit: bool = True,
     ) -> GeneratedOutput:
         """Store one generation under the output type its summary mode names.
 
@@ -513,4 +520,5 @@ class StudyGuideService:
             model_used=model_used,
             generation_settings=generation_settings,
             generation_context=generation_context,
+            commit=commit,
         )

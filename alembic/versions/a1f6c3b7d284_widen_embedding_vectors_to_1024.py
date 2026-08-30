@@ -1,7 +1,7 @@
 """widen embedding vectors to 1024
 
 Revision ID: a1f6c3b7d284
-Revises: e74c4d3649f1
+Revises: 9f4c1d7b2e83
 Create Date: 2026-08-30 00:00:00.000000
 """
 
@@ -13,7 +13,7 @@ from alembic import op
 
 
 revision: str = "a1f6c3b7d284"
-down_revision: str | Sequence[str] | None = "e74c4d3649f1"
+down_revision: str | Sequence[str] | None = "9f4c1d7b2e83"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

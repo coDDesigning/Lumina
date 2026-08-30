@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import { useAuth } from '@/context/AuthContext';
 import { QuizModal } from '@/features/study/quiz/QuizModal';
@@ -23,7 +22,6 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
   const courseId = Number(workspace.id);
   useDocumentTitle(`${workspace.name} · Progress`);
 
-  const navigate = useNavigate();
   const [practiceTopic, setPracticeTopic] = useState<string | null>(null);
 
   const { entries, readyCount } = useCourseDocuments(courseId);
@@ -84,10 +82,7 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
           topics={workspace.topics}
           readyDocumentCount={readyCount}
           initialTopic={practiceTopic}
-          onQuizReady={(quizId) => {
-            setPracticeTopic(null);
-            navigate(`/courses/${workspace.id}/practice/${quizId}`);
-          }}
+          onQueued={() => setPracticeTopic(null)}
           onClose={() => setPracticeTopic(null)}
           onAttemptRecorded={reload}
         />

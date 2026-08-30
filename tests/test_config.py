@@ -999,8 +999,10 @@ def test_a_credential_alone_makes_exactly_its_vendor_available(
     loaded = load_settings()
 
     assert loaded.ai_available_vendors == (vendor,)
-    assert set(loaded.ai_model_catalog) == {vendor}
     assert loaded.ai_default_model.startswith(f"{vendor}:")
+    # The catalog is not filtered to the available vendors: a user's own key
+    # must be able to reach a vendor this deployment does not configure.
+    assert loaded.ai_model_catalog.get(vendor)
 
 
 def test_no_credential_leaves_no_model_and_fails_at_startup(
@@ -2014,6 +2016,17 @@ def test_processing_job_concurrency_is_bounded(
         load_settings()
 
 
+@pytest.mark.parametrize("value", ["0", "7", "-1"])
+def test_generation_job_concurrency_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("GENERATION_JOB_CONCURRENCY", value)
+
+    with pytest.raises(ValueError):
+        load_settings()
+
+
 def test_hosted_concurrency_beyond_the_connection_pool_is_refused(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -2034,11 +2047,13 @@ def test_hosted_concurrency_within_the_connection_pool_is_accepted(
 ) -> None:
     _configure_production(monkeypatch, tmp_path)
     _configure_hosted_s3(monkeypatch)
-    monkeypatch.setenv("DATABASE_POOL_SIZE", "5")
-    monkeypatch.setenv("DATABASE_MAX_OVERFLOW", "5")
+    monkeypatch.setenv("DATABASE_POOL_SIZE", "7")
+    monkeypatch.setenv("DATABASE_MAX_OVERFLOW", "7")
     monkeypatch.setenv("PROCESSING_JOB_CONCURRENCY", "4")
 
-    assert load_settings().processing_job_concurrency == 4
+    loaded = load_settings()
+    assert loaded.processing_job_concurrency == 4
+    assert loaded.generation_job_concurrency == 2
 
 
 def test_self_hosted_concurrency_is_not_gated_on_the_pool(

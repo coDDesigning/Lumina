@@ -9,7 +9,13 @@ from backend.app.models import User
 from schemas.credits import CreditStatusResponse, CreditTransactionResponse
 from schemas.prompt_context import EducationLevel
 from schemas.response import BaseResponse
-from schemas.user import PasswordChangeRequest, UserResponse, UserUpdate
+from schemas.user import (
+    PasswordChangeRequest,
+    UserApiKeysResponse,
+    UserApiKeysUpdateRequest,
+    UserResponse,
+    UserUpdate,
+)
 from services.credits import (
     DEFAULT_HISTORY_LIMIT,
     GENERATION_CREDIT_COSTS,
@@ -137,3 +143,33 @@ def list_my_credit_transactions(
         message="Credit transactions retrieved",
         data=[CreditTransactionResponse.model_validate(t) for t in transactions],
     )
+
+
+@router.get("/me/api-keys", response_model=BaseResponse[UserApiKeysResponse])
+def get_my_api_keys(
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Retrieve masked BYOK API keys for the authenticated user."""
+    keys = UserService.get_user_api_keys(db, current_user.id)
+    return BaseResponse(
+        success=True,
+        message="API keys retrieved successfully",
+        data=keys,
+    )
+
+
+@router.put("/me/api-keys", response_model=BaseResponse[UserApiKeysResponse])
+def update_my_api_keys(
+    payload: UserApiKeysUpdateRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Save, update, or clear BYOK API keys for the authenticated user."""
+    keys = UserService.update_user_api_keys(db, current_user.id, payload)
+    return BaseResponse(
+        success=True,
+        message="API keys updated successfully",
+        data=keys,
+    )
+

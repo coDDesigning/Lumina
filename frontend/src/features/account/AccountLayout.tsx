@@ -13,6 +13,7 @@ const SECTIONS = [
   { to: '/account', label: 'You', end: true },
   { to: '/account/background', label: 'Your background', end: false },
   { to: '/account/ai', label: 'AI', end: false },
+  { to: '/account/api-keys', label: 'API keys', end: false },
   { to: '/account/appearance', label: 'Appearance', end: false },
   { to: '/account/security', label: 'Security', end: false },
 ];

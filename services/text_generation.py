@@ -241,40 +241,54 @@ def is_transient_generation_error(exc: Exception) -> bool:
     try:
         import openai
 
-        if isinstance(
-            exc,
-            (
-                openai.APIConnectionError,
-                openai.APITimeoutError,
-                openai.RateLimitError,
-                openai.InternalServerError,
-            ),
-        ):
+        openai_errors = tuple(
+            getattr(openai, attr)
+            for attr in (
+                "APIConnectionError",
+                "APITimeoutError",
+                "RateLimitError",
+                "InternalServerError",
+            )
+            if hasattr(openai, attr)
+        )
+        if openai_errors and isinstance(exc, openai_errors):
             return True
-        if isinstance(exc, openai.APIStatusError):
+        status_err = getattr(openai, "APIStatusError", None)
+        if status_err and isinstance(exc, status_err):
             code = getattr(exc, "status_code", None)
             return code in {429, 500, 502, 503, 504}
-    except ImportError:
+    except (ImportError, AttributeError):
         pass
 
     try:
         import anthropic
 
-        if isinstance(
-            exc,
-            (
-                anthropic.APIConnectionError,
-                anthropic.APITimeoutError,
-                anthropic.RateLimitError,
-                anthropic.InternalServerError,
-            ),
-        ):
+        anthropic_errors = tuple(
+            getattr(anthropic, attr)
+            for attr in (
+                "APIConnectionError",
+                "APITimeoutError",
+                "RateLimitError",
+                "InternalServerError",
+            )
+            if hasattr(anthropic, attr)
+        )
+        if anthropic_errors and isinstance(exc, anthropic_errors):
             return True
-        if isinstance(exc, anthropic.APIStatusError):
+        status_err = getattr(anthropic, "APIStatusError", None)
+        if status_err and isinstance(exc, status_err):
             code = getattr(exc, "status_code", None)
             return code in {429, 500, 502, 503, 504}
-    except ImportError:
+    except (ImportError, AttributeError):
         pass
+
+    status_code = getattr(exc, "status_code", getattr(exc, "code", None))
+    if isinstance(status_code, int) and status_code in {429, 500, 502, 503, 504}:
+        return True
+
+    exc_name = type(exc).__name__.lower()
+    if "connection" in exc_name or "timeout" in exc_name:
+        return True
 
     if isinstance(exc, TextGenerationRateLimitError) and not isinstance(
         exc, GenerationConcurrencyError
@@ -478,8 +492,11 @@ class OllamaTextGenerationProvider:
         client: httpx.Client | None = None,
         timeout_seconds: int | None = None,
         model: str | None = None,
+        base_url: str | None = None,
     ) -> None:
-        self._base_url = settings.ollama_base_url
+        from services.embeddings import resolve_ollama_base_url
+
+        self._base_url = resolve_ollama_base_url(base_url or settings.ollama_base_url)
         self._model = model or settings.ollama_model
         self._timeout_seconds = (
             timeout_seconds
@@ -626,9 +643,12 @@ class OpenAITextGenerationProvider:
         if client is not None:
             self._client = client
         else:
-            from openai import OpenAI
+            try:
+                from openai import OpenAI
 
-            self._client = OpenAI(api_key=key, timeout=self._timeout_seconds)
+                self._client = OpenAI(api_key=key, timeout=self._timeout_seconds)
+            except (ImportError, AttributeError):
+                self._client = None
 
     def _extract_metadata(
         self, response: object, latency_ms: int
@@ -655,31 +675,48 @@ class OpenAITextGenerationProvider:
     def _handle_client_error(self, exc: Exception) -> None:
         if isinstance(exc, TextGenerationError):
             raise exc
-        # Import here to avoid hard dependency at module load
-        from openai import (
-            APITimeoutError,
-            RateLimitError as OpenAIRateLimitError,
-            APIStatusError,
-            APIConnectionError,
-        )
+        try:
+            from openai import (
+                APITimeoutError,
+                RateLimitError as OpenAIRateLimitError,
+                APIStatusError,
+                APIConnectionError,
+            )
 
-        if isinstance(exc, APITimeoutError):
-            raise TextGenerationTimeoutError("OpenAI request timed out.") from exc
-        if isinstance(exc, OpenAIRateLimitError):
+            if isinstance(exc, APITimeoutError):
+                raise TextGenerationTimeoutError("OpenAI request timed out.") from exc
+            if isinstance(exc, OpenAIRateLimitError):
+                raise TextGenerationRateLimitError("OpenAI rate limit exceeded.") from exc
+            if isinstance(exc, APIStatusError):
+                if exc.status_code in {401, 403}:
+                    raise TextGenerationAuthError("OpenAI authentication failed.") from exc
+                if exc.status_code in {429}:
+                    raise TextGenerationRateLimitError(
+                        "OpenAI rate limit exceeded."
+                    ) from exc
+                if exc.status_code in {500, 502, 503, 504}:
+                    raise TextGenerationProviderError(
+                        "OpenAI service unavailable."
+                    ) from exc
+                raise TextGenerationProviderError("OpenAI text generation failed.") from exc
+            if isinstance(exc, APIConnectionError):
+                raise TextGenerationConnectionError("OpenAI could not be reached.") from exc
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            pass
+
+        status_code = getattr(exc, "status_code", getattr(exc, "code", None))
+        if status_code in {401, 403}:
+            raise TextGenerationAuthError("OpenAI authentication failed.") from exc
+        if status_code == 429:
             raise TextGenerationRateLimitError("OpenAI rate limit exceeded.") from exc
-        if isinstance(exc, APIStatusError):
-            if exc.status_code in {401, 403}:
-                raise TextGenerationAuthError("OpenAI authentication failed.") from exc
-            if exc.status_code in {429}:
-                raise TextGenerationRateLimitError(
-                    "OpenAI rate limit exceeded."
-                ) from exc
-            if exc.status_code in {500, 502, 503, 504}:
-                raise TextGenerationProviderError(
-                    "OpenAI service unavailable."
-                ) from exc
-            raise TextGenerationProviderError("OpenAI text generation failed.") from exc
-        if isinstance(exc, APIConnectionError):
+        if status_code in {500, 502, 503, 504}:
+            raise TextGenerationProviderError("OpenAI service unavailable.") from exc
+        name = type(exc).__name__.lower()
+        if "timeout" in name:
+            raise TextGenerationTimeoutError("OpenAI request timed out.") from exc
+        if "ratelimit" in name:
+            raise TextGenerationRateLimitError("OpenAI rate limit exceeded.") from exc
+        if "connection" in name:
             raise TextGenerationConnectionError("OpenAI could not be reached.") from exc
         raise TextGenerationProviderError("OpenAI text generation failed.") from exc
 
@@ -770,9 +807,12 @@ class ClaudeTextGenerationProvider:
         if client is not None:
             self._client = client
         else:
-            from anthropic import Anthropic
+            try:
+                from anthropic import Anthropic
 
-            self._client = Anthropic(api_key=key, timeout=self._timeout_seconds)
+                self._client = Anthropic(api_key=key, timeout=self._timeout_seconds)
+            except (ImportError, ModuleNotFoundError, AttributeError):
+                self._client = None
 
     def _extract_metadata(
         self, response: object, latency_ms: int
@@ -803,30 +843,48 @@ class ClaudeTextGenerationProvider:
     def _handle_client_error(self, exc: Exception) -> None:
         if isinstance(exc, TextGenerationError):
             raise exc
-        from anthropic import (
-            APITimeoutError,
-            RateLimitError as AnthropicRateLimitError,
-            APIStatusError,
-            APIConnectionError,
-        )
+        try:
+            from anthropic import (
+                APITimeoutError,
+                RateLimitError as AnthropicRateLimitError,
+                APIStatusError,
+                APIConnectionError,
+            )
 
-        if isinstance(exc, APITimeoutError):
-            raise TextGenerationTimeoutError("Claude request timed out.") from exc
-        if isinstance(exc, AnthropicRateLimitError):
+            if isinstance(exc, APITimeoutError):
+                raise TextGenerationTimeoutError("Claude request timed out.") from exc
+            if isinstance(exc, AnthropicRateLimitError):
+                raise TextGenerationRateLimitError("Claude rate limit exceeded.") from exc
+            if isinstance(exc, APIStatusError):
+                if exc.status_code in {401, 403}:
+                    raise TextGenerationAuthError("Claude authentication failed.") from exc
+                if exc.status_code in {429}:
+                    raise TextGenerationRateLimitError(
+                        "Claude rate limit exceeded."
+                    ) from exc
+                if exc.status_code in {500, 502, 503, 504}:
+                    raise TextGenerationProviderError(
+                        "Claude service unavailable."
+                    ) from exc
+                raise TextGenerationProviderError("Claude text generation failed.") from exc
+            if isinstance(exc, APIConnectionError):
+                raise TextGenerationConnectionError("Claude could not be reached.") from exc
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            pass
+
+        status_code = getattr(exc, "status_code", getattr(exc, "code", None))
+        if status_code in {401, 403}:
+            raise TextGenerationAuthError("Claude authentication failed.") from exc
+        if status_code == 429:
             raise TextGenerationRateLimitError("Claude rate limit exceeded.") from exc
-        if isinstance(exc, APIStatusError):
-            if exc.status_code in {401, 403}:
-                raise TextGenerationAuthError("Claude authentication failed.") from exc
-            if exc.status_code in {429}:
-                raise TextGenerationRateLimitError(
-                    "Claude rate limit exceeded."
-                ) from exc
-            if exc.status_code in {500, 502, 503, 504}:
-                raise TextGenerationProviderError(
-                    "Claude service unavailable."
-                ) from exc
-            raise TextGenerationProviderError("Claude text generation failed.") from exc
-        if isinstance(exc, APIConnectionError):
+        if status_code in {500, 502, 503, 504}:
+            raise TextGenerationProviderError("Claude service unavailable.") from exc
+        name = type(exc).__name__.lower()
+        if "timeout" in name:
+            raise TextGenerationTimeoutError("Claude request timed out.") from exc
+        if "ratelimit" in name:
+            raise TextGenerationRateLimitError("Claude rate limit exceeded.") from exc
+        if "connection" in name:
             raise TextGenerationConnectionError("Claude could not be reached.") from exc
         raise TextGenerationProviderError("Claude text generation failed.") from exc
 
@@ -1321,9 +1379,62 @@ def resolve_effective_model(
     return resolved_id
 
 
+def resolve_user_api_key(
+    provider_name: str,
+    user: object | None = None,
+    user_api_keys: dict[str, str | None] | None = None,
+    explicit_key: str | None = None,
+) -> str | None:
+    """Resolve the API key for a provider, prioritizing explicit/user BYOK key before fallback."""
+    if explicit_key:
+        return explicit_key
+
+    clean_name = provider_name.strip().lower()
+
+    if user_api_keys:
+        if clean_name in user_api_keys and user_api_keys[clean_name]:
+            return user_api_keys[clean_name]
+        if clean_name == "claude" and user_api_keys.get("anthropic"):
+            return user_api_keys["anthropic"]
+        if clean_name == "anthropic" and user_api_keys.get("claude"):
+            return user_api_keys["claude"]
+
+    if user is not None:
+        try:
+            from utils.crypto import decrypt_value
+
+            if clean_name == "gemini":
+                enc = getattr(user, "encrypted_gemini_api_key", None)
+                if enc:
+                    decrypted = decrypt_value(enc)
+                    if decrypted:
+                        return decrypted
+            elif clean_name == "openai":
+                enc = getattr(user, "encrypted_openai_api_key", None)
+                if enc:
+                    decrypted = decrypt_value(enc)
+                    if decrypted:
+                        return decrypted
+            elif clean_name in {"claude", "anthropic"}:
+                enc = getattr(user, "encrypted_anthropic_api_key", None)
+                if enc:
+                    decrypted = decrypt_value(enc)
+                    if decrypted:
+                        return decrypted
+        except Exception as exc:
+            logger.warning(
+                "Failed to decrypt BYOK API key for provider '%s': %s. Falling back to default.",
+                clean_name,
+                exc,
+            )
+
+    return None
+
+
 def _instantiate_provider(
     provider_name: str,
     model_name: str | None = None,
+    api_key: str | None = None,
 ) -> TextGenerationProvider:
     clean_name = provider_name.strip().lower()
     constructor = ProviderRegistry.get_constructor(clean_name)
@@ -1335,12 +1446,17 @@ def _instantiate_provider(
 
     default_model = ProviderRegistry.get_default_model(clean_name)
     model = model_name or default_model
+    if api_key and ProviderRegistry.requires_key(clean_name):
+        return constructor(model=model, api_key=api_key)
     return constructor(model=model)
 
 
 def get_text_generation_provider(
     effective_model: str | None = None,
     *,
+    user: object | None = None,
+    user_api_keys: dict[str, str | None] | None = None,
+    api_key: str | None = None,
     require_json_mode: bool = False,
     overall_timeout_seconds: int | None = None,
 ) -> TextGenerationProvider:
@@ -1403,7 +1519,13 @@ def get_text_generation_provider(
 
     for name in provider_names:
         model_override = selected_model if name == selected_provider else None
-        providers.append(_instantiate_provider(name, model_override))
+        resolved_key = resolve_user_api_key(
+            name,
+            user=user,
+            user_api_keys=user_api_keys,
+            explicit_key=api_key if name == selected_provider else None,
+        )
+        providers.append(_instantiate_provider(name, model_override, api_key=resolved_key))
 
     return ReliableTextGenerationProvider(
         providers,
@@ -1411,3 +1533,4 @@ def get_text_generation_provider(
         max_concurrency=settings.ai_generation_max_concurrency,
         overall_timeout_seconds=overall_timeout_seconds,
     )
+

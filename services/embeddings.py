@@ -7,6 +7,9 @@ for vectors and never learns which provider produced them.
 """
 
 import math
+import os
+import socket
+import urllib.parse
 from collections.abc import Iterator, Sequence
 from typing import Protocol
 
@@ -21,6 +24,37 @@ from backend.app.config import (
     settings,
 )
 from backend.app.models import EMBEDDING_DIMENSIONS
+
+
+def resolve_ollama_base_url(url_str: str | None = None) -> str:
+    """Parse OLLAMA_BASE_URL, defaulting to http://127.0.0.1:11434 if invalid or unresolved."""
+    default_url = "http://127.0.0.1:11434"
+    raw = (
+        url_str
+        if url_str is not None
+        else (getattr(settings, "ollama_base_url", None) or os.getenv("OLLAMA_BASE_URL"))
+    )
+    if not raw or not isinstance(raw, str) or not raw.strip():
+        return default_url
+    cleaned = raw.strip().rstrip("/")
+    try:
+        parsed = urllib.parse.urlsplit(cleaned)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return default_url
+        hostname = parsed.hostname
+        if hostname in {"host.docker.internal", "localhost"}:
+            try:
+                socket.getaddrinfo(
+                    hostname,
+                    parsed.port or 11434,
+                    socket.AF_UNSPEC,
+                    socket.SOCK_STREAM,
+                )
+            except (socket.gaierror, OSError):
+                return default_url
+        return cleaned
+    except Exception:
+        return default_url
 
 
 class EmbeddingProvider(Protocol):
@@ -178,8 +212,9 @@ class OllamaEmbeddingProvider:
         self,
         client: httpx.Client | None = None,
         timeout_seconds: int | None = None,
+        base_url: str | None = None,
     ) -> None:
-        self._base_url = settings.ollama_base_url
+        self._base_url = resolve_ollama_base_url(base_url or settings.ollama_base_url)
         self._model = settings.ollama_embedding_model
         self._batch_size = settings.embedding_batch_size
         self._timeout_seconds = (
@@ -201,9 +236,27 @@ class OllamaEmbeddingProvider:
                 "Ollama did not return embeddings within the configured timeout."
             ) from exc
         except httpx.TransportError as exc:
-            raise EmbeddingConnectionError(
-                "Ollama could not be reached at the configured base URL."
-            ) from exc
+            if self._base_url != "http://127.0.0.1:11434":
+                try:
+                    fallback_url = "http://127.0.0.1:11434"
+                    response = self._client.post(
+                        f"{fallback_url}{self.EMBED_PATH}",
+                        json={"model": self._model, "input": texts, "truncate": True},
+                        timeout=self._timeout_seconds,
+                    )
+                    self._base_url = fallback_url
+                except httpx.TimeoutException as timeout_exc:
+                    raise EmbeddingTimeoutError(
+                        "Ollama did not return embeddings within the configured timeout."
+                    ) from timeout_exc
+                except httpx.TransportError as transport_exc:
+                    raise EmbeddingConnectionError(
+                        "Ollama could not be reached at the configured base URL."
+                    ) from transport_exc
+            else:
+                raise EmbeddingConnectionError(
+                    "Ollama could not be reached at the configured base URL."
+                ) from exc
 
         if response.status_code == 429:
             raise EmbeddingRateLimitError("Ollama rate limit exceeded.")

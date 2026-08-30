@@ -6,6 +6,7 @@ import { APIError } from '@/api/client'
 import type { CreditStatus } from '@/api/types'
 import { ThemeProvider } from '@/app/ThemeProvider'
 import AccountAppearancePage from './AccountAppearancePage'
+import AccountApiKeysPage from './AccountApiKeysPage'
 import AccountLayout from './AccountLayout'
 import AccountYouPage from './AccountYouPage'
 import { AiPreferencesSection } from './AiPreferencesSection'
@@ -86,6 +87,8 @@ vi.mock('@/api/user', () => ({
     updatePreferredModel: vi.fn(),
     updateEducationLevel: vi.fn(),
     getCreditTransactions: vi.fn(),
+    getApiKeys: vi.fn(),
+    updateApiKeys: vi.fn(),
   },
 }))
 
@@ -106,6 +109,7 @@ const mockAdsGetConfig = vi.mocked(adsAPI.getConfig)
 const mockUpdatePreferredModel = vi.mocked(userAPI.updatePreferredModel)
 const mockUpdateEducationLevel = vi.mocked(userAPI.updateEducationLevel)
 const mockGetCreditTransactions = vi.mocked(userAPI.getCreditTransactions)
+const mockGetApiKeys = vi.mocked(userAPI.getApiKeys)
 
 function renderAccountPage(path = '/account') {
   return render(
@@ -116,6 +120,7 @@ function renderAccountPage(path = '/account') {
             <Route index element={<AccountYouPage />} />
             <Route path="background" element={<ProfileKnowledgeSection />} />
             <Route path="ai" element={<AiPreferencesSection />} />
+            <Route path="api-keys" element={<AccountApiKeysPage />} />
             <Route path="appearance" element={<AccountAppearancePage />} />
           </Route>
         </Routes>
@@ -134,6 +139,14 @@ describe('AccountPage', () => {
     })
     mockProfileDocumentsList.mockResolvedValue([])
     mockKnowledgeList.mockResolvedValue([])
+    mockGetApiKeys.mockResolvedValue({
+      openai_api_key: null,
+      gemini_api_key: null,
+      anthropic_api_key: null,
+      has_openai_key: false,
+      has_gemini_key: false,
+      has_anthropic_key: false,
+    })
     mockModelsList.mockResolvedValue([
       {
         id: 'gemini-1.5-flash',
@@ -366,6 +379,10 @@ describe('AccountPage credits', () => {
       '/account/background',
     )
     expect(within(nav).getByRole('link', { name: 'AI' })).toHaveAttribute('href', '/account/ai')
+    expect(within(nav).getByRole('link', { name: 'API keys' })).toHaveAttribute(
+      'href',
+      '/account/api-keys',
+    )
     expect(within(nav).getByRole('link', { name: 'Appearance' })).toHaveAttribute(
       'href',
       '/account/appearance',

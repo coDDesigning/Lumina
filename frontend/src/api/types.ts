@@ -1342,3 +1342,18 @@ export interface AdTelemetryRequest {
 export interface AdTelemetryResponse {
   recorded: boolean;
 }
+
+export interface UserApiKeys {
+  openai_api_key: string | null;
+  gemini_api_key: string | null;
+  anthropic_api_key: string | null;
+  has_openai_key: boolean;
+  has_gemini_key: boolean;
+  has_anthropic_key: boolean;
+}
+
+export interface UserApiKeysUpdateRequest {
+  openai_api_key?: string | null;
+  gemini_api_key?: string | null;
+  anthropic_api_key?: string | null;
+}

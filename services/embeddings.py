@@ -1,26 +1,20 @@
-"""Embedding generation providers and their configuration-driven factory.
+"""In-process embedding generation.
 
-Embeddings are a separate seam from text generation: a deployment may pair a
-large generative model with a small dedicated embedding model, and the two
-call different endpoints with different response contracts. Feature code asks
-for vectors and never learns which provider produced them.
+Embeddings are computed locally and are independent of which vendor answers a
+generation request: the same vectors are produced whether this deployment talks
+to Gemini, to Ollama, or to nothing. Nothing leaves the machine and there is no
+endpoint to be unavailable, so the retryable half of the error taxonomy below
+is unreachable here; it is kept because services/document_embedding.py
+classifies on it and the job state machine consumes that classification.
 """
 
 import math
-from collections.abc import Iterator, Sequence
+import threading
+from collections.abc import Sequence
 from typing import Protocol
 
-import httpx
-from google import genai
-from google.genai import types
-
-from backend.app.config import (
-    AI_PROVIDER_GEMINI,
-    AI_PROVIDER_OLLAMA,
-    IMPLEMENTED_EMBEDDING_PROVIDERS,
-    settings,
-)
-from backend.app.models import EMBEDDING_DIMENSIONS
+from backend.app.config import EMBEDDING_PROVIDER_LOCAL, settings
+from backend.app.embedding_models import EMBEDDING_MODEL
 
 
 class EmbeddingProvider(Protocol):
@@ -108,11 +102,6 @@ def is_transient_embedding_error(exc: Exception) -> bool:
     return isinstance(exc, EmbeddingError) and exc.retryable
 
 
-def _batched(texts: Sequence[str], size: int) -> Iterator[list[str]]:
-    for start in range(0, len(texts), size):
-        yield list(texts[start : start + size])
-
-
 def _validate_vectors(
     vectors: object,
     *,
@@ -139,9 +128,9 @@ def _validate_vectors(
             raise EmbeddingInvalidResponseError(
                 "The embedding provider returned an empty vector."
             )
-        if len(vector) != EMBEDDING_DIMENSIONS:
+        if len(vector) != EMBEDDING_MODEL.dimensions:
             raise EmbeddingDimensionMismatchError(
-                f"Embeddings must contain {EMBEDDING_DIMENSIONS} values, "
+                f"Embeddings must contain {EMBEDDING_MODEL.dimensions} values, "
                 f"got {len(vector)}."
             )
         values: list[float] = []
@@ -160,169 +149,85 @@ def _validate_vectors(
     return validated
 
 
-_shared_http_client: httpx.Client | None = None
+_shared_model: object | None = None
+_shared_model_lock = threading.Lock()
+_compute_lock = threading.Lock()
 
 
-def _get_shared_http_client() -> httpx.Client:
-    global _shared_http_client
-    if _shared_http_client is None:
-        _shared_http_client = httpx.Client()
-    return _shared_http_client
+def load_shared_model() -> object:
+    """Load the ONNX graph once per process.
+
+    One instance, not one per caller: a multi-gigabyte graph per worker slot
+    would cost more memory than the container has, and onnxruntime already
+    saturates the available cores from a single session.
+    """
+    global _shared_model
+    with _shared_model_lock:
+        if _shared_model is None:
+            try:
+                from fastembed import TextEmbedding
+            except ImportError as exc:
+                raise EmbeddingConfigurationError(
+                    "fastembed is not installed; install requirements.txt."
+                ) from exc
+
+            try:
+                _shared_model = TextEmbedding(
+                    model_name=EMBEDDING_MODEL.model_id,
+                    cache_dir=settings.embedding_model_cache_directory,
+                    local_files_only=True,
+                )
+            except Exception as exc:
+                raise EmbeddingConfigurationError(
+                    f"The embedding model '{EMBEDDING_MODEL.model_id}' is not "
+                    f"present in "
+                    f"'{settings.embedding_model_cache_directory}'. Container "
+                    "images bake it at build time; a checkout downloads it once "
+                    "with `python scripts/fetch_embedding_model.py`."
+                ) from exc
+        return _shared_model
 
 
-class OllamaEmbeddingProvider:
-    PROVIDER_NAME = AI_PROVIDER_OLLAMA
-    EMBED_PATH = "/api/embed"
+class LocalEmbeddingProvider:
+    """fastembed ONNX embeddings computed in this process.
 
-    def __init__(
-        self,
-        client: httpx.Client | None = None,
-        timeout_seconds: int | None = None,
-    ) -> None:
-        self._base_url = settings.ollama_base_url
-        self._model = settings.ollama_embedding_model
-        self._batch_size = settings.embedding_batch_size
-        self._timeout_seconds = (
-            timeout_seconds
-            if timeout_seconds is not None
-            else settings.embedding_timeout_seconds
-        )
-        self._client = client or _get_shared_http_client()
+    The query and passage prefixes are applied here rather than left to the
+    library, because the library treats them as optional and a silently
+    unprefixed query is a recall loss no test would notice.
+    """
 
-    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        try:
-            response = self._client.post(
-                f"{self._base_url}{self.EMBED_PATH}",
-                json={"model": self._model, "input": texts, "truncate": True},
-                timeout=self._timeout_seconds,
-            )
-        except httpx.TimeoutException as exc:
-            raise EmbeddingTimeoutError(
-                "Ollama did not return embeddings within the configured timeout."
-            ) from exc
-        except httpx.TransportError as exc:
-            raise EmbeddingConnectionError(
-                "Ollama could not be reached at the configured base URL."
-            ) from exc
+    PROVIDER_NAME = EMBEDDING_PROVIDER_LOCAL
 
-        if response.status_code == 429:
-            raise EmbeddingRateLimitError("Ollama rate limit exceeded.")
-        if not response.is_success:
-            raise EmbeddingProviderError(
-                f"Ollama returned HTTP {response.status_code}."
-            )
+    def __init__(self, *, model: object | None = None) -> None:
+        self._model = model
 
-        try:
-            envelope = response.json()
-        except ValueError as exc:
-            raise EmbeddingInvalidResponseError(
-                "Ollama returned a response that is not valid JSON."
-            ) from exc
-        if not isinstance(envelope, dict):
-            raise EmbeddingInvalidResponseError(
-                "Ollama returned an unexpected response structure."
-            )
-
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        model = self._model if self._model is not None else load_shared_model()
+        with _compute_lock:
+            try:
+                raw = list(model.embed(texts, batch_size=settings.embedding_batch_size))
+            except EmbeddingError:
+                raise
+            except Exception as exc:
+                raise EmbeddingProviderError(
+                    "Local embedding generation failed."
+                ) from exc
         return _validate_vectors(
-            envelope.get("embeddings"),
-            expected_count=len(texts),
+            [list(vector) for vector in raw], expected_count=len(texts)
         )
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
-        vectors: list[list[float]] = []
-        for batch in _batched(texts, self._batch_size):
-            vectors.extend(self._embed_batch(batch))
-        return vectors
+        prefix = EMBEDDING_MODEL.passage_prefix
+        return self._embed([f"{prefix}{text}" for text in texts])
 
     def embed_query(self, text: str) -> list[float]:
-        return self._embed_batch([text])[0]
-
-
-class GeminiEmbeddingProvider:
-    PROVIDER_NAME = AI_PROVIDER_GEMINI
-
-    def __init__(
-        self,
-        client: object | None = None,
-        timeout_seconds: int | None = None,
-    ) -> None:
-        api_key = settings.gemini_api_key
-        if client is None and not api_key:
-            raise EmbeddingConfigurationError(
-                "EMBEDDING_PROVIDER 'gemini' requires GEMINI_API_KEY to be set."
-            )
-        self._model = settings.gemini_embedding_model
-        self._batch_size = settings.embedding_batch_size
-        timeout_sec = (
-            timeout_seconds
-            if timeout_seconds is not None
-            else settings.embedding_timeout_seconds
-        )
-        http_options = types.HttpOptions(timeout=int(timeout_sec * 1000))
-        self._client = client or genai.Client(
-            api_key=api_key,
-            http_options=http_options,
-        )
-
-    def _handle_client_error(self, exc: Exception) -> None:
-        if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
-            raise EmbeddingTimeoutError("Gemini embedding request timed out.") from exc
-        status = getattr(exc, "code", None)
-        if status == 429:
-            raise EmbeddingRateLimitError("Gemini rate limit exceeded.") from exc
-        if status in {401, 403}:
-            raise EmbeddingAuthError(
-                "Gemini rejected the configured credentials."
-            ) from exc
-        if isinstance(status, int) and 400 <= status < 500:
-            raise EmbeddingInvalidResponseError(
-                "Gemini rejected the embedding request."
-            ) from exc
-        raise EmbeddingProviderError("Gemini failed to return embeddings.") from exc
-
-    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        try:
-            response = self._client.models.embed_content(
-                model=self._model,
-                contents=texts,
-                config={"output_dimensionality": EMBEDDING_DIMENSIONS},
-            )
-        except Exception as exc:
-            self._handle_client_error(exc)
-
-        raw = getattr(response, "embeddings", None)
-        if not isinstance(raw, list):
-            raise EmbeddingInvalidResponseError(
-                "Gemini returned an unexpected response structure."
-            )
-        return _validate_vectors(
-            [getattr(item, "values", None) for item in raw],
-            expected_count=len(texts),
-        )
-
-    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
-        vectors: list[list[float]] = []
-        for batch in _batched(texts, self._batch_size):
-            vectors.extend(self._embed_batch(batch))
-        return vectors
-
-    def embed_query(self, text: str) -> list[float]:
-        return self._embed_batch([text])[0]
+        return self._embed([f"{EMBEDDING_MODEL.query_prefix}{text}"])[0]
 
 
 def configured_embedding_identity() -> tuple[str, str]:
     """Report the provider and model that vectors should be attributed to."""
-    if settings.embedding_provider == AI_PROVIDER_GEMINI:
-        return AI_PROVIDER_GEMINI, settings.gemini_embedding_model
-    return AI_PROVIDER_OLLAMA, settings.ollama_embedding_model
+    return EMBEDDING_PROVIDER_LOCAL, EMBEDDING_MODEL.model_id
 
 
 def get_embedding_provider() -> EmbeddingProvider:
-    provider_name = settings.embedding_provider
-    if provider_name not in IMPLEMENTED_EMBEDDING_PROVIDERS:
-        raise EmbeddingConfigurationError(
-            f"Embedding provider '{provider_name}' is not implemented."
-        )
-    if provider_name == AI_PROVIDER_GEMINI:
-        return GeminiEmbeddingProvider()
-    return OllamaEmbeddingProvider()
+    return LocalEmbeddingProvider()

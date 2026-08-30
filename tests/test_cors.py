@@ -19,9 +19,8 @@ def _run_probe(script: str, *, allowed_origins: str | None) -> dict[str, object]
             "STORAGE_BACKEND": "local",
             "VECTOR_BACKEND": "chroma",
             "MAX_REQUEST_SIZE_BYTES": "4",
-            "AI_PROVIDER": "ollama",
+            "OLLAMA_BASE_URL": "http://localhost:11434",
             "EMBEDDING_PROVIDER": "ollama",
-            "IMAGE_PROVIDER": "none",
             "CREDIT_METERING_ENABLED": "false",
             "PYTHONPATH": str(PROJECT_ROOT),
         }

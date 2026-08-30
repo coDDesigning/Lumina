@@ -945,22 +945,8 @@ ProviderRegistry.register(
 
 def configured_provider_identity() -> tuple[str, str]:
     """Report the provider name and model the application is configured to use."""
-    provider_name = settings.ai_provider
-    default_model = ProviderRegistry.get_default_model(provider_name)
-    if default_model:
-        return provider_name, default_model
-
-    # Fallback to old logic for backward compatibility
-    if provider_name == AI_PROVIDER_OLLAMA:
-        return AI_PROVIDER_OLLAMA, settings.ollama_model
-    if provider_name == AI_PROVIDER_GEMINI:
-        return AI_PROVIDER_GEMINI, GeminiTextGenerationProvider.MODEL
-    if provider_name == AI_PROVIDER_OPENAI:
-        return AI_PROVIDER_OPENAI, DEFAULT_OPENAI_MODEL
-    if provider_name == AI_PROVIDER_CLAUDE:
-        return AI_PROVIDER_CLAUDE, DEFAULT_CLAUDE_MODEL
-
-    return provider_name, "unknown"
+    provider_name, model_name = settings.ai_default_model.split(":", 1)
+    return provider_name, model_name
 
 
 def model_identifier(metadata: GenerationMetadata | None) -> str:
@@ -1192,17 +1178,7 @@ class ReliableTextGenerationProvider:
 
 
 def get_available_models() -> list[dict[str, object]]:
-    primary_name = settings.ai_provider
-    provider_names = [primary_name]
-
-    if settings.ai_fallback_providers:
-        for fallback_token in (
-            item.strip().lower()
-            for item in settings.ai_fallback_providers.split(",")
-            if item.strip()
-        ):
-            if fallback_token not in provider_names:
-                provider_names.append(fallback_token)
+    provider_names = list(settings.ai_available_vendors)
 
     standard_capabilities = [
         "study_guide",
@@ -1222,7 +1198,7 @@ def get_available_models() -> list[dict[str, object]]:
         description_template = ProviderRegistry.get_description(provider)
         is_local = ProviderRegistry.is_local(provider)
 
-        for index, entry in enumerate(provider_models):
+        for entry in provider_models:
             model_name = str(entry["model"])
             is_json = bool(entry.get("json_mode", True))
             context_win = int(entry.get("context_window", 8192))
@@ -1243,7 +1219,8 @@ def get_available_models() -> list[dict[str, object]]:
                     "provider": provider,
                     "model": model_name,
                     "display_name": f"{vendor} ({model_name})",
-                    "is_default": provider == primary_name and index == 0,
+                    "is_default": f"{provider}:{model_name}"
+                    == settings.ai_default_model,
                     "cost_hint": cost_hint,
                     "capabilities": list(standard_capabilities),
                     "description": description,
@@ -1344,17 +1321,7 @@ def get_text_generation_provider(
     require_json_mode: bool = False,
     overall_timeout_seconds: int | None = None,
 ) -> TextGenerationProvider:
-    primary_name = settings.ai_provider
-    provider_names = [primary_name]
-
-    if settings.ai_fallback_providers:
-        for fallback_token in (
-            item.strip().lower()
-            for item in settings.ai_fallback_providers.split(",")
-            if item.strip()
-        ):
-            if fallback_token not in provider_names:
-                provider_names.append(fallback_token)
+    provider_names = list(settings.ai_available_vendors)
 
     # Validate effective model's JSON mode requirement
     if effective_model and require_json_mode:

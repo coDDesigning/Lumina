@@ -30,20 +30,10 @@ from backend.app.config import (
     DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS,
     DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS,
     DEFAULT_EMBEDDING_BATCH_SIZE,
-    DEFAULT_EMBEDDING_PROVIDER,
-    DEFAULT_EMBEDDING_TIMEOUT_SECONDS,
-    DEFAULT_GEMINI_EMBEDDING_MODEL,
-    DEFAULT_GEMINI_IMAGE_MODEL,
-    DEFAULT_IMAGE_PROVIDER,
-    DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES,
-    DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS,
+    DEFAULT_EMBEDDING_MODEL_CACHE_DIRECTORY,
     DEFAULT_OCR_DPI,
     DEFAULT_OCR_LANGUAGE,
     DEFAULT_OCR_MIN_TEXT_CHARACTERS,
-    DEFAULT_OLLAMA_BASE_URL,
-    DEFAULT_OLLAMA_EMBEDDING_MODEL,
-    DEFAULT_OLLAMA_IMAGE_MODEL,
-    DEFAULT_OLLAMA_MODEL,
     DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
     DEFAULT_PROCESSING_JOB_CONCURRENCY,
     DEFAULT_PROCESSING_JOB_LEASE_SECONDS,
@@ -52,13 +42,10 @@ from backend.app.config import (
     DEFAULT_RETRIEVAL_CHUNK_LIMIT,
     DEFAULT_RETRIEVAL_MIN_SIMILARITY,
     DEFAULT_UPLOAD_REQUEST_TIMEOUT_SECONDS,
+    AI_VENDOR_PREFERENCE_ORDER,
     IMPLEMENTED_AI_PROVIDERS,
-    IMPLEMENTED_EMBEDDING_PROVIDERS,
-    IMPLEMENTED_IMAGE_PROVIDERS,
     MODE_HOSTED,
     MODE_SELF_HOSTED,
-    RECOGNIZED_AI_PROVIDERS,
-    RECOGNIZED_IMAGE_PROVIDERS,
     VECTOR_BACKEND_CHROMA,
     VECTOR_BACKEND_PGVECTOR,
     DEFAULT_COURSE_PURGE_INTERVAL_SECONDS,
@@ -79,7 +66,7 @@ CONFIGURATION_KEYS = (
     "APP_DEBUG",
     "CORS_ALLOWED_ORIGINS",
     "DEPLOYMENT_MODE",
-    "AI_PROVIDER",
+    "AI_DEFAULT_MODEL",
     "AI_MODEL_CATALOG",
     "AI_MODEL_COST_RATES",
     "DATABASE_URL",
@@ -100,7 +87,6 @@ CONFIGURATION_KEYS = (
     "BOOTSTRAP_ADMIN_EMAIL",
     "BOOTSTRAP_ADMIN_TOKEN",
     "GEMINI_API_KEY",
-    "AI_FALLBACK_PROVIDERS",
     "AI_GENERATION_TIMEOUT_SECONDS",
     "AI_GENERATION_MAX_ATTEMPTS",
     "AI_GENERATION_BACKOFF_BASE_SECONDS",
@@ -138,14 +124,8 @@ CONFIGURATION_KEYS = (
     "DOCUMENT_CHUNK_OVERLAP_CHARACTERS",
     "RETRIEVAL_CHUNK_LIMIT",
     "RETRIEVAL_MIN_SIMILARITY",
-    "EMBEDDING_PROVIDER",
-    "OLLAMA_EMBEDDING_MODEL",
-    "GEMINI_EMBEDDING_MODEL",
     "EMBEDDING_BATCH_SIZE",
-    "EMBEDDING_TIMEOUT_SECONDS",
-    "IMAGE_PROVIDER",
-    "OLLAMA_IMAGE_MODEL",
-    "GEMINI_IMAGE_MODEL",
+    "EMBEDDING_MODEL_CACHE_DIRECTORY",
     "IMAGE_UNDERSTANDING_TIMEOUT_SECONDS",
     "IMAGE_UNDERSTANDING_MAX_BYTES",
     "VECTOR_BACKEND",
@@ -193,6 +173,9 @@ CONFIGURATION_KEYS = (
 def clear_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in CONFIGURATION_KEYS:
         monkeypatch.delenv(key, raising=False)
+    # A vendor is available only when its credential is configured, so a bare
+    # environment leaves no model at all.
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 
 def _configure_production(
@@ -979,70 +962,127 @@ def test_gemini_api_key_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None
     assert load_settings().gemini_api_key == "test-gemini-key"
 
 
-def test_ai_provider_defaults_to_ollama() -> None:
-    assert load_settings().ai_provider == "ollama"
-
-
-def test_ai_provider_rejects_unsupported_value(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("AI_PROVIDER", "unsupported")
-
-    with pytest.raises(ValueError, match="AI_PROVIDER"):
-        load_settings()
-
-
-@pytest.mark.parametrize("provider", ["openai", "claude"])
-def test_recognized_provider_requires_api_key(
-    monkeypatch: pytest.MonkeyPatch,
-    provider: str,
-) -> None:
-    monkeypatch.setenv("AI_PROVIDER", provider)
-
-    with pytest.raises(ValueError, match="API_KEY is required"):
-        load_settings()
-
-
-@pytest.mark.parametrize("fallback", ["openai", "gemini,claude", " claude "])
-def test_fallback_provider_requires_api_key(
-    monkeypatch: pytest.MonkeyPatch,
-    fallback: str,
-) -> None:
-    monkeypatch.setenv("AI_FALLBACK_PROVIDERS", fallback)
-
-    with pytest.raises(ValueError, match="API_KEY is required"):
-        load_settings()
-
-
-def test_unrecognized_fallback_provider_fails_at_startup(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("AI_FALLBACK_PROVIDERS", "gemeni")
-
-    with pytest.raises(ValueError, match="AI_FALLBACK_PROVIDERS"):
-        load_settings()
-
-
-def test_implemented_fallback_providers_load(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("AI_FALLBACK_PROVIDERS", "gemini,ollama")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-
-    assert load_settings().ai_fallback_providers == "gemini,ollama"
-
-
 def test_implemented_providers_are_the_authoritative_list() -> None:
     assert IMPLEMENTED_AI_PROVIDERS == ("gemini", "ollama", "openai", "claude")
-    assert set(IMPLEMENTED_AI_PROVIDERS) <= set(RECOGNIZED_AI_PROVIDERS)
+    assert set(AI_VENDOR_PREFERENCE_ORDER) == set(IMPLEMENTED_AI_PROVIDERS)
 
 
-def test_ollama_settings_default_to_a_working_local_endpoint() -> None:
+def _only(monkeypatch: pytest.MonkeyPatch, **credentials: str) -> None:
+    for key in (
+        "OLLAMA_BASE_URL",
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in credentials.items():
+        monkeypatch.setenv(key, value)
+
+
+@pytest.mark.parametrize(
+    ("env_name", "env_value", "vendor"),
+    [
+        ("OLLAMA_BASE_URL", "http://localhost:11434", "ollama"),
+        ("GEMINI_API_KEY", "k", "gemini"),
+        ("OPENAI_API_KEY", "k", "openai"),
+        ("ANTHROPIC_API_KEY", "k", "claude"),
+    ],
+)
+def test_a_credential_alone_makes_exactly_its_vendor_available(
+    monkeypatch: pytest.MonkeyPatch,
+    env_name: str,
+    env_value: str,
+    vendor: str,
+) -> None:
+    _only(monkeypatch, **{env_name: env_value})
+
     loaded = load_settings()
 
-    assert loaded.ai_provider == "ollama"
-    assert loaded.ollama_base_url == DEFAULT_OLLAMA_BASE_URL
-    assert loaded.ollama_model == DEFAULT_OLLAMA_MODEL
+    assert loaded.ai_available_vendors == (vendor,)
+    assert set(loaded.ai_model_catalog) == {vendor}
+    assert loaded.ai_default_model.startswith(f"{vendor}:")
+
+
+def test_no_credential_leaves_no_model_and_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only(monkeypatch)
+
+    with pytest.raises(ValueError, match="No AI model is available"):
+        load_settings()
+
+
+def test_local_vendor_is_preferred_when_several_are_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only(monkeypatch, OLLAMA_BASE_URL="http://localhost:11434", GEMINI_API_KEY="k")
+
+    loaded = load_settings()
+
+    assert loaded.ai_available_vendors == ("ollama", "gemini")
+    assert loaded.ai_default_model.startswith("ollama:")
+
+
+def test_ai_default_model_pins_the_deployment_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only(monkeypatch, OLLAMA_BASE_URL="http://localhost:11434", GEMINI_API_KEY="k")
+    monkeypatch.setenv("AI_DEFAULT_MODEL", "gemini:gemini-3.6-flash")
+
+    assert load_settings().ai_default_model == "gemini:gemini-3.6-flash"
+
+
+def test_ai_default_model_outside_the_catalog_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only(monkeypatch, GEMINI_API_KEY="k")
+    monkeypatch.setenv("AI_DEFAULT_MODEL", "gemini:no-such-model")
+
+    with pytest.raises(ValueError, match="is not an available model"):
+        load_settings()
+
+
+def test_catalog_omitting_a_configured_vendor_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only(monkeypatch, OLLAMA_BASE_URL="http://localhost:11434", GEMINI_API_KEY="k")
+    monkeypatch.setenv(
+        "AI_MODEL_CATALOG",
+        json.dumps(
+            {
+                "ollama": [
+                    {
+                        "model": "llama3.1",
+                        "json_mode": True,
+                        "context_window": 8192,
+                        "vision": False,
+                    }
+                ]
+            }
+        ),
+    )
+
+    with pytest.raises(ValueError, match="declares no models for configured vendor"):
+        load_settings()
+
+
+def test_vision_needs_a_vendor_we_can_send_an_image_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only(monkeypatch, OPENAI_API_KEY="k")
+
+    loaded = load_settings()
+
+    assert any(entry["vision"] for entry in loaded.ai_model_catalog["openai"])
+    assert loaded.ai_vision_model is None
+
+
+def test_vision_resolves_to_a_vendor_with_an_implementation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only(monkeypatch, GEMINI_API_KEY="k")
+
+    assert load_settings().ai_vision_model == "gemini:gemini-3.6-flash"
 
 
 def test_ollama_settings_are_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1247,11 +1287,37 @@ def test_env_example_advertises_every_active_ollama_setting() -> None:
     section = "\n".join(_ai_section_of_env_example())
 
     for name in (
-        "AI_PROVIDER",
         "OLLAMA_BASE_URL",
         "OLLAMA_MODEL",
     ):
         assert f"{name}=" in section, f"{name} is read by config.py but not documented."
+
+
+def test_embedding_defaults_are_ready_without_any_vendor() -> None:
+    loaded = load_settings()
+
+    assert (
+        loaded.embedding_model_cache_directory
+        == DEFAULT_EMBEDDING_MODEL_CACHE_DIRECTORY
+    )
+    assert loaded.embedding_batch_size == DEFAULT_EMBEDDING_BATCH_SIZE
+
+
+def test_embedding_model_cache_directory_is_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_MODEL_CACHE_DIRECTORY", "/opt/models")
+
+    assert load_settings().embedding_model_cache_directory == "/opt/models"
+
+
+def test_embedding_model_cache_directory_must_not_be_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_MODEL_CACHE_DIRECTORY", "   ")
+
+    with pytest.raises(ValueError, match="EMBEDDING_MODEL_CACHE_DIRECTORY"):
+        load_settings()
 
 
 def test_all_config_keys_are_declared_in_env_example() -> None:
@@ -1299,18 +1365,6 @@ def test_all_config_keys_are_declared_in_env_example() -> None:
         f"{sorted(missing)}.\n"
         f"Every environment variable must be declared (or commented as a placeholder) in .env.example."
     )
-
-
-def test_gemini_provider_does_not_require_ollama_configuration(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("AI_PROVIDER", "gemini")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-
-    loaded = load_settings()
-
-    assert loaded.ai_provider == "gemini"
-    assert loaded.ollama_base_url == DEFAULT_OLLAMA_BASE_URL
 
 
 MATERIAL_BUDGET_SETTINGS = (
@@ -1454,67 +1508,6 @@ def test_env_example_advertises_every_retrieval_setting() -> None:
         )
 
 
-def test_embedding_defaults_are_self_hosted_ready() -> None:
-    loaded = load_settings()
-
-    assert loaded.embedding_provider == DEFAULT_EMBEDDING_PROVIDER
-    assert loaded.ollama_embedding_model == DEFAULT_OLLAMA_EMBEDDING_MODEL
-    assert loaded.gemini_embedding_model == DEFAULT_GEMINI_EMBEDDING_MODEL
-    assert loaded.embedding_batch_size == DEFAULT_EMBEDDING_BATCH_SIZE
-    assert loaded.embedding_timeout_seconds == DEFAULT_EMBEDDING_TIMEOUT_SECONDS
-
-
-def test_embedding_provider_rejects_unrecognized_value(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("EMBEDDING_PROVIDER", "unsupported")
-
-    with pytest.raises(ValueError, match="EMBEDDING_PROVIDER"):
-        load_settings()
-
-
-@pytest.mark.parametrize("provider", ["openai", "claude"])
-def test_recognized_but_unimplemented_embedding_provider_fails_at_startup(
-    monkeypatch: pytest.MonkeyPatch,
-    provider: str,
-) -> None:
-    monkeypatch.setenv("EMBEDDING_PROVIDER", provider)
-
-    with pytest.raises(ValueError, match="not implemented"):
-        load_settings()
-
-
-@pytest.mark.parametrize("provider", IMPLEMENTED_EMBEDDING_PROVIDERS)
-def test_every_implemented_embedding_provider_configures(
-    monkeypatch: pytest.MonkeyPatch,
-    provider: str,
-) -> None:
-    monkeypatch.setenv("EMBEDDING_PROVIDER", provider)
-
-    assert load_settings().embedding_provider == provider
-
-
-def test_implemented_embedding_providers_are_recognized() -> None:
-    assert IMPLEMENTED_EMBEDDING_PROVIDERS == ("gemini", "ollama")
-    assert set(IMPLEMENTED_EMBEDDING_PROVIDERS) <= set(RECOGNIZED_AI_PROVIDERS)
-
-
-def test_ollama_embedding_model_rejects_unsafe_characters(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("OLLAMA_EMBEDDING_MODEL", "bad model!")
-
-    with pytest.raises(ValueError, match="OLLAMA_EMBEDDING_MODEL"):
-        load_settings()
-
-
-def test_embedding_model_must_not_be_blank(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GEMINI_EMBEDDING_MODEL", "   ")
-
-    with pytest.raises(ValueError, match="GEMINI_EMBEDDING_MODEL"):
-        load_settings()
-
-
 @pytest.mark.parametrize("value", ["0", "257", "not-a-number"])
 def test_embedding_batch_size_is_bounded(
     monkeypatch: pytest.MonkeyPatch,
@@ -1523,17 +1516,6 @@ def test_embedding_batch_size_is_bounded(
     monkeypatch.setenv("EMBEDDING_BATCH_SIZE", value)
 
     with pytest.raises(ValueError, match="EMBEDDING_BATCH_SIZE"):
-        load_settings()
-
-
-@pytest.mark.parametrize("value", ["0", "301"])
-def test_embedding_timeout_seconds_is_bounded(
-    monkeypatch: pytest.MonkeyPatch,
-    value: str,
-) -> None:
-    monkeypatch.setenv("EMBEDDING_TIMEOUT_SECONDS", value)
-
-    with pytest.raises(ValueError, match="EMBEDDING_TIMEOUT_SECONDS"):
         load_settings()
 
 
@@ -1596,201 +1578,6 @@ def test_chroma_backend_is_allowed_on_postgresql(
     monkeypatch.setenv("VECTOR_BACKEND", VECTOR_BACKEND_CHROMA)
 
     assert load_settings().vector_backend == VECTOR_BACKEND_CHROMA
-
-
-def test_image_understanding_defaults_are_disabled() -> None:
-    loaded = load_settings()
-
-    assert loaded.image_provider == DEFAULT_IMAGE_PROVIDER
-    assert loaded.ollama_image_model == DEFAULT_OLLAMA_IMAGE_MODEL
-    assert loaded.gemini_image_model == DEFAULT_GEMINI_IMAGE_MODEL
-    assert (
-        loaded.image_understanding_timeout_seconds
-        == DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS
-    )
-    assert loaded.image_understanding_max_bytes == DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES
-
-
-def test_image_provider_rejects_unrecognized_value(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("IMAGE_PROVIDER", "unsupported")
-
-    with pytest.raises(ValueError, match="IMAGE_PROVIDER"):
-        load_settings()
-
-
-@pytest.mark.parametrize("provider", ["openai", "claude"])
-def test_recognized_but_unimplemented_image_provider_fails_at_startup(
-    monkeypatch: pytest.MonkeyPatch,
-    provider: str,
-) -> None:
-    monkeypatch.setenv("IMAGE_PROVIDER", provider)
-
-    with pytest.raises(ValueError, match="not implemented"):
-        load_settings()
-
-
-@pytest.mark.parametrize("provider", IMPLEMENTED_IMAGE_PROVIDERS)
-def test_every_implemented_image_provider_configures(
-    monkeypatch: pytest.MonkeyPatch,
-    provider: str,
-) -> None:
-    monkeypatch.setenv("IMAGE_PROVIDER", provider)
-    if provider == "gemini":
-        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-
-    assert load_settings().image_provider == provider
-
-
-def test_implemented_image_providers_are_recognized() -> None:
-    assert IMPLEMENTED_IMAGE_PROVIDERS == ("none", "gemini", "ollama")
-    assert set(IMPLEMENTED_IMAGE_PROVIDERS) <= set(RECOGNIZED_IMAGE_PROVIDERS)
-
-
-def test_image_provider_explicit_none_preserves_text_only(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setenv("IMAGE_PROVIDER", "none")
-    assert load_settings().image_provider == "none"
-
-    _configure_production(monkeypatch, tmp_path)
-    _configure_hosted_s3(monkeypatch)
-    monkeypatch.setenv("AI_PROVIDER", "gemini")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    monkeypatch.setenv("IMAGE_PROVIDER", "none")
-    assert load_settings().image_provider == "none"
-
-
-def test_hosted_mode_defaults_to_hosted_provider_vision_path(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure_production(monkeypatch, tmp_path)
-    _configure_hosted_s3(monkeypatch)
-    monkeypatch.setenv("AI_PROVIDER", "gemini")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-
-    loaded = load_settings()
-    assert loaded.image_provider == "gemini"
-
-
-def test_hosted_mode_with_unsupported_vision_provider_defaults_to_none(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _configure_production(monkeypatch, tmp_path)
-    _configure_hosted_s3(monkeypatch)
-    monkeypatch.setenv("AI_PROVIDER", "openai")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
-    # Even if Gemini API key happens to exist in the environment, do not cross-route.
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-
-    loaded = load_settings()
-    assert loaded.image_provider == "none"
-
-
-def test_self_hosted_mode_uses_advertised_vision_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv(
-        "AI_MODEL_CATALOG",
-        json.dumps(
-            {
-                "ollama": [
-                    {
-                        "model": "llama3.2-vision",
-                        "json_mode": True,
-                        "context_window": 8192,
-                        "vision": True,
-                    }
-                ]
-            }
-        ),
-    )
-    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "llama3.2-vision")
-
-    loaded = load_settings()
-    assert loaded.image_provider == "ollama"
-
-
-def test_self_hosted_mode_defaults_to_none_when_vision_not_advertised(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    with caplog.at_level("INFO"):
-        loaded = load_settings()
-
-    assert loaded.image_provider == "none"
-    assert "Visual analysis is disabled (IMAGE_PROVIDER='none')" in caplog.text
-
-
-def test_explicit_gemini_image_provider_requires_api_key(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("IMAGE_PROVIDER", "gemini")
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-
-    with pytest.raises(ValueError, match="GEMINI_API_KEY is required"):
-        load_settings()
-
-
-def test_explicit_ollama_image_provider_rejects_model_declared_without_vision(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("IMAGE_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "llama3.1")
-
-    with pytest.raises(
-        ValueError, match="OLLAMA_IMAGE_MODEL 'llama3.1' is declared with vision=False"
-    ):
-        load_settings()
-
-
-def test_explicit_ollama_image_provider_rejects_catalog_model_with_vision_false(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv(
-        "AI_MODEL_CATALOG",
-        json.dumps(
-            {
-                "ollama": [
-                    {
-                        "model": "custom-vision-disabled",
-                        "json_mode": True,
-                        "context_window": 8192,
-                        "vision": False,
-                    }
-                ]
-            }
-        ),
-    )
-    monkeypatch.setenv("IMAGE_PROVIDER", "ollama")
-    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "custom-vision-disabled")
-
-    with pytest.raises(
-        ValueError,
-        match="OLLAMA_IMAGE_MODEL 'custom-vision-disabled' is declared with vision=False",
-    ):
-        load_settings()
-
-
-def test_ollama_image_model_rejects_unsafe_characters(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("OLLAMA_IMAGE_MODEL", "bad vision model!")
-
-    with pytest.raises(ValueError, match="OLLAMA_IMAGE_MODEL"):
-        load_settings()
-
-
-def test_gemini_image_model_must_not_be_blank(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("GEMINI_IMAGE_MODEL", "   ")
-
-    with pytest.raises(ValueError, match="GEMINI_IMAGE_MODEL"):
-        load_settings()
 
 
 @pytest.mark.parametrize("value", ["0", "301", "not-a-number"])

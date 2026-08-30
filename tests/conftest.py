@@ -17,8 +17,9 @@ from sqlalchemy import Engine, event, func, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.base import Base
-from backend.app.config import settings
+from backend.app.config import EMBEDDING_PROVIDER_LOCAL, settings
 from backend.app.database import get_db
+from backend.app.embedding_models import EMBEDDING_MODEL
 from backend.app.database_engine import create_database_engine
 from backend.app.models import (
     EMBEDDING_DIMENSIONS,
@@ -309,8 +310,8 @@ def db_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
         session.close()
 
 
-EMBEDDING_PROVIDER_NAME = "ollama"
-EMBEDDING_MODEL_NAME = "nomic-embed-text"
+EMBEDDING_PROVIDER_NAME = EMBEDDING_PROVIDER_LOCAL
+EMBEDDING_MODEL_NAME = EMBEDDING_MODEL.model_id
 
 
 def directional_vector(seed: float) -> list[float]:

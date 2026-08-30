@@ -15,7 +15,7 @@ const MAX_PASSWORD_BYTES = 72;
 // The server owns the policy and states it in full when it refuses; this is the
 // floor the form can check before anybody waits for a round trip.
 // See docs/authentication.md.
-const MIN_PASSWORD_LENGTH = 12;
+const MIN_PASSWORD_LENGTH = 8;
 
 function passwordByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
@@ -49,7 +49,7 @@ export default function RegisterPage() {
     setPasswordError(null);
 
     if (passwordByteLength(password) > MAX_PASSWORD_BYTES) {
-      setPasswordError('That password is too long. Keep it under 72 bytes.');
+      setPasswordError('That password is too long.');
       return;
     }
 
@@ -150,7 +150,7 @@ export default function RegisterPage() {
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           disabled={isSubmitting}
-          hint="At least 12 characters, up to 72 bytes. A passphrase beats a short password with a digit on the end, and it cannot contain your name or email address."
+          hint="At least 8 characters. A passphrase beats a short password with a digit on the end, and it cannot contain your name or email address."
         />
 
         <Input

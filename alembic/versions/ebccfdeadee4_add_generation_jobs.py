@@ -82,7 +82,11 @@ def upgrade() -> None:
             name=op.f("ck_generation_jobs_study_guide_result_shape"),
         ),
         sa.CheckConstraint(
-            "job_type IN ('generate_study_guide', 'generate_quiz')",
+            "job_type <> 'generate_flashcard' OR quiz_id IS NULL",
+            name=op.f("ck_generation_jobs_flashcard_result_shape"),
+        ),
+        sa.CheckConstraint(
+            "job_type IN ('generate_study_guide', 'generate_quiz', 'generate_flashcard')",
             name=op.f("ck_generation_jobs_job_type_valid"),
         ),
         sa.CheckConstraint(

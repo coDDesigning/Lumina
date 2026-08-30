@@ -59,14 +59,23 @@ describe('GenerationRail', () => {
         quiz_id: 42,
         finished_at: '2026-08-30T12:02:00Z',
       }),
-    ]);
+      job({
+        id: 3,
+        job_type: 'generate_flashcard',
+        status: 'succeeded',
+        generated_output_id: 99,
+        finished_at: '2026-08-30T12:03:00Z',
+      }),
+    ], { onOpenFlashcards: vi.fn() });
     const person = userEvent.setup();
 
     await person.click(screen.getByRole('button', { name: /Study guide/ }));
     await person.click(screen.getByRole('button', { name: /Practice quiz/ }));
+    await person.click(screen.getByRole('button', { name: /Flashcards/ }));
 
     expect(props.onOpenGuide).toHaveBeenCalledWith(12);
     expect(props.onOpenQuiz).toHaveBeenCalledWith(42);
+    expect(props.onOpenFlashcards).toHaveBeenCalledWith(99);
   });
 
   it('offers the durable retry action for a failed job', async () => {

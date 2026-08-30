@@ -18,6 +18,7 @@ from backend.app.models import (
     JOB_STATUS_SUCCEEDED,
     JOB_TYPE_GENERATE_QUIZ,
     JOB_TYPE_GENERATE_STUDY_GUIDE,
+    JOB_TYPE_GENERATE_FLASHCARD,
     Course,
     GeneratedOutput,
     GenerationJob,
@@ -36,6 +37,7 @@ from services.generation_jobs import (
     heartbeat_generation_job,
     list_course_generation_jobs,
     recover_expired_generation_jobs,
+    retry_generation_job,
 )
 
 from tests.conftest import assert_balance_is_derivable, seed_registration_grant
@@ -624,3 +626,40 @@ def test_queue_metrics_report_depth(
     assert metrics.queued == 1
     assert metrics.running == 1
     assert metrics.oldest_queued_age_seconds >= 0.0
+
+
+def test_enqueue_and_retry_flashcard_generation_job(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    job = _enqueue(
+        db_session,
+        course,
+        owner,
+        job_type=JOB_TYPE_GENERATE_FLASHCARD,
+        payload="{}",
+    )
+    assert job.job_type == JOB_TYPE_GENERATE_FLASHCARD
+    assert job.status == JOB_STATUS_QUEUED
+
+    claimed = claim_next_generation_job(db_session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+    assert claimed.id == job.id
+
+    fail_generation_job(
+        db_session,
+        claimed.id,
+        claimed.claim_token,
+        error_code="provider_unavailable",
+        error_message="Unavailable",
+        retryable=False,
+    )
+    retried = retry_generation_job(
+        db_session,
+        course_id=course.id,
+        user_id=owner.id,
+        job_id=job.id,
+    )
+    assert retried is not None
+    assert retried.job_type == JOB_TYPE_GENERATE_FLASHCARD
+    assert retried.status == JOB_STATUS_QUEUED
+

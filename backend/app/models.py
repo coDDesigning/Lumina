@@ -1320,7 +1320,7 @@ class GenerationJob(Base):
             name="quiz_result_shape",
         ),
         CheckConstraint(
-            f"job_type <> '{JOB_TYPE_GENERATE_FLASHCARD}' OR generated_output_id IS NULL",
+            f"job_type <> '{JOB_TYPE_GENERATE_FLASHCARD}' OR quiz_id IS NULL",
             name="flashcard_result_shape",
         ),
         CheckConstraint(

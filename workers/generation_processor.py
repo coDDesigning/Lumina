@@ -271,7 +271,9 @@ def _run_quiz(session: Session, job: ClaimedGenerationJob) -> ResultPersister:
             citations=generation.material.citation_map,
             commit=False,
         )
-        return None, persisted.view.id
+        # The job row's quiz_id is a foreign key into quizzes, so it takes the
+        # row's own identifier and not the view's quiz_id field.
+        return None, persisted.id
 
     return persist
 

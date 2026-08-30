@@ -43,6 +43,7 @@ class ProcessingErrorCode(StrEnum):
     EXTRACTED_TEXT_LIMIT_EXCEEDED = "extracted_text_limit_exceeded"
     DOCUMENT_CHUNK_LIMIT_EXCEEDED = "document_chunk_limit_exceeded"
     CORRUPTED_TEXT = "corrupted_text"
+    CORRUPTED_IMAGE = "corrupted_image"
     OCR_UNAVAILABLE = "ocr_unavailable"
     OCR_FAILED = "ocr_failed"
     PAGE_RENDER_FAILED = "page_render_failed"
@@ -75,6 +76,9 @@ _ERROR_MESSAGES = {
     ),
     ProcessingErrorCode.CORRUPTED_TEXT: (
         "The text document is corrupted or contains binary data."
+    ),
+    ProcessingErrorCode.CORRUPTED_IMAGE: (
+        "The image is corrupted or is not a supported PNG or JPEG file."
     ),
     ProcessingErrorCode.OCR_UNAVAILABLE: "Local OCR is unavailable.",
     ProcessingErrorCode.OCR_FAILED: "Text recognition failed.",
@@ -294,6 +298,11 @@ class ExtractedDocument:
 
     file_type: str
     contents: tuple[ExtractedPage, ...]
+    # Set only when the upload could not be rendered as a PDF directly and had
+    # to be transcoded first (image uploads). The OCR and visual-understanding
+    # stages re-open bytes as a PDF, so they must receive these instead of the
+    # original upload.
+    render_content: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,6 +418,32 @@ class TextExtractor:
         )
 
 
+class ImageExtractor:
+    """Validate a PNG/JPEG upload and transcode it into a one-page PDF.
+
+    The rest of the pipeline (OCR, visual detection and understanding, cleaning,
+    chunking) is reused unchanged: the transcoded page is a single full-page
+    raster, which the PDF path already treats as one visual region that needs
+    OCR. The transcoded bytes travel back on ``ExtractedDocument.render_content``
+    so the render stages re-open the PDF rather than the original image.
+    """
+
+    def validate(self, content: bytes, options: PipelineOptions) -> None:
+        _validate_image(content)
+
+    def extract(
+        self,
+        file_type: str,
+        content: bytes,
+        validated_text: str | None,
+        options: PipelineOptions,
+    ) -> ExtractedDocument:
+        pdf_bytes = _image_to_single_page_pdf(content, options)
+        _validate_pdf(pdf_bytes, options)
+        extracted = _extract_pdf_document(file_type, pdf_bytes, options)
+        return replace(extracted, render_content=pdf_bytes)
+
+
 class OCRProvider(Protocol):
     """Recognize one PDF page without exposing Tesseract to pipeline callers."""
 
@@ -498,6 +533,7 @@ _DISABLED_IMAGE_PROVIDER = DisabledImageUnderstandingProvider()
 _EXTRACTORS: dict[str, DocumentExtractor] = {
     "pdf": PDFExtractor(),
     "text": TextExtractor(),
+    "image": ImageExtractor(),
 }
 
 # MuPDF stores parser warnings globally. Every operation that clears or reads
@@ -541,6 +577,18 @@ _VISUAL_SOURCE_PRIORITY = {
     VisualSource.IMAGE: 1,
     VisualSource.DRAWING: 2,
 }
+
+# Uploads whose pages can carry visual content the vision provider describes.
+# Image uploads are transcoded to a one-page PDF, so downstream stages see them
+# as "pdf"; this set is what callers outside the pipeline (models, config) check.
+_VISUAL_CAPABLE_FILE_TYPES = frozenset({"pdf", "png", "jpg", "jpeg"})
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+_IMAGE_MAGIC_PREFIXES = (_PNG_MAGIC, _JPEG_MAGIC)
+# Ceilings applied while transcoding an image to a one-page PDF, so the result
+# clears the PDF render budgets (`max_pdf_page_pixels`, default 40M).
+_IMAGE_MAX_LONGEST_SIDE_PIXELS = 5_000
+_IMAGE_PIXEL_BUDGET_RATIO = 0.8
 
 
 @dataclass(frozen=True, slots=True)
@@ -673,9 +721,12 @@ def _extract_raw_document(
                 current_stage,
                 retryable=False,
             )
-        if type_definition["validator"] != "pdf" and not any(
+        if type_definition["validator"] not in ("pdf", "image") and not any(
             content.text.strip() for content in extracted_document.contents
         ):
+            # PDFs and images may carry no extractable text at this point: PDF
+            # pages can still yield OCR text, and an image always carries a
+            # visual the understanding stage describes.
             raise _failure(
                 ProcessingErrorCode.NO_PROCESSABLE_TEXT,
                 current_stage,
@@ -714,6 +765,12 @@ def _process_document(
             stage_callback=stage_callback,
         )
         _emit_extraction(extraction_callback, extracted_document)
+        # Image uploads are transcoded to a one-page PDF during extraction; the
+        # OCR and visual stages re-open bytes as a PDF, so from here on they
+        # work against the transcoded document.
+        render_content = extracted_document.render_content or content
+        is_image_upload = extracted_document.render_content is not None
+        render_file_type = "pdf" if is_image_upload else file_type
         pages = tuple(
             _initial_enriched_page(content) for content in extracted_document.contents
         )
@@ -726,20 +783,37 @@ def _process_document(
         if options.ocr_enabled and poor_page_numbers:
             current_stage = PipelineStage.RUNNING_OCR
             _emit_stage(stage_callback, current_stage)
-            pages = _apply_ocr(
-                content,
-                pages,
-                poor_page_numbers,
-                options=options,
-                provider=ocr_provider,
-            )
+            try:
+                pages = _apply_ocr(
+                    render_content,
+                    pages,
+                    poor_page_numbers,
+                    options=options,
+                    provider=ocr_provider,
+                )
+            except DocumentProcessingError as exc:
+                if not is_image_upload or exc.code not in (
+                    ProcessingErrorCode.OCR_UNAVAILABLE,
+                    ProcessingErrorCode.OCR_FAILED,
+                ):
+                    raise
+                # An image upload's primary content is its visual description;
+                # a missing or failing local OCR engine must not fail the whole
+                # upload the way it does for a scanned PDF.
+                logger.warning("OCR skipped for image upload: %s", exc.safe_message)
+                pages = tuple(
+                    replace(page, needs_ocr=False, ocr_status=OCRStatus.NO_TEXT)
+                    if page.needs_ocr
+                    else page
+                    for page in pages
+                )
 
-        if file_type == "pdf" and any(page.has_visual_content for page in pages):
+        if render_file_type == "pdf" and any(page.has_visual_content for page in pages):
             if image_provider.enabled:
                 current_stage = PipelineStage.UNDERSTANDING_IMAGES
                 _emit_stage(stage_callback, current_stage)
             pages = _apply_visual_understanding(
-                content,
+                render_content,
                 pages,
                 options=options,
                 provider=image_provider,
@@ -748,7 +822,7 @@ def _process_document(
         current_stage = PipelineStage.CLEANING_TEXT
         _emit_stage(stage_callback, current_stage)
         try:
-            pages = _clean_and_merge_pages(pages, file_type=file_type)
+            pages = _clean_and_merge_pages(pages, file_type=render_file_type)
         except Exception:
             logger.exception("Document text cleaning failed")
             raise _failure(
@@ -1116,6 +1190,101 @@ def _validate_and_decode_text(content: bytes) -> str:
             retryable=False,
         )
     return decoded
+
+
+def _image_filetype(content: bytes) -> str:
+    return "png" if content.startswith(_PNG_MAGIC) else "jpg"
+
+
+def _validate_image(content: bytes) -> None:
+    """Confirm the upload is a single, decodable PNG or JPEG raster."""
+    if not content.startswith(_IMAGE_MAGIC_PREFIXES):
+        raise _failure(
+            ProcessingErrorCode.CORRUPTED_IMAGE,
+            PipelineStage.VALIDATING,
+            retryable=False,
+        )
+    with _PDF_WARNING_LOCK:
+        pymupdf.TOOLS.reset_mupdf_warnings()
+        try:
+            with pymupdf.open(
+                stream=content, filetype=_image_filetype(content)
+            ) as image:
+                if image.page_count != 1:
+                    raise _failure(
+                        ProcessingErrorCode.CORRUPTED_IMAGE,
+                        PipelineStage.VALIDATING,
+                        retryable=False,
+                    )
+                rect = image.load_page(0).rect
+        except DocumentProcessingError:
+            raise
+        except Exception:
+            raise _failure(
+                ProcessingErrorCode.CORRUPTED_IMAGE,
+                PipelineStage.VALIDATING,
+                retryable=False,
+            ) from None
+        finally:
+            pymupdf.TOOLS.reset_mupdf_warnings()
+    if rect.is_empty or rect.width <= 0 or rect.height <= 0:
+        raise _failure(
+            ProcessingErrorCode.CORRUPTED_IMAGE,
+            PipelineStage.VALIDATING,
+            retryable=False,
+        )
+
+
+def _image_transcode_scale(
+    width: float, height: float, options: PipelineOptions
+) -> float:
+    """Scale factor that keeps a transcoded image inside the PDF render budgets."""
+    scale = 1.0
+    longest_side = max(width, height)
+    if longest_side > _IMAGE_MAX_LONGEST_SIDE_PIXELS:
+        scale = _IMAGE_MAX_LONGEST_SIDE_PIXELS / longest_side
+    pixel_budget = options.max_pdf_page_pixels * _IMAGE_PIXEL_BUDGET_RATIO
+    if width * height * scale * scale > pixel_budget:
+        scale = min(scale, (pixel_budget / (width * height)) ** 0.5)
+    return scale
+
+
+def _image_to_single_page_pdf(content: bytes, options: PipelineOptions) -> bytes:
+    """Rasterise a PNG/JPEG upload into a one-page PDF sized to the image."""
+    with _PDF_WARNING_LOCK:
+        pymupdf.TOOLS.reset_mupdf_warnings()
+        try:
+            with pymupdf.open(
+                stream=content, filetype=_image_filetype(content)
+            ) as image:
+                source_rect = image.load_page(0).rect
+                scale = _image_transcode_scale(
+                    source_rect.width, source_rect.height, options
+                )
+                pixmap = image.load_page(0).get_pixmap(
+                    matrix=pymupdf.Matrix(scale, scale), alpha=False
+                )
+            document = pymupdf.open()
+            try:
+                page = document.new_page(width=pixmap.width, height=pixmap.height)
+                page.insert_image(page.rect, pixmap=pixmap)
+                rendered = document.tobytes(garbage=4, deflate=True)
+            finally:
+                document.close()
+            if pymupdf.TOOLS.mupdf_warnings():
+                raise RuntimeError("mupdf reported warnings transcoding an image")
+            if not isinstance(rendered, bytes) or not rendered.startswith(b"%PDF-"):
+                raise RuntimeError("image transcode did not produce a PDF")
+            return rendered
+        except Exception:
+            logger.exception("Image-to-PDF transcode failed")
+            raise _failure(
+                ProcessingErrorCode.CORRUPTED_IMAGE,
+                PipelineStage.EXTRACTING_TEXT,
+                retryable=False,
+            ) from None
+        finally:
+            pymupdf.TOOLS.reset_mupdf_warnings()
 
 
 def _extract_pdf_document(

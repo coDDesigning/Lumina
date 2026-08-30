@@ -15,6 +15,18 @@
     "markdown": {
       "validator": "text",
       "content_type": "text/markdown"
+    },
+    "png": {
+      "validator": "image",
+      "content_type": "image/png"
+    },
+    "jpg": {
+      "validator": "image",
+      "content_type": "image/jpeg"
+    },
+    "jpeg": {
+      "validator": "image",
+      "content_type": "image/jpeg"
     }
   }
 }

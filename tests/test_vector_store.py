@@ -133,9 +133,9 @@ def test_replace_stores_one_vector_per_chunk(
         session.commit()
 
         assert store.count_document_vectors(session, document.id) == 3
-        assert store.chunk_ids_with_vectors(session, document.id) == {
-            chunk.id for chunk in chunks
-        }
+        assert store.chunk_ids_with_vectors(
+            session, document.id, embedding_model=MODEL
+        ) == {chunk.id for chunk in chunks}
 
 
 def test_replace_is_idempotent_for_the_same_chunks(
@@ -173,9 +173,9 @@ def test_replace_with_fewer_chunks_drops_the_stale_vectors(
         session.commit()
 
         assert store.count_document_vectors(session, document.id) == 2
-        assert store.chunk_ids_with_vectors(session, document.id) == {
-            chunk.id for chunk in surviving
-        }
+        assert store.chunk_ids_with_vectors(
+            session, document.id, embedding_model=MODEL
+        ) == {chunk.id for chunk in surviving}
 
 
 def test_replace_with_more_chunks_covers_every_new_chunk(
@@ -343,9 +343,9 @@ def test_chroma_vectors_survive_a_client_restart(
 
         restarted = ChromaVectorStore(persist_directory=persist_directory)
         assert restarted.count_document_vectors(session, document.id) == 4
-        assert restarted.chunk_ids_with_vectors(session, document.id) == {
-            chunk.id for chunk in chunks
-        }
+        assert restarted.chunk_ids_with_vectors(
+            session, document.id, embedding_model=MODEL
+        ) == {chunk.id for chunk in chunks}
 
 
 def test_chroma_recovers_when_the_collection_is_rebuilt_underneath_it(
@@ -562,7 +562,11 @@ def test_search_ranks_hits_by_cosine_similarity(
         session.commit()
 
         ranked = chroma_store.search(
-            session, course_id=document.course_id, query_embedding=QUERY, limit=3
+            session,
+            course_id=document.course_id,
+            query_embedding=QUERY,
+            limit=3,
+            embedding_model=MODEL,
         )
         assert [result.chunk_id for result in ranked] == [
             chunks[0].id,
@@ -592,7 +596,11 @@ def test_search_never_leaks_another_course(
         session.commit()
 
         ranked = chroma_store.search(
-            session, course_id=course.id, query_embedding=QUERY, limit=4
+            session,
+            course_id=course.id,
+            query_embedding=QUERY,
+            limit=4,
+            embedding_model=MODEL,
         )
         assert {result.course_id for result in ranked} == {course.id}
         assert {result.chunk_id for result in ranked} == {chunk.id for chunk in chunks}
@@ -609,7 +617,11 @@ def test_search_honours_the_limit(
         session.commit()
 
         ranked = chroma_store.search(
-            session, course_id=document.course_id, query_embedding=QUERY, limit=2
+            session,
+            course_id=document.course_id,
+            query_embedding=QUERY,
+            limit=2,
+            embedding_model=MODEL,
         )
         assert len(ranked) == 2
         assert ranked[0].chunk_id == chunks[0].id
@@ -626,7 +638,11 @@ def test_search_returns_nothing_for_a_course_without_vectors(
 
         assert (
             chroma_store.search(
-                session, course_id=course.id, query_embedding=QUERY, limit=3
+                session,
+                course_id=course.id,
+                query_embedding=QUERY,
+                limit=3,
+                embedding_model=MODEL,
             )
             == []
         )
@@ -641,7 +657,11 @@ def test_search_rejects_a_wrong_width_embedding(
         )
         with pytest.raises(ValueError):
             store.search(
-                session, course_id=course.id, query_embedding=[0.1] * 10, limit=3
+                session,
+                course_id=course.id,
+                query_embedding=[0.1] * 10,
+                limit=3,
+                embedding_model=MODEL,
             )
 
 
@@ -653,7 +673,13 @@ def test_search_rejects_a_nonpositive_limit(
             session, email="vs-search-limit-zero@example.com", chunk_count=1
         )
         with pytest.raises(ValueError):
-            store.search(session, course_id=course.id, query_embedding=QUERY, limit=0)
+            store.search(
+                session,
+                course_id=course.id,
+                query_embedding=QUERY,
+                limit=0,
+                embedding_model=MODEL,
+            )
 
 
 def test_pgvector_search_requires_postgresql(
@@ -665,7 +691,11 @@ def test_pgvector_search_requires_postgresql(
         )
         with pytest.raises(VectorStoreError):
             pgvector_store.search(
-                session, course_id=course.id, query_embedding=QUERY, limit=3
+                session,
+                course_id=course.id,
+                query_embedding=QUERY,
+                limit=3,
+                embedding_model=MODEL,
             )
 
 
@@ -684,5 +714,9 @@ def test_chroma_wraps_search_failures_as_vector_store_errors(
         )
         with pytest.raises(VectorStoreError):
             chroma_store.search(
-                session, course_id=course.id, query_embedding=QUERY, limit=3
+                session,
+                course_id=course.id,
+                query_embedding=QUERY,
+                limit=3,
+                embedding_model=MODEL,
             )

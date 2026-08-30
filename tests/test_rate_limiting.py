@@ -286,7 +286,7 @@ def test_login_account_lockout_blocks_failed_attempts_and_allows_correct_passwor
         json={
             "name": "Locked User",
             "email": "locked@example.com",
-            "password": "correct-password",
+            "password": "Correct-password!",
         },
     )
 
@@ -323,7 +323,7 @@ def test_login_successful_clears_account_failure_bucket(
         json={
             "name": "Legit User",
             "email": "legit@example.com",
-            "password": "correct-password",
+            "password": "Correct-password!",
         },
     )
 
@@ -343,7 +343,7 @@ def test_login_successful_clears_account_failure_bucket(
     # Successful login clears the account bucket
     success = api_context.client.post(
         "/api/auth/login",
-        data={"username": "legit@example.com", "password": "correct-password"},
+        data={"username": "legit@example.com", "password": "Correct-password!"},
     )
     assert success.status_code == 200
 
@@ -392,7 +392,7 @@ def test_register_rate_limited_per_ip_returns_429(api_context, monkeypatch) -> N
             json={
                 "name": f"User {index}",
                 "email": f"user{index}@example.com",
-                "password": "a-strong-password",
+                "password": "A-strong-password-123!",
             },
         )
         assert response.status_code == 200
@@ -402,7 +402,7 @@ def test_register_rate_limited_per_ip_returns_429(api_context, monkeypatch) -> N
         json={
             "name": "One Too Many",
             "email": "toomany@example.com",
-            "password": "a-strong-password",
+            "password": "A-strong-password-123!",
         },
     )
 
@@ -605,12 +605,17 @@ def test_route_inventory_generation_rate_limiting() -> None:
 
     expected_generation_paths = {
         "/api/courses/{course_id}/study-guide",
+        "/api/courses/{course_id}/study-guide/jobs",
         "/api/courses/{course_id}/quiz",
+        "/api/courses/{course_id}/quiz/jobs",
+        "/api/courses/{course_id}/generation-jobs/{job_id}/retry",
         "/api/courses/{course_id}/flashcards",
+        "/api/courses/{course_id}/flashcards/jobs",
         "/api/courses/{course_id}/ai-tutor",
         "/api/courses/{course_id}/qa",
         "/api/prompt-generator",
         "/api/courses/{course_id}/reverse-quiz",
+        "/api/courses/{course_id}/reverse-quiz/questions",
         "/api/courses/{course_id}/exam-roadmap",
         "/api/courses/{course_id}/exam-mode/analysis",
         "/api/courses/{course_id}/exam-mode/analysis/rescan",
@@ -642,7 +647,7 @@ def test_route_inventory_generation_rate_limiting() -> None:
     }
 
     assert found_generation_paths == expected_generation_paths
-    assert len(found_generation_paths) == 17
+    assert len(found_generation_paths) == 22
 
     # Ensure deterministic plan creation is not in generation rate limit
     plan_route = next(

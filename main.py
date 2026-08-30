@@ -40,6 +40,7 @@ from routes import (
     exam_roadmap,
     flashcard,
     generated_output,
+    generation_job,
     profile_document,
     profile_knowledge,
     progress,
@@ -58,6 +59,17 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     configure_logging(service="api", environment=settings.app_env)
+    # Every configured vendor joins the fallback chain, so an operator must be
+    # able to see which ones an outage would bill without guessing.
+    logger.info(
+        "AI vendors available",
+        extra={
+            "event": "ai_vendors_available",
+            "ai_available_vendors": ",".join(settings.ai_available_vendors),
+            "ai_default_model": settings.ai_default_model,
+            "ai_vision_model": settings.ai_vision_model,
+        },
+    )
     yield
 
 
@@ -98,6 +110,7 @@ app.include_router(document.router)
 app.include_router(study_guide.router)
 app.include_router(exam_roadmap.router)
 app.include_router(generated_output.router)
+app.include_router(generation_job.router)
 app.include_router(exam_mode.router)
 app.include_router(conversation.router)
 app.include_router(quiz.router)

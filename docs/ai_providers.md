@@ -5,25 +5,44 @@ in `services/text_generation.py`. The five generation features — study guide,
 quiz, flashcards, prompt generator, and AI tutor — depend on that protocol and
 never on a specific vendor.
 
-## Implemented Providers
+## Availability Is Derived, Not Declared
 
-| `AI_PROVIDER` | Status | Required configuration |
-|---|---|---|
-| `ollama` | Implemented (default) | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` — both defaulted |
-| `gemini` | Implemented | `GEMINI_API_KEY` |
-| `openai` | Implemented | `OPENAI_API_KEY` |
-| `claude` | Implemented | `ANTHROPIC_API_KEY` |
+There is no provider selector. A vendor is available because its credential or
+endpoint is configured, and for no other reason:
 
-`IMPLEMENTED_AI_PROVIDERS` in `backend/app/config.py` is the authoritative list.
-The provider factory reads it rather than restating provider names, so the two
-cannot drift apart.
+| Vendor | What makes it available |
+|---|---|
+| `ollama` | `OLLAMA_BASE_URL` |
+| `gemini` | `GEMINI_API_KEY` |
+| `openai` | `OPENAI_API_KEY` |
+| `claude` | `ANTHROPIC_API_KEY` |
 
-The same rule covers `AI_FALLBACK_PROVIDERS`: a fallback naming an
-unimplemented provider is rejected at startup rather than failing the first time
-the primary provider errors and the fallback is actually reached.
+Set a key and that vendor's models appear in `GET /api/models`; unset it and
+they are gone. Nothing else has to be kept in step, which is the point: the
+old `AI_PROVIDER` and `AI_FALLBACK_PROVIDERS` settings could disagree with the
+keys actually present, and that disagreement was only discovered at request
+time. Startup now fails outright when no credential leaves any model at all,
+naming every key that would fix it.
 
-An unrecognized spelling fails with the list of accepted names, which keeps a
-typo (`gemeni`) distinguishable from a genuine provider name.
+`OLLAMA_BASE_URL` has no default any more. A default would have meant every
+deployment permanently claiming a local Ollama server, which is exactly the
+kind of unearned claim this change removes. The root Compose file and
+`.env.example` both ship a value, so the out-of-box self-hosted experience is
+unchanged.
+
+`IMPLEMENTED_AI_PROVIDERS` in `backend/app/config.py` remains the authoritative
+list of vendors with an implementation, and a test asserts the factory can
+construct every name in it.
+
+### Choosing the default
+
+`AI_DEFAULT_MODEL` optionally pins the deployment default to an exact
+`provider:model` id from `GET /api/models`; a value outside that catalog is
+rejected at startup with the available list. Unset, the default is the first
+model of the first available vendor in the fixed order `ollama`, `gemini`,
+`openai`, `claude` — local first, because a local model costs nothing and sends
+no course material anywhere. A user's `preferred_model` overrides the
+deployment default, and a request's explicit `model` overrides both.
 
 ## Hosted OpenAI Setup
 
@@ -31,7 +50,7 @@ typo (`gemeni`) distinguishable from a genuine provider name.
 2. Configure the environment:
 
    ```bash
-   AI_PROVIDER=openai
+   OPENAI_API_KEY=sk-...
    OPENAI_API_KEY=sk-...
    ```
 
@@ -44,7 +63,7 @@ typo (`gemeni`) distinguishable from a genuine provider name.
 2. Configure the environment:
 
    ```bash
-   AI_PROVIDER=claude
+   ANTHROPIC_API_KEY=sk-ant-...
    ANTHROPIC_API_KEY=sk-ant-...
    ```
 
@@ -53,17 +72,28 @@ typo (`gemeni`) distinguishable from a genuine provider name.
 
 ## Multi-Provider Fallback & Resilience
 
-Hosted production deployments can configure multiple providers in priority order to eliminate
-single-vendor concentration risk:
+There is no fallback setting either. Every available vendor is in the chain,
+the selected model's vendor first and the rest in the same fixed order. During
+transient network drops, rate limits, or upstream 5xx outages,
+`ReliableTextGenerationProvider` retries with exponential backoff and fails over
+to the next vendor. Output attribution truthfully records the provider and model
+that generated each artifact.
 
-```bash
-AI_PROVIDER=gemini
-AI_FALLBACK_PROVIDERS=openai,claude
-```
+**Configuring a paid key is therefore accepting its bill.** A deployment holding
+`GEMINI_API_KEY`, `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` will, during a Gemini
+outage, generate against OpenAI and then Claude without anyone asking for it —
+at those vendors' token prices, which are not Gemini's. This is deliberate: one
+rule ("a configured credential is a usable vendor") is worth more than a second,
+hidden switch that can disagree with it. Three things make the consequence
+visible rather than silent:
 
-During transient network drops, rate limits, or upstream 5xx outages, `ReliableTextGenerationProvider`
-will automatically retry with exponential backoff and transparently fail over to the next configured
-provider. Output attribution truthfully records the provider and model that generated each artifact.
+- the application logs the derived chain at startup (`ai_vendors_available`), so
+  an operator never has to guess which vendors an outage would reach;
+- `GET /api/admin/ai-costs` reports spend per day, vendor, model and pricing
+  version, which is where the bill actually shows up;
+- removing a key removes the vendor, so opting out is one deletion.
+
+See `docs/runbooks/provider_outage.md`.
 
 ## Self-Hosted Ollama Setup
 
@@ -94,7 +124,7 @@ provider. Output attribution truthfully records the provider and model that gene
    `host.docker.internal` for root Compose:
 
    ```bash
-   AI_PROVIDER=ollama
+   OLLAMA_BASE_URL=http://localhost:11434
    OLLAMA_BASE_URL=http://localhost:11434
    OLLAMA_MODEL=llama3.1
    ```
@@ -180,7 +210,7 @@ needs no custom Modelfile to run at the intended window, and a server-wide
 `OLLAMA_CONTEXT_LENGTH` cannot silently inflate the KV cache — an oversized
 window is what pushes a model off the GPU and into system RAM.
 
-Sampling options do not apply to `EMBEDDING_PROVIDER` or `IMAGE_PROVIDER`; both
+Sampling options do not apply to embeddings or visual understanding; both
 call different endpoints with different contracts.
 
 ## Single-GPU Box Profile
@@ -200,8 +230,7 @@ ollama pull nomic-embed-text
 ```
 
 ```bash
-AI_PROVIDER=ollama
-EMBEDDING_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.1
 OLLAMA_TEMPERATURE=0.2
 OLLAMA_NUM_CTX=8192
@@ -287,7 +316,7 @@ rather than at the first user click:
 
 | Setting | Rejected when |
 |---|---|
-| `AI_PROVIDER` | not a recognized name, or recognized but not implemented |
+| credentials | no vendor configured, so no model is available |
 | `OLLAMA_BASE_URL` | empty, whitespace, or not a valid `http://`/`https://` URL with a host (`banana` and `localhost:11434` both fail) |
 | `OLLAMA_MODEL` | empty, whitespace, longer than 128 characters, or containing characters outside letters, digits, `. : / - _` |
 | `OLLAMA_TEMPERATURE` | not a finite number, or outside `0.0`-`2.0` |
@@ -295,7 +324,7 @@ rather than at the first user click:
 | `OLLAMA_NUM_CTX` | not a positive integer, or outside `512`-`131072` |
 | `OLLAMA_NUM_PREDICT` | not a positive integer, outside `64`-`131072`, or greater than `OLLAMA_NUM_CTX` |
 | `OLLAMA_REPEAT_PENALTY` | not a finite number, or outside `0.5`-`2.0` |
-| `AI_FALLBACK_PROVIDERS` | any token is unrecognized, or recognized but not implemented |
+| `AI_DEFAULT_MODEL` | not an available `provider:model` id |
 | `AI_MODEL_CATALOG` | not valid JSON, empty, contains an unimplemented provider, contains duplicate model names, or a model entry is missing/invalid `model`, `json_mode`, `context_window`, or `vision` metadata |
 
 Configuration validation deliberately does **not** contact Ollama. Booting the
@@ -368,7 +397,7 @@ error body from Ollama is never treated as generated content.
 
 `ReliableTextGenerationProvider` wraps whatever providers are configured and adds
 retries with exponential backoff, a concurrency ceiling, and fallback to the
-providers named in `AI_FALLBACK_PROVIDERS`. Ollama participates on the same terms
+every other available vendor. Ollama participates on the same terms
 as Gemini:
 
 - Connection failures and timeouts are classified transient and retried up to
@@ -376,7 +405,7 @@ as Gemini:
 - Invalid JSON and schema failures are **not** retried. They are deterministic;
   re-asking an identical prompt would only burn time. A weak model producing
   unusable JSON is a configuration problem, not a transient one.
-- With `AI_PROVIDER=ollama` and `AI_FALLBACK_PROVIDERS=gemini`, a local model
+- With `OLLAMA_BASE_URL` and `GEMINI_API_KEY` both set, a local model
   that is down falls through to the cloud provider — useful for self-hosted
   setups that keep an API key for emergencies.
 
@@ -577,34 +606,76 @@ unpriced generations. These operational estimates are not invoices and retain
 the telemetry privacy lifecycle: deleting the related user or course deletes
 its usage events.
 
-## Embedding Providers
+## Embeddings
 
-Embedding generation is a separate seam from text generation. A deployment may
-pair a large generative model with a small dedicated embedding model, and the two
-call different endpoints with different response contracts, so `EmbeddingProvider`
-in `services/embeddings.py` is not a variant of `TextGenerationProvider`.
+Embeddings are computed **in this process** by fastembed (ONNX, on CPU) and are
+completely independent of which vendor answers a generation request: the same
+vectors are produced whether a deployment talks to Gemini, to Ollama, or to
+nothing at all. Two consequences are worth stating plainly:
+
+- **Ollama is no longer required for embeddings.** A deployment can run on a
+  Gemini key alone, or on no vendor's embedding endpoint at all, and documents
+  still reach `ready`. Before this change `EMBEDDING_PROVIDER` defaulted to
+  `ollama`, so a self-hosted install without Ollama could not index anything.
+- **Course material never leaves the machine to be embedded.** There is no
+  embedding endpoint, no key, and no per-request cost.
+
+There is no model setting. The model is pinned in
+`backend/app/embedding_models.py`:
+
+| | |
+| --- | --- |
+| Model | `intfloat/multilingual-e5-large` |
+| Width | 1024 |
+| Context | 512 input tokens |
+| Languages | ~100, trained for asymmetric retrieval |
+
+It is pinned rather than configured because the stored vector width, its three
+`dimensions` CHECK constraints and its two HNSW indexes are all built for
+exactly that width: changing the model is an Alembic revision, not an
+environment edit. `tests/test_embedding_models.py` fails if the spec and the
+migrated schema ever disagree.
+
+E5 is trained asymmetrically, so `embed_query` prepends `query: ` and
+`embed_documents` prepends `passage: `. The prefixes are applied in
+`LocalEmbeddingProvider` rather than left to the library, because the library
+treats them as optional and a silently unprefixed query is a recall loss no
+test would notice.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `EMBEDDING_PROVIDER` | `ollama` | Implemented: `ollama`, `gemini`. `openai` and `claude` are recognized and fail at startup, exactly as they do for `AI_PROVIDER`. |
-| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Used with the shared `OLLAMA_BASE_URL`. |
-| `GEMINI_EMBEDDING_MODEL` | `text-embedding-004` | Used with the shared `GEMINI_API_KEY`. |
-| `EMBEDDING_BATCH_SIZE` | `32` | Texts per provider request, 1-256. |
-| `EMBEDDING_TIMEOUT_SECONDS` | `60` | Per-request deadline, 1-300. |
+| `EMBEDDING_MODEL_CACHE_DIRECTORY` | `./data/embedding-models` | Where the ONNX weights live. Container images bake them at build time and never reach the network at runtime; a checkout downloads them once with `python scripts/fetch_embedding_model.py`. |
+| `EMBEDDING_BATCH_SIZE` | `32` | Texts per forward pass, 1-256. |
 
-`IMPLEMENTED_EMBEDDING_PROVIDERS` in `backend/app/config.py` is authoritative, and
-a test asserts the factory constructs every name in it.
+The graph is loaded once per process behind a lock: one multi-gigabyte session
+per worker slot would cost more memory than the container has, and onnxruntime
+already saturates the available cores from a single session. Budget for the
+model being resident in **every** API and worker task — the API embeds a query
+on every retrieval.
 
-Every provider validates before returning: the response is a list, its length
-matches the input, order is preserved, and each vector is non-empty, numeric,
-finite, and exactly `EMBEDDING_DIMENSIONS` wide. A malformed or wrong-width
-response is a permanent failure, never something that reaches storage.
+Validation is unchanged: the response must be a list, its length must match the
+input, order is preserved, and each vector must be non-empty, numeric, finite,
+and exactly `EMBEDDING_DIMENSIONS` wide. A malformed or wrong-width vector is a
+permanent failure and never reaches storage.
 
-Text generation resilience (`ReliableTextGenerationProvider`, fallback providers,
-retry, concurrency limiting) does not apply here. Embedding retries are the
-durable processing job's responsibility: a transient failure requeues the whole
-embedding stage rather than retrying inside the provider. See
-`docs/vector_storage.md` for the error codes and their retryability.
+Text generation resilience (fallback vendors, retry, concurrency limiting) does
+not apply here. A local failure requeues the whole embedding stage through the
+durable processing job rather than retrying inside the provider. See
+`docs/vector_storage.md`.
+
+### Vectors from another model are not searched
+
+Every stored vector records the model that produced it, and every read filters
+on it. A vector written by a different model is a point in a different space,
+so it is excluded rather than compared — which means changing the model can no
+longer silently degrade retrieval. A course holding only such vectors ranks as
+empty, which `services/retrieval_material.py` reports as the indexing gap it
+is: HTTP 409 `material_not_indexed`, whose remedy is already
+`python -m workers.embedding_backfill`.
+
+The backfill closes the loop for free: because it reconciles against the
+configured model, a wrong-model vector counts as *missing* and is rewritten in
+place. There is no separate re-embed mode to run.
 
 ## Visual Understanding Providers
 
@@ -615,27 +686,23 @@ and passed to an `ImageUnderstandingProvider` in `services/image_understanding.p
 The resulting semantic descriptions are merged into the page's text with labeled
 headers (e.g. `[Diagram]\n...`) and indexed into chunks/embeddings downstream.
 
+There is no image provider setting. Descriptions are extracted **once** by the
+background worker and stored on the document, where every reader of that course
+shares them, so this can never be a per-user choice. The deployment uses the
+first vision-capable model of the first available vendor that has an image
+implementation, and if there is none the stage is skipped and recorded
+truthfully as `not_configured`.
+
+Only `gemini` and `ollama` have an `ImageUnderstandingProvider`. That filter is
+load-bearing rather than cosmetic: the default catalog marks OpenAI and Claude
+entries `vision: true`, so an OpenAI-only deployment would otherwise derive an
+image model it cannot send an image to.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `IMAGE_PROVIDER` | `none` | Implemented: `none` (disabled), `ollama`, `gemini`. Unset resolves based on `DEPLOYMENT_MODE`. `openai` and `claude` are recognized and fail at startup. |
-| `OLLAMA_IMAGE_MODEL` | `llama3.2-vision` | Multimodal model used with the shared `OLLAMA_BASE_URL`. |
-| `GEMINI_IMAGE_MODEL` | `gemini-2.5-flash` | Multimodal model used with `GEMINI_API_KEY`. |
+| `IMAGE_UNDERSTANDING_ENABLED` | `true` | Set `false` to skip visual analysis entirely. Describing a visual is a paid call per image, so a deployment can decline it without giving up the vendor that answers generation. |
 | `IMAGE_UNDERSTANDING_TIMEOUT_SECONDS` | `30` | Per-visual deadline, 1-300 seconds. |
 | `IMAGE_UNDERSTANDING_MAX_BYTES` | `10485760` | Maximum accepted rendered image size (10 MB). |
-
-### Deployment Mode Defaults and Startup Validation
-
-Visual understanding configuration is verified at application and worker startup:
-
-- **Hosted Mode (`DEPLOYMENT_MODE=hosted`)**:
-  - When `IMAGE_PROVIDER` is unset or empty, it auto-resolves to `gemini` only if the primary `AI_PROVIDER` is `gemini` and the configured model advertises vision capability in `AI_MODEL_CATALOG` (`vision: true`).
-  - If `AI_PROVIDER` is configured for any other provider (e.g. `openai` or `claude`), `IMAGE_PROVIDER` defaults to `none` rather than cross-routing visual crops to Gemini.
-  - An explicit or defaulted `IMAGE_PROVIDER=gemini` requires a non-blank `GEMINI_API_KEY`, failing fast at startup if missing.
-- **Self-Hosted Mode (`DEPLOYMENT_MODE=self_hosted`)**:
-  - When `IMAGE_PROVIDER` is unset or empty, it checks whether the configured `OLLAMA_IMAGE_MODEL` advertises vision capability in `AI_MODEL_CATALOG` (`vision: true`). If vision capability is present, it defaults to `ollama`. If the model does not support vision or is unadvertised, it defaults safely to `none` with an explicit non-fatal startup log.
-  - An explicit `IMAGE_PROVIDER=ollama` validates that the configured image model is not a known text-only model (e.g. `llama3.1` or `nomic-embed-text`), failing fast if a text-only model is configured for visual understanding.
-- **Text-Only and Disabled Deployments**:
-  - `IMAGE_PROVIDER=none` is always a valid non-fatal configuration across all deployment modes. When disabled, the visual understanding stage is bypassed: detected visual regions and document pages are recorded truthfully as `not_configured`, and standard text extraction, OCR, chunking, and embedding proceed normally.
 
 ### Supported Formats and Extraction Pipeline
 
@@ -658,7 +725,7 @@ Image understanding distinguishes between temporary infrastructure failures and 
   Exposed via API as `UploadedDocument.visual_analysis_status`:
   - `not_applicable`: Non-PDF documents or PDFs with no detected visual elements.
   - `pending`: Document is actively processing or pending extraction.
-  - `not_configured`: Visual elements exist, but `IMAGE_PROVIDER=none` or visual analysis was unconfigured.
+  - `not_configured`: Visual elements exist, but no available vendor offers a vision-capable model.
   - `completed`: All detected visual elements were successfully analyzed and indexed.
   - `partial`: Mixed outcomes (e.g., some succeeded and some failed, or some succeeded and some not configured).
   - `failed`: All relevant visual elements failed analysis.
@@ -672,5 +739,5 @@ Image understanding distinguishes between temporary infrastructure failures and 
 - **Self-Hosted Hardware Requirements**:
   Running local multimodal vision models with Ollama requires sufficient GPU VRAM to keep both the vision encoder and LLM resident in GPU memory concurrently. Running under memory pressure, falling back to CPU execution, or frequent model eviction significantly increases document processing latency.
 - **Privacy**:
-  - **Self-Hosted (`IMAGE_PROVIDER=ollama`)**: Visual crops remain entirely within the local host/network (`OLLAMA_BASE_URL`). No image bytes leave the local infrastructure.
-  - **Hosted (`IMAGE_PROVIDER=gemini`)**: Only cropped bounding-box PNGs of detected visual regions are transmitted over TLS to Google's Gemini API; entire PDF files or unrelated document text are not transmitted during the visual stage.
+  - **Local vision model (`ollama:*`)**: Visual crops remain entirely within the local host/network (`OLLAMA_BASE_URL`). No image bytes leave the local infrastructure.
+  - **Hosted vision model (`gemini:*`)**: Only cropped bounding-box PNGs of detected visual regions are transmitted over TLS to Google's Gemini API; entire PDF files or unrelated document text are not transmitted during the visual stage.

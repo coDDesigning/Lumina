@@ -42,6 +42,7 @@ import { QuizResults } from './QuizResults';
 import styles from './QuizModal.module.css';
 
 export interface QuizModalProps {
+  onQueued?: (jobId: number) => void;
   onQuizReady?: (quizId: number) => void;
   courseId: number;
   topics: string[];
@@ -99,6 +100,7 @@ export function QuizModal({
   initialTopic,
   onClose,
   onAttemptRecorded,
+  onQueued,
   onQuizReady,
 }: QuizModalProps) {
   const [step, setStep] = useState<QuizStep>('config');
@@ -117,6 +119,7 @@ export function QuizModal({
   const [answers, setAnswers] = useState<Record<number, AnswerDraft>>({});
   const [attempt, setAttempt] = useState<QuizAttemptResponse | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [isQueueing, setIsQueueing] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const startedAtRef = useRef(0);
@@ -223,10 +226,45 @@ export function QuizModal({
     const controller = new AbortController();
     abortRef.current = controller;
 
-    setStep('generating');
+    setFailure(null);
+    if (onQueued) {
+      setIsQueueing(true);
+    } else {
+      setStep('generating');
+    }
 
     try {
-      const generated = await quizAPI.generate(
+      if (!onQueued) {
+        const generated = await quizAPI.generate(
+          courseId,
+          {
+            question_count: setup.questionCount,
+            question_types: setup.questionTypes,
+            difficulty: setup.difficulty,
+            topic_focus: setup.topic,
+            use_profile_knowledge: setup.includeProfileContext,
+            include_profile_context: setup.includeProfileContext,
+          },
+          { signal: controller.signal },
+        );
+        if (controller.signal.aborted) return;
+        afterQuizGenerated(courseId);
+        if (onQuizReady) {
+          onQuizReady(generated.quiz.quiz_id);
+          void refresh();
+          return;
+        }
+        setQuiz(generated.quiz);
+        setIndex(0);
+        setAnswers({});
+        setAttempt(null);
+        startedAtRef.current = Date.now();
+        setStep('solving');
+        void refresh();
+        return;
+      }
+
+      const accepted = await quizAPI.enqueue(
         courseId,
         {
           question_count: setup.questionCount,
@@ -242,20 +280,9 @@ export function QuizModal({
         return;
       }
 
-      afterQuizGenerated(courseId);
-      if (onQuizReady) {
-        onQuizReady(generated.quiz.quiz_id);
-        void refresh();
-        return;
-      }
-
-      setQuiz(generated.quiz);
-      setIndex(0);
-      setAnswers({});
-      setAttempt(null);
-      startedAtRef.current = Date.now();
-      setStep('solving');
-      void refresh();
+      await refresh();
+      onQueued?.(accepted.job_id);
+      onClose();
     } catch (caught) {
       if (controller.signal.aborted || isAbortError(caught)) {
         return;
@@ -269,8 +296,10 @@ export function QuizModal({
       setFailedAction('generate');
       setFailure(described);
       setStep('error');
+    } finally {
+      if (!controller.signal.aborted) setIsQueueing(false);
     }
-  }, [courseId, setup, refresh, onQuizReady]);
+  }, [courseId, onClose, onQueued, onQuizReady, refresh, setup]);
 
   const backToSetup = () => {
     abortRef.current?.abort();
@@ -307,7 +336,9 @@ export function QuizModal({
             <Button
               variant="primary"
               onClick={() => void startQuiz()}
-              disabled={!hasMaterial || exhausted}
+              disabled={!hasMaterial || exhausted || isQueueing}
+              isLoading={isQueueing}
+              loadingLabel="Queueing quiz"
               icon={<Play aria-hidden="true" />}
             >
               Start the quiz

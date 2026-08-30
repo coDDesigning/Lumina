@@ -1,6 +1,7 @@
 import { apiClient, unwrapData } from './client';
 import type {
   BaseResponse,
+  GenerationJobAccepted,
   QuizAttemptRequest,
   QuizAttemptResponse,
   QuizGenerationResult,
@@ -14,6 +15,19 @@ import type {
 } from './types';
 
 export const quizAPI = {
+  enqueue: async (
+    courseId: number,
+    request: QuizRequest,
+    options?: RequestInit,
+  ): Promise<GenerationJobAccepted> => {
+    const res = await apiClient.post<BaseResponse<GenerationJobAccepted>>(
+      `/courses/${courseId}/quiz/jobs`,
+      request,
+      options,
+    );
+    return unwrapData(res, 'Quiz generation job');
+  },
+
   generate: async (
     courseId: number,
     request: QuizRequest,
@@ -160,4 +174,3 @@ export const quizAPI = {
     return unwrapData(res, 'Timed session submission');
   },
 };
-

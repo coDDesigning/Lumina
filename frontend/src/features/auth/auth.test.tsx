@@ -160,7 +160,7 @@ describe('RegisterPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     expect(
-      await screen.findByText('That password is too long. Keep it under 72 bytes.'),
+      await screen.findByText('That password is too long.'),
     ).toBeInTheDocument();
     expect(mockedRegister).not.toHaveBeenCalled();
   });
@@ -195,7 +195,7 @@ describe('RegisterPage', () => {
   it('states the password rules before the user submits', () => {
     renderAt(<RegisterPage />, '/register');
     expect(
-      screen.getByText(/At least 12 characters, up to 72 bytes\./),
+      screen.getByText(/At least 8 characters\./),
     ).toBeInTheDocument();
   });
 
@@ -224,6 +224,8 @@ describe('RegisterPage', () => {
     // The account exists and the session is real; only the credits are held back.
     expect(login).toHaveBeenCalledWith('token-xyz');
     expect(screen.queryByRole('heading', { name: 'Courses' })).not.toBeInTheDocument();
+    // No bypass: the only way on is the emailed link.
+    expect(screen.queryByRole('link', { name: /skip|look around/i })).not.toBeInTheDocument();
   });
 
   it('asks for another link without making the user retype their address', async () => {

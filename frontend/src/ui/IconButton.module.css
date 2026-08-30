@@ -27,14 +27,29 @@
   height: var(--size-control-sm);
 }
 
+.sm svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
 .md {
   width: var(--size-control-md);
   height: var(--size-control-md);
 }
 
+.md svg {
+  width: var(--size-icon-md);
+  height: var(--size-icon-md);
+}
+
 .lg {
   width: var(--size-control-lg);
   height: var(--size-control-lg);
+}
+
+.lg svg {
+  width: var(--size-icon-lg);
+  height: var(--size-icon-lg);
 }
 
 .accent {

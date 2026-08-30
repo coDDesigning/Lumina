@@ -9,6 +9,8 @@ from backend.app.models import (
     EMBEDDING_DIMENSIONS,
     Course,
     DocumentChunk,
+    ProfileDocument,
+    ProfileDocumentChunk,
     Role,
     UploadedDocument,
     User,
@@ -20,6 +22,10 @@ from services.vector_store import ChromaVectorStore, PgVectorStore, VectorRecord
 from storage.local import LocalStorage
 from workers import embedding_backfill
 from workers.embedding_backfill import BackfillReport, run_backfill
+
+from services.embeddings import configured_embedding_identity
+
+EMBEDDING_PROVIDER_NAME, EMBEDDING_MODEL_NAME = configured_embedding_identity()
 
 pytestmark = pytest.mark.database_contract
 
@@ -110,7 +116,15 @@ def _seed(
     return course, document, chunks
 
 
-def _store_vectors(store, session, document, chunks) -> None:
+def _store_vectors(
+    store,
+    session,
+    document,
+    chunks,
+    *,
+    embedding_provider: str = EMBEDDING_PROVIDER_NAME,
+    embedding_model: str = EMBEDDING_MODEL_NAME,
+) -> None:
     store.replace_document_vectors(
         session,
         document_id=document.id,
@@ -125,8 +139,8 @@ def _store_vectors(store, session, document, chunks) -> None:
             )
             for chunk in chunks
         ],
-        embedding_provider="ollama",
-        embedding_model="nomic-embed-text",
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
     )
 
 
@@ -259,9 +273,9 @@ def test_backfill_only_embeds_the_missing_chunks(
     assert report.vectors_written == 3
     assert len(provider.embedded) == 3
     assert store.count_document_vectors(db_session, document.id) == 5
-    assert store.chunk_ids_with_vectors(db_session, document.id) == {
-        chunk.id for chunk in chunks
-    }
+    assert store.chunk_ids_with_vectors(
+        db_session, document.id, embedding_model=EMBEDDING_MODEL_NAME
+    ) == {chunk.id for chunk in chunks}
 
 
 def test_backfill_resumes_after_a_partial_failure(
@@ -305,6 +319,52 @@ def test_backfill_resumes_after_a_partial_failure(
     assert store.count_document_vectors(db_session, second.id) == 3
 
 
+def test_backfill_replaces_vectors_written_by_another_model(
+    store, session_factory, db_session, tmp_path
+) -> None:
+    """A wrong-model vector is missing, not present: the backfill rewrites it."""
+    storage = LocalStorage(tmp_path / "uploads", namespace="lifecycle")
+    _, document, chunks = _seed(
+        db_session, storage, email="backfill-stale-model@example.com", chunk_count=3
+    )
+    _store_vectors(
+        store,
+        db_session,
+        document,
+        chunks,
+        embedding_provider="ollama",
+        embedding_model="nomic-embed-text",
+    )
+    db_session.commit()
+    assert store.count_document_vectors(db_session, document.id) == 3
+    assert (
+        store.chunk_ids_with_vectors(
+            db_session, document.id, embedding_model=EMBEDDING_MODEL_NAME
+        )
+        == set()
+    )
+
+    provider = StubEmbeddingProvider()
+    report = run_backfill(
+        session_factory=session_factory,
+        vector_store=store,
+        embedding_provider=provider,
+    )
+
+    assert report.vectors_written == 3
+    assert store.count_document_vectors(db_session, document.id) == 3
+    assert store.chunk_ids_with_vectors(
+        db_session, document.id, embedding_model=EMBEDDING_MODEL_NAME
+    ) == {chunk.id for chunk in chunks}
+
+    rerun = run_backfill(
+        session_factory=session_factory,
+        vector_store=store,
+        embedding_provider=StubEmbeddingProvider(),
+    )
+    assert rerun.vectors_written == 0
+
+
 def test_backfill_prunes_vectors_whose_chunk_is_gone(
     store, session_factory, db_session, tmp_path
 ) -> None:
@@ -322,7 +382,9 @@ def test_backfill_prunes_vectors_whose_chunk_is_gone(
 
     # A pgvector row cascades away with its chunk; a Chroma vector does not.
     if store.count_document_vectors(db_session, document.id) == 3:
-        assert stale_id in store.chunk_ids_with_vectors(db_session, document.id)
+        assert stale_id in store.chunk_ids_with_vectors(
+            db_session, document.id, embedding_model=EMBEDDING_MODEL_NAME
+        )
 
     report = run_backfill(
         session_factory=session_factory,
@@ -332,7 +394,9 @@ def test_backfill_prunes_vectors_whose_chunk_is_gone(
     )
 
     assert store.count_document_vectors(db_session, document.id) == 2
-    assert stale_id not in store.chunk_ids_with_vectors(db_session, document.id)
+    assert stale_id not in store.chunk_ids_with_vectors(
+        db_session, document.id, embedding_model=EMBEDDING_MODEL_NAME
+    )
     assert report.vectors_written == 0
 
 
@@ -548,3 +612,79 @@ def test_backfill_worker_cli_with_interval(monkeypatch) -> None:
     assert called_with["interval_seconds"] == 600.0
     assert called_with["once"] is True
     assert called_with["batch_size"] == 32
+
+
+def test_backfill_covers_profile_documents(
+    store, session_factory, db_session, tmp_path
+) -> None:
+    """A profile document has no other route back into the index."""
+    role = db_session.scalar(select(Role).where(Role.name == "user"))
+    assert role is not None
+    user = User(
+        name="Profile backfill",
+        email="profile-backfill@example.com",
+        password_hash="not-a-real-hash",
+        role_id=role.id,
+    )
+    db_session.add(user)
+    db_session.flush()
+
+    document_id = uuid4()
+    db_session.add(
+        ProfileDocument(
+            id=document_id,
+            original_file_name="background.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=100,
+            file_hash=uuid4().hex * 2,
+            user_id=user.id,
+            storage_provider="local:default",
+            storage_key=f"users/{user.id}/documents/{document_id}/source.txt",
+            status="ready",
+        )
+    )
+    db_session.flush()
+    db_session.add_all(
+        ProfileDocumentChunk(
+            document_id=document_id,
+            user_id=user.id,
+            chunk_index=index,
+            page_number=1,
+            end_page_number=1,
+            text=f"profile chunk {index}",
+        )
+        for index in range(2)
+    )
+    db_session.commit()
+
+    assert (
+        store.profile_chunk_ids_with_vectors(
+            db_session, document_id, embedding_model=EMBEDDING_MODEL_NAME
+        )
+        == set()
+    )
+
+    report = run_backfill(
+        session_factory=session_factory,
+        vector_store=store,
+        embedding_provider=StubEmbeddingProvider(),
+    )
+
+    assert report.profile_documents_examined == 1
+    assert report.profile_documents_updated == 1
+    assert (
+        len(
+            store.profile_chunk_ids_with_vectors(
+                db_session, document_id, embedding_model=EMBEDDING_MODEL_NAME
+            )
+        )
+        == 2
+    )
+
+    rerun = run_backfill(
+        session_factory=session_factory,
+        vector_store=store,
+        embedding_provider=StubEmbeddingProvider(),
+    )
+    assert rerun.profile_documents_updated == 0

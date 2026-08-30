@@ -89,6 +89,32 @@ describe('StudyHistoryModal', () => {
     expect(mockGet).toHaveBeenCalledWith(7, 12, expect.anything());
   });
 
+  it('lets a stored guide be copied as markdown', async () => {
+    mockList.mockResolvedValue([SUMMARY]);
+    mockGet.mockResolvedValue(DETAIL);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    renderModal();
+    await userEvent.click(await screen.findByText('Study guide'));
+    await userEvent.click(await screen.findByRole('button', { name: 'Copy' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    expect(writeText.mock.calls[0][0]).toContain('# Stored Guide');
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+  });
+
+  it('offers no copy or download until a guide is open', async () => {
+    mockList.mockResolvedValue([SUMMARY]);
+    mockGet.mockResolvedValue(DETAIL);
+
+    renderModal();
+    await screen.findByText('Study guide');
+
+    expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
+  });
+
   it('reports missing settings rather than inventing them', async () => {
     mockList.mockResolvedValue([{ ...SUMMARY, generation_settings: null }]);
 

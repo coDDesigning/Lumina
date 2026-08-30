@@ -23,6 +23,7 @@ from backend.app.models import (
     OUTPUT_TYPE_EXAM_TOPIC_GUIDE,
     OUTPUT_TYPE_EXAM_TOPIC_PRACTICE,
     OUTPUT_TYPE_EXAM_TOPIC_SUMMARY,
+    User,
 )
 from schemas.citation import Citation
 from schemas.exam_mode import (
@@ -315,15 +316,16 @@ def _run_analysis(
 ) -> BaseResponse[ExamAnalysisResult]:
     generation = None
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model,
             current_user.preferred_model,
             required_capability="study_guide",
         )
-        try:
-            provider = get_text_generation_provider(effective_model=effective_model)
-        except TypeError:
-            provider = get_text_generation_provider()
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            user=db_user,
+        )
 
         generation = ExamSourceAnalysisService.analyse(
             db,
@@ -664,15 +666,16 @@ def _topic_artifact(
 
     generation = None
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model,
             current_user.preferred_model,
             required_capability="study_guide",
         )
-        try:
-            provider = get_text_generation_provider(effective_model=effective_model)
-        except TypeError:
-            provider = get_text_generation_provider()
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            user=db_user,
+        )
 
         generation = ExamTopicStudyService.generate(
             db,
@@ -910,15 +913,16 @@ def _topic_quiz(
 
     generation = None
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model,
             current_user.preferred_model,
             required_capability="quiz",
         )
-        try:
-            provider = get_text_generation_provider(effective_model=effective_model)
-        except TypeError:
-            provider = get_text_generation_provider()
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            user=db_user,
+        )
 
         generation = ExamQuizService.generate(
             db,
@@ -1080,15 +1084,16 @@ def generate_similar_questions(
 
     generation = None
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model,
             current_user.preferred_model,
             required_capability="quiz",
         )
-        try:
-            provider = get_text_generation_provider(effective_model=effective_model)
-        except TypeError:
-            provider = get_text_generation_provider()
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            user=db_user,
+        )
 
         generation = ExamSimilarQuestionsService.generate(
             db,
@@ -1246,15 +1251,16 @@ def generate_mock_exam(
 
     generation = None
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model,
             current_user.preferred_model,
             required_capability="quiz",
         )
-        try:
-            provider = get_text_generation_provider(effective_model=effective_model)
-        except TypeError:
-            provider = get_text_generation_provider()
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            user=db_user,
+        )
 
         generation = ExamMockExamService.generate(
             db,
@@ -1358,15 +1364,16 @@ def generate_review_sheet(
 
     generation = None
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model,
             current_user.preferred_model,
             required_capability="study_guide",
         )
-        try:
-            provider = get_text_generation_provider(effective_model=effective_model)
-        except TypeError:
-            provider = get_text_generation_provider()
+        provider = get_text_generation_provider(
+            effective_model=effective_model,
+            user=db_user,
+        )
 
         generation = ExamReviewSheetService.generate(
             db, course.id, plan, provider, user_id=current_user.id

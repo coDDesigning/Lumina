@@ -186,6 +186,7 @@ def test_backup_and_restore_round_trip_sqlite_uploads_and_chroma(
             course_id=model_graph.course.id,
             query_embedding=vector,
             limit=1,
+            embedding_model="test",
         )
         assert [result.chunk_id for result in results] == [chunk_id]
     finally:

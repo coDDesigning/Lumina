@@ -20,6 +20,7 @@ from backend.app.models import (
     ProfileDocumentChunk,
 )
 from services.embeddings import (
+    configured_embedding_identity,
     EmbeddingDimensionMismatchError,
     EmbeddingProvider,
     get_embedding_provider,
@@ -80,11 +81,15 @@ def retrieve_course_chunks(
             f"got {len(query_embedding)}."
         )
 
+    # Vectors written by another model are a different space, so they are
+    # filtered out rather than compared. An index that only holds those ranks
+    # as empty, which retrieval_material reports as the indexing gap it is.
     results = (store or get_vector_store()).search(
         db,
         course_id=course_id,
         query_embedding=query_embedding,
         limit=limit,
+        embedding_model=configured_embedding_identity()[1],
         document_ids=identifiers,
     )
     if not results:
@@ -163,6 +168,7 @@ def retrieve_profile_chunks(
         user_id=user_id,
         query_embedding=query_embedding,
         limit=limit,
+        embedding_model=configured_embedding_identity()[1],
         document_ids=identifiers,
     )
     if not results:

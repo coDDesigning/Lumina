@@ -26,6 +26,7 @@ from backend.app.config import (
     DEFAULT_OPENAI_MODEL,
     settings,
 )
+from services.ollama import resolve_ollama_base_url
 from schemas.ai_usage import ErrorCategory
 from utils.exceptions import BadRequestException
 
@@ -134,10 +135,46 @@ class ProviderRegistry:
         return entry["is_local"] if entry else False
 
 
-def _model_catalog_entry(model_id: str) -> dict[str, object] | None:
-    for model in get_available_models():
+def _model_catalog_entry(
+    model_id: str, user: object | None = None
+) -> dict[str, object] | None:
+    for model in get_available_models(user=user):
         if model["id"] == model_id:
             return model
+    if ":" in model_id:
+        provider, model_name = model_id.split(":", 1)
+        catalog_dict = getattr(settings, "ai_model_catalog", None) or {}
+        for entry in catalog_dict.get(provider, []):
+            if str(entry.get("model")) == model_name:
+                vendor = ProviderRegistry.get_vendor(provider) or provider.title()
+                is_local = ProviderRegistry.is_local(provider)
+                is_json = bool(entry.get("json_mode", True))
+                return {
+                    "id": model_id,
+                    "provider": provider,
+                    "model": model_name,
+                    "display_name": f"{vendor} ({model_name})",
+                    "is_default": False,
+                    "cost_hint": (
+                        "Local execution · Unmetered"
+                        if is_local
+                        else "Metered (1-2 credits)"
+                    ),
+                    "capabilities": [
+                        "study_guide",
+                        "quiz",
+                        "flashcard",
+                        "ai_tutor",
+                        "course_qa",
+                        "prompt_generator",
+                    ],
+                    "description": f"{vendor} ({model_name})",
+                    "is_local": is_local,
+                    "supports_json": is_json,
+                    "json_mode": is_json,
+                    "context_window": int(entry.get("context_window", 8192)),
+                    "vision": bool(entry.get("vision", False)),
+                }
     return None
 
 
@@ -197,6 +234,30 @@ class TextGenerationAuthError(TextGenerationError):
         super().__init__(message, error_category=ErrorCategory.AUTHENTICATION_ERROR)
 
 
+class PersonalKeyAuthError(TextGenerationAuthError):
+    """Personal/BYOK API key authentication failure (disables silent fallback)."""
+
+    def __init__(
+        self,
+        message: str = "Your personal API key is invalid or expired.",
+        provider: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.provider = provider
+
+
+def _vendor_display_name(provider_name: str) -> str:
+    clean = provider_name.strip().lower()
+    mapping = {
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "claude": "Anthropic Claude",
+        "anthropic": "Anthropic Claude",
+        "ollama": "Ollama",
+    }
+    return mapping.get(clean, clean.title())
+
+
 class TextGenerationEmptyResponseError(TextGenerationError):
     """Provider returned an empty response."""
 
@@ -241,40 +302,54 @@ def is_transient_generation_error(exc: Exception) -> bool:
     try:
         import openai
 
-        if isinstance(
-            exc,
-            (
-                openai.APIConnectionError,
-                openai.APITimeoutError,
-                openai.RateLimitError,
-                openai.InternalServerError,
-            ),
-        ):
+        openai_errors = tuple(
+            getattr(openai, attr)
+            for attr in (
+                "APIConnectionError",
+                "APITimeoutError",
+                "RateLimitError",
+                "InternalServerError",
+            )
+            if hasattr(openai, attr)
+        )
+        if openai_errors and isinstance(exc, openai_errors):
             return True
-        if isinstance(exc, openai.APIStatusError):
+        status_err = getattr(openai, "APIStatusError", None)
+        if status_err and isinstance(exc, status_err):
             code = getattr(exc, "status_code", None)
             return code in {429, 500, 502, 503, 504}
-    except ImportError:
+    except (ImportError, AttributeError):
         pass
 
     try:
         import anthropic
 
-        if isinstance(
-            exc,
-            (
-                anthropic.APIConnectionError,
-                anthropic.APITimeoutError,
-                anthropic.RateLimitError,
-                anthropic.InternalServerError,
-            ),
-        ):
+        anthropic_errors = tuple(
+            getattr(anthropic, attr)
+            for attr in (
+                "APIConnectionError",
+                "APITimeoutError",
+                "RateLimitError",
+                "InternalServerError",
+            )
+            if hasattr(anthropic, attr)
+        )
+        if anthropic_errors and isinstance(exc, anthropic_errors):
             return True
-        if isinstance(exc, anthropic.APIStatusError):
+        status_err = getattr(anthropic, "APIStatusError", None)
+        if status_err and isinstance(exc, status_err):
             code = getattr(exc, "status_code", None)
             return code in {429, 500, 502, 503, 504}
-    except ImportError:
+    except (ImportError, AttributeError):
         pass
+
+    status_code = getattr(exc, "status_code", getattr(exc, "code", None))
+    if isinstance(status_code, int) and status_code in {429, 500, 502, 503, 504}:
+        return True
+
+    exc_name = type(exc).__name__.lower()
+    if "connection" in exc_name or "timeout" in exc_name:
+        return True
 
     if isinstance(exc, TextGenerationRateLimitError) and not isinstance(
         exc, GenerationConcurrencyError
@@ -478,8 +553,9 @@ class OllamaTextGenerationProvider:
         client: httpx.Client | None = None,
         timeout_seconds: int | None = None,
         model: str | None = None,
+        base_url: str | None = None,
     ) -> None:
-        self._base_url = settings.ollama_base_url
+        self._base_url = resolve_ollama_base_url(base_url or settings.ollama_base_url)
         self._model = model or settings.ollama_model
         self._timeout_seconds = (
             timeout_seconds
@@ -626,9 +702,12 @@ class OpenAITextGenerationProvider:
         if client is not None:
             self._client = client
         else:
-            from openai import OpenAI
+            try:
+                from openai import OpenAI
 
-            self._client = OpenAI(api_key=key, timeout=self._timeout_seconds)
+                self._client = OpenAI(api_key=key, timeout=self._timeout_seconds)
+            except (ImportError, AttributeError):
+                self._client = None
 
     def _extract_metadata(
         self, response: object, latency_ms: int
@@ -655,31 +734,56 @@ class OpenAITextGenerationProvider:
     def _handle_client_error(self, exc: Exception) -> None:
         if isinstance(exc, TextGenerationError):
             raise exc
-        # Import here to avoid hard dependency at module load
-        from openai import (
-            APITimeoutError,
-            RateLimitError as OpenAIRateLimitError,
-            APIStatusError,
-            APIConnectionError,
-        )
+        try:
+            from openai import (
+                APITimeoutError,
+                RateLimitError as OpenAIRateLimitError,
+                APIStatusError,
+                APIConnectionError,
+            )
 
-        if isinstance(exc, APITimeoutError):
-            raise TextGenerationTimeoutError("OpenAI request timed out.") from exc
-        if isinstance(exc, OpenAIRateLimitError):
-            raise TextGenerationRateLimitError("OpenAI rate limit exceeded.") from exc
-        if isinstance(exc, APIStatusError):
-            if exc.status_code in {401, 403}:
-                raise TextGenerationAuthError("OpenAI authentication failed.") from exc
-            if exc.status_code in {429}:
+            if isinstance(exc, APITimeoutError):
+                raise TextGenerationTimeoutError("OpenAI request timed out.") from exc
+            if isinstance(exc, OpenAIRateLimitError):
                 raise TextGenerationRateLimitError(
                     "OpenAI rate limit exceeded."
                 ) from exc
-            if exc.status_code in {500, 502, 503, 504}:
+            if isinstance(exc, APIStatusError):
+                if exc.status_code in {401, 403}:
+                    raise TextGenerationAuthError(
+                        "OpenAI authentication failed."
+                    ) from exc
+                if exc.status_code in {429}:
+                    raise TextGenerationRateLimitError(
+                        "OpenAI rate limit exceeded."
+                    ) from exc
+                if exc.status_code in {500, 502, 503, 504}:
+                    raise TextGenerationProviderError(
+                        "OpenAI service unavailable."
+                    ) from exc
                 raise TextGenerationProviderError(
-                    "OpenAI service unavailable."
+                    "OpenAI text generation failed."
                 ) from exc
-            raise TextGenerationProviderError("OpenAI text generation failed.") from exc
-        if isinstance(exc, APIConnectionError):
+            if isinstance(exc, APIConnectionError):
+                raise TextGenerationConnectionError(
+                    "OpenAI could not be reached."
+                ) from exc
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            pass
+
+        status_code = getattr(exc, "status_code", getattr(exc, "code", None))
+        if status_code in {401, 403}:
+            raise TextGenerationAuthError("OpenAI authentication failed.") from exc
+        if status_code == 429:
+            raise TextGenerationRateLimitError("OpenAI rate limit exceeded.") from exc
+        if status_code in {500, 502, 503, 504}:
+            raise TextGenerationProviderError("OpenAI service unavailable.") from exc
+        name = type(exc).__name__.lower()
+        if "timeout" in name:
+            raise TextGenerationTimeoutError("OpenAI request timed out.") from exc
+        if "ratelimit" in name:
+            raise TextGenerationRateLimitError("OpenAI rate limit exceeded.") from exc
+        if "connection" in name:
             raise TextGenerationConnectionError("OpenAI could not be reached.") from exc
         raise TextGenerationProviderError("OpenAI text generation failed.") from exc
 
@@ -770,9 +874,12 @@ class ClaudeTextGenerationProvider:
         if client is not None:
             self._client = client
         else:
-            from anthropic import Anthropic
+            try:
+                from anthropic import Anthropic
 
-            self._client = Anthropic(api_key=key, timeout=self._timeout_seconds)
+                self._client = Anthropic(api_key=key, timeout=self._timeout_seconds)
+            except (ImportError, ModuleNotFoundError, AttributeError):
+                self._client = None
 
     def _extract_metadata(
         self, response: object, latency_ms: int
@@ -803,30 +910,56 @@ class ClaudeTextGenerationProvider:
     def _handle_client_error(self, exc: Exception) -> None:
         if isinstance(exc, TextGenerationError):
             raise exc
-        from anthropic import (
-            APITimeoutError,
-            RateLimitError as AnthropicRateLimitError,
-            APIStatusError,
-            APIConnectionError,
-        )
+        try:
+            from anthropic import (
+                APITimeoutError,
+                RateLimitError as AnthropicRateLimitError,
+                APIStatusError,
+                APIConnectionError,
+            )
 
-        if isinstance(exc, APITimeoutError):
-            raise TextGenerationTimeoutError("Claude request timed out.") from exc
-        if isinstance(exc, AnthropicRateLimitError):
-            raise TextGenerationRateLimitError("Claude rate limit exceeded.") from exc
-        if isinstance(exc, APIStatusError):
-            if exc.status_code in {401, 403}:
-                raise TextGenerationAuthError("Claude authentication failed.") from exc
-            if exc.status_code in {429}:
+            if isinstance(exc, APITimeoutError):
+                raise TextGenerationTimeoutError("Claude request timed out.") from exc
+            if isinstance(exc, AnthropicRateLimitError):
                 raise TextGenerationRateLimitError(
                     "Claude rate limit exceeded."
                 ) from exc
-            if exc.status_code in {500, 502, 503, 504}:
+            if isinstance(exc, APIStatusError):
+                if exc.status_code in {401, 403}:
+                    raise TextGenerationAuthError(
+                        "Claude authentication failed."
+                    ) from exc
+                if exc.status_code in {429}:
+                    raise TextGenerationRateLimitError(
+                        "Claude rate limit exceeded."
+                    ) from exc
+                if exc.status_code in {500, 502, 503, 504}:
+                    raise TextGenerationProviderError(
+                        "Claude service unavailable."
+                    ) from exc
                 raise TextGenerationProviderError(
-                    "Claude service unavailable."
+                    "Claude text generation failed."
                 ) from exc
-            raise TextGenerationProviderError("Claude text generation failed.") from exc
-        if isinstance(exc, APIConnectionError):
+            if isinstance(exc, APIConnectionError):
+                raise TextGenerationConnectionError(
+                    "Claude could not be reached."
+                ) from exc
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            pass
+
+        status_code = getattr(exc, "status_code", getattr(exc, "code", None))
+        if status_code in {401, 403}:
+            raise TextGenerationAuthError("Claude authentication failed.") from exc
+        if status_code == 429:
+            raise TextGenerationRateLimitError("Claude rate limit exceeded.") from exc
+        if status_code in {500, 502, 503, 504}:
+            raise TextGenerationProviderError("Claude service unavailable.") from exc
+        name = type(exc).__name__.lower()
+        if "timeout" in name:
+            raise TextGenerationTimeoutError("Claude request timed out.") from exc
+        if "ratelimit" in name:
+            raise TextGenerationRateLimitError("Claude rate limit exceeded.") from exc
+        if "connection" in name:
             raise TextGenerationConnectionError("Claude could not be reached.") from exc
         raise TextGenerationProviderError("Claude text generation failed.") from exc
 
@@ -945,22 +1078,8 @@ ProviderRegistry.register(
 
 def configured_provider_identity() -> tuple[str, str]:
     """Report the provider name and model the application is configured to use."""
-    provider_name = settings.ai_provider
-    default_model = ProviderRegistry.get_default_model(provider_name)
-    if default_model:
-        return provider_name, default_model
-
-    # Fallback to old logic for backward compatibility
-    if provider_name == AI_PROVIDER_OLLAMA:
-        return AI_PROVIDER_OLLAMA, settings.ollama_model
-    if provider_name == AI_PROVIDER_GEMINI:
-        return AI_PROVIDER_GEMINI, GeminiTextGenerationProvider.MODEL
-    if provider_name == AI_PROVIDER_OPENAI:
-        return AI_PROVIDER_OPENAI, DEFAULT_OPENAI_MODEL
-    if provider_name == AI_PROVIDER_CLAUDE:
-        return AI_PROVIDER_CLAUDE, DEFAULT_CLAUDE_MODEL
-
-    return provider_name, "unknown"
+    provider_name, model_name = settings.ai_default_model.split(":", 1)
+    return provider_name, model_name
 
 
 def model_identifier(metadata: GenerationMetadata | None) -> str:
@@ -1150,6 +1269,23 @@ class ReliableTextGenerationProvider:
                         },
                     )
 
+                is_auth_error = isinstance(last_exception, TextGenerationAuthError)
+                if not is_auth_error and last_exception is not None:
+                    status_code = getattr(
+                        last_exception,
+                        "status_code",
+                        getattr(last_exception, "code", None),
+                    )
+                    if status_code in {401, 403}:
+                        is_auth_error = True
+
+                if getattr(provider, "is_personal_key", False) and is_auth_error:
+                    vendor = _vendor_display_name(provider_name)
+                    raise PersonalKeyAuthError(
+                        f"Your personal {vendor} API key is invalid or expired.",
+                        provider=provider_name,
+                    ) from last_exception
+
             if isinstance(last_exception, TextGenerationError):
                 raise last_exception
             raise TextGenerationError(
@@ -1191,18 +1327,27 @@ class ReliableTextGenerationProvider:
         return result
 
 
-def get_available_models() -> list[dict[str, object]]:
-    primary_name = settings.ai_provider
-    provider_names = [primary_name]
+def get_available_models(user: object | None = None) -> list[dict[str, object]]:
+    # The deployment's credentials set the base; a user's own key can add a
+    # vendor the deployment does not configure.
+    provider_names = list(settings.ai_available_vendors)
 
-    if settings.ai_fallback_providers:
-        for fallback_token in (
-            item.strip().lower()
-            for item in settings.ai_fallback_providers.split(",")
-            if item.strip()
+    if user is not None:
+        if getattr(user, "encrypted_gemini_api_key", None) or (
+            isinstance(user, dict) and user.get("encrypted_gemini_api_key")
         ):
-            if fallback_token not in provider_names:
-                provider_names.append(fallback_token)
+            if AI_PROVIDER_GEMINI not in provider_names:
+                provider_names.append(AI_PROVIDER_GEMINI)
+        if getattr(user, "encrypted_openai_api_key", None) or (
+            isinstance(user, dict) and user.get("encrypted_openai_api_key")
+        ):
+            if AI_PROVIDER_OPENAI not in provider_names:
+                provider_names.append(AI_PROVIDER_OPENAI)
+        if getattr(user, "encrypted_anthropic_api_key", None) or (
+            isinstance(user, dict) and user.get("encrypted_anthropic_api_key")
+        ):
+            if AI_PROVIDER_CLAUDE not in provider_names:
+                provider_names.append(AI_PROVIDER_CLAUDE)
 
     standard_capabilities = [
         "study_guide",
@@ -1222,7 +1367,7 @@ def get_available_models() -> list[dict[str, object]]:
         description_template = ProviderRegistry.get_description(provider)
         is_local = ProviderRegistry.is_local(provider)
 
-        for index, entry in enumerate(provider_models):
+        for entry in provider_models:
             model_name = str(entry["model"])
             is_json = bool(entry.get("json_mode", True))
             context_win = int(entry.get("context_window", 8192))
@@ -1243,7 +1388,8 @@ def get_available_models() -> list[dict[str, object]]:
                     "provider": provider,
                     "model": model_name,
                     "display_name": f"{vendor} ({model_name})",
-                    "is_default": provider == primary_name and index == 0,
+                    "is_default": f"{provider}:{model_name}"
+                    == settings.ai_default_model,
                     "cost_hint": cost_hint,
                     "capabilities": list(standard_capabilities),
                     "description": description,
@@ -1262,6 +1408,7 @@ def resolve_effective_model(
     request_model: str | None = None,
     user_preferred_model: str | None = None,
     required_capability: str | None = None,
+    user: object | None = None,
 ) -> str:
     """Resolve the effective model using precedence rule:
     1. Explicit request override
@@ -1270,13 +1417,16 @@ def resolve_effective_model(
 
     Optionally validates that the resolved model supports ``required_capability``.
     """
-    catalog = get_available_models()
+    catalog = get_available_models(user=user)
     catalog_by_id = {m["id"]: m for m in catalog}
     valid_ids = set(catalog_by_id.keys())
 
     if request_model:
         if request_model not in valid_ids:
-            raise UnavailableModelError("Requested AI model is not available.")
+            full_entry = _model_catalog_entry(request_model, user=user)
+            if full_entry is None:
+                raise UnavailableModelError("Requested AI model is not available.")
+            catalog_by_id[request_model] = full_entry
         if required_capability:
             caps = catalog_by_id[request_model].get("capabilities") or []
             if required_capability not in caps:
@@ -1287,11 +1437,19 @@ def resolve_effective_model(
 
     resolved_id: str | None = None
 
-    if user_preferred_model and user_preferred_model in catalog_by_id:
-        if not required_capability or required_capability in (
-            catalog_by_id[user_preferred_model].get("capabilities") or []
-        ):
-            resolved_id = user_preferred_model
+    if user_preferred_model:
+        if user_preferred_model in catalog_by_id:
+            if not required_capability or required_capability in (
+                catalog_by_id[user_preferred_model].get("capabilities") or []
+            ):
+                resolved_id = user_preferred_model
+        else:
+            full_entry = _model_catalog_entry(user_preferred_model, user=user)
+            if full_entry is not None:
+                if not required_capability or required_capability in (
+                    full_entry.get("capabilities") or []
+                ):
+                    resolved_id = user_preferred_model
 
     if not resolved_id:
         for m in catalog:
@@ -1321,9 +1479,62 @@ def resolve_effective_model(
     return resolved_id
 
 
+def resolve_user_api_key(
+    provider_name: str,
+    user: object | None = None,
+    user_api_keys: dict[str, str | None] | None = None,
+    explicit_key: str | None = None,
+) -> str | None:
+    """Resolve the API key for a provider, prioritizing explicit/user BYOK key before fallback."""
+    if explicit_key:
+        return explicit_key
+
+    clean_name = provider_name.strip().lower()
+
+    if user_api_keys:
+        if clean_name in user_api_keys and user_api_keys[clean_name]:
+            return user_api_keys[clean_name]
+        if clean_name == "claude" and user_api_keys.get("anthropic"):
+            return user_api_keys["anthropic"]
+        if clean_name == "anthropic" and user_api_keys.get("claude"):
+            return user_api_keys["claude"]
+
+    if user is not None:
+        try:
+            from utils.crypto import decrypt_value
+
+            if clean_name == "gemini":
+                enc = getattr(user, "encrypted_gemini_api_key", None)
+                if enc:
+                    decrypted = decrypt_value(enc)
+                    if decrypted:
+                        return decrypted
+            elif clean_name == "openai":
+                enc = getattr(user, "encrypted_openai_api_key", None)
+                if enc:
+                    decrypted = decrypt_value(enc)
+                    if decrypted:
+                        return decrypted
+            elif clean_name in {"claude", "anthropic"}:
+                enc = getattr(user, "encrypted_anthropic_api_key", None)
+                if enc:
+                    decrypted = decrypt_value(enc)
+                    if decrypted:
+                        return decrypted
+        except Exception as exc:
+            logger.warning(
+                "Failed to decrypt BYOK API key for provider '%s': %s. Falling back to default.",
+                clean_name,
+                exc,
+            )
+
+    return None
+
+
 def _instantiate_provider(
     provider_name: str,
     model_name: str | None = None,
+    api_key: str | None = None,
 ) -> TextGenerationProvider:
     clean_name = provider_name.strip().lower()
     constructor = ProviderRegistry.get_constructor(clean_name)
@@ -1335,30 +1546,25 @@ def _instantiate_provider(
 
     default_model = ProviderRegistry.get_default_model(clean_name)
     model = model_name or default_model
+    if api_key and ProviderRegistry.requires_key(clean_name):
+        return constructor(model=model, api_key=api_key)
     return constructor(model=model)
 
 
 def get_text_generation_provider(
     effective_model: str | None = None,
     *,
+    user: object | None = None,
+    user_api_keys: dict[str, str | None] | None = None,
+    api_key: str | None = None,
     require_json_mode: bool = False,
     overall_timeout_seconds: int | None = None,
 ) -> TextGenerationProvider:
-    primary_name = settings.ai_provider
-    provider_names = [primary_name]
-
-    if settings.ai_fallback_providers:
-        for fallback_token in (
-            item.strip().lower()
-            for item in settings.ai_fallback_providers.split(",")
-            if item.strip()
-        ):
-            if fallback_token not in provider_names:
-                provider_names.append(fallback_token)
+    provider_names = list(settings.ai_available_vendors)
 
     # Validate effective model's JSON mode requirement
     if effective_model and require_json_mode:
-        model_entry = _model_catalog_entry(effective_model)
+        model_entry = _model_catalog_entry(effective_model, user=user)
 
         if model_entry is None:
             raise UnavailableModelError("Requested AI model is not available.")
@@ -1370,7 +1576,7 @@ def get_text_generation_provider(
 
     # Validate fallback models also support required capabilities
     if require_json_mode:
-        catalog = get_available_models()
+        catalog = get_available_models(user=user)
         # Determine selected_provider early for validation
         selected_provider_for_validation: str | None = None
         if effective_model:
@@ -1397,13 +1603,36 @@ def get_text_generation_provider(
 
         if selected_provider in provider_names:
             provider_names.remove(selected_provider)
-            provider_names.insert(0, selected_provider)
+        provider_names.insert(0, selected_provider)
 
     providers: list[TextGenerationProvider] = []
 
     for name in provider_names:
         model_override = selected_model if name == selected_provider else None
-        providers.append(_instantiate_provider(name, model_override))
+        resolved_key = resolve_user_api_key(
+            name,
+            user=user,
+            user_api_keys=user_api_keys,
+            explicit_key=api_key if name == selected_provider else None,
+        )
+        is_personal = bool(resolved_key)
+        try:
+            provider_inst = _instantiate_provider(
+                name, model_override, api_key=resolved_key
+            )
+        except TypeError:
+            provider_inst = _instantiate_provider(name, model_override)
+        except TextGenerationAuthError as exc:
+            if is_personal:
+                vendor = _vendor_display_name(name)
+                raise PersonalKeyAuthError(
+                    f"Your personal {vendor} API key is invalid or expired.",
+                    provider=name,
+                ) from exc
+            raise
+        setattr(provider_inst, "is_personal_key", is_personal)
+        setattr(provider_inst, "provider_name", name)
+        providers.append(provider_inst)
 
     return ReliableTextGenerationProvider(
         providers,

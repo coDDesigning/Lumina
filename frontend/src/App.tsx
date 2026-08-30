@@ -22,6 +22,7 @@ import AccountAppearancePage from './features/account/AccountAppearancePage'
 import { AiPreferencesSection } from './features/account/AiPreferencesSection'
 import { ProfileKnowledgeSection } from './features/account/ProfileKnowledgeSection'
 import AccountSecurityPage from './features/account/AccountSecurityPage'
+import AccountApiKeysPage from './features/account/AccountApiKeysPage'
 import AdminPage from './features/admin/AdminPage'
 import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
@@ -498,6 +499,7 @@ function App() {
           <Route index element={<AccountYouPage />} />
           <Route path="background" element={<ProfileKnowledgeSection />} />
           <Route path="ai" element={<AiPreferencesSection />} />
+          <Route path="api-keys" element={<AccountApiKeysPage />} />
           <Route path="appearance" element={<AccountAppearancePage />} />
           <Route path="security" element={<AccountSecurityPage />} />
         </Route>

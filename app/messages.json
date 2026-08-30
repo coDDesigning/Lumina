@@ -3,7 +3,7 @@
     "unsupported_file_type": {
       "status_code": 415,
       "code": "UPLOAD_UNSUPPORTED_FILE_TYPE",
-      "message": "Unsupported file type. Please upload a PDF, TXT, or Markdown file."
+      "message": "Unsupported file type. Please upload a PDF, TXT, Markdown, or image (PNG or JPEG) file."
     },
     "invalid_file_name": {
       "status_code": 422,

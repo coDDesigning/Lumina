@@ -12,18 +12,28 @@ import { studyGuideAPI } from './api/studyGuide';
 import {
   createMockCourse,
   createMockDocument,
-  createMockQuiz,
-  createMockQuizGenerationResult,
 } from './test/mocks/api';
 
 vi.mock('./api/generatedOutputs', () => ({
   generatedOutputsAPI: { list: vi.fn(), get: vi.fn() },
 }));
 
-vi.mock('./api/studyGuide', () => ({ studyGuideAPI: { generate: vi.fn() } }));
-vi.mock('./api/flashcards', () => ({ flashcardsAPI: { generate: vi.fn() } }));
+vi.mock('./api/studyGuide', () => ({
+  studyGuideAPI: { generate: vi.fn(), enqueue: vi.fn() },
+}));
+vi.mock('./api/flashcards', () => ({ flashcardsAPI: { enqueue: vi.fn() } }));
 vi.mock('./api/quiz', () => ({
-  quizAPI: { generate: vi.fn(), list: vi.fn(), get: vi.fn(), submitAttempt: vi.fn() },
+  quizAPI: {
+    generate: vi.fn(),
+    enqueue: vi.fn(),
+    list: vi.fn(),
+    get: vi.fn(),
+    submitAttempt: vi.fn(),
+  },
+}));
+
+vi.mock('./api/generationJobs', () => ({
+  generationJobsAPI: { list: vi.fn().mockResolvedValue([]), get: vi.fn(), retry: vi.fn() },
 }));
 
 vi.mock('./api/settings', () => ({
@@ -92,9 +102,9 @@ const mockProgress = vi.mocked(progressAPI.get);
 const mockListProgress = vi.mocked(progressAPI.listAll);
 const mockOutputList = vi.mocked(generatedOutputsAPI.list);
 const mockOutputGet = vi.mocked(generatedOutputsAPI.get);
-const mockQuizGenerate = vi.mocked(quizAPI.generate);
-const mockFlashcards = vi.mocked(flashcardsAPI.generate);
-const mockStudyGuide = vi.mocked(studyGuideAPI.generate);
+const mockQuizEnqueue = vi.mocked(quizAPI.enqueue);
+const mockFlashcardEnqueue = vi.mocked(flashcardsAPI.enqueue);
+const mockStudyGuideEnqueue = vi.mocked(studyGuideAPI.enqueue);
 
 function renderWorkspace(initialEntry = '/courses/1') {
   render(
@@ -185,39 +195,15 @@ describe('making something from the course', () => {
     ).toBeInTheDocument();
   });
 
-  it('keeps a generated study guide over the current conversation', async () => {
-    mockStudyGuide.mockResolvedValue({
-      generated_output_id: 12,
-      context_truncated: false,
-      retrieval_narrowed: false,
-      lowest_similarity: 0.41,
-      highest_similarity: 0.88,
-      chunks_used: 4,
-      chunks_available: 10,
-      study_guide: {
-        title: 'Paging Guide',
-        summary: 'Paging keeps processes isolated in virtual memory.',
-        key_points: [],
-        important_terms: [],
-        common_mistakes: [],
-        exam_tips: { lecture_based: [], ai_suggestions: [] },
-        difficulty: { level: 'Medium', reason: 'Address translation has several steps.' },
-        estimated_study_time: '30 minutes',
-        prerequisites: [],
-        learning_objectives: [],
-        coverage: { status: 'Partial', estimated_completeness: 60 },
-        confidence_notes: '',
-      },
-    });
+  it('queues a study guide without replacing the current conversation', async () => {
+    mockStudyGuideEnqueue.mockResolvedValue({ job_id: 12, status: 'queued' });
     const person = renderWorkspace();
 
     await person.click(await screen.findByRole('button', { name: 'Study guide' }));
     await person.click(await screen.findByRole('button', { name: /write my study guide/i }));
 
-    expect(
-      await screen.findByText('Paging keeps processes isolated in virtual memory.'),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('dialog')).toHaveAccessibleName('Study guide');
+    await waitFor(() => expect(mockStudyGuideEnqueue).toHaveBeenCalled());
+    expect(screen.queryByRole('dialog', { name: 'Study guide' })).not.toBeInTheDocument();
     expect(
       screen.getByPlaceholderText(/Ask anything about Operating Systems/),
     ).toBeInTheDocument();
@@ -263,43 +249,27 @@ describe('making something from the course', () => {
     expect(select).toHaveTextContent('Scheduling');
   });
 
-  it('takes the student to the quiz once it has been written', async () => {
-    mockQuizGenerate.mockResolvedValue(
-      createMockQuizGenerationResult({ quiz: createMockQuiz({ quiz_id: 42 }) }),
-    );
+  it('queues the quiz in the background', async () => {
+    mockQuizEnqueue.mockResolvedValue({ job_id: 42, status: 'queued' });
     const person = renderWorkspace();
 
     await person.click(await screen.findByRole('button', { name: 'Practice quiz' }));
     await person.click(await screen.findByRole('button', { name: /start the quiz/i }));
 
-    await waitFor(() => expect(mockQuizGenerate).toHaveBeenCalled());
-    expect(mockQuizGenerate.mock.calls[0][0]).toBe(1);
+    await waitFor(() => expect(mockQuizEnqueue).toHaveBeenCalled());
+    expect(mockQuizEnqueue.mock.calls[0][0]).toBe(1);
   });
 
-  it('refreshes what the course has made after a deck is generated', async () => {
-    mockFlashcards.mockResolvedValue({
-      flashcards: {
-        deck_title: 'Paging cards',
-        card_count: 1,
-        flashcards: [
-          { card_number: 1, front: 'What is a page?', back: 'A fixed block.', difficulty: 'Easy' },
-        ],
-      },
-      generated_output_id: 9,
-      context_truncated: false,
-      chunks_used: 2,
-      chunks_available: 5,
-      retrieval_narrowed: false,
-      lowest_similarity: null,
-      highest_similarity: null,
-    });
+  it('queues a deck in the background instead of holding the page for it', async () => {
+    mockFlashcardEnqueue.mockResolvedValue({ job_id: 9, status: 'queued' });
     const person = renderWorkspace();
 
     await person.click(await screen.findByRole('button', { name: 'Flashcards' }));
     await person.click(await screen.findByRole('button', { name: /make flashcards/i }));
 
-    expect(await screen.findByText('What is a page?')).toBeInTheDocument();
-    await waitFor(() => expect(mockOutputList.mock.calls.length).toBeGreaterThan(1));
+    await waitFor(() => expect(mockFlashcardEnqueue).toHaveBeenCalled());
+    expect(mockFlashcardEnqueue.mock.calls[0][0]).toBe(1);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
   it('leaves the course page alone when the student backs out of a modal', async () => {
@@ -311,7 +281,7 @@ describe('making something from the course', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(screen.getByRole('button', { name: 'Flashcards' })).toBeInTheDocument();
-    expect(mockStudyGuide).not.toHaveBeenCalled();
+    expect(mockStudyGuideEnqueue).not.toHaveBeenCalled();
   });
 });
 

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
+from backend.app.models import User
 from schemas.prompt_generator import (
     PromptGenerationRequest,
     PromptGenerationResponse,
@@ -45,6 +46,7 @@ def generate_prompt(
     db: Annotated[Session, Depends(get_db)],
 ):
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model,
             current_user.preferred_model,
@@ -52,6 +54,7 @@ def generate_prompt(
         )
         provider = get_text_generation_provider(
             effective_model=effective_model,
+            user=db_user,
             require_json_mode=True,
         )
         telemetry_provider, telemetry_model = effective_model.split(":", 1)

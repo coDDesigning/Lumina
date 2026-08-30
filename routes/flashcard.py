@@ -5,16 +5,19 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.database import get_db
+from backend.app.models import JOB_TYPE_GENERATE_FLASHCARD, User
 from schemas.flashcard import (
     FlashcardGenerationContext,
     FlashcardGenerationResult,
     FlashcardGenerationSettings,
     FlashcardRequest,
 )
+from schemas.generation_job import GenerationJobAccepted
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
-from services.credits import CreditService
+from services.credits import CreditService, GENERATION_CREDIT_COSTS
 from services.flashcard import FlashcardService
+from services.generation_jobs import enqueue_generation_job
 from services.text_generation import (
     get_text_generation_provider,
     resolve_effective_model,
@@ -58,6 +61,7 @@ def generate_flashcards(
 ):
     generation = None
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model if request else None,
             current_user.preferred_model,
@@ -65,6 +69,7 @@ def generate_flashcards(
         )
         provider = get_text_generation_provider(
             effective_model=effective_model,
+            user=db_user,
             require_json_mode=True,
         )
 
@@ -126,4 +131,52 @@ def generate_flashcards(
                 else 0
             ),
         ),
+    )
+
+
+@router.post(
+    "/{course_id}/flashcards/jobs",
+    response_model=BaseResponse[GenerationJobAccepted],
+    status_code=202,
+    dependencies=[Depends(rate_limit_generation("flashcard"))],
+    responses={
+        401: {"description": "Authentication required"},
+        402: {"description": "Insufficient credits"},
+        404: {"description": "Course not found"},
+        422: {"description": "Invalid flashcard request"},
+        429: {"description": "Per-user generation rate limited"},
+    },
+)
+def enqueue_flashcards(
+    course: OwnedCourse,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+    request: FlashcardRequest | None = None,
+):
+    """Queue flashcard generation and return immediately with a handle to poll."""
+    try:
+        req = request or FlashcardRequest()
+        effective_model = resolve_effective_model(
+            req.model,
+            current_user.preferred_model,
+            required_capability="flashcard",
+        )
+        queued_request = req.model_copy(update={"model": effective_model})
+        job = enqueue_generation_job(
+            db,
+            course_id=course.id,
+            user_id=current_user.id,
+            job_type=JOB_TYPE_GENERATE_FLASHCARD,
+            request_payload=queued_request.model_dump_json(),
+            credit_cost=GENERATION_CREDIT_COSTS["flashcard"],
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise ai_generation_http_exception(exc, feature="flashcard") from exc
+
+    return BaseResponse(
+        success=True,
+        message="Flashcard generation queued",
+        data=GenerationJobAccepted(job_id=job.id, status=job.status),
     )

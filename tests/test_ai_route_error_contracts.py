@@ -101,6 +101,47 @@ def test_quiz_route_does_not_import_generated_output_service_or_models() -> None
 
 SYNTHETIC_LEAK = "host=db.prod.internal:5432 user=superuser secret=sk_live_xyz987"
 
+# Route modules that build a text-generation provider before calling their
+# service. The test environment configures no AI key, so an unstubbed
+# `get_text_generation_provider` raises `TextGenerationAuthError` and masks the
+# retrieval and service failures these contract tests are about. A test that
+# wants a *specific* provider still overrides this with its own monkeypatch.
+_PROVIDER_ROUTE_MODULES = (
+    "routes.ai_tutor",
+    "routes.course_qa",
+    "routes.exam_mode",
+    "routes.flashcard",
+    "routes.prompt_generator",
+    "routes.quiz",
+    "routes.reverse_quiz",
+    "routes.study_guide",
+)
+
+
+class _InertProvider:
+    """A provider that constructs cleanly; generation is mocked out per test."""
+
+    def generate_text(self, *args, **kwargs):  # pragma: no cover - not reached
+        raise AssertionError("generation should be mocked in these contract tests")
+
+    def generate_text_with_metadata(self, *args, **kwargs):  # pragma: no cover
+        raise AssertionError("generation should be mocked in these contract tests")
+
+
+@pytest.fixture(autouse=True)
+def _stub_text_generation_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    for module_path in _PROVIDER_ROUTE_MODULES:
+        try:
+            module = __import__(module_path, fromlist=["get_text_generation_provider"])
+        except ImportError:
+            continue
+        if hasattr(module, "get_text_generation_provider"):
+            monkeypatch.setattr(
+                module,
+                "get_text_generation_provider",
+                lambda *args, **kwargs: _InertProvider(),
+            )
+
 
 AI_ENDPOINT_CONFIGS = [
     (

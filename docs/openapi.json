@@ -1796,6 +1796,34 @@
         "title": "BaseResponse[UploadErrorData]",
         "type": "object"
       },
+      "BaseResponse_UserApiKeysResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserApiKeysResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[UserApiKeysResponse]",
+        "type": "object"
+      },
       "BaseResponse_UserResponse_": {
         "properties": {
           "data": {
@@ -9450,6 +9478,104 @@
         "title": "UploadErrorData",
         "type": "object"
       },
+      "UserApiKeysResponse": {
+        "description": "Masked view of configured BYOK API keys.",
+        "properties": {
+          "anthropic_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anthropic Api Key"
+          },
+          "gemini_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gemini Api Key"
+          },
+          "has_anthropic_key": {
+            "default": false,
+            "title": "Has Anthropic Key",
+            "type": "boolean"
+          },
+          "has_gemini_key": {
+            "default": false,
+            "title": "Has Gemini Key",
+            "type": "boolean"
+          },
+          "has_openai_key": {
+            "default": false,
+            "title": "Has Openai Key",
+            "type": "boolean"
+          },
+          "openai_api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openai Api Key"
+          }
+        },
+        "title": "UserApiKeysResponse",
+        "type": "object"
+      },
+      "UserApiKeysUpdateRequest": {
+        "description": "Payload for saving, updating, or clearing BYOK API keys.",
+        "properties": {
+          "anthropic_api_key": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anthropic Api Key"
+          },
+          "gemini_api_key": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gemini Api Key"
+          },
+          "openai_api_key": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openai Api Key"
+          }
+        },
+        "title": "UserApiKeysUpdateRequest",
+        "type": "object"
+      },
       "UserCreate": {
         "description": "Schema for user registration payload.",
         "properties": {
@@ -13008,6 +13134,77 @@
         ]
       }
     },
+    "/api/courses/{course_id}/flashcards/jobs": {
+      "post": {
+        "description": "Queue flashcard generation and return immediately with a handle to poll.",
+        "operationId": "enqueue_flashcards_api_courses__course_id__flashcards_jobs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/FlashcardRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_GenerationJobAccepted_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
+          },
+          "404": {
+            "description": "Course not found"
+          },
+          "422": {
+            "description": "Invalid flashcard request"
+          },
+          "429": {
+            "description": "Per-user generation rate limited"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Enqueue Flashcards",
+        "tags": [
+          "Flashcard"
+        ]
+      }
+    },
     "/api/courses/{course_id}/generated-outputs": {
       "get": {
         "description": "List the generated outputs of a course the caller is allowed to read.",
@@ -15313,6 +15510,78 @@
         "summary": "Generate Prompt",
         "tags": [
           "Prompt Generator"
+        ]
+      }
+    },
+    "/api/users/me/api-keys": {
+      "get": {
+        "description": "Retrieve masked BYOK API keys for the authenticated administrator.",
+        "operationId": "get_my_api_keys_api_users_me_api_keys_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_UserApiKeysResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get My Api Keys",
+        "tags": [
+          "Users"
+        ]
+      },
+      "put": {
+        "description": "Save, update, or clear BYOK API keys for the authenticated administrator.",
+        "operationId": "update_my_api_keys_api_users_me_api_keys_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserApiKeysUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_UserApiKeysResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update My Api Keys",
+        "tags": [
+          "Users"
         ]
       }
     },

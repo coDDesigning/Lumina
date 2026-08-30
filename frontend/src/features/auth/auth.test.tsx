@@ -132,16 +132,61 @@ describe('LoginPage', () => {
     expect(login).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Email')).toHaveValue('deniz@uni.edu');
   });
+
+  it('toggles password visibility when the show/hide password button is clicked', async () => {
+    renderAt(<LoginPage />, '/login');
+
+    const passwordInput = screen.getByLabelText('Password');
+    expect(passwordInput).toHaveAttribute('type', 'password');
+
+    const toggleButton = screen.getByRole('button', { name: 'Show password' });
+    await userEvent.click(toggleButton);
+
+    expect(passwordInput).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: 'Hide password' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Hide password' }));
+    expect(passwordInput).toHaveAttribute('type', 'password');
+    expect(screen.getByRole('button', { name: 'Show password' })).toBeInTheDocument();
+  });
 });
 
 describe('RegisterPage', () => {
+  it('toggles password and confirm password visibility independently', async () => {
+    renderAt(<RegisterPage />, '/register');
+
+    const passwordInput = screen.getByLabelText('Password');
+    const confirmPasswordInput = screen.getByLabelText('Confirm password');
+
+    expect(passwordInput).toHaveAttribute('type', 'password');
+    expect(confirmPasswordInput).toHaveAttribute('type', 'password');
+
+    const toggleButtons = screen.getAllByRole('button', { name: 'Show password' });
+    expect(toggleButtons).toHaveLength(2);
+
+    // Toggle main password
+    await userEvent.click(toggleButtons[0]);
+    expect(passwordInput).toHaveAttribute('type', 'text');
+    expect(confirmPasswordInput).toHaveAttribute('type', 'password');
+
+    // Toggle confirm password
+    await userEvent.click(toggleButtons[1]);
+    expect(passwordInput).toHaveAttribute('type', 'text');
+    expect(confirmPasswordInput).toHaveAttribute('type', 'text');
+
+    // Hide main password again
+    await userEvent.click(screen.getAllByRole('button', { name: 'Hide password' })[0]);
+    expect(passwordInput).toHaveAttribute('type', 'password');
+    expect(confirmPasswordInput).toHaveAttribute('type', 'text');
+  });
+
   it('refuses mismatched passwords without calling the API', async () => {
     renderAt(<RegisterPage />, '/register');
 
     await userEvent.type(screen.getByLabelText('Name'), 'Deniz Kaya');
     await userEvent.type(screen.getByLabelText('Email'), 'deniz@uni.edu');
-    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse');
-    await userEvent.type(screen.getByLabelText('Confirm password'), 'correct-hoose');
+    await userEvent.type(screen.getByLabelText('Password'), 'Correct-horse!');
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'Correct-hoose!');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     expect(await screen.findByText('Those two passwords do not match.')).toBeInTheDocument();
@@ -149,10 +194,27 @@ describe('RegisterPage', () => {
     expect(screen.getByLabelText('Confirm password')).toHaveAttribute('aria-invalid', 'true');
   });
 
+  it('refuses a password that does not meet requirements', async () => {
+    renderAt(<RegisterPage />, '/register');
+
+    await userEvent.type(screen.getByLabelText('Name'), 'Deniz Kaya');
+    await userEvent.type(screen.getByLabelText('Email'), 'deniz@uni.edu');
+    await userEvent.type(screen.getByLabelText('Password'), 'short');
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'short');
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    expect(
+      await screen.findByText(
+        'Password must be at least 8 characters, with at least one uppercase letter and one special character.',
+      ),
+    ).toBeInTheDocument();
+    expect(mockedRegister).not.toHaveBeenCalled();
+  });
+
   it('refuses a password over the 72-byte bcrypt ceiling', async () => {
     renderAt(<RegisterPage />, '/register');
 
-    const tooLong = 'ü'.repeat(40);
+    const tooLong = 'Ü!' + 'ü'.repeat(40);
     await userEvent.type(screen.getByLabelText('Name'), 'Deniz Kaya');
     await userEvent.type(screen.getByLabelText('Email'), 'deniz@uni.edu');
     await userEvent.type(screen.getByLabelText('Password'), tooLong);
@@ -180,14 +242,14 @@ describe('RegisterPage', () => {
 
     await userEvent.type(screen.getByLabelText('Name'), '  Deniz Kaya  ');
     await userEvent.type(screen.getByLabelText('Email'), '  deniz@uni.edu  ');
-    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse');
-    await userEvent.type(screen.getByLabelText('Confirm password'), 'correct-horse');
+    await userEvent.type(screen.getByLabelText('Password'), 'Correct-horse!');
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'Correct-horse!');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     await waitFor(() => {
-      expect(mockedRegister).toHaveBeenCalledWith('Deniz Kaya', 'deniz@uni.edu', 'correct-horse');
+      expect(mockedRegister).toHaveBeenCalledWith('Deniz Kaya', 'deniz@uni.edu', 'Correct-horse!');
     });
-    expect(mockedLogin).toHaveBeenCalledWith('deniz@uni.edu', 'correct-horse');
+    expect(mockedLogin).toHaveBeenCalledWith('deniz@uni.edu', 'Correct-horse!');
     expect(login).toHaveBeenCalledWith('token-xyz');
     expect(await screen.findByRole('heading', { name: 'Courses' })).toBeInTheDocument();
   });
@@ -195,7 +257,7 @@ describe('RegisterPage', () => {
   it('states the password rules before the user submits', () => {
     renderAt(<RegisterPage />, '/register');
     expect(
-      screen.getByText(/At least 12 characters, up to 72 bytes\./),
+      screen.getByText(/At least 8 characters, with at least one uppercase letter and one special character\./),
     ).toBeInTheDocument();
   });
 
@@ -213,8 +275,8 @@ describe('RegisterPage', () => {
 
     await userEvent.type(screen.getByLabelText('Name'), 'Deniz Kaya');
     await userEvent.type(screen.getByLabelText('Email'), 'deniz@uni.edu');
-    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse');
-    await userEvent.type(screen.getByLabelText('Confirm password'), 'correct-horse');
+    await userEvent.type(screen.getByLabelText('Password'), 'Correct-horse!');
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'Correct-horse!');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     expect(
@@ -245,8 +307,8 @@ describe('RegisterPage', () => {
 
     await userEvent.type(screen.getByLabelText('Name'), 'Deniz Kaya');
     await userEvent.type(screen.getByLabelText('Email'), 'deniz@uni.edu');
-    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse');
-    await userEvent.type(screen.getByLabelText('Confirm password'), 'correct-horse');
+    await userEvent.type(screen.getByLabelText('Password'), 'Correct-horse!');
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'Correct-horse!');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     await userEvent.click(await screen.findByRole('button', { name: 'Send the link again' }));

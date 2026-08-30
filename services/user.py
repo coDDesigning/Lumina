@@ -215,7 +215,7 @@ class UserService:
             raise BadRequestException("Current password is incorrect")
 
         try:
-            validate_password(new_password, identifiers=(user.name, user.email))
+            validate_password(new_password)
         except PasswordPolicyError as exc:
             raise BadRequestException(str(exc)) from exc
 
@@ -230,7 +230,7 @@ class UserService:
         Used by the password reset flow. Invalidates all existing sessions.
         """
         try:
-            validate_password(new_password, identifiers=(user.name, user.email))
+            validate_password(new_password)
         except PasswordPolicyError as exc:
             raise BadRequestException(str(exc)) from exc
 

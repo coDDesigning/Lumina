@@ -68,7 +68,7 @@ x-lumina-environment: &lumina-environment
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
   SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
-  PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-12}
+  PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-8}
   SECURITY_HEADERS_ENABLED: ${SECURITY_HEADERS_ENABLED:-true}
   # Off unless this deployment is reached over HTTPS. Turn it on once a TLS
   # reverse proxy fronts the API; browsers remember the promise for a year.

@@ -176,7 +176,7 @@ def test_server_error_maps_to_a_retryable_provider_error(monkeypatch) -> None:
         {"embeddings": []},
         {"embeddings": [[]]},
         {"embeddings": [None]},
-        {"embeddings": [["not", "numbers"] * 384]},
+        {"embeddings": [["not", "numbers"] * (EMBEDDING_DIMENSIONS // 2)]},
     ],
 )
 def test_malformed_payloads_are_permanent_failures(monkeypatch, payload) -> None:

@@ -30,6 +30,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import LargeBinary, TypeDecorator
 
 from .base import Base
+from .embedding_models import SCHEMA_EMBEDDING_DIMENSIONS
 
 
 QUESTION_TYPE_MULTIPLE_CHOICE = "multiple_choice"
@@ -162,7 +163,7 @@ _DOCUMENT_PROCESSING_STAGES_SQL = ", ".join(
 )
 _ASCII_WHITESPACE = " \t\n\r\v\f"
 
-EMBEDDING_DIMENSIONS = 768
+EMBEDDING_DIMENSIONS = SCHEMA_EMBEDDING_DIMENSIONS
 
 
 class UTCDateTime(TypeDecorator[datetime]):

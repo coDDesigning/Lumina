@@ -258,7 +258,7 @@ def _extract_with_timeout(
     process = context.Process(
         target=_extraction_process,
         args=(child_connection, storage, job, prompt_context),
-        daemon=True,
+        daemon=False,
     )
     started = False
     result = None

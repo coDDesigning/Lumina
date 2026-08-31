@@ -33,6 +33,7 @@ from schemas.document import (
     DocumentStatusResponse,
     DocumentUploadResponse,
     ProcessingJobResponse,
+    SyllabusExtractionResponse,
 )
 from schemas.prompt_context import DocumentMaterialKind
 from schemas.response import BaseResponse
@@ -46,6 +47,7 @@ from services.document import (
     DocumentService,
 )
 from services.document_hash import FileHashError
+from services.document_pipeline import DocumentProcessingError
 from services.document_validation import UPLOAD_ERRORS, DocumentValidationError
 from storage.base import Storage
 from storage.dependencies import get_storage
@@ -82,11 +84,11 @@ def _error_response(error_key: str) -> JSONResponse:
 
 def _is_document_upload(request: Request) -> bool:
     path = request.url.path
-    return (
-        request.method == "POST"
-        and path.startswith("/api/courses/")
-        and path.endswith("/documents")
-    )
+    if request.method != "POST":
+        return False
+    if path == "/api/courses/syllabus/extract":
+        return True
+    return path.startswith("/api/courses/") and path.endswith("/documents")
 
 
 async def upload_request_validation_error(
@@ -175,6 +177,47 @@ def upload_document(
     return DocumentUploadResponse(
         document=DocumentResponse.model_validate(result.document),
         duplicate=result.duplicate,
+    )
+
+
+@router.post(
+    "/syllabus/extract",
+    response_model=BaseResponse[SyllabusExtractionResponse],
+    responses={
+        400: {"model": UploadErrorResponse, "description": "Invalid multipart body"},
+        401: {"description": "Authentication required"},
+        413: {"model": UploadErrorResponse, "description": "Document too large"},
+        415: {"model": UploadErrorResponse, "description": "Unsupported file type"},
+        422: {"description": "Invalid document or request parameters"},
+    },
+)
+def extract_syllabus(
+    document: Annotated[UploadFile, File()],
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+) -> BaseResponse[SyllabusExtractionResponse] | JSONResponse:
+    """Read a PDF or text syllabus into the plain text of the course form.
+
+    The upload is not stored and is not attached to any course, so this is
+    reachable before the course exists. An unreadable page yields empty text
+    rather than an error: the field stays editable either way.
+    """
+    try:
+        extraction = DocumentService.extract_syllabus_text(document)
+    except DocumentValidationError as exc:
+        return _error_response(exc.error_key)
+    except DocumentProcessingError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.safe_message,
+        ) from exc
+
+    return BaseResponse(
+        success=True,
+        message="Syllabus text extracted",
+        data=SyllabusExtractionResponse(
+            text=extraction.text,
+            truncated=extraction.truncated,
+        ),
     )
 
 

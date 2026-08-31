@@ -852,6 +852,10 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                   setOpenDeckId(artifact.outputId);
                   return;
                 }
+                if (artifact.kind === 'study_guide') {
+                  setViewerGuideId(artifact.outputId);
+                  return;
+                }
                 setMadeForYouInitialId(artifact.outputId);
                 setIsMadeForYouOpen(true);
               }}

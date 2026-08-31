@@ -277,6 +277,11 @@ export interface DocumentUploadResponse {
   duplicate: boolean;
 }
 
+export interface SyllabusExtraction {
+  text: string;
+  truncated: boolean;
+}
+
 export interface ProcessingJobResponse {
   id: number;
   status: LooseUnion<ProcessingJobStatus>;

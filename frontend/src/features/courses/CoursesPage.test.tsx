@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { activityAPI } from '@/api/activity';
 import { adsAPI } from '@/api/ads';
 import { APIError } from '@/api/client';
+import { coursesAPI } from '@/api/courses';
 import type { Workspace } from '@/data/workspaces';
 import { AD_CONSENT_STORAGE_KEY } from '@/features/ads/useAdConsent';
 import CoursesPage from './CoursesPage';
@@ -271,6 +272,53 @@ describe('CoursesPage', () => {
         }),
       );
     });
+  });
+
+  it('fills the syllabus field from an uploaded file', async () => {
+    const user = userEvent.setup();
+    const extract = vi
+      .spyOn(coursesAPI, 'extractSyllabus')
+      .mockResolvedValue({ text: 'Week 1: Limits', truncated: false });
+    renderPage();
+
+    await user.click(openCreate());
+
+    const file = new File(['Week 1: Limits'], 'syllabus.pdf', {
+      type: 'application/pdf',
+    });
+    const fileInput = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    await user.upload(fileInput, file);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^Syllabus/)).toHaveValue('Week 1: Limits');
+    });
+    expect(extract).toHaveBeenCalledWith(file);
+    expect(screen.getByText('Read syllabus.pdf.')).toBeInTheDocument();
+    extract.mockRestore();
+  });
+
+  it('says so when an uploaded syllabus holds no readable text', async () => {
+    const user = userEvent.setup();
+    const extract = vi
+      .spyOn(coursesAPI, 'extractSyllabus')
+      .mockResolvedValue({ text: '', truncated: false });
+    renderPage();
+
+    await user.click(openCreate());
+
+    const file = new File([''], 'scan.pdf', { type: 'application/pdf' });
+    const fileInput = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    await user.upload(fileInput, file);
+
+    expect(
+      await screen.findByText('No text could be read from scan.pdf.'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Syllabus/)).toHaveValue('');
+    extract.mockRestore();
   });
 
   it('explains a failed list load and offers a retry', async () => {

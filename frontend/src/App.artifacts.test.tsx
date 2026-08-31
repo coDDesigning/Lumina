@@ -220,7 +220,8 @@ describe('making something from the course', () => {
     expect(
       await screen.findByText('This saved guide opens without replacing the conversation.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('dialog')).toHaveAccessibleName('Made for you');
+    // The guide itself opens, not the list it was picked from.
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Study guide');
     expect(
       screen.getByPlaceholderText(/Ask anything about Operating Systems/),
     ).toBeInTheDocument();

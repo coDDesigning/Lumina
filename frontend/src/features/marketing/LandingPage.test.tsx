@@ -72,14 +72,17 @@ describe('LandingPage', () => {
     expect(screen.queryByRole('banner')).not.toBeInTheDocument();
   });
 
-  it('states plainly what is not built, so the page does not oversell', () => {
+  it('renders the privacy section and GitHub link', () => {
     authState.isAuthenticated = false;
     authState.isLoading = false;
 
     renderLanding();
 
-    expect(screen.getByRole('heading', { name: 'Not built yet' })).toBeInTheDocument();
-    expect(screen.getByText(/Exam Mode/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Your data stays yours.' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Run it on your own machine' })).toHaveAttribute(
+      'href',
+      'https://github.com/coDDesigning/Lumina',
+    );
   });
 
   it('keeps a single h1 and no skipped heading levels', () => {

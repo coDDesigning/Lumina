@@ -106,6 +106,8 @@ DEFAULT_PROCESSING_JOB_POLL_SECONDS = 1.0
 DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS = 300
 DEFAULT_PROCESSING_JOB_CONCURRENCY = 2
 MAX_PROCESSING_JOB_CONCURRENCY = 6
+DEFAULT_PDF_PAGE_WORKERS = 4
+MAX_PDF_PAGE_WORKERS = 8
 # A generation is one provider call, not a pipeline, so its lease only has to
 # outlive a slow model rather than an extraction. The attempt timeout is the
 # ceiling the worker enforces on that call; a reasoning model on a free tier has
@@ -264,6 +266,7 @@ class Settings:
     max_upload_size_bytes: int
     max_request_size_bytes: int
     max_concurrent_document_validations: int
+    pdf_page_workers: int
     upload_request_timeout_seconds: int
     max_documents_per_course: int
     max_course_storage_bytes: int
@@ -606,6 +609,12 @@ def load_settings() -> Settings:
     max_concurrent_document_validations = _positive_integer_setting(
         "MAX_CONCURRENT_DOCUMENT_VALIDATIONS",
         DEFAULT_MAX_CONCURRENT_DOCUMENT_VALIDATIONS,
+    )
+    pdf_page_workers = _bounded_positive_integer_setting(
+        "PDF_PAGE_WORKERS",
+        DEFAULT_PDF_PAGE_WORKERS,
+        minimum=1,
+        maximum=MAX_PDF_PAGE_WORKERS,
     )
     upload_request_timeout_seconds = _bounded_positive_integer_setting(
         "UPLOAD_REQUEST_TIMEOUT_SECONDS",
@@ -1187,6 +1196,7 @@ def load_settings() -> Settings:
         max_upload_size_bytes=max_upload_size_bytes,
         max_request_size_bytes=max_request_size_bytes,
         max_concurrent_document_validations=max_concurrent_document_validations,
+        pdf_page_workers=pdf_page_workers,
         upload_request_timeout_seconds=upload_request_timeout_seconds,
         max_documents_per_course=max_documents_per_course,
         max_course_storage_bytes=max_course_storage_bytes,

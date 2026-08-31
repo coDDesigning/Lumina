@@ -562,7 +562,6 @@ export default function CoursesPage({
             value={draft.semester}
             onChange={(event) => updateDraft('semester', event.target.value)}
             placeholder="e.g. Fall 2026"
-            hint="Free text — write it however your university does."
           />
 
           <Input

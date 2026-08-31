@@ -4,7 +4,7 @@ import { userAPI } from '@/api/user';
 import { describeError } from '@/api/errors';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
-import { Input } from '@/ui/Input';
+import { PasswordInput } from '@/ui/PasswordInput';
 import styles from './AccountPage.module.css';
 
 export default function AccountSecurityPage() {
@@ -58,9 +58,8 @@ export default function AccountSecurityPage() {
           </Alert>
         ) : null}
 
-        <Input
+        <PasswordInput
           label="Current password"
-          type="password"
           autoComplete="current-password"
           required
           value={currentPassword}
@@ -71,9 +70,8 @@ export default function AccountSecurityPage() {
           disabled={status === 'submitting'}
         />
 
-        <Input
+        <PasswordInput
           label="New password"
-          type="password"
           autoComplete="new-password"
           required
           value={newPassword}
@@ -84,9 +82,8 @@ export default function AccountSecurityPage() {
           disabled={status === 'submitting'}
         />
 
-        <Input
+        <PasswordInput
           label="Confirm new password"
-          type="password"
           autoComplete="new-password"
           required
           value={confirmPassword}

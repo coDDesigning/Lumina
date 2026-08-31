@@ -30,8 +30,14 @@ from backend.app.models import (
 
 logger = logging.getLogger(__name__)
 
-CHROMA_COLLECTION_NAME = "lumina_chunks"
-CHROMA_PROFILE_COLLECTION_NAME = "lumina_profile_chunks"
+# Chroma pins a collection's width on its first write and rejects every later
+# vector of another width, so the width belongs in the name. Repointing
+# EMBEDDING_DIMENSIONS at a model of another size then opens a fresh collection
+# and leaves the superseded one intact to be backfilled from or discarded,
+# instead of failing every upsert against a collection that can never accept
+# them. pgvector gets the same guarantee from an Alembic revision.
+CHROMA_COLLECTION_NAME = f"lumina_chunks_{EMBEDDING_DIMENSIONS}"
+CHROMA_PROFILE_COLLECTION_NAME = f"lumina_profile_chunks_{EMBEDDING_DIMENSIONS}"
 SIMILARITY_METRIC = "cosine"
 
 

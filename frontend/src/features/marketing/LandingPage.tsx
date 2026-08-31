@@ -192,10 +192,7 @@ export default function LandingPage() {
       </section>
 
       <section className={styles.section} id="capabilities">
-        <p className={styles.eyebrow}>What works today</p>
-        <h2 className={styles.sectionTitle}>
-          Everything on this list is built. Nothing here is a preview.
-        </h2>
+        <h2 className={styles.sectionTitle}>What works today</h2>
         <div className={styles.capabilities}>
           {CAPABILITIES.map((capability) => (
             <article key={capability.title} className={styles.capability}>

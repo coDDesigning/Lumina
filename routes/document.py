@@ -260,9 +260,8 @@ def delete_document(
         bool,
         Query(
             description=(
-                "Discard a document whose extraction is stuck (queued with no "
-                "worker, or running with an expired worker lease). A job a "
-                "worker is actively holding is still rejected."
+                "Discard a document whose extraction is in flight or stuck "
+                "(queued or running), cancelling the processing job."
             )
         ),
     ] = False,

@@ -280,6 +280,19 @@ to fit within `DATABASE_POOL_SIZE` plus `DATABASE_MAX_OVERFLOW`. Raising either
 setting multiplies its subprocess, memory, and provider load within one process
 exactly as adding replicas does across them.
 
+`PDF_PAGE_WORKERS` (default 4, maximum 8) is a second, independent axis: it is
+the number of pages of *one* PDF extracted in parallel inside a single
+extraction subprocess. It applies only to documents of at least eight pages, and
+to text recognition only when at least four pages need it, so short uploads
+never pay for a pool. Page work is CPU-bound inside MuPDF and does not scale on
+threads, so the pool uses processes; the extraction subprocess is therefore not
+daemonic, and its page workers exit on their own when it is killed at the
+attempt deadline. If a pool cannot start -- a sandbox that forbids
+subprocesses, for instance -- extraction degrades to the serial path and
+produces byte-identical output rather than failing. Peak CPU processes on one
+host are `PROCESSING_JOB_CONCURRENCY * PDF_PAGE_WORKERS`, so raise the two
+together only against measured headroom.
+
 Deployments use one commit SHA for the backend image, frontend release, and
 sanitized task-definition documents. The workflow archives the frontend and
 task definitions before runtime mutation, creates and verifies a 30-day manual

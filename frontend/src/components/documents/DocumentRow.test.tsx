@@ -50,11 +50,11 @@ describe('DocumentRow', () => {
     expect(screen.getAllByRole('button', { name: /try again/i })).toHaveLength(1);
   });
 
-  it('holds back the normal removal while a source is being read, and says why', () => {
+  it('holds back the normal removal while a source is being read, offering force removal', () => {
     renderRow(entry('processing'));
 
     expect(screen.queryByRole('button', { name: /Remove week-3-lecture/ })).toBeNull();
-    expect(screen.getByText(/cannot be removed until this finishes/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
   });
 
   it('still lets the reader force out a source whose reading is stuck', async () => {
@@ -62,10 +62,10 @@ describe('DocumentRow', () => {
     const remove = vi.fn();
     renderRow(entry('processing'), { remove });
 
-    await user.click(screen.getByRole('button', { name: /remove it anyway/i }));
-    // a sterner confirm dialog, then the forced delete
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+    // a confirm dialog, then the forced delete
     const dialog = screen.getByRole('dialog');
-    await user.click(within(dialog).getByRole('button', { name: /remove it anyway/i }));
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }));
 
     expect(remove).toHaveBeenCalledWith('doc-1', { force: true });
   });
@@ -75,7 +75,7 @@ describe('DocumentRow', () => {
       <DocumentRow entry={entry('processing')} onRetry={vi.fn()} onDelete={vi.fn()} readOnly />,
     );
 
-    expect(screen.queryByRole('button', { name: /remove it anyway/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
   });
 
   it('reports how far through the reading a source is', () => {

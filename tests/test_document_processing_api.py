@@ -249,7 +249,7 @@ def test_force_delete_discards_a_running_document_whose_worker_lease_expired(
         assert session.get(ProcessingJob, claim.id) is None
 
 
-def test_force_delete_is_still_refused_while_a_worker_actively_holds_the_lease(
+def test_force_delete_discards_a_running_document_even_while_worker_holds_lease(
     upload_api,
 ):
     uploaded = _upload(upload_api, b"A worker is really on it")
@@ -270,9 +270,10 @@ def test_force_delete_is_still_refused_while_a_worker_actively_holds_the_lease(
     forced = upload_api.client.delete(
         f"{path}?force=true", headers=upload_api.authorization
     )
-    assert forced.status_code == 409
+    assert forced.status_code == 204
     with upload_api.session_factory() as session:
-        assert session.get(UploadedDocument, document_id) is not None
+        assert session.get(UploadedDocument, document_id) is None
+        assert session.get(ProcessingJob, claim.id) is None
 
 
 def test_storage_delete_failure_retains_tombstone_for_retry(

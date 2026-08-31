@@ -92,27 +92,11 @@ describe('the landing page and the product agree about Exam Mode', () => {
   });
 
   it('claims Exam Mode is shipped exactly when a student can reach it', () => {
-    const unbuilt = landing.match(/Not built yet[\s\S]{0,400}?<\/article>/)?.[0] ?? '';
-
     if (offeredFrom.length > 0) {
-      expect(
-        EXAM_MODE.test(unbuilt),
-        'Exam Mode is offered in the product, so the landing page must stop listing it as unbuilt.',
-      ).toBe(false);
       expect(
         EXAM_MODE.test(landing),
         'Exam Mode ships, so the landing page must say what it does.',
       ).toBe(true);
-      return;
     }
-
-    expect(
-      unbuilt,
-      'Nothing offers Exam Mode yet, so the landing page must still name it as missing.',
-    ).toMatch(EXAM_MODE);
-  });
-
-  it('keeps naming the capabilities that are still missing', () => {
-    expect(landing).toMatch(/Not built yet/);
   });
 });

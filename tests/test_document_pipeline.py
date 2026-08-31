@@ -2330,3 +2330,154 @@ def test_oversized_image_is_downscaled_within_the_render_budget() -> None:
 
     assert len(result.pages) == 1
     assert result.pages[0].text == "[Figure]\nA very large scanned poster."
+
+
+def parallel_capable_pdf(pages: int) -> bytes:
+    return pdf_bytes(
+        *(
+            f"Physical page {number} carries its own sentence about topic {number}."
+            for number in range(1, pages + 1)
+        ),
+        image_pages={2, 5},
+    )
+
+
+def test_page_workers_do_not_change_the_extracted_document() -> None:
+    content = parallel_capable_pdf(12)
+
+    serial = extract_raw_document(
+        "pdf", content, options=pipeline_options(page_workers=1)
+    )
+    parallel = extract_raw_document(
+        "pdf", content, options=pipeline_options(page_workers=4)
+    )
+
+    assert parallel == serial
+    assert len(serial.contents) == 12
+
+
+def test_page_workers_do_not_change_pages_or_chunks() -> None:
+    content = parallel_capable_pdf(12)
+
+    serial = process_document("pdf", content, options=pipeline_options(page_workers=1))
+    parallel = process_document(
+        "pdf", content, options=pipeline_options(page_workers=4)
+    )
+
+    assert parallel.pages == serial.pages
+    assert parallel.chunks == serial.chunks
+
+
+def test_page_pool_failure_falls_back_to_serial_extraction(monkeypatch) -> None:
+    content = parallel_capable_pdf(12)
+    expected = extract_raw_document(
+        "pdf", content, options=pipeline_options(page_workers=1)
+    )
+
+    def unavailable_pool(*args: object, **kwargs: object):
+        raise OSError("no subprocesses available")
+
+    monkeypatch.setattr(pipeline, "_page_pool", unavailable_pool)
+
+    assert (
+        extract_raw_document("pdf", content, options=pipeline_options(page_workers=4))
+        == expected
+    )
+
+
+def test_parallel_extraction_still_reports_a_corrupt_page() -> None:
+    assert_pipeline_error(
+        "pdf",
+        pdf_with_dangling_xobject(),
+        ProcessingErrorCode.CORRUPTED_PDF,
+        PipelineStage.VALIDATING,
+        options=pipeline_options(page_workers=4),
+    )
+
+
+def test_parallel_extraction_still_enforces_page_budgets() -> None:
+    assert_pipeline_error(
+        "pdf",
+        parallel_capable_pdf(12),
+        ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
+        PipelineStage.VALIDATING,
+        options=pipeline_options(page_workers=4, max_pdf_total_pixels=1_000_000),
+    )
+
+
+def test_page_ranges_cover_every_page_exactly_once() -> None:
+    for page_count in (1, 7, 8, 50, 500):
+        for workers in (1, 2, 4, 8):
+            ranges = pipeline._page_ranges(page_count, workers)
+            covered = [
+                number for start, stop in ranges for number in range(start, stop)
+            ]
+            assert covered == list(range(page_count))
+
+
+def test_ocr_batches_cover_every_page_exactly_once() -> None:
+    for pages in ((1,), (1, 2, 3), tuple(range(1, 41))):
+        for workers in (1, 2, 4, 8):
+            batches = pipeline._ocr_batches(pages, workers)
+            assert tuple(page for batch in batches for page in batch) == pages
+
+
+def test_an_injected_ocr_provider_never_leaves_the_calling_process() -> None:
+    class RecordingOCR:
+        def extract_text(
+            self,
+            page: pymupdf.Page,
+            *,
+            language: str,
+            dpi: int,
+        ) -> str:
+            return "recognized"
+
+    pages = tuple(range(1, 21))
+    options = pipeline_options(page_workers=4)
+
+    assert pipeline._ocr_runs_in_parallel(pages, options, RecordingOCR()) is False
+    assert (
+        pipeline._ocr_runs_in_parallel(pages, options, pipeline._DEFAULT_OCR_PROVIDER)
+        is True
+    )
+
+
+def test_ocr_stays_serial_below_the_parallel_threshold() -> None:
+    options = pipeline_options(page_workers=4)
+    provider = pipeline._DEFAULT_OCR_PROVIDER
+
+    assert pipeline._ocr_runs_in_parallel((1, 2), options, provider) is False
+    assert pipeline._ocr_runs_in_parallel((1, 2, 3, 4), options, provider) is True
+    assert (
+        pipeline._ocr_runs_in_parallel(
+            tuple(range(1, 21)), pipeline_options(page_workers=1), provider
+        )
+        is False
+    )
+
+
+def test_a_multi_page_pdf_actually_uses_the_page_pool(monkeypatch) -> None:
+    calls: list[int] = []
+    real_pool = pipeline._page_pool
+
+    def spy(content, options, workers, preflight=None):
+        calls.append(workers)
+        return real_pool(content, options, workers, preflight)
+
+    monkeypatch.setattr(pipeline, "_page_pool", spy)
+    extract_raw_document(
+        "pdf", parallel_capable_pdf(12), options=pipeline_options(page_workers=4)
+    )
+    assert calls == [4]
+
+
+def test_a_short_pdf_is_extracted_without_starting_a_pool(monkeypatch) -> None:
+    def forbidden(*args: object, **kwargs: object):
+        raise AssertionError("a short document must not start a page pool")
+
+    monkeypatch.setattr(pipeline, "_page_pool", forbidden)
+    result = extract_raw_document(
+        "pdf", parallel_capable_pdf(4), options=pipeline_options(page_workers=4)
+    )
+    assert len(result.contents) == 4

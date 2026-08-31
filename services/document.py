@@ -315,11 +315,9 @@ class DocumentService:
     ) -> None:
         """Tombstone a terminal document, remove its source, then delete metadata.
 
-        ``force`` lets a caller discard a document whose extraction is stuck:
-        a queued job nothing is working on, or a running job whose worker lease
-        has expired (the worker crashed or was stopped). A job with a live lease
-        is genuinely being read right now and is never force-deleted; nor is a
-        document a generation is actively reading.
+        ``force`` lets a caller discard a document whose extraction is in flight
+        or stuck: a queued or running job, regardless of worker lease. A document
+        a generation is actively reading is still protected.
         """
         try:
             db.rollback()
@@ -359,14 +357,7 @@ class DocumentService:
             db.rollback()
             raise NotFoundException("Document not found")
         document, job = row
-        job_is_active = job.status in {"queued", "running"}
-        if job_is_active and force:
-            lease_is_live = (
-                job.status == "running"
-                and job.lease_expires_at is not None
-                and job.lease_expires_at > _database_now(db)
-            )
-            job_is_active = lease_is_live
+        job_is_active = (job.status in {"queued", "running"}) if not force else False
         if job_is_active or is_document_locked_for_generation(document_id):
             db.rollback()
             raise DocumentActiveError

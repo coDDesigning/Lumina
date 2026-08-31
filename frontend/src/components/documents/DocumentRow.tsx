@@ -108,22 +108,18 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
             />
           </div>
           {why ? <p className={styles.locked}>{why}</p> : null}
-          <p className={styles.locked}>
-            It cannot be removed until this finishes.
-            {!readOnly ? (
-              <>
-                {' '}
-                <button
-                  type="button"
-                  className={styles.forceLink}
-                  onClick={() => setIsForcing(true)}
-                  disabled={entry.pending !== null}
-                >
-                  {entry.pending === 'delete' ? 'Removing…' : 'Remove it anyway'}
-                </button>
-              </>
-            ) : null}
-          </p>
+          {!readOnly ? (
+            <p className={styles.locked}>
+              <button
+                type="button"
+                className={styles.forceLink}
+                onClick={() => setIsForcing(true)}
+                disabled={entry.pending !== null}
+              >
+                {entry.pending === 'delete' ? 'Removing…' : 'Remove'}
+              </button>
+            </p>
+          ) : null}
         </>
       ) : null}
 
@@ -200,13 +196,12 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
           setIsForcing(false);
           onDelete(document.id, { force: true });
         }}
-        title="Force-remove this source?"
-        confirmLabel="Remove it anyway"
+        title="Remove this source?"
+        confirmLabel="Remove"
         destructive
       >
-        Reading {document.original_file_name} has not finished. If it is genuinely still being
-        read this will fail — try again in a minute. Otherwise this clears the stuck upload so
-        you can add the file again.
+        Reading {document.original_file_name} has not finished. Removing it now will cancel
+        the upload and discard the document.
       </ConfirmDialog>
     </article>
   );

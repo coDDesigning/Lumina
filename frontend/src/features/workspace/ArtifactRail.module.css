@@ -67,6 +67,8 @@
   font-size: var(--text-xs);
   color: var(--text-subtle);
   line-height: var(--leading-relaxed);
+  padding: 0 var(--space-4) var(--space-3);
+  margin: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

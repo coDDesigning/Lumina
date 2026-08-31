@@ -348,6 +348,41 @@ def test_chroma_vectors_survive_a_client_restart(
         ) == {chunk.id for chunk in chunks}
 
 
+def test_chroma_ignores_a_legacy_collection_of_a_superseded_width(
+    tmp_path, session_factory: sessionmaker[Session]
+) -> None:
+    """A store left at 768 by an earlier model must not block writes at the current width."""
+    import chromadb
+
+    if EMBEDDING_DIMENSIONS == 768:
+        pytest.skip("The superseded width is the current one.")
+
+    persist_directory = str(tmp_path / "chroma")
+    legacy = chromadb.PersistentClient(path=persist_directory)
+    legacy.get_or_create_collection(
+        name="lumina_chunks",
+        embedding_function=None,
+        configuration={"hnsw": {"space": vector_store.SIMILARITY_METRIC}},
+    ).upsert(
+        ids=["1"],
+        embeddings=[[0.1] * 768],
+        metadatas=[
+            {"document_id": str(uuid4()), "embedding_model": "gemini-embedding-001"}
+        ],
+    )
+
+    with session_factory() as session:
+        _, document, chunks = _seed_document(
+            session, email="vs-width@example.com", chunk_count=2
+        )
+        store = ChromaVectorStore(persist_directory=persist_directory)
+        _replace(store, session, document, chunks)
+        session.commit()
+        assert store.count_document_vectors(session, document.id) == 2
+
+    assert legacy.get_collection("lumina_chunks").count() == 1
+
+
 def test_chroma_recovers_when_the_collection_is_rebuilt_underneath_it(
     tmp_path, session_factory: sessionmaker[Session]
 ) -> None:

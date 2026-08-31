@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Upload } from 'lucide-react';
+import { coursesAPI } from '@/api/courses';
 import { describeError } from '@/api/errors';
 import { queryKeys } from '@/api/queryKeys';
 import { settingsAPI } from '@/api/settings';
@@ -72,6 +74,10 @@ export default function CourseSettingsPage({
   const [isSavingCourse, setIsSavingCourse] = useState(false);
   const [courseError, setCourseError] = useState<string | null>(null);
 
+  const [isReadingSyllabus, setIsReadingSyllabus] = useState(false);
+  const [syllabusNotice, setSyllabusNotice] = useState<string | null>(null);
+  const syllabusInputRef = useRef<HTMLInputElement>(null);
+
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const [loadedPreferences, setLoadedPreferences] = useState(DEFAULT_PREFERENCES);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
@@ -109,6 +115,38 @@ export default function CourseSettingsPage({
     value: (typeof course)[Field],
   ) {
     setCourse((current) => ({ ...current, [field]: value }));
+  }
+
+  async function handleSyllabusFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setIsReadingSyllabus(true);
+    setSyllabusNotice(null);
+    try {
+      const extracted = await coursesAPI.extractSyllabus(file);
+      if (!extracted.text) {
+        setSyllabusNotice(`No text could be read from ${file.name}.`);
+        return;
+      }
+      updateCourse('syllabus', extracted.text);
+      setSyllabusNotice(
+        extracted.truncated
+          ? `Read ${file.name}, trimmed to the first ${extracted.text.length} characters.`
+          : `Read ${file.name}.`,
+      );
+    } catch (caught) {
+      setSyllabusNotice(
+        describeError(caught, 'That file could not be read. Try again.').message,
+      );
+    } finally {
+      setIsReadingSyllabus(false);
+      if (syllabusInputRef.current) {
+        syllabusInputRef.current.value = '';
+      }
+    }
   }
 
   async function saveCourse(event: FormEvent<HTMLFormElement>) {
@@ -332,8 +370,32 @@ export default function CourseSettingsPage({
                 rows={4}
                 value={course.syllabus}
                 onChange={(event) => updateCourse('syllabus', event.target.value)}
+                hint={syllabusNotice ?? undefined}
                 disabled={isSupportView}
               />
+
+              {!isSupportView ? (
+                <div className={styles.span}>
+                  <input
+                    ref={syllabusInputRef}
+                    type="file"
+                    className={styles.fileInput}
+                    accept=".pdf,.txt,.md,.markdown"
+                    onChange={(event) => void handleSyllabusFile(event)}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    icon={<Upload aria-hidden="true" />}
+                    isLoading={isReadingSyllabus}
+                    loadingLabel="Reading"
+                    onClick={() => syllabusInputRef.current?.click()}
+                  >
+                    Read from PDF or TXT
+                  </Button>
+                </div>
+              ) : null}
             </div>
 
             {!isSupportView ? (

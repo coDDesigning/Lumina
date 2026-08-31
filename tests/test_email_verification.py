@@ -178,7 +178,9 @@ def test_registration_emails_exactly_one_link(api_context, verifying) -> None:
         assert len(live[0].token_hash) == 64
 
 
-def test_an_unverified_account_can_still_sign_in(api_context, verifying) -> None:
+def test_an_unverified_account_cannot_sign_in_before_verification(
+    api_context, verifying
+) -> None:
     _register(api_context.client)
 
     response = api_context.client.post(
@@ -189,13 +191,8 @@ def test_an_unverified_account_can_still_sign_in(api_context, verifying) -> None
         },
     )
 
-    assert response.status_code == 200
-    token = response.json()["access_token"]
-    me = api_context.client.get(
-        "/api/auth/me", headers={"Authorization": f"Bearer {token}"}
-    )
-    assert me.status_code == 200
-    assert me.json()["is_email_verified"] is False
+    assert response.status_code == 403
+    assert "verify your email" in response.json()["detail"].lower()
 
 
 def test_self_hosted_registration_grants_credits_without_verification(
@@ -471,15 +468,10 @@ def test_a_failed_send_does_not_lose_the_account(
     )
     _register(api_context.client)
 
-    login = api_context.client.post(
-        "/api/auth/login",
-        data={
-            "username": REGISTRATION["email"],
-            "password": REGISTRATION["password"],
-        },
-    )
-
-    assert login.status_code == 200
+    with api_context.session_factory() as session:
+        user = _load_user(session)
+        assert user is not None
+        assert user.email_verified_at is None
 
 
 # --- what the client is told -------------------------------------------------
@@ -489,6 +481,11 @@ def test_credit_status_distinguishes_spent_from_never_granted(
     api_context, verifying
 ) -> None:
     _register(api_context.client)
+
+    api_context.client.post(
+        "/api/auth/verify-email", json={"token": verifying.tokens[0]}
+    )
+
     login = api_context.client.post(
         "/api/auth/login",
         data={
@@ -496,19 +493,11 @@ def test_credit_status_distinguishes_spent_from_never_granted(
             "password": REGISTRATION["password"],
         },
     )
+    assert login.status_code == 200
     authorization = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
-    before = api_context.client.get("/api/users/me/credits", headers=authorization)
-    assert before.status_code == 200
-    assert before.json()["data"]["email_verification_required"] is True
-    assert before.json()["data"]["is_email_verified"] is False
-    assert before.json()["data"]["credits"] == 0.0
-
-    api_context.client.post(
-        "/api/auth/verify-email", json={"token": verifying.tokens[0]}
-    )
-
     after = api_context.client.get("/api/users/me/credits", headers=authorization)
+    assert after.json()["data"]["email_verification_required"] is True
     assert after.json()["data"]["is_email_verified"] is True
     assert after.json()["data"]["credits"] == settings.credit_initial_grant
 

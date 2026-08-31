@@ -221,8 +221,8 @@ describe('RegisterPage', () => {
       await screen.findByText('Check your email to confirm your address.'),
     ).toBeInTheDocument();
     expect(screen.getByText(/We sent a confirmation link to deniz@uni.edu/)).toBeInTheDocument();
-    // The account exists and the session is real; only the credits are held back.
-    expect(login).toHaveBeenCalledWith('token-xyz');
+    // The account requires email confirmation before signing in.
+    expect(login).not.toHaveBeenCalled();
     expect(screen.queryByRole('heading', { name: 'Courses' })).not.toBeInTheDocument();
     // No bypass: the only way on is the emailed link.
     expect(screen.queryByRole('link', { name: /skip|look around/i })).not.toBeInTheDocument();

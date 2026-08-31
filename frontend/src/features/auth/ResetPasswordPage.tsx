@@ -5,7 +5,7 @@ import { authAPI } from '@/api/auth';
 import { describeError } from '@/api/errors';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
-import { Input } from '@/ui/Input';
+import { PasswordInput } from '@/ui/PasswordInput';
 import { AuthLayout } from './AuthLayout';
 import styles from './AuthLayout.module.css';
 
@@ -87,9 +87,8 @@ export default function ResetPasswordPage() {
             </Alert>
           ) : null}
 
-          <Input
+          <PasswordInput
             label="New password"
-            type="password"
             autoComplete="new-password"
             required
             value={password}
@@ -97,9 +96,8 @@ export default function ResetPasswordPage() {
             disabled={status === 'submitting'}
           />
 
-          <Input
+          <PasswordInput
             label="Confirm password"
-            type="password"
             autoComplete="new-password"
             required
             value={confirmPassword}

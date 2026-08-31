@@ -139,6 +139,13 @@ alters the column and rebuilds the index, and re-embed everything. Vectors of tw
 different models must never share an index — that is what `embedding_model` on each
 record exists to make detectable.
 
+Chroma has no migration to hang that on: it pins a collection's width on the first
+write and rejects every later vector of another width. The width is therefore part
+of the collection name (`lumina_chunks_1024`), so changing `EMBEDDING_DIMENSIONS`
+opens a new collection instead of failing every upsert against one that can never
+accept them. The superseded collection is left in the store; delete it once the
+backfill worker has re-embedded, or leave it — nothing reads it.
+
 ## Lifecycle
 
 | Event | Behaviour |

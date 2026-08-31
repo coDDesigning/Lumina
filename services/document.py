@@ -23,7 +23,11 @@ from backend.app.repositories.document import DocumentRepository
 from schemas.prompt_context import DocumentMaterialKind
 from services.document_hash import calculate_file_hash
 from services.document_lock import is_document_locked_for_generation
-from services.document_validation import validate_basic_upload
+from services.document_pipeline import extract_raw_document
+from services.document_validation import (
+    DocumentValidationError,
+    validate_basic_upload,
+)
 from services.processing_jobs import (
     ProcessingJobStateError,
     _database_now,
@@ -37,6 +41,11 @@ from utils.exceptions import ConflictException, NotFoundException
 logger = logging.getLogger(__name__)
 COMMIT_RECONCILIATION_ATTEMPTS = 3
 COMMIT_RECONCILIATION_DELAY_SECONDS = 0.05
+# Text file types a syllabus may be pasted from. Images are excluded: reading
+# one needs OCR, which belongs to the processing pipeline, not a form field.
+SYLLABUS_FILE_TYPES = frozenset({"pdf", "txt", "md", "markdown"})
+SYLLABUS_MAX_CHARACTERS = 20_000
+PAGE_SEPARATOR = "\n\n"
 
 
 class DocumentRegistrationError(Exception):
@@ -63,6 +72,12 @@ class DocumentDeletionError(Exception):
 class DocumentUploadResult:
     document: UploadedDocument
     duplicate: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SyllabusExtraction:
+    text: str
+    truncated: bool
 
 
 class DocumentService:
@@ -240,6 +255,33 @@ class DocumentService:
                 exc,
             )
         return DocumentUploadResult(document=document, duplicate=False)
+
+    @staticmethod
+    def extract_syllabus_text(upload: UploadFile) -> SyllabusExtraction:
+        """Read a syllabus upload into plain text without persisting anything.
+
+        This backs the syllabus field of the course form, so the upload is
+        never stored, hashed, or queued: only the text the user is about to
+        edit is returned.
+        """
+        metadata = validate_basic_upload(upload)
+        if metadata.file_type not in SYLLABUS_FILE_TYPES:
+            raise DocumentValidationError("unsupported_file_type")
+
+        try:
+            content = upload.file.read()
+        except Exception as exc:
+            raise DocumentValidationError("upload_failed") from exc
+
+        extracted = extract_raw_document(metadata.file_type, content)
+        text = PAGE_SEPARATOR.join(
+            page.text.strip() for page in extracted.contents if page.text.strip()
+        ).strip()
+        truncated = len(text) > SYLLABUS_MAX_CHARACTERS
+        return SyllabusExtraction(
+            text=text[:SYLLABUS_MAX_CHARACTERS].strip(),
+            truncated=truncated,
+        )
 
     @staticmethod
     def list_course_documents(

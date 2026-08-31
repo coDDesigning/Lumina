@@ -1768,6 +1768,34 @@
         "title": "BaseResponse[StudyGuideGenerationResult]",
         "type": "object"
       },
+      "BaseResponse_SyllabusExtractionResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SyllabusExtractionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[SyllabusExtractionResponse]",
+        "type": "object"
+      },
       "BaseResponse_UploadErrorData_": {
         "properties": {
           "data": {
@@ -2392,6 +2420,20 @@
           "message"
         ],
         "title": "BaseResponse[list[UserResponse]]",
+        "type": "object"
+      },
+      "Body_extract_syllabus_api_courses_syllabus_extract_post": {
+        "properties": {
+          "document": {
+            "contentMediaType": "application/octet-stream",
+            "title": "Document",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document"
+        ],
+        "title": "Body_extract_syllabus_api_courses_syllabus_extract_post",
         "type": "object"
       },
       "Body_login_user_api_auth_login_post": {
@@ -9376,6 +9418,25 @@
         "title": "SummaryMode",
         "type": "string"
       },
+      "SyllabusExtractionResponse": {
+        "description": "Plain text read out of a syllabus upload that was never persisted.",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text",
+          "truncated"
+        ],
+        "title": "SyllabusExtractionResponse",
+        "type": "object"
+      },
       "Token": {
         "properties": {
           "access_token": {
@@ -10696,6 +10757,79 @@
         ]
       }
     },
+    "/api/courses/syllabus/extract": {
+      "post": {
+        "description": "Read a PDF or text syllabus into the plain text of the course form.\n\nThe upload is not stored and is not attached to any course, so this is\nreachable before the course exists. An unreadable page yields empty text\nrather than an error: the field stays editable either way.",
+        "operationId": "extract_syllabus_api_courses_syllabus_extract_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_extract_syllabus_api_courses_syllabus_extract_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_SyllabusExtractionResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_UploadErrorData_"
+                }
+              }
+            },
+            "description": "Invalid multipart body"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_UploadErrorData_"
+                }
+              }
+            },
+            "description": "Document too large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_UploadErrorData_"
+                }
+              }
+            },
+            "description": "Unsupported file type"
+          },
+          "422": {
+            "description": "Invalid document or request parameters"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Extract Syllabus",
+        "tags": [
+          "Documents"
+        ]
+      }
+    },
     "/api/courses/{course_id}": {
       "delete": {
         "description": "Permanently erases a course the caller owns.\n\nDeletion is unconditional: the course, its documents, stored files, pages,\nvisuals, chunks, vectors, generated outputs, quizzes, attempts, and progress\nall go. The caller's profile knowledge is user-scoped and is not touched.\nCleanup that cannot finish leaves the course tombstoned so the same request\ncan safely resume it.",
@@ -11325,13 +11459,13 @@
             }
           },
           {
-            "description": "Discard a document whose extraction is stuck (queued with no worker, or running with an expired worker lease). A job a worker is actively holding is still rejected.",
+            "description": "Discard a document whose extraction is in flight or stuck (queued or running), cancelling the processing job.",
             "in": "query",
             "name": "force",
             "required": false,
             "schema": {
               "default": false,
-              "description": "Discard a document whose extraction is stuck (queued with no worker, or running with an expired worker lease). A job a worker is actively holding is still rejected.",
+              "description": "Discard a document whose extraction is in flight or stuck (queued or running), cancelling the processing job.",
               "title": "Force",
               "type": "boolean"
             }

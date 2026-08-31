@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { FormEvent } from 'react';
-import { FolderOpen, Plus, Settings2, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
+import { FolderOpen, Plus, Settings2, Trash2, Upload } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
+import { coursesAPI } from '@/api/courses';
 import { describeError } from '@/api/errors';
 import { COURSE_STATUS_LABELS, EDUCATION_LEVEL_LABELS } from '@/api/types';
 import type { EducationLevel } from '@/api/types';
@@ -165,6 +166,9 @@ export default function CoursesPage({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'active' | 'archived'>('active');
+  const [isReadingSyllabus, setIsReadingSyllabus] = useState(false);
+  const [syllabusNotice, setSyllabusNotice] = useState<string | null>(null);
+  const syllabusInputRef = useRef<HTMLInputElement>(null);
 
   const now = useMemo(() => Date.now(), []);
 
@@ -217,6 +221,7 @@ export default function CoursesPage({
   useEffect(() => {
     if (!isCreating) {
       setCreateError(null);
+      setSyllabusNotice(null);
     }
   }, [isCreating]);
 
@@ -225,6 +230,38 @@ export default function CoursesPage({
     value: WorkspaceDraft[Field],
   ) {
     setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  async function handleSyllabusFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setIsReadingSyllabus(true);
+    setSyllabusNotice(null);
+    try {
+      const extracted = await coursesAPI.extractSyllabus(file);
+      if (!extracted.text) {
+        setSyllabusNotice(`No text could be read from ${file.name}.`);
+        return;
+      }
+      updateDraft('syllabus', extracted.text);
+      setSyllabusNotice(
+        extracted.truncated
+          ? `Read ${file.name}, trimmed to the first ${extracted.text.length} characters.`
+          : `Read ${file.name}.`,
+      );
+    } catch (caught) {
+      setSyllabusNotice(
+        describeError(caught, 'That file could not be read. Try again.').message,
+      );
+    } finally {
+      setIsReadingSyllabus(false);
+      if (syllabusInputRef.current) {
+        syllabusInputRef.current.value = '';
+      }
+    }
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -590,7 +627,28 @@ export default function CoursesPage({
             value={draft.syllabus}
             onChange={(event) => updateDraft('syllabus', event.target.value)}
             placeholder="Paste the course description or learning goals"
+            hint={syllabusNotice ?? undefined}
           />
+
+          <div className={styles.formSpan}>
+            <input
+              ref={syllabusInputRef}
+              type="file"
+              className={styles.fileInput}
+              accept=".pdf,.txt,.md,.markdown"
+              onChange={(event) => void handleSyllabusFile(event)}
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Upload aria-hidden="true" />}
+              isLoading={isReadingSyllabus}
+              loadingLabel="Reading"
+              onClick={() => syllabusInputRef.current?.click()}
+            >
+              Read from PDF or TXT
+            </Button>
+          </div>
         </form>
       </Dialog>
 

@@ -165,16 +165,9 @@ def login_user(
     if user.is_banned:
         raise HTTPException(status_code=403, detail="Your account has been banned.")
 
-    if (
-        settings.email_verification_required
-        and user.email_verified_at is None
-        and user.role.name != "admin"
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Please verify your email address before signing in.",
-        )
-
+    # An unverified account signs in deliberately. It has to: the screen that
+    # explains why the balance is zero, and the control that resends the link,
+    # are both behind the session.
     access_token = create_access_token(data={"sub": user.email})
 
     return {"access_token": access_token, "token_type": "bearer"}

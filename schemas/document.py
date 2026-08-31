@@ -29,6 +29,13 @@ class DocumentUploadResponse(BaseModel):
     duplicate: bool
 
 
+class SyllabusExtractionResponse(BaseModel):
+    """Plain text read out of a syllabus upload that was never persisted."""
+
+    text: str
+    truncated: bool
+
+
 class ProcessingJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

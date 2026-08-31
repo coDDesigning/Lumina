@@ -63,14 +63,13 @@ export default function RegisterPage() {
 
     try {
       const registration = await authAPI.register(name.trim(), email.trim(), password);
+      const session = await authAPI.login(email.trim(), password);
+      await login(session.access_token);
 
       if (registration.email_verification_required && !registration.is_email_verified) {
         setAwaitingVerification({ email: registration.user_email, message: registration.message });
         return;
       }
-
-      const session = await authAPI.login(email.trim(), password);
-      await login(session.access_token);
 
       navigate('/dashboard', { replace: true });
     } catch (caught) {

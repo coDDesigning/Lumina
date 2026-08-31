@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '@/api/client';
+import { coursesAPI } from '@/api/courses';
 import { settingsAPI } from '@/api/settings';
 import type { Workspace } from '@/data/workspaces';
 import { ToastProvider } from '@/ui/ToastProvider';
@@ -22,8 +23,15 @@ vi.mock('@/api/settings', () => ({
   },
 }));
 
+vi.mock('@/api/courses', () => ({
+  coursesAPI: {
+    extractSyllabus: vi.fn(),
+  },
+}));
+
 const mockGet = vi.mocked(settingsAPI.get);
 const mockUpdate = vi.mocked(settingsAPI.update);
+const mockExtractSyllabus = vi.mocked(coursesAPI.extractSyllabus);
 
 const workspace: Workspace = {
   id: '1',
@@ -129,6 +137,31 @@ describe('CourseSettingsPage — course details', () => {
     });
 
     expect(await screen.findByText('Course details saved')).toBeInTheDocument();
+  });
+
+  it('extracts syllabus text from an uploaded file and populates the syllabus field', async () => {
+    const user = userEvent.setup();
+    mockExtractSyllabus.mockResolvedValueOnce({
+      text: 'Week 1: Concurrency\nWeek 2: File Systems',
+      truncated: false,
+    });
+
+    const { container } = renderPage();
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(fileInput).toBeInTheDocument();
+
+    const file = new File(['dummy syllabus'], 'syllabus.pdf', { type: 'application/pdf' });
+    await user.upload(fileInput, file);
+
+    await waitFor(() => {
+      expect(mockExtractSyllabus).toHaveBeenCalledWith(file);
+    });
+
+    expect(screen.getByLabelText(/^Syllabus/)).toHaveValue(
+      'Week 1: Concurrency\nWeek 2: File Systems',
+    );
+    expect(screen.getByText('Read syllabus.pdf.')).toBeInTheDocument();
   });
 
   it('restores the original values on reset', async () => {

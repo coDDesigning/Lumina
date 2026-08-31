@@ -6,6 +6,7 @@ import threading
 import unicodedata
 import zlib
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -145,6 +146,7 @@ class PipelineOptions:
     chunk_overlap_characters: int = settings.document_chunk_overlap_characters
     max_extracted_characters: int = settings.max_extracted_characters
     max_document_chunks: int = settings.max_document_chunks
+    page_workers: int = settings.pdf_page_workers
 
     def __post_init__(self) -> None:
         positive_options = (
@@ -161,6 +163,7 @@ class PipelineOptions:
             "chunk_target_characters",
             "max_extracted_characters",
             "max_document_chunks",
+            "page_workers",
         )
         for option_name in positive_options:
             value = getattr(self, option_name)
@@ -354,32 +357,44 @@ class ExtractionCallback(Protocol):
     def __call__(self, document: ExtractedDocument) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class _PDFPreflight:
+    """Document-level PDF facts established before any page is processed."""
+
+    xref_length: int
+    page_content_xrefs: tuple[tuple[int, ...], ...]
+    image_xrefs: frozenset[int]
+    total_image_pixels: int
+
+
 class DocumentExtractor(Protocol):
     """Validate and extract one configured family of document types."""
 
-    def validate(self, content: bytes, options: PipelineOptions) -> str | None: ...
+    def validate(self, content: bytes, options: PipelineOptions) -> object | None: ...
 
     def extract(
         self,
         file_type: str,
         content: bytes,
-        validated_text: str | None,
+        validated: object | None,
         options: PipelineOptions,
     ) -> ExtractedDocument: ...
 
 
 class PDFExtractor:
-    def validate(self, content: bytes, options: PipelineOptions) -> None:
-        _validate_pdf(content, options)
+    def validate(self, content: bytes, options: PipelineOptions) -> _PDFPreflight:
+        return _pdf_preflight(content, options)
 
     def extract(
         self,
         file_type: str,
         content: bytes,
-        validated_text: str | None,
+        validated: object | None,
         options: PipelineOptions,
     ) -> ExtractedDocument:
-        return _extract_pdf_document(file_type, content, options)
+        if not isinstance(validated, _PDFPreflight):
+            raise RuntimeError("PDF preflight is required")
+        return _extract_pdf_document(file_type, content, validated, options)
 
 
 class TextExtractor:
@@ -390,11 +405,12 @@ class TextExtractor:
         self,
         file_type: str,
         content: bytes,
-        validated_text: str | None,
+        validated: object | None,
         options: PipelineOptions,
     ) -> ExtractedDocument:
-        if validated_text is None:
+        if not isinstance(validated, str):
             raise RuntimeError("validated text is required")
+        validated_text = validated
         if len(validated_text) > options.max_extracted_characters:
             raise _failure(
                 ProcessingErrorCode.EXTRACTED_TEXT_LIMIT_EXCEEDED,
@@ -435,12 +451,12 @@ class ImageExtractor:
         self,
         file_type: str,
         content: bytes,
-        validated_text: str | None,
+        validated: object | None,
         options: PipelineOptions,
     ) -> ExtractedDocument:
         pdf_bytes = _image_to_single_page_pdf(content, options)
-        _validate_pdf(pdf_bytes, options)
-        extracted = _extract_pdf_document(file_type, pdf_bytes, options)
+        preflight = _pdf_preflight(pdf_bytes, options)
+        extracted = _extract_pdf_document(file_type, pdf_bytes, preflight, options)
         return replace(extracted, render_content=pdf_bytes)
 
 
@@ -571,6 +587,9 @@ _REPEATED_CONTENT_MIN_PAGES = 3
 _REPEATED_CONTENT_MIN_RATIO = 0.6
 _MAX_VISUAL_DESCRIPTION_CHARACTERS = 2_000
 _MIN_VISUAL_DIMENSION_POINTS = 36.0
+_MIN_PAGES_FOR_PARALLEL_EXTRACTION = 8
+_MIN_PAGES_FOR_PARALLEL_OCR = 4
+_PAGE_RANGES_PER_WORKER = 4
 _MIN_VISUAL_PAGE_AREA_RATIO = 0.01
 _VISUAL_SOURCE_PRIORITY = {
     VisualSource.TABLE: 0,
@@ -697,13 +716,13 @@ def _extract_raw_document(
                 retryable=False,
             )
 
-        validated_text = extractor.validate(content, options)
+        validated = extractor.validate(content, options)
         current_stage = PipelineStage.EXTRACTING_TEXT
         _emit_stage(stage_callback, current_stage)
         extracted_document = extractor.extract(
             file_type,
             content,
-            validated_text,
+            validated,
             options,
         )
         if not extracted_document.contents:
@@ -915,9 +934,9 @@ def _failure(
     return DocumentProcessingError(code, stage, retryable=retryable)
 
 
-def _validate_pdf(content: bytes, options: PipelineOptions) -> None:
+def _pdf_preflight(content: bytes, options: PipelineOptions) -> _PDFPreflight:
     with _PDF_WARNING_LOCK:
-        _validate_pdf_locked(content, options)
+        return _pdf_preflight_locked(content, options)
 
 
 def _bounded_stream_size(
@@ -982,7 +1001,7 @@ def _bounded_stream_size(
     return decoded_size
 
 
-def _validate_pdf_locked(content: bytes, options: PipelineOptions) -> None:
+def _pdf_preflight_locked(content: bytes, options: PipelineOptions) -> _PDFPreflight:
     if not content.startswith(b"%PDF-"):
         raise _failure(
             ProcessingErrorCode.CORRUPTED_PDF,
@@ -1014,11 +1033,9 @@ def _validate_pdf_locked(content: bytes, options: PipelineOptions) -> None:
 
             xref_length = pdf.xref_length()
             total_decoded_stream_bytes = 0
-            total_drawing_operations = 0
             image_xrefs: set[int] = set()
             total_image_pixels = 0
-            pages = list(pdf)
-            page_content_xrefs = [page.get_contents() for page in pages]
+            page_content_xrefs = [page.get_contents() for page in pdf]
             direct_content_xrefs = {
                 content_xref
                 for content_xrefs in page_content_xrefs
@@ -1071,62 +1088,20 @@ def _validate_pdf_locked(content: bytes, options: PipelineOptions) -> None:
                     remaining_bytes,
                 )
 
-            total_render_pixels = total_image_pixels
-            for page, content_xrefs in zip(pages, page_content_xrefs, strict=True):
-                image_info = page.get_image_info(xrefs=True)
-                page_pixels = int(page.rect.width * page.rect.height)
-                image_pixels = sum(
-                    image["width"] * image["height"]
-                    for image in image_info
-                    if image.get("xref", 0) not in image_xrefs
-                )
-                total_render_pixels += page_pixels + image_pixels
-                if (
-                    page_pixels > options.max_pdf_page_pixels
-                    or any(
-                        image["width"] * image["height"] > options.max_pdf_page_pixels
-                        for image in image_info
-                    )
-                    or total_render_pixels > options.max_pdf_total_pixels
-                ):
-                    raise _failure(
-                        ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
-                        PipelineStage.VALIDATING,
-                        retryable=False,
-                    )
-
-                for content_xref in content_xrefs:
-                    if (
-                        content_xref <= 0
-                        or content_xref >= xref_length
-                        or not pdf.xref_is_stream(content_xref)
-                    ):
-                        raise _failure(
-                            ProcessingErrorCode.CORRUPTED_PDF,
-                            PipelineStage.VALIDATING,
-                            retryable=False,
-                        )
-
-                drawings = page.get_drawings()
-                total_drawing_operations += sum(
-                    len(drawing.get("items", ())) for drawing in drawings
-                )
-                if total_drawing_operations > options.max_pdf_drawing_operations:
-                    raise _failure(
-                        ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
-                        PipelineStage.VALIDATING,
-                        retryable=False,
-                    )
-
-                page.get_text("text")
-                page.get_pixmap(alpha=False)
-
             if pymupdf.TOOLS.mupdf_warnings():
                 raise _failure(
                     ProcessingErrorCode.CORRUPTED_PDF,
                     PipelineStage.VALIDATING,
                     retryable=False,
                 )
+            return _PDFPreflight(
+                xref_length=xref_length,
+                page_content_xrefs=tuple(
+                    tuple(content_xrefs) for content_xrefs in page_content_xrefs
+                ),
+                image_xrefs=frozenset(image_xrefs),
+                total_image_pixels=total_image_pixels,
+            )
     except DocumentProcessingError:
         raise
     except Exception:
@@ -1138,6 +1113,248 @@ def _validate_pdf_locked(content: bytes, options: PipelineOptions) -> None:
         ) from None
     finally:
         pymupdf.TOOLS.reset_mupdf_warnings()
+
+
+@dataclass(frozen=True, slots=True)
+class _PageBudget:
+    """Cumulative render and drawing cost accepted so far, in page order."""
+
+    total_render_pixels: int
+    total_drawing_operations: int
+
+
+def _page_image_regions(page: pymupdf.Page, xref_images: list) -> list[dict]:
+    """One placement rectangle per distinct image referenced by a page."""
+    if not xref_images:
+        return page.get_image_info(xrefs=True)
+    regions: list[dict] = []
+    for item in xref_images:
+        try:
+            rect = page.get_image_bbox(item)
+        except Exception:
+            return page.get_image_info(xrefs=True)
+        if rect.is_infinite:
+            return page.get_image_info(xrefs=True)
+        regions.append(
+            {
+                "bbox": (rect.x0, rect.y0, rect.x1, rect.y1),
+                "xref": int(item[0]),
+                "width": int(item[1]),
+                "height": int(item[2]),
+            }
+        )
+    return regions
+
+
+def _advance_page_budget(
+    pdf: pymupdf.Document,
+    work: "_PageWork",
+    budget: _PageBudget,
+    preflight: _PDFPreflight,
+    options: PipelineOptions,
+) -> _PageBudget:
+    total_render_pixels = (
+        budget.total_render_pixels + work.page_pixels + work.uncounted_image_pixels
+    )
+    if (
+        work.page_pixels > options.max_pdf_page_pixels
+        or work.largest_image_pixels > options.max_pdf_page_pixels
+        or total_render_pixels > options.max_pdf_total_pixels
+    ):
+        raise _failure(
+            ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
+            PipelineStage.VALIDATING,
+            retryable=False,
+        )
+
+    for content_xref in preflight.page_content_xrefs[work.number]:
+        if (
+            content_xref <= 0
+            or content_xref >= preflight.xref_length
+            or not pdf.xref_is_stream(content_xref)
+        ):
+            raise _failure(
+                ProcessingErrorCode.CORRUPTED_PDF,
+                PipelineStage.VALIDATING,
+                retryable=False,
+            )
+
+    total_drawing_operations = budget.total_drawing_operations + work.drawing_operations
+    if total_drawing_operations > options.max_pdf_drawing_operations:
+        raise _failure(
+            ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
+            PipelineStage.VALIDATING,
+            retryable=False,
+        )
+    return _PageBudget(
+        total_render_pixels=total_render_pixels,
+        total_drawing_operations=total_drawing_operations,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _PageWork:
+    """Everything one page contributes, computed without any document context."""
+
+    number: int
+    text: str
+    text_blocks: tuple[str, ...]
+    header_candidates: tuple[str, ...]
+    footer_candidates: tuple[str, ...]
+    has_images: bool
+    page_pixels: int
+    uncounted_image_pixels: int
+    largest_image_pixels: int
+    drawing_operations: int
+    candidates: tuple[_VisualCandidate, ...]
+    overflowed: bool
+
+
+def _page_work(
+    page: pymupdf.Page,
+    preflight: _PDFPreflight,
+    options: PipelineOptions,
+) -> _PageWork:
+    xref_images = page.get_images(full=True)
+    image_info = _page_image_regions(page, xref_images)
+    drawings = page.get_drawings()
+    page.get_pixmap(alpha=False)
+    text = page.get_text("text").replace("\x00", "")
+    text_blocks, header_candidates, footer_candidates = _pdf_layout_content(page)
+    candidates, overflowed = _detect_visual_candidates(
+        page, image_info, drawings, options
+    )
+    return _PageWork(
+        number=page.number,
+        text=text,
+        text_blocks=text_blocks,
+        header_candidates=header_candidates,
+        footer_candidates=footer_candidates,
+        has_images=bool(image_info),
+        page_pixels=int(page.rect.width * page.rect.height),
+        uncounted_image_pixels=sum(
+            image["width"] * image["height"]
+            for image in image_info
+            if image.get("xref", 0) not in preflight.image_xrefs
+        ),
+        largest_image_pixels=max(
+            (image["width"] * image["height"] for image in image_info),
+            default=0,
+        ),
+        drawing_operations=sum(len(drawing.get("items", ())) for drawing in drawings),
+        candidates=tuple(candidates),
+        overflowed=overflowed,
+    )
+
+
+_PAGE_WORKER_STATE: dict[str, object] = {}
+
+
+def _init_page_worker(
+    content: bytes,
+    options: PipelineOptions,
+    preflight: _PDFPreflight | None,
+) -> None:
+    pymupdf.TOOLS.reset_mupdf_warnings()
+    _PAGE_WORKER_STATE["document"] = pymupdf.open(stream=content, filetype="pdf")
+    _PAGE_WORKER_STATE["preflight"] = preflight
+    _PAGE_WORKER_STATE["options"] = options
+
+
+def _page_pool(
+    content: bytes,
+    options: PipelineOptions,
+    workers: int,
+    preflight: _PDFPreflight | None = None,
+) -> ProcessPoolExecutor:
+    return ProcessPoolExecutor(
+        max_workers=workers,
+        initializer=_init_page_worker,
+        initargs=(content, options, preflight),
+    )
+
+
+def _ocr_page_range(page_numbers: tuple[int, ...]) -> tuple[dict[int, str], bool]:
+    pdf = _PAGE_WORKER_STATE["document"]
+    options = _PAGE_WORKER_STATE["options"]
+    recognized = {
+        page_number: _DEFAULT_OCR_PROVIDER.extract_text(
+            pdf.load_page(page_number - 1),
+            language=options.ocr_language,
+            dpi=options.ocr_dpi,
+        )
+        for page_number in page_numbers
+    }
+    return recognized, bool(pymupdf.TOOLS.mupdf_warnings())
+
+
+def _page_work_range(bounds: tuple[int, int]) -> tuple[list[_PageWork], bool]:
+    pdf = _PAGE_WORKER_STATE["document"]
+    preflight = _PAGE_WORKER_STATE["preflight"]
+    options = _PAGE_WORKER_STATE["options"]
+    start, stop = bounds
+    works = [
+        _page_work(pdf.load_page(number), preflight, options)
+        for number in range(start, stop)
+    ]
+    return works, bool(pymupdf.TOOLS.mupdf_warnings())
+
+
+def _page_ranges(page_count: int, workers: int) -> list[tuple[int, int]]:
+    size = max(1, ceil(page_count / (workers * _PAGE_RANGES_PER_WORKER)))
+    return [
+        (start, min(start + size, page_count)) for start in range(0, page_count, size)
+    ]
+
+
+def _collect_page_work(
+    pdf: pymupdf.Document,
+    content: bytes,
+    preflight: _PDFPreflight,
+    options: PipelineOptions,
+) -> tuple[list[_PageWork], bool]:
+    workers = min(options.page_workers, pdf.page_count)
+    if workers < 2 or pdf.page_count < _MIN_PAGES_FOR_PARALLEL_EXTRACTION:
+        return _collect_page_work_serially(pdf, preflight, options), False
+    try:
+        return _collect_page_work_in_parallel(
+            content, pdf.page_count, preflight, options, workers
+        )
+    except Exception:
+        logger.warning("PDF page pool unavailable; extracting pages serially")
+        pymupdf.TOOLS.reset_mupdf_warnings()
+        return _collect_page_work_serially(pdf, preflight, options), False
+
+
+def _collect_page_work_serially(
+    pdf: pymupdf.Document,
+    preflight: _PDFPreflight,
+    options: PipelineOptions,
+) -> list[_PageWork]:
+    return [_page_work(page, preflight, options) for page in pdf]
+
+
+def _collect_page_work_in_parallel(
+    content: bytes,
+    page_count: int,
+    preflight: _PDFPreflight,
+    options: PipelineOptions,
+    workers: int,
+) -> tuple[list[_PageWork], bool]:
+    executor = _page_pool(content, options, workers, preflight)
+    try:
+        collected: list[_PageWork] = []
+        warnings_seen = False
+        for works, range_warnings in executor.map(
+            _page_work_range, _page_ranges(page_count, workers)
+        ):
+            warnings_seen = warnings_seen or range_warnings
+            collected.extend(works)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    if len(collected) != page_count:
+        raise RuntimeError("page pool returned an incomplete document")
+    return collected, warnings_seen
 
 
 def _contains_parseable_pdf(content: bytes) -> bool:
@@ -1290,6 +1507,7 @@ def _image_to_single_page_pdf(content: bytes, options: PipelineOptions) -> bytes
 def _extract_pdf_document(
     file_type: str,
     content: bytes,
+    preflight: _PDFPreflight,
     options: PipelineOptions,
 ) -> ExtractedDocument:
     with _PDF_WARNING_LOCK:
@@ -1316,33 +1534,40 @@ def _extract_pdf_document(
                 ] = []
                 candidate_pages: list[tuple[list[_VisualCandidate], bool]] = []
                 character_count = 0
-                for page in pdf:
-                    text = page.get_text("text").replace("\x00", "")
-                    character_count += len(text)
+                budget = _PageBudget(
+                    total_render_pixels=preflight.total_image_pixels,
+                    total_drawing_operations=0,
+                )
+                page_work, warnings_seen = _collect_page_work(
+                    pdf, content, preflight, options
+                )
+                for work in page_work:
+                    budget = _advance_page_budget(pdf, work, budget, preflight, options)
+                    character_count += len(work.text)
                     if character_count > options.max_extracted_characters:
                         raise _failure(
                             ProcessingErrorCode.EXTRACTED_TEXT_LIMIT_EXCEEDED,
                             PipelineStage.EXTRACTING_TEXT,
                             retryable=False,
                         )
-                    image_info = page.get_image_info(xrefs=True)
-                    text_blocks, header_candidates, footer_candidates = (
-                        _pdf_layout_content(page)
-                    )
                     extracted_values.append(
                         (
-                            page.number,
-                            text,
-                            page.number + 1,
-                            ExtractionMethod.NATIVE if text.strip() else None,
-                            bool(image_info),
-                            header_candidates,
-                            footer_candidates,
-                            text_blocks,
+                            work.number,
+                            work.text,
+                            work.number + 1,
+                            ExtractionMethod.NATIVE if work.text.strip() else None,
+                            work.has_images,
+                            work.header_candidates,
+                            work.footer_candidates,
+                            work.text_blocks,
                         )
                     )
-                    candidate_pages.append(
-                        _detect_visual_candidates(page, image_info, options)
+                    candidate_pages.append((list(work.candidates), work.overflowed))
+                if warnings_seen or pymupdf.TOOLS.mupdf_warnings():
+                    raise _failure(
+                        ProcessingErrorCode.CORRUPTED_PDF,
+                        PipelineStage.VALIDATING,
+                        retryable=False,
                     )
                 selected_visuals, meaningful_visual_pages = _select_document_visuals(
                     candidate_pages, options
@@ -1431,6 +1656,7 @@ def _pdf_layout_content(
 def _detect_visual_candidates(
     page: pymupdf.Page,
     image_info: list[dict],
+    drawings: list,
     options: PipelineOptions,
 ) -> tuple[list[_VisualCandidate], bool]:
     page_rect = page.rect
@@ -1477,7 +1703,7 @@ def _detect_visual_candidates(
             )
 
     try:
-        drawing_rects = page.cluster_drawings()
+        drawing_rects = page.cluster_drawings(drawings=drawings)
     except Exception:
         logger.exception("Drawing detection failed on PDF page %s", page.number + 1)
         drawing_rects = (page_rect,)
@@ -1667,19 +1893,24 @@ def _apply_ocr(
     with _PDF_WARNING_LOCK:
         pymupdf.TOOLS.reset_mupdf_warnings()
         try:
-            with pymupdf.open(stream=content, filetype="pdf") as pdf:
-                for page_number in page_numbers:
-                    page = pdf.load_page(page_number - 1)
-                    text = provider.extract_text(
-                        page,
-                        language=options.ocr_language,
-                        dpi=options.ocr_dpi,
-                    )
-                    if not isinstance(text, str):
+            if _ocr_runs_in_parallel(page_numbers, options, provider):
+                recognized = _recognize_pages_in_parallel(
+                    content, page_numbers, options
+                )
+            else:
+                with pymupdf.open(stream=content, filetype="pdf") as pdf:
+                    for page_number in page_numbers:
+                        page = pdf.load_page(page_number - 1)
+                        text = provider.extract_text(
+                            page,
+                            language=options.ocr_language,
+                            dpi=options.ocr_dpi,
+                        )
+                        if not isinstance(text, str):
+                            raise OCRExecutionError
+                        recognized[page_number] = text
+                    if pymupdf.TOOLS.mupdf_warnings():
                         raise OCRExecutionError
-                    recognized[page_number] = text
-                if pymupdf.TOOLS.mupdf_warnings():
-                    raise OCRExecutionError
         except OCRUnavailableError:
             raise _failure(
                 ProcessingErrorCode.OCR_UNAVAILABLE,
@@ -1728,6 +1959,89 @@ def _apply_ocr(
             )
         )
     return tuple(enriched_pages)
+
+
+def _ocr_runs_in_parallel(
+    page_numbers: tuple[int, ...],
+    options: PipelineOptions,
+    provider: OCRProvider,
+) -> bool:
+    """Only this module's own adapter may run outside the calling process."""
+    return (
+        provider is _DEFAULT_OCR_PROVIDER
+        and options.page_workers > 1
+        and len(page_numbers) >= _MIN_PAGES_FOR_PARALLEL_OCR
+    )
+
+
+def _recognize_pages_in_parallel(
+    content: bytes,
+    page_numbers: tuple[int, ...],
+    options: PipelineOptions,
+) -> dict[int, str]:
+    workers = min(options.page_workers, len(page_numbers))
+    try:
+        executor = _page_pool(content, options, workers)
+        try:
+            recognized: dict[int, str] = {}
+            warnings_seen = False
+            for batch, batch_warnings in executor.map(
+                _ocr_page_range, _ocr_batches(page_numbers, workers)
+            ):
+                warnings_seen = warnings_seen or batch_warnings
+                recognized.update(batch)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+    except (OCRUnavailableError, OCRExecutionError):
+        raise
+    except Exception:
+        logger.warning("PDF page pool unavailable; recognizing pages serially")
+        pymupdf.TOOLS.reset_mupdf_warnings()
+        return _recognize_pages_serially(content, page_numbers, options)
+    if warnings_seen or not _recognized_pages_are_complete(recognized, page_numbers):
+        raise OCRExecutionError
+    return recognized
+
+
+def _recognized_pages_are_complete(
+    recognized: dict[int, str],
+    page_numbers: tuple[int, ...],
+) -> bool:
+    return sorted(recognized) == sorted(page_numbers) and all(
+        isinstance(text, str) for text in recognized.values()
+    )
+
+
+def _recognize_pages_serially(
+    content: bytes,
+    page_numbers: tuple[int, ...],
+    options: PipelineOptions,
+) -> dict[int, str]:
+    with pymupdf.open(stream=content, filetype="pdf") as pdf:
+        recognized = {
+            page_number: _DEFAULT_OCR_PROVIDER.extract_text(
+                pdf.load_page(page_number - 1),
+                language=options.ocr_language,
+                dpi=options.ocr_dpi,
+            )
+            for page_number in page_numbers
+        }
+    if pymupdf.TOOLS.mupdf_warnings() or not _recognized_pages_are_complete(
+        recognized, page_numbers
+    ):
+        raise OCRExecutionError
+    return recognized
+
+
+def _ocr_batches(
+    page_numbers: tuple[int, ...],
+    workers: int,
+) -> list[tuple[int, ...]]:
+    size = max(1, ceil(len(page_numbers) / (workers * _PAGE_RANGES_PER_WORKER)))
+    return [
+        page_numbers[start : start + size]
+        for start in range(0, len(page_numbers), size)
+    ]
 
 
 def _apply_visual_understanding(

@@ -10,6 +10,8 @@
   gap: var(--space-4);
   padding: 0 var(--space-5) var(--space-8);
   max-width: var(--width-prose);
+  width: 100%;
+  margin: 0 auto;
   min-width: 0;
 }
 

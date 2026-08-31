@@ -196,13 +196,12 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
           setIsForcing(false);
           onDelete(document.id, { force: true });
         }}
-        title="Force-remove this source?"
+        title="Remove this source?"
         confirmLabel="Remove"
         destructive
       >
-        Reading {document.original_file_name} has not finished. If it is genuinely still being
-        read this will fail — try again in a minute. Otherwise this clears the stuck upload so
-        you can add the file again.
+        Reading {document.original_file_name} has not finished. Removing it now will cancel
+        the upload and discard the document.
       </ConfirmDialog>
     </article>
   );

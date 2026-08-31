@@ -216,6 +216,46 @@ def test_backfill_skips_a_purge_pending_course(
     assert store.count_document_vectors(db_session, document.id) == 0
 
 
+def test_backfill_releases_the_read_transaction_before_embedding(
+    store, session_factory, db_session, tmp_path
+) -> None:
+    """The read transaction must be committed before the slow embed call.
+
+    Holding it open across ``embed_documents`` (which loads the local model on
+    its first call) is what tripped PostgreSQL's idle-in-transaction timeout in
+    production. A concurrent session must be free to write while embedding runs.
+    """
+    storage = LocalStorage(tmp_path / "uploads", namespace="lifecycle")
+    course, document, _ = _seed(
+        db_session, storage, email="backfill-txn@example.com", chunk_count=3
+    )
+    db_session.commit()
+
+    embedded = []
+
+    class ProbingProvider(StubEmbeddingProvider):
+        def embed_documents(self, texts):
+            # A concurrent session must be free to write and commit while the
+            # backfill is embedding; it would block or fail if the read
+            # transaction were still open.
+            with session_factory() as probe:
+                probe.get(Course, course.id).subject_area = "probe-write"
+                probe.commit()
+            embedded.append(len(texts))
+            return super().embed_documents(texts)
+
+    run_backfill(
+        session_factory=session_factory,
+        vector_store=store,
+        embedding_provider=ProbingProvider(),
+    )
+
+    assert embedded  # the embed call ran
+    assert store.count_document_vectors(db_session, document.id) == 3
+    db_session.expire_all()
+    assert db_session.get(Course, course.id).subject_area == "probe-write"
+
+
 def test_backfill_creates_missing_vectors_once(
     store, session_factory, db_session, tmp_path
 ) -> None:

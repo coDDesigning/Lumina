@@ -159,21 +159,26 @@ def _backfill_document(
     prune_orphans: bool,
     report: BackfillReport,
 ) -> None:
-    chunks = list(
-        session.scalars(
+    provider_name, model_name = configured_embedding_identity()
+    document_id = document.id
+    course_id = document.course_id
+
+    chunk_rows = [
+        (chunk.id, chunk.chunk_index, chunk.text)
+        for chunk in session.scalars(
             select(DocumentChunk)
-            .where(DocumentChunk.document_id == document.id)
+            .where(DocumentChunk.document_id == document_id)
             .order_by(DocumentChunk.chunk_index)
         ).all()
-    )
-    if not chunks:
+    ]
+    if not chunk_rows:
         return
 
     stored_ids = vector_store.chunk_ids_with_vectors(
-        session, document.id, embedding_model=configured_embedding_identity()[1]
+        session, document_id, embedding_model=model_name
     )
-    current_ids = {chunk.id for chunk in chunks}
-    missing = [chunk for chunk in chunks if chunk.id not in stored_ids]
+    current_ids = {chunk_id for chunk_id, _index, _text in chunk_rows}
+    missing = [row for row in chunk_rows if row[0] not in stored_ids]
     orphans = stored_ids - current_ids
 
     report.vectors_missing += len(missing)
@@ -182,11 +187,18 @@ def _backfill_document(
     if dry_run:
         return
 
-    provider_name, model_name = configured_embedding_identity()
+    # Embedding a batch takes seconds, and the first call loads the local model
+    # (hundreds of MB). Holding the read transaction open across that is what
+    # trips PostgreSQL's idle-in-transaction timeout, so release it first and
+    # let the write below open a fresh one.
+    session.commit()
+
     records: list[VectorRecord] = []
     for start in range(0, len(missing), batch_size):
         batch = missing[start : start + batch_size]
-        vectors = embedding_provider.embed_documents([chunk.text for chunk in batch])
+        vectors = embedding_provider.embed_documents(
+            [text for _id, _index, text in batch]
+        )
         if len(vectors) != len(batch):
             raise RuntimeError(
                 f"Embedding provider returned {len(vectors)} vectors for "
@@ -194,26 +206,26 @@ def _backfill_document(
             )
         records.extend(
             VectorRecord(
-                chunk_id=chunk.id,
-                document_id=document.id,
-                course_id=document.course_id,
-                chunk_index=chunk.chunk_index,
+                chunk_id=chunk_id,
+                document_id=document_id,
+                course_id=course_id,
+                chunk_index=chunk_index,
                 embedding=vector,
             )
-            for chunk, vector in zip(batch, vectors)
+            for (chunk_id, chunk_index, _text), vector in zip(batch, vectors)
         )
 
     if records:
         vector_store.upsert_document_vectors(
             session,
-            document_id=document.id,
-            course_id=document.course_id,
+            document_id=document_id,
+            course_id=course_id,
             records=records,
             embedding_provider=provider_name,
             embedding_model=model_name,
         )
     if prune_orphans and orphans:
-        vector_store.delete_chunk_vectors(session, document.id, orphans)
+        vector_store.delete_chunk_vectors(session, document_id, orphans)
         report.vectors_pruned += len(orphans)
 
     report.vectors_written += len(records)
@@ -237,31 +249,43 @@ def _backfill_profile_document(
     small and rare, so a full replacement is cheaper than a second upsert path
     that would have to stay in step with the course one.
     """
-    chunks = list(
-        session.scalars(
+    provider_name, model_name = configured_embedding_identity()
+    document_id = document.id
+    user_id = document.user_id
+
+    chunk_rows = [
+        (chunk.id, chunk.chunk_index, chunk.text)
+        for chunk in session.scalars(
             select(ProfileDocumentChunk)
-            .where(ProfileDocumentChunk.document_id == document.id)
+            .where(ProfileDocumentChunk.document_id == document_id)
             .order_by(ProfileDocumentChunk.chunk_index)
         ).all()
-    )
-    if not chunks:
+    ]
+    if not chunk_rows:
         return
 
-    provider_name, model_name = configured_embedding_identity()
     stored_ids = vector_store.profile_chunk_ids_with_vectors(
-        session, document.id, embedding_model=model_name
+        session, document_id, embedding_model=model_name
     )
-    missing = [chunk for chunk in chunks if chunk.id not in stored_ids]
+    missing = [
+        chunk_id for chunk_id, _index, _text in chunk_rows if chunk_id not in stored_ids
+    ]
     report.vectors_missing += len(missing)
     if not missing:
         return
     if dry_run:
         return
 
+    # Release the read transaction before the slow embedding work; see
+    # _backfill_document for why.
+    session.commit()
+
     vectors: list[list[float]] = []
-    for start in range(0, len(chunks), batch_size):
-        batch = chunks[start : start + batch_size]
-        produced = embedding_provider.embed_documents([chunk.text for chunk in batch])
+    for start in range(0, len(chunk_rows), batch_size):
+        batch = chunk_rows[start : start + batch_size]
+        produced = embedding_provider.embed_documents(
+            [text for _id, _index, text in batch]
+        )
         if len(produced) != len(batch):
             raise RuntimeError(
                 f"Embedding provider returned {len(produced)} vectors for "
@@ -271,17 +295,19 @@ def _backfill_profile_document(
 
     vector_store.replace_profile_document_vectors(
         session,
-        document_id=document.id,
-        user_id=document.user_id,
+        document_id=document_id,
+        user_id=user_id,
         records=[
             VectorRecord(
-                chunk_id=chunk.id,
-                document_id=document.id,
-                course_id=document.user_id,
-                chunk_index=chunk.chunk_index,
+                chunk_id=chunk_id,
+                document_id=document_id,
+                course_id=user_id,
+                chunk_index=chunk_index,
                 embedding=vector,
             )
-            for chunk, vector in zip(chunks, vectors, strict=True)
+            for (chunk_id, chunk_index, _text), vector in zip(
+                chunk_rows, vectors, strict=True
+            )
         ],
         embedding_provider=provider_name,
         embedding_model=model_name,

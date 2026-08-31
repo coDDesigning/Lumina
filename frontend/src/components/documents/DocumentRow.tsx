@@ -108,22 +108,18 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
             />
           </div>
           {why ? <p className={styles.locked}>{why}</p> : null}
-          <p className={styles.locked}>
-            It cannot be removed until this finishes.
-            {!readOnly ? (
-              <>
-                {' '}
-                <button
-                  type="button"
-                  className={styles.forceLink}
-                  onClick={() => setIsForcing(true)}
-                  disabled={entry.pending !== null}
-                >
-                  {entry.pending === 'delete' ? 'Removing…' : 'Remove it anyway'}
-                </button>
-              </>
-            ) : null}
-          </p>
+          {!readOnly ? (
+            <p className={styles.locked}>
+              <button
+                type="button"
+                className={styles.forceLink}
+                onClick={() => setIsForcing(true)}
+                disabled={entry.pending !== null}
+              >
+                {entry.pending === 'delete' ? 'Removing…' : 'Remove'}
+              </button>
+            </p>
+          ) : null}
         </>
       ) : null}
 
@@ -201,7 +197,7 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
           onDelete(document.id, { force: true });
         }}
         title="Force-remove this source?"
-        confirmLabel="Remove it anyway"
+        confirmLabel="Remove"
         destructive
       >
         Reading {document.original_file_name} has not finished. If it is genuinely still being

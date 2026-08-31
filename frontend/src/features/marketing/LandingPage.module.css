@@ -60,10 +60,10 @@
 
 .heroTitle {
   font-size: clamp(2.25rem, 5.5vw, 3.75rem);
-  line-height: 1.02;
-  letter-spacing: -0.04em;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
   font-weight: var(--weight-bold);
-  max-width: 17ch;
+  max-width: 22ch;
 }
 
 .heroLede {

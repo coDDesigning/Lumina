@@ -168,7 +168,7 @@ describe('CourseSettingsPage — generation defaults', () => {
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith(1, expect.anything());
     });
-    expect(await screen.findByLabelText('Questions per quiz')).toHaveValue(12);
+    expect(await screen.findByLabelText('Questions per quiz')).toHaveValue('12');
   });
 
   it('sends the defaults back in the shape the API expects', async () => {
@@ -176,8 +176,7 @@ describe('CourseSettingsPage — generation defaults', () => {
     renderPage();
 
     const questionCount = await screen.findByLabelText('Questions per quiz');
-    await user.clear(questionCount);
-    await user.type(questionCount, '20');
+    await user.selectOptions(questionCount, '20');
 
     await user.click(screen.getByRole('button', { name: 'Save defaults' }));
 
@@ -197,22 +196,21 @@ describe('CourseSettingsPage — generation defaults', () => {
     renderPage();
 
     const questionCount = await screen.findByLabelText('Questions per quiz');
-    expect(questionCount).toHaveValue(12);
+    expect(questionCount).toHaveValue('12');
 
-    await user.clear(questionCount);
-    await user.type(questionCount, '20');
-    expect(questionCount).toHaveValue(20);
+    await user.selectOptions(questionCount, '20');
+    expect(questionCount).toHaveValue('20');
 
     await user.click(screen.getByRole('button', { name: 'Reset defaults' }));
 
-    expect(questionCount).toHaveValue(12);
+    expect(questionCount).toHaveValue('12');
   });
 
-  it('states the real range, including that a quiz caps lower than the setting', async () => {
+  it('offers quiz question count options up to 20', async () => {
     renderPage();
-    expect(
-      await screen.findByText('Between 5 and 50 here. A single quiz generates up to 20.'),
-    ).toBeInTheDocument();
+    const select = await screen.findByLabelText('Questions per quiz');
+    expect(within(select).getByRole('option', { name: '5 questions' })).toBeInTheDocument();
+    expect(within(select).getByRole('option', { name: '20 questions' })).toBeInTheDocument();
   });
 
   it('explains a failed load instead of showing stale defaults silently', async () => {

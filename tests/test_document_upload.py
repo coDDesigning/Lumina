@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.models import Course, ProcessingJob, UploadedDocument
 from backend.app.repositories.document import DocumentRepository
 from main import app
@@ -853,3 +854,105 @@ def test_document_upload_persists_incoming_correlation_id_to_processing_job(
         )
         assert job is not None
         assert job.correlation_id == "req-corr-trace-777"
+
+
+def extract_syllabus(
+    context,
+    filename: str,
+    content: bytes,
+    content_type: str,
+    *,
+    authenticated: bool = True,
+):
+    headers = context.authorization if authenticated else {}
+    return context.client.post(
+        "/api/courses/syllabus/extract",
+        headers=headers,
+        files={"document": (filename, content, content_type)},
+    )
+
+
+def test_syllabus_extraction_returns_text_without_persisting_the_upload(
+    upload_api,
+) -> None:
+    before = document_count(upload_api)
+
+    response = extract_syllabus(
+        upload_api,
+        "syllabus.txt",
+        b"Week 1: Limits\nWeek 2: Derivatives",
+        "text/plain",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["data"]["text"] == "Week 1: Limits\nWeek 2: Derivatives"
+    assert payload["data"]["truncated"] is False
+    assert document_count(upload_api) == before
+    assert stored_files(upload_api.storage_root) == []
+
+
+def test_syllabus_extraction_rejects_unsupported_file_types(upload_api) -> None:
+    response = extract_syllabus(
+        upload_api,
+        "syllabus.png",
+        b"\x89PNG\r\n\x1a\n",
+        "image/png",
+    )
+
+    assert response.status_code == 415
+    assert response.json()["data"]["code"] == "UPLOAD_UNSUPPORTED_FILE_TYPE"
+
+
+def test_syllabus_extraction_reports_unreadable_documents(upload_api) -> None:
+    response = extract_syllabus(
+        upload_api,
+        "syllabus.pdf",
+        b"%PDF-1.7\ntruncated-corrupt-data",
+        "application/pdf",
+    )
+
+    assert response.status_code == 422
+
+
+def test_syllabus_extraction_requires_authentication(upload_api) -> None:
+    response = extract_syllabus(
+        upload_api,
+        "syllabus.txt",
+        b"Week 1: Limits",
+        "text/plain",
+        authenticated=False,
+    )
+
+    assert response.status_code == 401
+
+
+def test_syllabus_extraction_truncates_text_beyond_the_field_budget(
+    upload_api,
+) -> None:
+    oversized = b"a" * (document_service.SYLLABUS_MAX_CHARACTERS + 500)
+
+    response = extract_syllabus(upload_api, "syllabus.txt", oversized, "text/plain")
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["truncated"] is True
+    assert len(payload["text"]) == document_service.SYLLABUS_MAX_CHARACTERS
+
+
+def test_syllabus_extraction_accepts_bodies_above_the_plain_request_limit(
+    upload_api,
+) -> None:
+    """The syllabus reader gets the upload body budget, not the JSON one."""
+    oversized_for_json = b"Week 1: Limits\n" + b"x" * (settings.max_request_size_bytes)
+
+    response = extract_syllabus(
+        upload_api,
+        "syllabus.txt",
+        oversized_for_json,
+        "text/plain",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["text"].startswith("Week 1: Limits")

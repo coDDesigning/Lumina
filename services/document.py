@@ -26,7 +26,6 @@ from services.document_lock import is_document_locked_for_generation
 from services.document_validation import validate_basic_upload
 from services.processing_jobs import (
     ProcessingJobStateError,
-    _database_now,
     enqueue_document_job,
     retry_failed_job,
 )

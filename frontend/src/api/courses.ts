@@ -8,6 +8,7 @@ import type {
   DocumentStatusResponse,
   DocumentMaterialKind,
   DocumentUploadResponse,
+  SyllabusExtraction,
 } from './types';
 
 export const coursesAPI = {
@@ -55,6 +56,20 @@ export const coursesAPI = {
       formData,
       options,
     );
+  },
+
+  extractSyllabus: async (
+    file: File,
+    options?: RequestInit,
+  ): Promise<SyllabusExtraction> => {
+    const formData = new FormData();
+    formData.append('document', file);
+    const res = await apiClient.postForm<BaseResponse<SyllabusExtraction>>(
+      '/courses/syllabus/extract',
+      formData,
+      options,
+    );
+    return unwrapData(res, 'Syllabus extraction');
   },
 
   listDocuments: async (

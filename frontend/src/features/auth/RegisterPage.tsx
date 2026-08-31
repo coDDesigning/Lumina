@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
 import { Input } from '@/ui/Input';
+import { PasswordInput } from '@/ui/PasswordInput';
 import { AuthLayout } from './AuthLayout';
 import { ResendVerification } from './ResendVerification';
 import styles from './AuthLayout.module.css';
@@ -92,7 +93,6 @@ export default function RegisterPage() {
             Already have an account? <Link to="/login">Sign in</Link>
           </>
         }
-        note="Open the link to finish setting up your account and receive your starting credits. That step is what keeps one person from opening fifty accounts."
       >
         <Alert tone="info" live="status">
           {awaitingVerification.message}
@@ -116,7 +116,6 @@ export default function RegisterPage() {
           Already have an account? <Link to="/login">Sign in</Link>
         </>
       }
-      note="Your uploads are never used to train anything. You can delete a course, and everything in it, permanently at any time."
     >
       <form className={styles.form} onSubmit={handleSubmit}>
         {error ? (
@@ -145,9 +144,8 @@ export default function RegisterPage() {
           disabled={isSubmitting}
         />
 
-        <Input
+        <PasswordInput
           label="Password"
-          type="password"
           autoComplete="new-password"
           required
           minLength={MIN_PASSWORD_LENGTH}
@@ -157,9 +155,8 @@ export default function RegisterPage() {
           hint="At least 8 characters. A passphrase beats a short password with a digit on the end, and it cannot contain your name or email address."
         />
 
-        <Input
+        <PasswordInput
           label="Confirm password"
-          type="password"
           autoComplete="new-password"
           required
           minLength={MIN_PASSWORD_LENGTH}

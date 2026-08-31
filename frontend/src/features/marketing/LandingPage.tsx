@@ -107,13 +107,14 @@ export default function LandingPage() {
             <LinkButton to="/register" variant="primary" size="lg">
               Start with one course
             </LinkButton>
-            <ExternalLinkButton href="#privacy" variant="secondary" size="lg">
+            <ExternalLinkButton
+              href="https://github.com/coDDesigning/Lumina"
+              variant="secondary"
+              size="lg"
+            >
               Run it on your own machine
             </ExternalLinkButton>
           </div>
-          <p className={styles.heroFootnote}>
-            No card needed. 20 credits a month on the hosted version — unmetered when you self-host.
-          </p>
         </div>
       </CourseLight>
 
@@ -202,25 +203,26 @@ export default function LandingPage() {
               <p className={styles.capabilityBody}>{capability.body}</p>
             </article>
           ))}
-          <article className={`${styles.capability} ${styles.capabilityMuted}`}>
-            <h3 className={styles.capabilityTitle}>Not built yet</h3>
-            <p className={styles.capabilityBody}>
-              Audio and video, spaced repetition, and editing a generated guide. They are on the
-              roadmap and they are not in the product.
-            </p>
-          </article>
         </div>
       </section>
 
-      <footer className={styles.footer} id="privacy">
+      <section className={styles.section} id="privacy">
+        <p className={styles.eyebrow}>Privacy & Data Protection</p>
+        <h2 className={styles.sectionTitle}>Your data stays yours.</h2>
+        <p className={styles.sectionLede}>
+          Lumina is designed with strict privacy boundaries: your course material is isolated per course,
+          never shared across accounts, and never used to train third-party AI models. When self-hosted,
+          everything stays completely on your own machine.
+        </p>
+      </section>
+
+      <footer className={styles.footer}>
         <div className={styles.footerInner}>
-          <span>
-            Lumina is open source. Self-host it with Docker, SQLite and a local Ollama model —
-            nothing you upload leaves your machine.
-          </span>
+          <span>Lumina</span>
           <span className={styles.footerLinks}>
-            <a href="https://github.com/coDDesigning/Lumina">GitHub</a>
-            <Link to="/login">Sign in</Link>
+            <a href="https://github.com/coDDesigning/Lumina" target="_blank" rel="noopener noreferrer">
+              GitHub
+            </a>
           </span>
         </div>
       </footer>

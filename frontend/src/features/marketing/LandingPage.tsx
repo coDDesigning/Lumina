@@ -94,25 +94,25 @@ export default function LandingPage() {
 
       <CourseLight courseId={0} as="section" className={styles.hero}>
         <div className={styles.heroInner}>
-          <Badge tone="accent">Open source · Self-hostable · Free to run yourself</Badge>
+          <Badge tone="accent">AI Study Platform · Grounded in Your Notes</Badge>
           <h1 className={styles.heroTitle}>
-            Turn the PDFs you already have into the studying you actually need.
+            Turn your study materials into interactive guides and practice quizzes.
           </h1>
           <p className={styles.heroLede}>
-            Upload your lectures, notes and past papers. Lumina reads them — scanned pages included
-            — and builds study guides, quizzes and answers grounded in your own material, never in
-            something it made up.
+            Upload your lecture slides, notes, and past exams. Lumina turns them into structured
+            study guides, quizzes, flashcards, and step-by-step AI tutoring — 100% grounded in your
+            own course files.
           </p>
           <div className={styles.heroActions}>
             <LinkButton to="/register" variant="primary" size="lg">
-              Start with one course
+              Get started free
             </LinkButton>
             <ExternalLinkButton
               href="https://github.com/coDDesigning/Lumina"
               variant="secondary"
               size="lg"
             >
-              Run it on your own machine
+              Run on your own machine
             </ExternalLinkButton>
           </div>
         </div>

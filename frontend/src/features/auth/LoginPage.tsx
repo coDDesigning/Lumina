@@ -1,14 +1,13 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { authAPI } from '@/api/auth';
 import { describeError } from '@/api/errors';
 import { useAuth } from '@/context/AuthContext';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
-import { IconButton } from '@/ui/IconButton';
 import { Input } from '@/ui/Input';
+import { PasswordInput } from '@/ui/PasswordInput';
 import { AuthLayout } from './AuthLayout';
 import styles from './AuthLayout.module.css';
 
@@ -19,7 +18,6 @@ interface LocationState {
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -81,23 +79,13 @@ export default function LoginPage() {
           disabled={isSubmitting}
         />
 
-        <Input
+        <PasswordInput
           label="Password"
-          type={showPassword ? 'text' : 'password'}
           autoComplete="current-password"
           required
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           disabled={isSubmitting}
-          action={
-            <IconButton
-              label={showPassword ? 'Hide password' : 'Show password'}
-              icon={showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-              size="sm"
-              onClick={() => setShowPassword((prev) => !prev)}
-              disabled={isSubmitting}
-            />
-          }
         />
 
         <Link to="/forgot-password" className={styles.forgot}>

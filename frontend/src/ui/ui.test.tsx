@@ -12,6 +12,7 @@ import { Dialog } from './Dialog';
 import { ErrorState } from './ErrorState';
 import { IconButton } from './IconButton';
 import { Input, Select, Textarea } from './Input';
+import { PasswordInput } from './PasswordInput';
 import { Checkbox, Switch } from './Checkbox';
 import { Tabs } from './Tabs';
 import { ToastProvider } from './ToastProvider';
@@ -157,6 +158,25 @@ describe('form controls', () => {
       />,
     );
     expect(screen.getByRole('button', { name: 'Toggle' })).toBeInTheDocument();
+  });
+
+  it('toggles password visibility with the eye icon button', async () => {
+    const user = userEvent.setup();
+    render(<PasswordInput label="Password" defaultValue="secret-pass" />);
+
+    const input = screen.getByLabelText('Password');
+    expect(input).toHaveAttribute('type', 'password');
+
+    const toggleButton = screen.getByRole('button', { name: 'Show password' });
+    expect(toggleButton).toBeInTheDocument();
+
+    await user.click(toggleButton);
+    expect(input).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: 'Hide password' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide password' }));
+    expect(input).toHaveAttribute('type', 'password');
+    expect(screen.getByRole('button', { name: 'Show password' })).toBeInTheDocument();
   });
 
   it('labels textareas and selects the same way', () => {

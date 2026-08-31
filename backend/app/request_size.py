@@ -158,11 +158,13 @@ class RequestSizeLimitMiddleware:
     @staticmethod
     def _is_document_upload(scope: Scope) -> bool:
         path = scope.get("path", "")
-        return (
-            scope.get("method") == "POST"
-            and path.startswith("/api/courses/")
-            and path.endswith("/documents")
-        )
+        if scope.get("method") != "POST":
+            return False
+        # Syllabus extraction parses the same file kinds as an upload, so it
+        # needs the upload body budget rather than the ordinary request one.
+        if path == "/api/courses/syllabus/extract":
+            return True
+        return path.startswith("/api/courses/") and path.endswith("/documents")
 
     @staticmethod
     def _content_length(scope: Scope) -> int | None:

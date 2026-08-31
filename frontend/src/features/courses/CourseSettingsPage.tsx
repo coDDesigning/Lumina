@@ -30,6 +30,8 @@ export interface CourseSettingsPageProps {
   onDelete: (courseId: string) => Promise<void>;
 }
 
+const QUIZ_QUESTION_OPTIONS = [5, 10, 15, 20];
+
 const DEFAULT_PREFERENCES = {
   studyMode: 'Exam',
   difficulty: 'Adaptive',
@@ -287,7 +289,6 @@ export default function CourseSettingsPage({
                 optional
                 value={course.semester}
                 onChange={(event) => updateCourse('semester', event.target.value)}
-                hint="Free text — write it however your university does."
                 disabled={isSupportView}
               />
 
@@ -410,21 +411,28 @@ export default function CourseSettingsPage({
                   <option value="Hard">Hard</option>
                 </Select>
 
-                <Input
+                <Select
                   label="Questions per quiz"
-                  type="number"
-                  min={5}
-                  max={50}
-                  value={preferences.questionCount}
+                  value={String(preferences.questionCount)}
                   onChange={(event) =>
                     setPreferences((current) => ({
                       ...current,
                       questionCount: Number(event.target.value),
                     }))
                   }
-                  hint="Between 5 and 50 here. A single quiz generates up to 20."
                   disabled={isSupportView}
-                />
+                >
+                  {!QUIZ_QUESTION_OPTIONS.includes(preferences.questionCount) ? (
+                    <option value={preferences.questionCount}>
+                      {preferences.questionCount} questions
+                    </option>
+                  ) : null}
+                  {QUIZ_QUESTION_OPTIONS.map((count) => (
+                    <option key={count} value={count}>
+                      {count} questions
+                    </option>
+                  ))}
+                </Select>
 
                 <Select
                   label="Guide length"

@@ -38,7 +38,7 @@ describe('LandingPage', () => {
     renderLanding();
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      /turn the pdfs you already have/i,
+      /turn your study materials/i,
     );
     const header = within(screen.getByRole('banner'));
     expect(header.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/login');
@@ -46,7 +46,7 @@ describe('LandingPage', () => {
       'href',
       '/register',
     );
-    expect(screen.getByRole('link', { name: 'Start with one course' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Get started free' })).toHaveAttribute(
       'href',
       '/register',
     );
@@ -79,7 +79,7 @@ describe('LandingPage', () => {
     renderLanding();
 
     expect(screen.getByRole('heading', { name: 'Your data stays yours.' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Run it on your own machine' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Run on your own machine' })).toHaveAttribute(
       'href',
       'https://github.com/coDDesigning/Lumina',
     );

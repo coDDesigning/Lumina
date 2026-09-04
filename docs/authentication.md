@@ -306,6 +306,10 @@ authorized to send as it or the message is rejected before it leaves.
 
 Access tokens (JWTs) have a default lifespan of 60 minutes. When a user logs out, 
 the token's unique ID (`jti`) is added to a denylist in the `revoked_tokens` table.
+Invalid or expired tokens no-op idempotently on logout, while database persistence
+failures surface as 500 errors to avoid falsely confirming revocation.
 Furthermore, changing a password updates the `tokens_valid_after` column, which 
-automatically rejects any JWTs issued before the change. These checks are 
-performed on every authenticated request by the `get_current_user` dependency.
+automatically rejects any JWTs issued before the change. When an account is banned,
+authenticated requests and sign-in attempts fail with HTTP 403 and `X-Error-Code: account_banned`,
+prompting clients to terminate active sessions and purge cached data immediately.
+These checks are performed on every authenticated request by the `get_current_user` dependency.

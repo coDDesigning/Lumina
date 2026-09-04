@@ -434,4 +434,29 @@ describe('apiClient HTTP requests', () => {
     expect(unauthorizedListener).not.toHaveBeenCalled();
     window.removeEventListener('auth:unauthorized', unauthorizedListener);
   });
+
+  it('keeps the Lumina session for a personal API key 400 bad request', async () => {
+    localStorage.setItem('token', 'valid-lumina-token');
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ detail: 'Your personal OpenAI API key is invalid or expired.' }),
+        {
+          status: 400,
+          headers: { 'X-Error-Code': 'personal_key_invalid' },
+        },
+      ),
+    );
+    const unauthorizedListener = vi.fn();
+    window.addEventListener('auth:unauthorized', unauthorizedListener);
+
+    await expect(apiClient.post('/courses/1/study-guide', {})).rejects.toMatchObject({
+      status: 400,
+      code: 'personal_key_invalid',
+    });
+
+    expect(localStorage.getItem('token')).toBe('valid-lumina-token');
+    expect(unauthorizedListener).not.toHaveBeenCalled();
+    window.removeEventListener('auth:unauthorized', unauthorizedListener);
+  });
 });

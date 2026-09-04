@@ -139,9 +139,22 @@ def downgrade() -> None:
     else:
         op.drop_index("ix_ai_usage_logs_success_created", table_name="ai_usage_logs")
 
+    if is_postgresql:
+        op.execute(
+            "ALTER TABLE ai_usage_logs DROP CONSTRAINT IF EXISTS "
+            "ck_ai_usage_logs_pricing_pair"
+        )
+        op.execute(
+            "ALTER TABLE ai_usage_logs DROP CONSTRAINT IF EXISTS "
+            "ck_ai_usage_logs_estimated_cost_range"
+        )
+
     with op.batch_alter_table("ai_usage_logs", schema=None) as batch_op:
-        batch_op.drop_constraint("ck_ai_usage_logs_pricing_pair", type_="check")
-        batch_op.drop_constraint("ck_ai_usage_logs_estimated_cost_range", type_="check")
+        if not is_postgresql:
+            batch_op.drop_constraint("ck_ai_usage_logs_pricing_pair", type_="check")
+            batch_op.drop_constraint(
+                "ck_ai_usage_logs_estimated_cost_range", type_="check"
+            )
         batch_op.drop_column("pricing_version")
         batch_op.drop_column("estimated_cost_usd")
         batch_op.alter_column(

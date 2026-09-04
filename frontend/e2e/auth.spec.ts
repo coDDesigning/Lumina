@@ -7,14 +7,14 @@ test.describe('signing in', () => {
 
     await expect(page).toHaveURL(/\/login$/)
     await expect(page.getByLabel(/email/i)).toBeVisible()
-    await expect(page.getByLabel(/password/i)).toBeVisible()
+    await expect(page.getByLabel(/^password$/i)).toBeVisible()
   })
 
   test('signs in and lands on the dashboard', async ({ page }) => {
     await visit(page, '/login')
 
     await page.getByLabel(/email/i).fill('bora@example.com')
-    await page.getByLabel(/password/i).fill('correct-horse')
+    await page.getByLabel(/^password$/i).fill('correct-horse')
     await page.getByRole('button', { name: /sign in/i }).click()
 
     await expect(page).toHaveURL(/\/dashboard$/)

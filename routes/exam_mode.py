@@ -113,7 +113,12 @@ MOCK_EXAM_CONFIGURATION_ERROR = "mock_exam_configuration_invalid"
 MAX_QUESTION_PAGE_SIZE = 100
 
 GENERATION_RESPONSES = {
-    400: {"description": "No processed course material is available"},
+    400: {
+        "description": (
+            "Personal API key is invalid, AI model is unavailable, or no processed "
+            "course material is available"
+        )
+    },
     401: {"description": "Authentication required"},
     402: {"description": "Insufficient credits"},
     404: {"description": "Course or document not found"},

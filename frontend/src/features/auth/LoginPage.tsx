@@ -12,7 +12,8 @@ import { AuthLayout } from './AuthLayout';
 import styles from './AuthLayout.module.css';
 
 interface LocationState {
-  from?: { pathname?: string };
+  from?: { pathname?: string; search?: string; hash?: string };
+  sessionEndReason?: 'unauthorized' | 'banned' | null;
 }
 
 export default function LoginPage() {
@@ -20,12 +21,22 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
 
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = (location.state as LocationState | null)?.from?.pathname ?? '/dashboard';
+  const state = location.state as LocationState | null;
+  const fromLocation = state?.from;
+  const from = fromLocation?.pathname
+    ? `${fromLocation.pathname}${fromLocation.search ?? ''}${fromLocation.hash ?? ''}`
+    : '/dashboard';
+  const banNotice =
+    !noticeDismissed && state?.sessionEndReason === 'banned'
+      ? 'Your account has been banned.'
+      : null;
+  const displayError = error ?? banNotice;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -33,6 +44,7 @@ export default function LoginPage() {
       return;
     }
     setError(null);
+    setNoticeDismissed(true);
     setIsSubmitting(true);
 
     try {
@@ -62,9 +74,9 @@ export default function LoginPage() {
       }
     >
       <form className={styles.form} onSubmit={handleSubmit}>
-        {error ? (
+        {displayError ? (
           <Alert tone="destructive" live="alert">
-            {error}
+            {displayError}
           </Alert>
         ) : null}
 
@@ -74,7 +86,10 @@ export default function LoginPage() {
           autoComplete="email"
           required
           value={email}
-          onChange={(event) => setEmail(event.target.value)}
+          onChange={(event) => {
+            setEmail(event.target.value);
+            setNoticeDismissed(true);
+          }}
           placeholder="you@university.edu"
           disabled={isSubmitting}
         />
@@ -84,7 +99,10 @@ export default function LoginPage() {
           autoComplete="current-password"
           required
           value={password}
-          onChange={(event) => setPassword(event.target.value)}
+          onChange={(event) => {
+            setPassword(event.target.value);
+            setNoticeDismissed(true);
+          }}
           disabled={isSubmitting}
         />
 

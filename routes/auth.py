@@ -182,7 +182,11 @@ def login_user(
     clear(rate_limit_db, account_bucket_key)
 
     if user.is_banned:
-        raise HTTPException(status_code=403, detail="Your account has been banned.")
+        raise HTTPException(
+            status_code=403,
+            detail="Your account has been banned.",
+            headers={"X-Error-Code": "account_banned"},
+        )
 
     # An unverified account signs in deliberately. It has to: the screen that
     # explains why the balance is zero, and the control that resends the link,

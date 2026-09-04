@@ -784,3 +784,53 @@ def test_admin_cannot_self_lock_and_role_changes_keep_credit_invariant(
             UserUpdate(role=Role.USER),
         )
         assert unchanged.credits == 0.0
+
+
+def test_banned_user_login_and_active_session_return_account_banned_code(
+    api_context,
+) -> None:
+    register = api_context.client.post(
+        "/api/auth/register",
+        json={
+            "name": "Banned User",
+            "email": "banned_student@example.com",
+            "password": "Strong-password!",
+        },
+    )
+    assert register.status_code == 200
+
+    login = api_context.client.post(
+        "/api/auth/login",
+        data={
+            "username": "banned_student@example.com",
+            "password": "Strong-password!",
+        },
+    )
+    assert login.status_code == 200
+    token = login.json()["access_token"]
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    me = api_context.client.get("/api/auth/me", headers=auth_headers)
+    assert me.status_code == 200
+
+    with api_context.session_factory() as session:
+        user = UserService.get_user_by_email(session, "banned_student@example.com")
+        assert user is not None
+        user.is_banned = True
+        session.commit()
+
+    banned_me = api_context.client.get("/api/auth/me", headers=auth_headers)
+    assert banned_me.status_code == 403
+    assert banned_me.headers.get("X-Error-Code") == "account_banned"
+    assert banned_me.json()["detail"] == "Your account has been banned."
+
+    banned_login = api_context.client.post(
+        "/api/auth/login",
+        data={
+            "username": "banned_student@example.com",
+            "password": "Strong-password!",
+        },
+    )
+    assert banned_login.status_code == 403
+    assert banned_login.headers.get("X-Error-Code") == "account_banned"
+    assert banned_login.json()["detail"] == "Your account has been banned."

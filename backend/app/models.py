@@ -1396,6 +1396,15 @@ class GenerationJob(Base):
     # with the run that replaced it.
     dismissed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
+    # Read-only views of whatever the run produced, so the panel can report the
+    # vendor that actually answered without a second query per row.
+    quiz: Mapped["Quiz | None"] = relationship(
+        "Quiz", foreign_keys=[quiz_id], viewonly=True
+    )
+    generated_output: Mapped["GeneratedOutput | None"] = relationship(
+        "GeneratedOutput", foreign_keys=[generated_output_id], viewonly=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )

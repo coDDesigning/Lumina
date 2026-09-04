@@ -19,7 +19,7 @@ from collections.abc import Callable
 from uuid import uuid4
 
 from sqlalchemy import case, func, select, update
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from backend.app.config import settings
 from backend.app.models import (
@@ -804,6 +804,10 @@ def list_course_generation_jobs(
     cutoff = read_at - timedelta(seconds=RECENT_WINDOW_SECONDS)
     statement = (
         select(GenerationJob)
+        .options(
+            selectinload(GenerationJob.quiz),
+            selectinload(GenerationJob.generated_output),
+        )
         .where(
             GenerationJob.course_id == course_id,
             GenerationJob.user_id == user_id,

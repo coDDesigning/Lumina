@@ -1,4 +1,7 @@
-import type { QuizView } from '@/api/types';
+import { quizAPI } from '@/api/quiz';
+import { queryKeys } from '@/api/queryKeys';
+import type { QuizHistoryItem, QuizView } from '@/api/types';
+import { useQuery } from '@/lib/query/useQuery';
 import { Badge } from '@/ui/Badge';
 import { CitationList } from '@/ui/CitationChip';
 import { LinkButton } from '@/ui/LinkButton';
@@ -19,6 +22,17 @@ const QUESTION_TYPE_LABELS: Record<string, string> = {
 export function StoredQuiz({ quiz, courseId }: StoredQuizProps) {
   const settings = quiz.generation_settings;
 
+  // Reading a quiz here must not tell a student the answers to a paper they
+  // have not sat. The review is earned by attempting it, so anything short of
+  // a recorded attempt -- still loading, or a history that could not be read --
+  // keeps the answers back rather than guessing in the student's favour.
+  const attempts = useQuery<QuizHistoryItem[]>({
+    key: queryKeys.courseQuizAttempts(courseId, quiz.quiz_id),
+    fetcher: ({ signal }) => quizAPI.listAttempts(courseId, quiz.quiz_id, { signal }),
+    fallbackMessage: 'Your attempts could not be read.',
+  });
+  const hasSatIt = attempts.status === 'success' && (attempts.data?.length ?? 0) > 0;
+
   return (
     <article className={styles.container}>
       <header className={styles.masthead}>
@@ -32,6 +46,11 @@ export function StoredQuiz({ quiz, courseId }: StoredQuizProps) {
             Take this quiz
           </LinkButton>
         </div>
+        {attempts.status !== 'pending' && attempts.status !== 'idle' && !hasSatIt ? (
+          <p className={styles.spoilerNote}>
+            The answers are held back until you have taken this quiz.
+          </p>
+        ) : null}
         <div className={styles.badges}>
           <Badge>
             <span className="tabular">{quiz.questions.length}</span>{' '}
@@ -61,7 +80,7 @@ export function StoredQuiz({ quiz, courseId }: StoredQuizProps) {
             {q.options && q.options.length > 0 ? (
               <ul className={styles.optionsList}>
                 {q.options.map((option, optIdx) => {
-                  const isCorrect = q.correct_option_index === optIdx;
+                  const isCorrect = hasSatIt && q.correct_option_index === optIdx;
                   return (
                     <li
                       key={optIdx}
@@ -75,7 +94,7 @@ export function StoredQuiz({ quiz, courseId }: StoredQuizProps) {
               </ul>
             ) : null}
 
-            {q.correct_answer ? (
+            {hasSatIt && q.correct_answer ? (
               <div className={styles.answerSection}>
                 <p className={styles.answerLabel}>
                   {q.question_type === 'open_ended' ? 'Reference answer' : 'Accepted answer'}
@@ -90,8 +109,8 @@ export function StoredQuiz({ quiz, courseId }: StoredQuizProps) {
               </div>
             ) : null}
 
-            <CitationList citations={q.citations} />
-            {q.explanation ? (
+            {hasSatIt ? <CitationList citations={q.citations} /> : null}
+            {hasSatIt && q.explanation ? (
               <p className={styles.explanation}>{q.explanation}</p>
             ) : null}
           </div>

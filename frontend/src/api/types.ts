@@ -239,6 +239,8 @@ export interface GenerationJob {
   error_message: string | null;
   generated_output_id: number | null;
   quiz_id: number | null;
+  requested_model?: string | null;
+  fallback_model?: string | null;
 }
 
 export type ProcessingStage =

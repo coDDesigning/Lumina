@@ -18,6 +18,8 @@ function job(overrides: Partial<GenerationJob> = {}): GenerationJob {
     error_message: null,
     generated_output_id: null,
     quiz_id: null,
+    requested_model: null,
+    fallback_model: null,
     ...overrides,
   };
 }
@@ -126,6 +128,38 @@ describe('GenerationRail', () => {
     renderRail([job({ status: 'running' })]);
 
     expect(screen.queryByRole('button', { name: /Dismiss/ })).not.toBeInTheDocument();
+  });
+
+  it('names the vendor that answered when the chosen one did not', () => {
+    // A silent fallback looks exactly like the model the student picked.
+    renderRail([
+      job({
+        job_type: 'generate_quiz',
+        status: 'succeeded',
+        quiz_id: 4,
+        finished_at: '2026-08-30T12:01:00Z',
+        requested_model: 'ollama:llama3',
+        fallback_model: 'gemini:gemini-3.6-flash',
+      }),
+    ]);
+
+    expect(screen.getByText(/ollama:llama3 was unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/gemini:gemini-3.6-flash/i)).toBeInTheDocument();
+  });
+
+  it('says nothing about vendors when the chosen one answered', () => {
+    renderRail([
+      job({
+        job_type: 'generate_quiz',
+        status: 'succeeded',
+        quiz_id: 4,
+        finished_at: '2026-08-30T12:01:00Z',
+        requested_model: 'gemini:gemini-3.6-flash',
+        fallback_model: null,
+      }),
+    ]);
+
+    expect(screen.queryByText(/unavailable/i)).not.toBeInTheDocument();
   });
 
   it('gives a failed status read a recovery route', async () => {

@@ -28,6 +28,7 @@ from backend.app.models import (
     Role,
     User,
 )
+from schemas.generation_job import GenerationJobView
 from generation_fixtures import (
     GENERATION_FEATURES,
     RecordingProvider,
@@ -435,6 +436,133 @@ def _persisted_output(session: Session, course: Course, owner: User) -> Generate
     session.add(output)
     session.commit()
     return output
+
+
+def _succeeded_quiz_job(
+    session: Session,
+    course: Course,
+    owner: User,
+    *,
+    requested: str | None,
+    produced: str | None,
+) -> GenerationJob:
+    """One finished quiz run, told what was asked for and what answered."""
+    payload = (
+        '{"question_count": 5}'
+        if requested is None
+        else ('{"question_count": 5, "model": "%s"}' % requested)
+    )
+    enqueue_generation_job(
+        session,
+        course_id=course.id,
+        user_id=owner.id,
+        job_type=JOB_TYPE_GENERATE_QUIZ,
+        request_payload=payload,
+        credit_cost=1.0,
+    )
+    claimed = claim_next_generation_job(session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+    quiz = Quiz(course_id=course.id, title="Q", model_used=produced)
+    session.add(quiz)
+    session.commit()
+    complete_generation_job(session, claimed.id, claimed.claim_token, quiz_id=quiz.id)
+    session.expire_all()
+    finished = session.get(GenerationJob, claimed.id)
+    assert finished is not None
+    return finished
+
+
+def test_a_run_answered_by_another_vendor_says_so(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """A silent fallback looks identical to the model the student chose.
+
+    The student picked Ollama; it could not be reached, so Gemini wrote the
+    quiz. Saying nothing leaves them believing their choice was honoured.
+    """
+    job = _succeeded_quiz_job(
+        db_session,
+        course,
+        owner,
+        requested="ollama:llama3",
+        produced="gemini:gemini-3.6-flash",
+    )
+
+    view = GenerationJobView.from_job(job)
+
+    assert view.requested_model == "ollama:llama3"
+    assert view.fallback_model == "gemini:gemini-3.6-flash"
+
+
+def test_the_chosen_vendor_answering_is_not_reported_as_a_fallback(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    job = _succeeded_quiz_job(
+        db_session,
+        course,
+        owner,
+        requested="gemini:gemini-3.6-flash",
+        produced="gemini:gemini-3.6-flash",
+    )
+
+    view = GenerationJobView.from_job(job)
+
+    assert view.requested_model == "gemini:gemini-3.6-flash"
+    assert view.fallback_model is None
+
+
+def test_the_same_vendor_on_a_different_model_is_not_a_fallback(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """Attribution spelling drifts, so only a change of vendor is reportable.
+
+    Comparing the whole identifier would call ``gemini:gemini-3.6-flash`` and
+    ``gemini:models/gemini-3.6-flash`` a fallback and warn about an outage that
+    never happened.
+    """
+    job = _succeeded_quiz_job(
+        db_session,
+        course,
+        owner,
+        requested="gemini:gemini-3.6-flash",
+        produced="gemini:models/gemini-3.6-flash",
+    )
+
+    assert GenerationJobView.from_job(job).fallback_model is None
+
+
+@pytest.mark.parametrize(
+    ("requested", "produced"),
+    [(None, "gemini:gemini-3.6-flash"), ("ollama:llama3", None), (None, None)],
+)
+def test_a_fallback_is_claimed_only_when_both_vendors_are_known(
+    db_session: Session, owner: User, course: Course, requested, produced
+) -> None:
+    job = _succeeded_quiz_job(
+        db_session, course, owner, requested=requested, produced=produced
+    )
+
+    assert GenerationJobView.from_job(job).fallback_model is None
+
+
+def test_an_unreadable_request_payload_never_fails_the_panel(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """One bad row must not take the whole generation panel down with it."""
+    job = _succeeded_quiz_job(
+        db_session,
+        course,
+        owner,
+        requested="ollama:llama3",
+        produced="gemini:gemini-3.6-flash",
+    )
+    job.request_payload = "{not json at all"
+    db_session.commit()
+
+    view = GenerationJobView.from_job(job)
+
+    assert view.requested_model is None
+    assert view.fallback_model is None
 
 
 def test_complete_records_the_artifact_the_run_produced(

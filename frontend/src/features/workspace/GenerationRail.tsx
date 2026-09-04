@@ -120,6 +120,13 @@ export function GenerationRail({
                     ? 'Queued'
                     : 'Generating in the background'}
               </span>
+              {job.fallback_model ? (
+                <span className={styles.fallback}>
+                  {job.requested_model
+                    ? `${job.requested_model} was unavailable · written by ${job.fallback_model}`
+                    : `Written by ${job.fallback_model}`}
+                </span>
+              ) : null}
             </span>
           </>
         );

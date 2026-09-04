@@ -1,5 +1,9 @@
+from fastapi.testclient import TestClient
 from sqlalchemy import select
+
 from backend.app.models import RevokedToken
+from main import app
+from services.token_revocation import TokenRevocationService
 
 
 def _register(client, email="test@example.com", password="Password123!"):
@@ -31,6 +35,8 @@ def test_logout_revokes_token(api_context):
     # Logout
     logout = api_context.client.post("/api/auth/logout", headers=auth_headers)
     assert logout.status_code == 200
+    repeated_logout = api_context.client.post("/api/auth/logout", headers=auth_headers)
+    assert repeated_logout.status_code == 200
 
     # Verify token is revoked in db
     with api_context.session_factory() as session:
@@ -41,6 +47,45 @@ def test_logout_revokes_token(api_context):
     # Verify token no longer works
     me_after = api_context.client.get("/api/auth/me", headers=auth_headers)
     assert me_after.status_code == 401
+
+
+def test_logout_does_not_report_success_when_revocation_fails(
+    api_context, monkeypatch
+):
+    _register(api_context.client, email="logout-failure@example.com")
+    login = api_context.client.post(
+        "/api/auth/login",
+        data={
+            "username": "logout-failure@example.com",
+            "password": "Password123!",
+        },
+    )
+    token = login.json()["access_token"]
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    def fail_revocation(*args, **kwargs):
+        raise RuntimeError("simulated revocation persistence failure")
+
+    monkeypatch.setattr(TokenRevocationService, "revoke_token", fail_revocation)
+    safe_client = TestClient(app, raise_server_exceptions=False)
+    try:
+        logout = safe_client.post("/api/auth/logout", headers=auth_headers)
+        me_after = safe_client.get("/api/auth/me", headers=auth_headers)
+    finally:
+        safe_client.close()
+
+    assert logout.status_code == 500
+    assert me_after.status_code == 200
+
+
+def test_logout_keeps_an_invalid_token_as_an_idempotent_noop(api_context):
+    response = api_context.client.post(
+        "/api/auth/logout",
+        headers={"Authorization": "Bearer not-a-jwt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "Logged out successfully"}
 
 
 def test_password_change_invalidates_old_tokens(api_context):

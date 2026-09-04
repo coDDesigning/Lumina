@@ -32,7 +32,9 @@ A key is meaningful only inside one prompt. That is why a persisted citation
 stores the resolved document and page rather than the key alone, and why
 `ConversationService.format_history` strips markers out of earlier turns: a
 stale `[S1]` would resolve against the *new* turn's map and silently name the
-wrong passage.
+wrong passage. Every other path that replays stored conversation text into a
+prompt strips them for the same reason, including
+`ReverseQuizService._recent_conversation_digest`.
 
 ## How each feature carries them
 
@@ -73,8 +75,10 @@ because the UI already labels it as not coming from the material.
 `resolve_citations` ignores non-strings, normalises `s3` / `[S3]` / `S03` to
 `S3`, **drops any key not in the supplied map**, deduplicates by document and
 page, and caps a single claim at `MAX_CITATIONS_PER_CLAIM`. For Q&A and Tutor,
-`sanitize_citation_markers` does the same and additionally deletes the
-unresolved marker from the answer text, repairing the spacing it leaves.
+`sanitize_citation_markers` does the same — the cap applies to one inline marker
+group exactly as it applies to a structured key list, so `[S1][S2]...[S6]` on a
+single sentence keeps the first four resolvable keys — and additionally deletes
+the unresolved marker from the answer text, repairing the spacing it leaves.
 
 A bracket is treated as a citation group only when every comma-separated part
 is a key, so `[see figure 2]` and `[1]` pass through untouched.

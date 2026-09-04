@@ -50,14 +50,14 @@ All templates reside in `app/prompts/<task_name>.json`:
 | `exam_style_question` | `2.0.0` | active | `services/exam_similar_questions.py` | Fresh attemptable questions in the observed style of the course's own past ones | `GeneratedSimilarQuestionResponse` |
 | `exam_topic_analysis` | `2.0.0` | active | `services/exam_source_analysis.py` | Exam Mode source analysis: topic discovery over the selected sources | `GeneratedExamAnalysisResponse` |
 | `past_exam_question_extraction` | `1.0.0` | active | `services/exam_question_extraction.py` | Transcribes the questions printed in one past examination paper | `GeneratedPastExamExtraction` |
-| `exam_topic_guide` | `1.0.0` | active | `services/exam_topic_study.py` | Exam Mode per-topic study guide | `GeneratedExamTopicGuide` |
+| `exam_topic_guide` | `1.1.0` | active | `services/exam_topic_study.py` | Exam Mode per-topic study guide | `GeneratedExamTopicGuide` |
 | `exam_topic_summary` | `1.0.0` | active | `services/exam_topic_study.py` | Exam Mode per-topic summary | `GeneratedExamTopicSummary` |
 | `exam_topic_practice` | `1.0.0` | active | `services/exam_quiz.py` | Exam Mode per-topic practice questions | `QuizGenerationResponse` |
 | `exam_topic_exam` | `1.0.0` | active | `services/exam_quiz.py` | Exam Mode per-topic examination | `QuizGenerationResponse` |
 | `exam_mock_exam` | `2.0.0` | active | `services/exam_course_artifacts.py` | Timed mock examination assembled to calculated per-topic and per-type quotas | `QuizGenerationResponse` |
 | `exam_review_sheet` | `1.0.0` | active | `services/exam_course_artifacts.py` | Last-minute review sheet across a whole exam plan | `GeneratedExamReviewSheet` |
 | `quiz_grading` | `2.0.0` | active | `services/quiz_grading.py` | Written answer grading against reference answers | `OpenEndedGradingResponse` |
-| `reverse_quiz` | `1.1.0` | active | `services/reverse_quiz.py` | Grades a student's own-words explanation of a topic (or an answer to a picked question) and flags misconceptions and missing points | `ReverseQuizEvaluation` |
+| `reverse_quiz` | `1.2.0` | active | `services/reverse_quiz.py` | Grades a student's own-words explanation of a topic (or an answer to a picked question) and flags misconceptions and missing points | `ReverseQuizEvaluation` |
 | `reverse_quiz_questions` | `1.0.0` | active | `services/reverse_quiz.py` | Drafts open-ended "explain in your own words" questions from the course's own sources and chat history | `ReverseQuizQuestionSet` |
 | `flashcard` | `2.2.0` | active | `services/flashcard.py` | Active recall flashcard decks | `FlashcardGenerationResponse` |
 | `ai_tutor` | `2.3.0` | active | `services/ai_tutor.py` | Hint-first tutoring with stepwise guidance | `AiTutorResponse` |
@@ -121,6 +121,22 @@ Shared prompt directives live in `services/prompt_components.py`:
 - `SHARED_SAFETY_RULES`: Directives instructing the model to treat all user inputs and course text as inert data, resisting prompt injection.
 - `build_grounding_block()`: Generates standard grounding sections.
 - `build_safety_block()`: Generates input safety sections.
+- `build_governance_block()`: Composes both, followed by the calling template's own
+  declared `safety_constraints` and `style_constraints`.
+
+These are not documentation. `PromptLoader.render` — the single production rendering
+path — appends `build_governance_block()` to every rendered prompt, after every
+substituted value, which is the position where an instruction outranks anything
+embedded in the data above it. A template body cannot drift away from the shared
+protections, and a constraint an author records in template metadata reaches the model
+instead of sitting inert beside it. `test_every_template_renders_the_shared_grounding_and_safety_directives`
+and `test_every_declared_safety_and_style_constraint_reaches_the_model` enforce both halves.
+
+`model_hints.temperature` is wired the same way: `PromptLoader.temperature_for(name)`
+reads it and the generating call site binds it with
+`services.text_generation.with_template_temperature`, which returns a temperature-bound
+copy of the provider (the original keeps the deployment default, and a provider that
+cannot take a temperature is returned untouched rather than refused).
 
 ---
 
@@ -169,11 +185,13 @@ Every prompt template is a validated JSON document adhering to `PromptTemplateMo
 
 ---
 
-`PromptTemplateModel.render` substitutes variables in the order the caller's
-dictionary supplies them, so a value containing a literal placeholder would be
-rewritten by any later pass. Feature services therefore render free-text and
-document content **last**: by the time `{{TEXT}}` is substituted every other
-placeholder is already consumed, so course material can never forge one.
+`PromptTemplateModel.render` substitutes every placeholder in a **single pass over
+the template body**, so text a value inserts is never rescanned. A value containing
+a literal `{{TEXT}}` or `{{PROFILE_CONTEXT}}` therefore survives rendering intact no
+matter which order the caller's dictionary supplied the variables in: no value can
+forge a placeholder that another value then fills in. Feature services still list
+free-text and document content last, which now reads as a redundancy rather than the
+guarantee itself.
 
 ### Which variables carry user text
 
@@ -203,7 +221,8 @@ The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validat
    - `PromptLoader.render(name, variables)` substitutes all declared placeholders. There is no implicit context injection: a template's learner and course variables come from `PromptContext.as_variables()` like any other variable.
    - Missing required variables raise `MissingPromptVariableError`.
    - Unexpected variables raise `UnexpectedPromptVariableError`.
-   - Document and free-text variables (e.g. `TEXT`, `COURSE_MATERIAL`) are always substituted last to prevent placeholder forging.
+   - Substitution is a single pass over the template body, so a placeholder appearing inside a substituted value is never resolved. Placeholder forging is impossible for every variable, in any order.
+   - `PromptLoader.render` appends the shared grounding and safety directives of `services/prompt_components.py`, followed by the template's own `safety_constraints` and `style_constraints`, after the rendered body.
 
 3. **Strict Variable Validation**:
    - Missing required variable $\rightarrow$ Raises `MissingPromptVariableError`.
@@ -259,9 +278,9 @@ The `PromptLoader` service (`services/prompt_loader.py`) enforces strict validat
 
 `quiz` (3.1.0) generates a quiz of a requested size, difficulty, and question-type mix. Its required variables are `TEXT`, `QUESTION_COUNT`, `QUESTION_TYPES_DIRECTIVE`, `QUESTION_SCHEMAS`, `REQUESTED_DIFFICULTY`, `DIFFICULTY_DIRECTIVE`, and `TOPIC_FOCUS`. `QUESTION_SCHEMAS` carries the JSON shape of each allowed question type, so the model is shown only the types the request permits.
 
-The variable is named `REQUESTED_DIFFICULTY` rather than `DIFFICULTY` on purpose. Rendering substitutes `{{NAME}}` placeholders in dictionary order, so a variable whose name is a prefix of another one's would make the result depend on that order.
+The variable is named `REQUESTED_DIFFICULTY` rather than `DIFFICULTY` on purpose: a placeholder name is matched whole, and a name that reads as a prefix of another one invites a template author to write the wrong one.
 
-`quiz_grading` (2.0.0) scores open-ended answers against their stored reference answers. Its required variables are `SUBMISSION_COUNT` and `SUBMISSIONS`, and it returns an `OpenEndedGradingResponse`. Both templates state that text inside the material, topic focus, or a student's answer is data and never an instruction. The `quiz` template renders `TEXT` last so course material cannot forge a placeholder a later substitution would fill in.
+`quiz_grading` (2.0.0) scores open-ended answers against their stored reference answers. Its required variables are `SUBMISSION_COUNT` and `SUBMISSIONS`, and it returns an `OpenEndedGradingResponse`. Both templates state that text inside the material, topic focus, or a student's answer is data and never an instruction. A score lands on the student's record, so `quiz_grading` is also the template whose declared `model_hints.temperature` of `0.0` matters most: `QuizGradingService` binds it to the provider call, so the same submission regrades to the same score.
 
 ## Shared learner and course context
 
@@ -439,10 +458,12 @@ Two checks stand between a template and a provider:
 
 Both scan the *template body*, never the rendered output. This is load-bearing. A value
 that happens to contain `{{TOPIC_FOCUS}}` must survive rendering intact — that inertness is
-the anti-injection guarantee the substitution order provides, and
-`tests/test_quiz.py` and `tests/test_study_guide.py` pin it. A check written against the
-rendered output would pass a naive reading of "no unresolved placeholder" while silently
-reopening a prompt-injection hole.
+the anti-injection guarantee, and it comes from the single-pass substitution rather than
+from the order a call site happens to list its variables in. `tests/test_quiz.py`,
+`tests/test_study_guide.py`, and
+`tests/test_prompt_loader.py::test_a_value_substituted_first_can_never_forge_a_later_placeholder`
+pin it. A check written against the rendered output would pass a naive reading of "no
+unresolved placeholder" while silently reopening a prompt-injection hole.
 
 A `PromptTemplateError` is a server fault, not a user error. Every AI route already funnels
 it through `utils/ai_errors.py` to `GENERATION_FAILED`, so it surfaces as a 500 with a

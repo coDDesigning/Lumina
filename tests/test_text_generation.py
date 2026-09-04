@@ -1394,3 +1394,71 @@ def test_multi_provider_fallback_chain() -> None:
     assert p1.call_count == 2
     assert p2.call_count == 2
     assert p3.call_count == 1
+
+
+def test_gemini_provider_applies_a_bound_temperature_to_the_json_call(
+    monkeypatch,
+) -> None:
+    calls: list[object] = []
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            calls.append(kwargs.get("config"))
+            return SimpleNamespace(text='{"ok": true}', usage_metadata=None)
+
+    class FakeClient:
+        def __init__(self, api_key: str, http_options=None) -> None:
+            self.models = FakeModels()
+
+    monkeypatch.setattr(
+        text_generation,
+        "settings",
+        SimpleNamespace(gemini_api_key="test-key", ai_generation_timeout_seconds=60),
+    )
+    monkeypatch.setattr(text_generation.genai, "Client", FakeClient)
+
+    provider = text_generation.GeminiTextGenerationProvider()
+    graded = text_generation.with_template_temperature(provider, 0.0)
+
+    graded.generate_json("Grade this answer")
+    provider.generate_json("Anything else")
+
+    assert graded is not provider
+    assert calls[0].temperature == 0.0
+    assert calls[1].temperature is None
+
+
+def test_with_template_temperature_leaves_a_provider_that_cannot_take_one(
+    monkeypatch,
+) -> None:
+    class BareProvider:
+        name = "bare"
+
+        def generate_json(self, prompt: str) -> dict[str, object]:
+            return {"ok": True}
+
+    provider = BareProvider()
+
+    assert text_generation.with_template_temperature(provider, 0.0) is provider
+    assert text_generation.with_template_temperature(provider, None) is provider
+
+
+def test_reliable_provider_binds_the_temperature_to_every_fallback() -> None:
+    class RecordingProvider(text_generation.TemperatureBindingMixin):
+        PROVIDER_NAME = "recording"
+
+        def generate_json_with_metadata(self, prompt: str):
+            return {"temperature": self._temperature}, GenerationMetadata(
+                provider=self.PROVIDER_NAME, model="recording-1"
+            )
+
+    primary = RecordingProvider()
+    fallback = RecordingProvider()
+    reliable = text_generation.ReliableTextGenerationProvider([primary, fallback])
+
+    bound = reliable.with_temperature(0.0)
+    result, _ = bound.generate_json_with_metadata("prompt")
+
+    assert result == {"temperature": 0.0}
+    assert [provider._temperature for provider in reliable.providers] == [None, None]
+    assert bound._semaphore is reliable._semaphore

@@ -337,9 +337,6 @@ def _mock_prompt(
             "QUESTION_TYPE_SCHEMAS": "\n\n".join(
                 QUESTION_TYPE_SCHEMAS[kind] for kind in MOCK_QUESTION_TYPES
             ),
-            # Rendered last so a placeholder appearing inside a topic label, a
-            # past question, or the course material can never be filled in by a
-            # later substitution.
             "PAST_QUESTION_STYLE": style,
             "PLAN_TOPICS": render_topic_quotas(quotas),
             "TEXT": material,

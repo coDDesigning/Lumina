@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import threading
@@ -68,6 +69,48 @@ class TextGenerationProvider(Protocol):
     def generate_json_with_metadata(
         self, prompt: str
     ) -> tuple[dict[str, object], GenerationMetadata]: ...
+
+
+class TemperatureBindingMixin:
+    """Lets a caller pin one call's sampling temperature without mutating the provider.
+
+    A prompt template declares its own `model_hints.temperature`, and a provider is
+    shared across features, so the temperature travels with the call rather than with
+    the instance: `with_temperature` returns a shallow copy and the original keeps
+    whatever the deployment configured.
+    """
+
+    _temperature: float | None = None
+
+    def _sampling_kwargs(self) -> dict[str, float]:
+        """Request keyword arguments for the bound temperature, empty when none is."""
+        if self._temperature is None:
+            return {}
+        return {"temperature": self._temperature}
+
+    def with_temperature(self, temperature: float | None) -> "TemperatureBindingMixin":
+        if temperature is None or temperature == self._temperature:
+            return self
+        bound = copy.copy(self)
+        bound._temperature = float(temperature)
+        return bound
+
+
+def with_template_temperature(
+    provider: TextGenerationProvider, temperature: float | None
+) -> TextGenerationProvider:
+    """Bind a template's declared temperature to a provider that supports one.
+
+    A provider that cannot take a temperature (an alternative implementation, or a
+    test double) is returned untouched rather than refused, so a declared hint can
+    never turn into a generation failure.
+    """
+    if temperature is None:
+        return provider
+    binder = getattr(provider, "with_temperature", None)
+    if not callable(binder):
+        return provider
+    return binder(temperature)
 
 
 class ProviderRegistry:
@@ -420,7 +463,7 @@ def _parse_json_object(text: str, provider_label: str) -> dict[str, object]:
     return result
 
 
-class GeminiTextGenerationProvider:
+class GeminiTextGenerationProvider(TemperatureBindingMixin):
     MODEL = DEFAULT_GEMINI_MODEL
     PROVIDER_NAME = "gemini"
 
@@ -498,6 +541,9 @@ class GeminiTextGenerationProvider:
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=prompt,
+                config=types.GenerateContentConfig(temperature=self._temperature)
+                if self._temperature is not None
+                else None,
             )
         except Exception as exc:
             self._handle_client_error(exc)
@@ -524,6 +570,7 @@ class GeminiTextGenerationProvider:
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
+                    temperature=self._temperature,
                 ),
             )
         except Exception as exc:
@@ -544,7 +591,7 @@ class GeminiTextGenerationProvider:
         return result
 
 
-class OllamaTextGenerationProvider:
+class OllamaTextGenerationProvider(TemperatureBindingMixin):
     PROVIDER_NAME = "ollama"
     GENERATE_PATH = "/api/generate"
 
@@ -572,11 +619,14 @@ class OllamaTextGenerationProvider:
         self._client = client or _get_shared_http_client()
 
     def _request(self, prompt: str, *, as_json: bool) -> tuple[str, dict[str, object]]:
+        options = dict(self._options)
+        if self._temperature is not None:
+            options["temperature"] = self._temperature
         payload: dict[str, object] = {
             "model": self._model,
             "prompt": prompt,
             "stream": False,
-            "options": dict(self._options),
+            "options": options,
         }
         if as_json:
             payload["format"] = "json"
@@ -678,7 +728,7 @@ class OllamaTextGenerationProvider:
         return result
 
 
-class OpenAITextGenerationProvider:
+class OpenAITextGenerationProvider(TemperatureBindingMixin):
     MODEL = DEFAULT_OPENAI_MODEL
     PROVIDER_NAME = "openai"
 
@@ -795,6 +845,7 @@ class OpenAITextGenerationProvider:
             response = self._client.responses.create(
                 model=self._model,
                 input=prompt,
+                **self._sampling_kwargs(),
             )
         except Exception as exc:
             self._handle_client_error(exc)
@@ -832,6 +883,7 @@ class OpenAITextGenerationProvider:
                         "strict": False,
                     }
                 },
+                **self._sampling_kwargs(),
             )
         except Exception as exc:
             self._handle_client_error(exc)
@@ -850,7 +902,7 @@ class OpenAITextGenerationProvider:
         return result
 
 
-class ClaudeTextGenerationProvider:
+class ClaudeTextGenerationProvider(TemperatureBindingMixin):
     MODEL = DEFAULT_CLAUDE_MODEL
     PROVIDER_NAME = "claude"
 
@@ -972,6 +1024,7 @@ class ClaudeTextGenerationProvider:
                 model=self._model,
                 max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
+                **self._sampling_kwargs(),
             )
         except Exception as exc:
             self._handle_client_error(exc)
@@ -1014,6 +1067,7 @@ class ClaudeTextGenerationProvider:
                         "schema": schema,
                     }
                 },
+                **self._sampling_kwargs(),
             )
         except Exception as exc:
             self._handle_client_error(exc)
@@ -1168,6 +1222,24 @@ class ReliableTextGenerationProvider:
             self._semaphore = threading.BoundedSemaphore(max_concurrency)
         else:
             self._semaphore = get_shared_generation_semaphore()
+
+    def with_temperature(
+        self, temperature: float | None
+    ) -> "ReliableTextGenerationProvider":
+        """Return a wrapper whose providers each carry the requested temperature.
+
+        The retry, backoff, and concurrency settings — including the shared
+        semaphore — are the same objects, so binding a temperature never widens
+        the deployment's concurrency budget.
+        """
+        if temperature is None:
+            return self
+        bound = copy.copy(self)
+        bound.providers = [
+            with_template_temperature(provider, temperature)
+            for provider in self.providers
+        ]
+        return bound
 
     def _execute_with_resilience(
         self,

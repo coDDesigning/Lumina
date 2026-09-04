@@ -1391,6 +1391,11 @@ class GenerationJob(Base):
         ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
     )
 
+    # When the student cleared this run from their panel. Retrying stamps the
+    # original too, so a failure that has already been retried stops competing
+    # with the run that replaced it.
+    dismissed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.now()
     )
@@ -1987,9 +1992,9 @@ class QuizAttempt(Base):
     # Parent two: which quiz. Quiz deleted -> attempts deleted.
     quiz_id: Mapped[int] = mapped_column(ForeignKey("quizzes.id", ondelete="CASCADE"))
 
-    # The result as a fraction between 0.0 and 1.0. Float is the
-    # column type for decimal numbers.
-    score: Mapped[float] = mapped_column(Float)
+    # The result as a fraction between 0.0 and 1.0, or null when the attempt
+    # graded nothing at all. Float is the column type for decimal numbers.
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     time_spent_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

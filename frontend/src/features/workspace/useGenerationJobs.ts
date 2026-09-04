@@ -62,6 +62,14 @@ export function useGenerationJobs(courseId: number) {
     [courseId, refetch, refreshCredits],
   );
 
+  const dismiss = useCallback(
+    async (jobId: number) => {
+      await generationJobsAPI.dismiss(courseId, jobId);
+      await refetch();
+    },
+    [courseId, refetch],
+  );
+
   return {
     jobs,
     isLoading: query.status === 'pending' || query.status === 'idle',
@@ -70,5 +78,6 @@ export function useGenerationJobs(courseId: number) {
     reload: refetch,
     retry,
     retryingId,
+    dismiss,
   };
 }

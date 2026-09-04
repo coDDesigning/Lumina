@@ -114,7 +114,7 @@ class QuizAnswerResult(BaseModel):
 class QuizHistoryItem(BaseModel):
     attempt_id: int
     quiz_id: int
-    score: float
+    score: float | None = None
     correct_count: int
     total_questions: int
     time_spent_seconds: int | None = None
@@ -125,9 +125,17 @@ class QuizHistoryItem(BaseModel):
 
 
 class QuizAttemptResponse(BaseModel):
+    """One graded attempt.
+
+    ``score`` is correct out of ``graded_count`` and is null when that
+    denominator is zero, because an attempt where nothing could be graded has no
+    score to report and 0.0 would be indistinguishable from every answer being
+    wrong. A null-scored attempt is excluded from the course average.
+    """
+
     attempt_id: int
     quiz_id: int
-    score: float
+    score: float | None = None
     correct_count: int
     graded_count: int
     total_questions: int
@@ -176,7 +184,7 @@ class CourseProgressResponse(BaseModel):
     correct_count: int = 0
     incorrect_count: int = 0
     total_questions_answered: int = 0
-    completion: float = 0.0
+    completion: float | None = None
     weak_topics: list[str] = Field(default_factory=list)
     topic_mastery: list[TopicMastery] = Field(default_factory=list)
     quiz_history: list[QuizHistoryItem] = Field(default_factory=list)

@@ -6,7 +6,7 @@ export interface QuizTally {
   ungraded: number;
   graded: number;
   total: number;
-  scorePercent: number;
+  scorePercent: number | null;
 }
 
 export function tallyAttempt(attempt: QuizAttemptResponse): QuizTally {
@@ -20,7 +20,8 @@ export function tallyAttempt(attempt: QuizAttemptResponse): QuizTally {
     ungraded: total - graded,
     graded,
     total,
-    scorePercent: Math.round(attempt.score * 100),
+    scorePercent:
+      graded === 0 || attempt.score === null ? null : Math.round(attempt.score * 100),
   };
 }
 

@@ -36,6 +36,7 @@ from generation_fixtures import (
 from services.credits import GENERATION_CREDIT_COSTS
 from services.generation_jobs import (
     CREDIT_SOURCE_TYPES,
+    GenerationJobNotDismissableError,
     GenerationJobStateError,
     InsufficientCreditsForGenerationError,
     claim_next_generation_job,
@@ -47,6 +48,7 @@ from services.generation_jobs import (
     heartbeat_generation_job,
     list_course_generation_jobs,
     recover_expired_generation_jobs,
+    dismiss_generation_job,
     retry_generation_job,
 )
 
@@ -674,6 +676,123 @@ def test_a_long_finished_job_falls_out_of_the_panel(
         list_course_generation_jobs(db_session, course.id, owner.id, now=much_later)
         == []
     )
+
+
+def _fail(session: Session, job: GenerationJob) -> GenerationJob:
+    claimed = claim_next_generation_job(session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+    fail_generation_job(
+        session,
+        claimed.id,
+        claimed.claim_token,
+        error_code="PROVIDER_TIMEOUT",
+        error_message="Timed out.",
+        retryable=False,
+    )
+    session.expire_all()
+    failed = session.get(GenerationJob, claimed.id)
+    assert failed is not None
+    assert failed.status == JOB_STATUS_FAILED
+    return failed
+
+
+def test_a_dismissed_job_leaves_the_panel(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """A failure the student has read must be clearable, or it nags for a day."""
+    failed = _fail(db_session, _enqueue(db_session, course, owner))
+
+    dismissed = dismiss_generation_job(
+        db_session, course_id=course.id, user_id=owner.id, job_id=failed.id
+    )
+
+    assert dismissed is not None
+    assert dismissed.dismissed_at is not None
+    assert list_course_generation_jobs(db_session, course.id, owner.id) == []
+
+
+def test_dismissing_the_same_job_twice_changes_nothing(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    failed = _fail(db_session, _enqueue(db_session, course, owner))
+
+    first = dismiss_generation_job(
+        db_session, course_id=course.id, user_id=owner.id, job_id=failed.id
+    )
+    assert first is not None
+    stamped = first.dismissed_at
+
+    second = dismiss_generation_job(
+        db_session, course_id=course.id, user_id=owner.id, job_id=failed.id
+    )
+
+    assert second is not None
+    assert second.dismissed_at == stamped
+
+
+def test_an_unfinished_job_cannot_be_dismissed(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """Hiding a run that is still going would strand the student's credit."""
+    job = _enqueue(db_session, course, owner)
+
+    with pytest.raises(GenerationJobNotDismissableError):
+        dismiss_generation_job(
+            db_session, course_id=course.id, user_id=owner.id, job_id=job.id
+        )
+
+    assert [
+        row.id for row in list_course_generation_jobs(db_session, course.id, owner.id)
+    ] == [job.id]
+
+
+def test_dismissal_is_scoped_to_its_course_and_owner(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    failed = _fail(db_session, _enqueue(db_session, course, owner))
+    stranger = _make_user(db_session, "stranger@example.com", credits=100.0)
+    elsewhere = _make_course(db_session, owner, "Elsewhere")
+
+    assert (
+        dismiss_generation_job(
+            db_session, course_id=course.id, user_id=stranger.id, job_id=failed.id
+        )
+        is None
+    )
+    assert (
+        dismiss_generation_job(
+            db_session, course_id=elsewhere.id, user_id=owner.id, job_id=failed.id
+        )
+        is None
+    )
+
+
+def test_retrying_a_failure_clears_the_run_it_replaces(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """Try again replaced the run, so the panel must stop offering it again."""
+    failed = _fail(db_session, _enqueue(db_session, course, owner))
+
+    replacement = retry_generation_job(
+        db_session, course_id=course.id, user_id=owner.id, job_id=failed.id
+    )
+
+    assert replacement is not None
+    assert replacement.id != failed.id
+    listed = [
+        row.id for row in list_course_generation_jobs(db_session, course.id, owner.id)
+    ]
+    assert listed == [replacement.id]
+
+    again = retry_generation_job(
+        db_session, course_id=course.id, user_id=owner.id, job_id=failed.id
+    )
+
+    assert again is not None
+    assert again.id == replacement.id
+    assert [
+        row.id for row in list_course_generation_jobs(db_session, course.id, owner.id)
+    ] == [replacement.id]
 
 
 def test_get_generation_job_is_scoped_to_its_course_and_owner(

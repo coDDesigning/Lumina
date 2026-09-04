@@ -522,6 +522,57 @@ describe('Workspace conversations', () => {
     });
   }, 15_000);
 
+  it('keeps the sources of the thread it restores on reload', async () => {
+    // The resumed-thread path carried citations while the reload path dropped
+    // them, so a refresh turned every resolved marker back into a bare [S1].
+    const summary: ConversationSummary = {
+      id: 55,
+      course_id: 1,
+      user_id: 1,
+      conversation_type: 'course_qa',
+      preview: 'What is paging?',
+      message_count: 2,
+      created_at: '2026-08-20T10:00:00Z',
+      updated_at: '2026-08-20T10:05:00Z',
+    };
+    const detail: ConversationDetail = {
+      ...summary,
+      messages: [
+        {
+          id: 81,
+          role: 'user',
+          content: 'What is paging?',
+          created_at: '2026-08-20T10:00:00Z',
+          citations: [],
+        },
+        {
+          id: 82,
+          role: 'assistant',
+          content: 'Paging maps virtual pages onto frames [S1].',
+          created_at: '2026-08-20T10:00:01Z',
+          citations: [
+            {
+              key: 'S1',
+              document_id: '11111111-1111-1111-1111-111111111111',
+              document_label: 'Lecture 4',
+              page_start: 12,
+              page_end: 12,
+            },
+          ],
+        },
+      ],
+    };
+
+    localStorage.setItem('lumina:course:1:conversation:course_qa', '55');
+    mockConversationGet.mockResolvedValue(detail);
+
+    renderWorkspace();
+    await screen.findByRole('button', { name: 'Add Sources' });
+
+    expect(await screen.findByText('Lecture 4 · p. 12')).toBeInTheDocument();
+    expect(screen.queryByText(/\[S1\]/)).not.toBeInTheDocument();
+  }, 15_000);
+
   it('restores the active thread on reload from stored conversation ID', async () => {
     const summary: ConversationSummary = {
       id: 42,

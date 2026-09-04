@@ -31,7 +31,7 @@ function RoleDeniedRedirect() {
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ requiredRole }) => {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading, sessionEndReason } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -39,7 +39,13 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ requiredRole }) 
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    return (
+      <Navigate
+        to="/login"
+        state={{ from: location, sessionEndReason: sessionEndReason ?? null }}
+        replace
+      />
+    );
   }
 
   if (requiredRole && user?.role !== requiredRole) {

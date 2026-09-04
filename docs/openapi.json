@@ -11116,7 +11116,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -11828,7 +11828,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -11903,7 +11903,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -12186,7 +12186,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -12488,7 +12488,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -12625,7 +12625,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -12770,7 +12770,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -12854,7 +12854,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -13001,7 +13001,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -13146,7 +13146,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -13303,7 +13303,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -13884,7 +13884,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -13965,7 +13965,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -14734,7 +14734,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -15036,7 +15036,7 @@
             "description": "Successful Response"
           },
           "400": {
-            "description": "No processed course material is available"
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
           },
           "401": {
             "description": "Authentication required"
@@ -15757,6 +15757,12 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "description": "Personal API key is invalid or AI model is unavailable"
+          },
+          "401": {
+            "description": "Authentication required"
           },
           "402": {
             "description": "Insufficient credits"

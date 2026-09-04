@@ -25,6 +25,7 @@ from services.retrieval_material import (
     NoRelevantMaterialError,
 )
 from services.text_generation import (
+    PersonalKeyAuthError,
     TextGenerationConnectionError,
     TextGenerationError,
     TextGenerationRateLimitError,
@@ -177,6 +178,16 @@ def test_retrieval_unavailable_answers_with_service_unavailable() -> None:
     )
 
     assert http_exception.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+
+def test_personal_key_failure_is_not_an_application_authentication_failure() -> None:
+    http_exception = ai_generation_http_exception(
+        PersonalKeyAuthError(), feature="study_guide"
+    )
+
+    assert http_exception.status_code == status.HTTP_400_BAD_REQUEST
+    assert http_exception.headers == {"X-Error-Code": "personal_key_invalid"}
+    assert http_exception.detail == PUBLIC_MESSAGES[AiErrorCode.PERSONAL_KEY_INVALID]
 
 
 def test_new_error_categories_are_recordable() -> None:

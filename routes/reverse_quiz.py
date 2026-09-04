@@ -46,7 +46,12 @@ def _provider_for(preferred_model: str | None, user: object | None = None):
     dependencies=[Depends(rate_limit_generation("reverse_quiz"))],
     status_code=status.HTTP_201_CREATED,
     responses={
-        400: {"description": "No processed course material is available"},
+        400: {
+            "description": (
+                "Personal API key is invalid, AI model is unavailable, or no "
+                "processed course material is available"
+            )
+        },
         401: {"description": "Authentication required"},
         402: {"description": "Insufficient credits"},
         404: {"description": "Course not found"},

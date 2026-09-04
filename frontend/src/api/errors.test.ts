@@ -284,7 +284,7 @@ describe('error description helpers', () => {
     it('describes personal key invalid errors clearly with server message', () => {
       const described = describeGenerationError(
         new APIError(
-          401,
+          400,
           { detail: 'Your personal OpenAI API key is invalid or expired.' },
           'personal_key_invalid',
         ),

@@ -608,6 +608,7 @@ const ROUTES: Answer[] = [
   [/^\/api\/auth\/me$/, () => USER],
   [/^\/api\/auth\/login$/, () => ({ access_token: 'stub', token_type: 'bearer', user: USER })],
   [/^\/api\/auth\/register$/, () => envelope(USER)],
+  [/^\/api\/users\/me\/password$/, () => envelope(null)],
   [/^\/api\/users\/me\/credits$/, () => envelope(CREDITS)],
   [/^\/api\/users\/me\/credit-transactions/, () => envelope([])],
   [/^\/api\/models/, () => envelope(MODELS)],

@@ -238,6 +238,14 @@ describe('AccountPage', () => {
     expect(screen.getByLabelText('Confirm new password')).toHaveValue('')
   })
 
+  it('gives every password visibility control a distinct name', () => {
+    renderAccountPage('/account/security')
+
+    expect(screen.getByRole('button', { name: 'Show current password' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show new password' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show confirm new password' })).toBeInTheDocument()
+  })
+
   it('renders model capabilities and cost hints for the selected model', async () => {
     renderAccountPage('/account/ai')
 
@@ -415,6 +423,10 @@ describe('AccountPage credits', () => {
     )
     expect(within(nav).getByRole('link', { name: 'AI' })).toHaveAttribute('href', '/account/ai')
     expect(within(nav).queryByRole('link', { name: 'API keys' })).not.toBeInTheDocument()
+    expect(within(nav).getByRole('link', { name: 'Security' })).toHaveAttribute(
+      'href',
+      '/account/security',
+    )
     expect(within(nav).getByRole('link', { name: 'Appearance' })).toHaveAttribute(
       'href',
       '/account/appearance',

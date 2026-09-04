@@ -1,8 +1,10 @@
 import logging
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
+from jose import JWTError
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
@@ -200,24 +202,28 @@ def logout_user(
     """
     try:
         payload = decode_access_token(token)
-        jti = payload.get("jti")
-        exp = payload.get("exp")
-
-        if jti and exp:
-            from datetime import datetime, timezone
-
-            expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
-            subject = payload.get("sub")
-            user_id = None
-            if isinstance(subject, str):
-                user = UserService.get_user_by_email(db, subject)
-                if user:
-                    user_id = user.id
-            TokenRevocationService.revoke_token(db, jti, expires_at, user_id=user_id)
-            db.commit()
-    except Exception:
+    except JWTError:
         # If token is invalid or expired, we don't care during logout
-        pass
+        return {"message": "Logged out successfully"}
+
+    jti = payload.get("jti")
+    exp = payload.get("exp")
+    if not isinstance(jti, str) or not jti or not isinstance(exp, (int, float)):
+        return {"message": "Logged out successfully"}
+
+    try:
+        expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
+    except (OSError, OverflowError, ValueError):
+        return {"message": "Logged out successfully"}
+
+    subject = payload.get("sub")
+    user_id = None
+    if isinstance(subject, str):
+        user = UserService.get_user_by_email(db, subject)
+        if user:
+            user_id = user.id
+    TokenRevocationService.revoke_token(db, jti, expires_at, user_id=user_id)
+    db.commit()
 
     return {"message": "Logged out successfully"}
 

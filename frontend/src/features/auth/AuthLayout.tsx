@@ -9,7 +9,8 @@ export interface AuthLayoutProps {
   tone: number;
   documentTitle: string;
   title: string;
-  subtitle: string;
+  /** Omitted while a screen is still learning what it should say. */
+  subtitle?: string;
   children: ReactNode;
   footer?: ReactNode;
   note?: ReactNode;
@@ -34,7 +35,7 @@ export function AuthLayout({
         </Link>
         <Brandmark size="lg" />
         <h1 className={styles.title}>{title}</h1>
-        <p className={styles.subtitle}>{subtitle}</p>
+        {subtitle ? <p className={styles.subtitle}>{subtitle}</p> : null}
         {children}
         {footer ? <p className={styles.footer}>{footer}</p> : null}
         {note ? <p className={styles.note}>{note}</p> : null}

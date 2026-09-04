@@ -445,18 +445,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      BACKEND_PORT: "18000"
-      BOOTSTRAP_ADMIN_EMAIL: admin@example.com
-      BOOTSTRAP_ADMIN_TOKEN: ci-only-bootstrap-token-0123456789abcdef
+      # Compose reads these for ${...} substitution in the Compose files. The
+      # application's own settings are not here: the containers are handed
+      # .env, which the first step writes.
       COMPOSE_PROJECT_NAME: lumina-ci-${{ github.run_id }}-${{ github.run_attempt }}
-      JWT_SECRET_KEY: ci-only-jwt-secret-key-0123456789abcdef
-      LUMINA_IMAGE: lumina:ci
-      LUMINA_FRONTEND_IMAGE: lumina-frontend:ci
+      LUMINA_IMAGE: lumina
       LUMINA_BIND_ADDRESS: "127.0.0.1"
       LUMINA_PORT: "18080"
-      VITE_API_BASE_URL: /api
       LUMINA_BACKUP_DIRECTORY: /tmp/lumina-backups-${{ github.run_id }}-${{ github.run_attempt }}
-      STORAGE_NAMESPACE: container-ci
       S3_ACCESS_KEY_ID: ci-only-access-key
       S3_SECRET_ACCESS_KEY: ci-only-secret-key
     steps:
@@ -465,39 +461,54 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Write the deployment configuration
+        # env_file is how a setting reaches a container, so this is not
+        # scaffolding: without it the API starts with no AI vendor configured
+        # and refuses to boot. .env is gitignored, so the tracked-file check at
+        # the end of this job still passes.
+        run: |
+          set -euo pipefail
+          install -m 0600 /dev/null .env
+          cat >> .env <<'ENV'
+          OLLAMA_BASE_URL=http://host.docker.internal:11434
+          JWT_SECRET_KEY=ci-only-jwt-secret-key-0123456789abcdef
+          BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+          BOOTSTRAP_ADMIN_TOKEN=ci-only-bootstrap-token-0123456789abcdef
+          STORAGE_NAMESPACE=container-ci
+          S3_ACCESS_KEY_ID=ci-only-access-key
+          S3_SECRET_ACCESS_KEY=ci-only-secret-key
+          ENV
+
       - name: Validate immutable base and Compose configuration
         run: |
           set -euo pipefail
-          for dockerfile in Dockerfile Dockerfile.frontend; do
-            mapfile -t references < <(
-              awk 'toupper($1) == "FROM" {
-                for (field = 2; field <= NF; field++) {
-                  if ($field !~ /^--/) {
-                    print $field
-                    next
-                  }
+          # Both stages: the interface builder and the runtime.
+          mapfile -t references < <(
+            awk 'toupper($1) == "FROM" {
+              for (field = 2; field <= NF; field++) {
+                if ($field !~ /^--/) {
+                  print $field
+                  next
                 }
-              }' "$dockerfile"
-            )
-            if [ "${#references[@]}" -eq 0 ]; then
-              echo "$dockerfile contains no base image." >&2
+              }
+            }' Dockerfile
+          )
+          if [ "${#references[@]}" -ne 2 ]; then
+            echo "Dockerfile should declare two base images, found ${#references[@]}." >&2
+            exit 1
+          fi
+          for reference in "${references[@]}"; do
+            if [[ ! "$reference" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
+              echo "Docker base image is not pinned by digest: $reference" >&2
               exit 1
             fi
-            for reference in "${references[@]}"; do
-              if [[ ! "$reference" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
-                echo "Docker base image is not pinned by digest in $dockerfile: $reference" >&2
-                exit 1
-              fi
-            done
           done
           docker compose version
           docker compose config --quiet
           docker compose -f docker-compose.hosted.yml config --quiet
 
-      - name: Build production images
-        run: |
-          docker build --pull --tag "$LUMINA_IMAGE" .
-          docker build --pull --file Dockerfile.frontend --build-arg "VITE_API_BASE_URL=$VITE_API_BASE_URL" --tag "$LUMINA_FRONTEND_IMAGE" .
+      - name: Build the production image
+        run: docker build --pull --tag "$LUMINA_IMAGE" .
 
       - name: Validate image contract
         run: |
@@ -507,6 +518,20 @@ jobs:
           docker run --rm --entrypoint python "$LUMINA_IMAGE" -m pip check
           docker run --rm --entrypoint tesseract "$LUMINA_IMAGE" --version
           docker run --rm --entrypoint tesseract "$LUMINA_IMAGE" --list-langs | grep --line-regexp eng
+          # The interface is baked into this same image, outside /app, and no
+          # part of the toolchain that built it survives.
+          docker run --rm --entrypoint sh "$LUMINA_IMAGE" -c '
+            set -eu
+            test -f /opt/lumina/web/index.html
+            test -d /opt/lumina/web/assets
+            test ! -e /build
+            test ! -e /opt/lumina/web/src
+            test ! -e /opt/lumina/web/node_modules
+            ! command -v node
+            ! command -v npm
+            ! test -w /opt/lumina/web/index.html
+          '
+          test "$(docker image inspect --format "{{json .Config.Volumes}}" "$LUMINA_IMAGE")" = "null"
           docker run --rm --read-only \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
             --entrypoint python "$LUMINA_IMAGE" -c '
@@ -527,37 +552,6 @@ jobs:
           vector = LocalEmbeddingProvider().embed_query("probe")
           assert len(vector) == EMBEDDING_MODEL.dimensions, len(vector)
           '
-
-      - name: Validate frontend image contract
-        run: |
-          set -euo pipefail
-          test "$(docker image inspect --format '{{.Config.User}}' "$LUMINA_FRONTEND_IMAGE")" = "101"
-          test "$(docker run --rm --entrypoint id "$LUMINA_FRONTEND_IMAGE" -u)" = "101"
-          docker run --rm --entrypoint sh "$LUMINA_FRONTEND_IMAGE" -c '
-            set -eu
-            test -f /usr/share/nginx/lumina/index.html
-            test -d /usr/share/nginx/lumina/assets
-            for absent in /build /usr/share/nginx/lumina/src /usr/share/nginx/lumina/node_modules; do
-              ! test -e "$absent"
-            done
-            ! command -v node
-            ! command -v npm
-            ! test -w /usr/share/nginx/lumina/index.html
-          '
-          docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m --entrypoint nginx "$LUMINA_FRONTEND_IMAGE" -t
-          # Only the declared tmpfs may be writable. test -w reports permission
-          # bits rather than mount flags, so this probes with a real write.
-          docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m --entrypoint sh "$LUMINA_FRONTEND_IMAGE" -c '
-            set -eu
-            touch /tmp/.probe && rm -f /tmp/.probe
-            for locked in /etc/nginx /etc/nginx/conf.d /usr/share/nginx/lumina /var/cache/nginx; do
-              if touch "$locked/.probe" 2>/dev/null; then
-                echo "unexpectedly writable: $locked" >&2
-                exit 1
-              fi
-            done
-          '
-          test "$(docker image inspect --format "{{json .Config.Volumes}}" "$LUMINA_FRONTEND_IMAGE")" = "null"
 
       - name: Exercise self-hosted topology
         run: |
@@ -580,12 +574,13 @@ jobs:
           trap cleanup EXIT
 
           docker compose up --detach --no-build --wait --wait-timeout 240
-          curl --fail --silent --show-error http://127.0.0.1:18000/health/ready
 
-          # Same-origin routing, driven through the frontend entrypoint only.
-          # The path table matches terraform/modules/frontend/tests/viewer_request.test.js,
-          # so the container and the CloudFront viewer function cannot drift apart.
+          # One origin serves the interface and the API, so there is one
+          # address to drive. The path table matches
+          # terraform/modules/frontend/tests/viewer_request.test.js, so the
+          # application and the CloudFront viewer function cannot drift apart.
           edge="http://127.0.0.1:${LUMINA_PORT}"
+          curl --fail --silent --show-error "$edge/health/ready"
 
           curl --fail --silent --show-error --max-time 30 -D /tmp/root.head -o /tmp/root.html "$edge/"
           test -s /tmp/root.html
@@ -602,7 +597,7 @@ jobs:
           grep -iq "^content-type:.*text/html" /tmp/deep.head
           cmp /tmp/root.html /tmp/deep.html
 
-          curl --fail --silent --show-error --max-time 30 -D /tmp/ready.head -o /tmp/ready.json "$edge/api/health/ready"
+          curl --fail --silent --show-error --max-time 30 -D /tmp/ready.head -o /tmp/ready.json "$edge/health/ready"
           grep -iq "^content-type:.*application/json" /tmp/ready.head
           jq -e '.status == "ready"' /tmp/ready.json > /dev/null
 
@@ -618,34 +613,59 @@ jobs:
           test "$asset_missing_status" = "404"
           ! grep -qi "<!doctype html" /tmp/asset404.body
 
+          # Shipped by the build, unlike the static server this replaced.
           favicon_status="$(curl --silent --show-error --max-time 30 -o /dev/null -w "%{http_code}" "$edge/favicon.ico")"
-          test "$favicon_status" = "404"
+          test "$favicon_status" = "200"
           method_status="$(curl --silent --show-error --max-time 30 -X POST -o /dev/null -w "%{http_code}" "$edge/courses/123")"
           test "$method_status" = "405"
 
-          # Request correlation survives the proxy.
-          curl --fail --silent --show-error --max-time 30 -D /tmp/rid.head -o /dev/null -H "X-Request-ID: container-ci-probe" "$edge/api/health/ready"
+          # The interface and the API get different policies from one origin:
+          # default-src 'none' is right for JSON and would blank the interface.
+          grep -iq "^content-security-policy:.*default-src 'self'" /tmp/root.head
+          grep -iq "^content-security-policy:.*default-src 'none'" /tmp/missing.head
+          grep -iq "^referrer-policy: strict-origin-when-cross-origin" /tmp/root.head
+          grep -iq "^referrer-policy: no-referrer" /tmp/missing.head
+
+          curl --fail --silent --show-error --max-time 30 -H "Accept-Encoding: gzip"             -D /tmp/gzip.head -o /dev/null "$edge/"
+          grep -iq "^content-encoding: gzip" /tmp/gzip.head
+
+          # Request correlation.
+          curl --fail --silent --show-error --max-time 30 -D /tmp/rid.head -o /dev/null -H "X-Request-ID: container-ci-probe" "$edge/health/ready"
           grep -iq "^x-request-id: container-ci-probe" /tmp/rid.head
 
-          # The interface must survive the API container being replaced: nginx
-          # resolves the upstream per request rather than once at startup.
-          docker compose up --detach --no-build --no-deps --force-recreate --wait --wait-timeout 120 api
+          # Replacing the container must leave the deployment serving: one
+          # process answers both halves, so a failed restart takes the
+          # interface with it and this is the only probe that would notice.
+          docker compose up --detach --no-build --no-deps --force-recreate --wait --wait-timeout 120 lumina
           for _ in $(seq 1 30); do
-            if curl --fail --silent --show-error --max-time 5 "$edge/api/health/ready" > /dev/null; then
+            if curl --fail --silent --show-error --max-time 5 "$edge/health/ready" > /dev/null; then
               break
             fi
             sleep 2
           done
-          curl --fail --silent --show-error "$edge/api/health/ready" > /dev/null
+          curl --fail --silent --show-error "$edge/health/ready" > /dev/null
 
 
           migrate_id="$(docker compose ps --all --quiet migrate)"
           test "$(docker inspect --format '{{.State.Status}}' "$migrate_id")" = "exited"
           test "$(docker inspect --format '{{.State.ExitCode}}' "$migrate_id")" = "0"
-          docker compose exec -T api sh -c 'test ! -w /app && test -w /data && test -w /tmp && test -f /data/lumina.db'
-          test "$(docker compose exec -T api id -u | tr -d '\r')" = "10001"
+          docker compose exec -T lumina sh -c 'test ! -w /app && test ! -w /opt/lumina/web && test -w /data && test -w /tmp && test -f /data/lumina.db'
+          # env_file hands .env to the container verbatim, so a data path left
+          # in it would override the image's. The weights are baked in and read
+          # with HF_HUB_OFFLINE=1: pointed anywhere else, every embedding fails
+          # at runtime and nothing else here would catch it.
+          docker compose exec -T lumina python -c '
+          from backend.app.config import settings
+
+          assert settings.embedding_model_cache_directory == "/opt/lumina/embedding-models", (
+              settings.embedding_model_cache_directory
+          )
+          assert settings.database_url == "sqlite:////data/lumina.db", settings.database_url
+          assert settings.web_root is not None
+          '
+          test "$(docker compose exec -T lumina id -u | tr -d '\r')" = "10001"
           test "$(docker compose exec -T worker id -u | tr -d '\r')" = "10001"
-          docker compose exec -T api python -c '
+          docker compose exec -T lumina python -c '
           import shutil
 
           from backend.app.config import settings
@@ -660,18 +680,18 @@ jobs:
           sudo install -d -o 10001 -g 10001 -m 0700 "$LUMINA_BACKUP_DIRECTORY"
           export BACKUP_ARCHIVE_NAME=lumina-ci-backup.tar.gz
           docker compose run --rm --no-deps \
-            --env LUMINA_RESTART_SERVICES="api worker" migrate sh -c '
+            --env LUMINA_RESTART_SERVICES="lumina lumina-worker" migrate sh -c '
               umask 077
               printf "%s\n" "$LUMINA_RESTART_SERVICES" > /data/.lumina-backup-restart-services
             '
-          docker compose stop api worker
+          docker compose stop lumina lumina-worker
           sudo mv "$LUMINA_BACKUP_DIRECTORY" "${LUMINA_BACKUP_DIRECTORY}.offline"
           set +e
           sh ops/self_hosted_backup.sh
           recovery_status=$?
           set -e
           test "$recovery_status" = "2"
-          for service in api worker; do
+          for service in lumina lumina-worker; do
             container_id="$(docker compose ps --quiet "$service")"
             test "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = "healthy"
           done
@@ -684,23 +704,23 @@ jobs:
             test ! -f /data/.lumina-backup-restart-services
           sudo test -s "$LUMINA_BACKUP_DIRECTORY/$BACKUP_ARCHIVE_NAME"
           test "$(sudo stat -c '%a' "$LUMINA_BACKUP_DIRECTORY/$BACKUP_ARCHIVE_NAME")" = "600"
-          curl --fail --silent --show-error http://127.0.0.1:18000/health/ready
+          curl --fail --silent --show-error "$edge/health/ready"
 
-          docker compose stop api worker
-          test -z "$(docker compose ps --status running --services api worker)"
+          docker compose stop lumina lumina-worker
+          test -z "$(docker compose ps --status running --services lumina lumina-worker)"
           # The restored project is started by explicit service name below. That
-          # filter is load-bearing: an unfiltered up would start a second frontend
+          # filter is load-bearing: an unfiltered up would start a second lumina
           # and collide with this project on the published host port.
           COMPOSE_PROJECT_NAME="$restore_project" docker compose --profile maintenance run --rm restore
           COMPOSE_PROJECT_NAME="$restore_project" docker compose run --rm migrate
-          COMPOSE_PROJECT_NAME="$restore_project" docker compose run --rm --no-deps worker \
+          COMPOSE_PROJECT_NAME="$restore_project" docker compose run --rm --no-deps lumina-worker \
             python -m workers.embedding_backfill --prune-orphans
-          COMPOSE_PROJECT_NAME="$restore_project" docker compose up --detach --no-build --wait --wait-timeout 180 api worker
-          curl --fail --silent --show-error http://127.0.0.1:18000/health/ready
+          COMPOSE_PROJECT_NAME="$restore_project" docker compose up --detach --no-build --wait --wait-timeout 180 lumina lumina-worker
+          curl --fail --silent --show-error "$edge/health/ready"
           COMPOSE_PROJECT_NAME="$restore_project" docker compose down --volumes --remove-orphans
 
-          docker compose start api worker
-          for service in api worker; do
+          docker compose start lumina lumina-worker
+          for service in lumina lumina-worker; do
             container_id="$(docker compose ps --quiet "$service")"
             for _ in $(seq 1 60); do
               if [ "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = "healthy" ]; then
@@ -710,7 +730,7 @@ jobs:
             done
             test "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = "healthy"
           done
-          curl --fail --silent --show-error http://127.0.0.1:18000/health/ready
+          curl --fail --silent --show-error "$edge/health/ready"
 
       - name: Reject tracked-file mutations
         run: git diff --exit-code

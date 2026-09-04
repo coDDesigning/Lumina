@@ -44,6 +44,21 @@ password and a rejected new password both return `400`; the rejection message is
 `policy_description()`, so the user is told the rule rather than being made to
 guess it. Passwords persist only as `password_hash` and are never logged.
 
+### How a client learns the rule
+
+`GET /api/auth/password-policy` returns `minimum_length`, `maximum_bytes`, and
+`description`, where `description` is `policy_description()` verbatim. It needs
+no session, because the screens that need it -- registration and password reset
+-- are reached without one.
+
+The sign-up form has to state the rule before anyone types, and the rule is
+configurable, so the form cannot know it: it reads it. Until the answer
+arrives the form states no rule and imposes no length of its own. A form
+carrying its own copy is how a screen ends up promising eight characters while
+the deployment demands twelve, and `tests/test_password_policy.py` asserts that
+the sentence this endpoint returns is byte-identical to the one a refusal
+carries.
+
 Changing your password automatically invalidates all existing JWT sessions. 
 The password reset flow is implemented using single-use expiring tokens and 
 calls `validate_password` internally to ensure consistent policy enforcement.

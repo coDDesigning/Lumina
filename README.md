@@ -149,15 +149,19 @@ reasoning.
 ### 6. Start Lumina
 
 ```bash
-docker compose up --build --detach --wait --wait-timeout 180
+docker compose up --detach --wait --wait-timeout 600
 docker compose ps --all
 ```
 
-`migrate` should be exited with code 0, and `api`, `worker`, and `frontend`
-should all be healthy. Confirm the stack is serving:
+The first run builds the image and takes around ten minutes, most of it
+downloading the embedding model that is baked in so the running container never
+needs the network for it. Later runs reuse the cache and take seconds.
+
+`migrate` should be exited with code 0, and `lumina` and `lumina-worker`
+should both be healthy. Confirm the stack is serving:
 
 ```bash
-curl --fail http://127.0.0.1:8080/api/health/ready
+curl --fail http://127.0.0.1:10312/health/ready
 ```
 
 ```json
@@ -175,7 +179,7 @@ all three placeholders below.
 ```bash
 curl --fail-with-body \
   --request POST \
-  http://127.0.0.1:8080/api/auth/register \
+  http://127.0.0.1:10312/api/auth/register \
   --header 'Content-Type: application/json' \
   --header 'X-Bootstrap-Token: REPLACE_WITH_BOOTSTRAP_ADMIN_TOKEN' \
   --data '{
@@ -194,10 +198,10 @@ $body = @{
   password = 'REPLACE_WITH_A_STRONG_PASSWORD'
 } | ConvertTo-Json
 
-Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8080/api/auth/register' -ContentType 'application/json' -Headers @{ 'X-Bootstrap-Token' = 'REPLACE_WITH_BOOTSTRAP_ADMIN_TOKEN' } -Body $body
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:10312/api/auth/register' -ContentType 'application/json' -Headers @{ 'X-Bootstrap-Token' = 'REPLACE_WITH_BOOTSTRAP_ADMIN_TOKEN' } -Body $body
 ```
 
-The password must be at least 12 characters and at most 72 bytes, must not be a
+The password must be at least 8 characters and at most 72 bytes, must not be a
 common password or a simple repeated or sequential pattern, and must not contain
 your name or the local part of your email address.
 
@@ -206,7 +210,7 @@ and server logs.
 
 ### 8. Open Lumina
 
-<http://127.0.0.1:8080>
+<http://127.0.0.1:10312>
 
 Sign in as the administrator you just created. Everyone else can register
 normally through the sign-up form.
@@ -227,11 +231,15 @@ normally through the sign-up form.
 
 | Symptom | Cause and fix |
 | --- | --- |
-| A source stays in processing | Extraction or OCR is still running. Watch `docker compose logs --follow worker`. |
+| `up` says the env file is not found | You skipped step 3. Lumina reads its whole configuration from `.env`; copy `.env.example` over. |
+| `lumina` exits straight away | A setting is missing or malformed. `docker compose logs lumina` names the variable. |
+| `up` says the port is already allocated | Something else holds `LUMINA_PORT`. Change it in `.env`, or stop the other program. |
+| The page loads but every request fails | An earlier version of this stack may still be running. `docker compose down --remove-orphans` (never `--volumes`), then `up` again. |
+| A source stays in processing | Extraction or OCR is still running. Watch `docker compose logs --follow lumina-worker`. |
 | A source reaches failed | The PDF is encrypted, corrupt, or beyond the configured page and size limits. |
-| Generation says the provider is unreachable | Ollama is not running, or `OLLAMA_BASE_URL` is wrong for your platform. Check from inside the stack with `docker compose exec api python -c "import os, urllib.request; print(urllib.request.urlopen(os.environ['OLLAMA_BASE_URL'] + '/api/tags', timeout=5).status)"`. |
+| Generation says the provider is unreachable | Ollama is not running, or `OLLAMA_BASE_URL` is wrong for your platform. Check from inside the stack with `docker compose exec lumina python -c "import os, urllib.request; print(urllib.request.urlopen(os.environ['OLLAMA_BASE_URL'] + '/api/tags', timeout=5).status)"`. |
 | Generation says the model is missing | Run both `ollama pull` commands from step 2, then `ollama list` to confirm. |
-| Material is not indexed | Chunks exist but their vectors do not. Run `docker compose run --rm worker python -m workers.embedding_backfill`. |
+| Material is not indexed | Chunks exist but their vectors do not. Run `docker compose run --rm lumina-worker python -m workers.embedding_backfill`. |
 | No relevant material | Retrieval found nothing above the similarity floor. Widen the topic, or add a source that covers it. |
 | Generation times out | Raise `AI_GENERATION_TIMEOUT_SECONDS` and `AI_GENERATION_OVERALL_TIMEOUT_SECONDS`, or ask for fewer questions. A model that does not fit entirely in VRAM runs roughly five times slower. |
 
@@ -240,21 +248,29 @@ normally through the sign-up form.
 ```bash
 docker compose stop                 # pause; nothing is lost
 docker compose down                 # remove containers; named volumes are kept
-docker compose build --pull         # rebuild after pulling new code
-docker compose up --detach --wait --wait-timeout 180
+docker compose up --detach --wait --wait-timeout 600
 ```
+
+`up` rebuilds before it starts, so after a `git pull` there is no separate
+build step and no way to leave yesterday's code running by accident. Add
+`--no-build` to start without rebuilding.
 
 > `docker compose down --volumes` **permanently deletes your database, uploaded
 > documents, and search index.** There is no undo. Use it only when you intend
 > to destroy the deployment.
 
-Changing `VITE_API_BASE_URL` needs a rebuild, because it is compiled into the
-interface bundle rather than read at runtime:
+### Changing the port
 
-```bash
-docker compose build frontend
-docker compose up --detach frontend
-```
+`LUMINA_PORT` in `.env` is the whole address. Change it and run `up` again:
+nothing needs rebuilding, because the interface asks for `/api` on whatever
+origin served it. Set `LUMINA_BIND_ADDRESS=0.0.0.0` to reach Lumina from
+another machine on your network.
+
+If you put a TLS reverse proxy in front, set `FORWARDED_ALLOW_IPS` to that
+proxy's address and turn on `SECURITY_HSTS_ENABLED`. Leave `FORWARDED_ALLOW_IPS`
+unset otherwise: it tells the API whose `X-Forwarded-For` header to believe, and
+a caller allowed to set its own would also be choosing its own rate-limit
+identity.
 
 ## Data and backups
 
@@ -314,16 +330,19 @@ type-checks the test and browser suites. Run both.
 ```bash
 docker compose config --quiet
 docker compose -f docker-compose.hosted.yml config --quiet
-docker compose build --pull
-docker compose up --detach --wait --wait-timeout 180
+docker compose up --detach --wait --wait-timeout 600
 ```
+
+One image carries both halves: its first build stage compiles the interface,
+and the API serves the result beside `/api` from a single port. `docker build`
+alone builds it; `VITE_API_BASE_URL` is a `--build-arg`, not a runtime setting.
 
 ## Deployment modes
 
 | Mode | Database | Documents | Vectors | Interface |
 | --- | --- | --- | --- | --- |
-| `self_hosted` (default) | SQLite | Local filesystem | Chroma | The `frontend` container in this repository |
-| `hosted` | PostgreSQL | S3-compatible | pgvector | S3 and CloudFront in AWS; the `frontend` container locally |
+| `self_hosted` (default) | SQLite | Local filesystem | Chroma | Served by the API from the same origin |
+| `hosted` | PostgreSQL | S3-compatible | pgvector | S3 and CloudFront in AWS; served by the API locally |
 
 The self-hosted stack is single-host and single-worker by design. See
 [`docs/deployment.md`](docs/deployment.md) for the full topology, the routing

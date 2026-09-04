@@ -7072,6 +7072,30 @@
         "title": "PasswordChangeRequest",
         "type": "object"
       },
+      "PasswordPolicyResponse": {
+        "description": "The password rule this deployment enforces, for a client to state.\n\nA sign-up form has to tell someone the rule before they type, and the rule\nis configurable, so the form cannot know it. Everything here is rendered\nfrom the same values utils/password_policy.py refuses with, which is what\nstops a screen from describing a rule the server does not enforce.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "maximum_bytes": {
+            "title": "Maximum Bytes",
+            "type": "integer"
+          },
+          "minimum_length": {
+            "title": "Minimum Length",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "minimum_length",
+          "maximum_bytes",
+          "description"
+        ],
+        "title": "PasswordPolicyResponse",
+        "type": "object"
+      },
       "PasswordResetConfirm": {
         "description": "Redeems a password reset link to set a new password.",
         "properties": {
@@ -9789,22 +9813,6 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/": {
-      "get": {
-        "operationId": "read_root__get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Read Root"
-      }
-    },
     "/ads.txt": {
       "get": {
         "operationId": "ads_txt_ads_txt_get",
@@ -10450,6 +10458,28 @@
           }
         ],
         "summary": "Read Users Me",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/password-policy": {
+      "get": {
+        "description": "The password rule, so a client can state it before anyone types.\n\nUnauthenticated because the screens that need it -- registration and\npassword reset -- are reached without a session. It reveals only what the\nserver already says verbatim when it refuses a password.",
+        "operationId": "read_password_policy_api_auth_password_policy_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordPolicyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Read Password Policy",
         "tags": [
           "Authentication"
         ]

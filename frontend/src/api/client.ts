@@ -106,6 +106,13 @@ function parseApiErrorBody(data: unknown): ParsedApiError {
 export const ERROR_CODE_HEADER = 'X-Error-Code';
 const RETRY_AFTER_HEADER = 'Retry-After';
 const PERSONAL_KEY_INVALID_ERROR_CODE = 'personal_key_invalid';
+const ACCOUNT_BANNED_ERROR_CODE = 'account_banned';
+
+export type SessionEndReason = 'unauthorized' | 'banned';
+
+export interface SessionEndEventDetail {
+  reason: SessionEndReason;
+}
 
 function parseRetryAfterSeconds(value: string | null): number | null {
   const normalized = value?.trim();
@@ -219,14 +226,23 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       response.headers?.get(RETRY_AFTER_HEADER) ?? null,
     );
 
-    if (
-      response.status === 401 &&
-      error.code !== PERSONAL_KEY_INVALID_ERROR_CODE &&
+    const isSessionEnded =
       token !== null &&
-      localStorage.getItem('token') === token
-    ) {
+      localStorage.getItem('token') === token &&
+      ((response.status === 401 && error.code !== PERSONAL_KEY_INVALID_ERROR_CODE) ||
+        (response.status === 403 && error.code === ACCOUNT_BANNED_ERROR_CODE));
+
+    if (isSessionEnded) {
+      const reason: SessionEndReason =
+        response.status === 403 && error.code === ACCOUNT_BANNED_ERROR_CODE
+          ? 'banned'
+          : 'unauthorized';
       localStorage.removeItem('token');
-      window.dispatchEvent(new Event('auth:unauthorized'));
+      window.dispatchEvent(
+        new CustomEvent<SessionEndEventDetail>('auth:unauthorized', {
+          detail: { reason },
+        }),
+      );
     }
 
     throw error;

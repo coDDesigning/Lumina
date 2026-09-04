@@ -1,5 +1,6 @@
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { APIError } from '../api/client';
 import { authAPI } from '../api/auth';
 import { AuthProvider, useAuth } from './AuthContext';
 import { createMockUser, MockErrors } from '../test/mocks/api';
@@ -220,5 +221,51 @@ describe('AuthContext', () => {
 
     expect(screen.getByTestId('auth-state')).toHaveTextContent('logged-out');
     expect(screen.getByTestId('user-name')).toHaveTextContent('no-user');
+  });
+
+  it('handles auth:unauthorized event with banned reason', async () => {
+    localStorage.setItem('token', 'active-token');
+    mockMe.mockResolvedValueOnce(createMockUser());
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }) => <AuthProvider>{children}</AuthProvider>,
+    });
+
+    await waitFor(() => {
+      expect(result.current.isAuthenticated).toBe(true);
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('auth:unauthorized', {
+          detail: { reason: 'banned' },
+        }),
+      );
+    });
+
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.user).toBeNull();
+    expect(result.current.sessionEndReason).toBe('banned');
+  });
+
+  it('records banned sessionEndReason when fetchUser receives account_banned error', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    localStorage.setItem('token', 'banned-token');
+    mockMe.mockRejectedValueOnce(
+      new APIError(403, { detail: 'Your account has been banned.' }, 'account_banned'),
+    );
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }) => <AuthProvider>{children}</AuthProvider>,
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.sessionEndReason).toBe('banned');
+    consoleSpy.mockRestore();
   });
 });

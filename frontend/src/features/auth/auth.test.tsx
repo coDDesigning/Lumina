@@ -147,6 +147,35 @@ describe('LoginPage', () => {
     expect(login).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Email')).toHaveValue('deniz@uni.edu');
   });
+
+  it('displays a banned notice when redirected after an account is banned', async () => {
+    renderAt(<LoginPage />, {
+      pathname: '/login',
+      state: { sessionEndReason: 'banned' },
+    });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Your account has been banned.');
+
+    await userEvent.type(screen.getByLabelText('Email'), 'other@uni.edu');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('announces a banned sign-in attempt and keeps the user on the form', async () => {
+    mockedLogin.mockRejectedValue(
+      new APIError(403, { detail: 'Your account has been banned.' }, 'account_banned'),
+    );
+
+    renderAt(<LoginPage />, '/login');
+
+    await userEvent.type(screen.getByLabelText('Email'), 'banned@uni.edu');
+    await userEvent.type(screen.getByLabelText('Password'), 'password');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Your account has been banned.');
+    expect(login).not.toHaveBeenCalled();
+  });
 });
 
 describe('RegisterPage', () => {

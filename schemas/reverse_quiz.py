@@ -1,5 +1,8 @@
 from enum import Enum
+
 from pydantic import BaseModel, Field
+
+from schemas.citation import Citation
 
 
 class ConceptStatus(str, Enum):
@@ -29,6 +32,17 @@ class ReverseQuizEvaluation(BaseModel):
 
 
 class ReverseQuizResponse(BaseModel):
+    """One evaluation, with the sources its markers point at.
+
+    ``feedback`` and each misconception ``detail`` keep the ``[S1]`` markers the
+    grader resolved, so ``citations`` is what turns them back into a document
+    and a page. It is stored alongside the text rather than rebuilt on read, so
+    reopening the session names the same sources with no provider call. It
+    defaults to empty because rows written before citations were carried have
+    none, and a marker nothing resolves is shown as plain text rather than as a
+    source the student cannot check.
+    """
+
     id: int
     course_id: int
     topic: str
@@ -36,6 +50,7 @@ class ReverseQuizResponse(BaseModel):
     feedback: str
     misconceptions: list[Misconception] = Field(default_factory=list)
     question: str | None = None
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class ReverseQuizQuestion(BaseModel):

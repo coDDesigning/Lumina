@@ -23,7 +23,7 @@ describe('userAPI.changePassword', () => {
     vi.unstubAllGlobals();
   });
 
-  it('succeeds on the empty body the endpoint answers with', async () => {
+  it('succeeds on the null-data envelope the endpoint answers with', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       jsonResponse({ success: true, message: 'Password changed', data: null }),
     );

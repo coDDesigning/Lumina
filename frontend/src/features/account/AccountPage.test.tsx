@@ -8,6 +8,7 @@ import { ThemeProvider } from '@/app/ThemeProvider'
 import AccountAppearancePage from './AccountAppearancePage'
 import AccountApiKeysPage from './AccountApiKeysPage'
 import AccountLayout from './AccountLayout'
+import AccountSecurityPage from './AccountSecurityPage'
 import AccountYouPage from './AccountYouPage'
 import { AiPreferencesSection } from './AiPreferencesSection'
 import { ProfileKnowledgeSection } from './ProfileKnowledgeSection'
@@ -93,6 +94,7 @@ vi.mock('@/api/user', () => ({
     getCreditTransactions: vi.fn(),
     getApiKeys: vi.fn(),
     updateApiKeys: vi.fn(),
+    changePassword: vi.fn(),
   },
 }))
 
@@ -114,6 +116,7 @@ const mockUpdatePreferredModel = vi.mocked(userAPI.updatePreferredModel)
 const mockUpdateEducationLevel = vi.mocked(userAPI.updateEducationLevel)
 const mockGetCreditTransactions = vi.mocked(userAPI.getCreditTransactions)
 const mockGetApiKeys = vi.mocked(userAPI.getApiKeys)
+const mockChangePassword = vi.mocked(userAPI.changePassword)
 
 function renderAccountPage(path = '/account') {
   return render(
@@ -125,6 +128,7 @@ function renderAccountPage(path = '/account') {
             <Route path="background" element={<ProfileKnowledgeSection />} />
             <Route path="ai" element={<AiPreferencesSection />} />
             <Route path="api-keys" element={<AccountApiKeysPage />} />
+            <Route path="security" element={<AccountSecurityPage />} />
             <Route path="appearance" element={<AccountAppearancePage />} />
           </Route>
         </Routes>
@@ -207,6 +211,31 @@ describe('AccountPage', () => {
     expect(screen.queryByRole('button', { name: 'Save profile' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument()
     expect(screen.queryByText('Bilkent University')).not.toBeInTheDocument()
+  })
+
+  it('reports a successful password change from a null-data response', async () => {
+    const user = userEvent.setup()
+    mockChangePassword.mockResolvedValue(undefined)
+    renderAccountPage('/account/security')
+
+    await user.type(screen.getByLabelText('Current password'), 'Current-password-123!')
+    await user.type(screen.getByLabelText('New password'), 'New-password-456!')
+    await user.type(screen.getByLabelText('Confirm new password'), 'New-password-456!')
+    await user.click(screen.getByRole('button', { name: 'Change password' }))
+
+    await waitFor(() => {
+      expect(mockChangePassword).toHaveBeenCalledWith(
+        'Current-password-123!',
+        'New-password-456!',
+      )
+    })
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Your password has been changed successfully.',
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Current password')).toHaveValue('')
+    expect(screen.getByLabelText('New password')).toHaveValue('')
+    expect(screen.getByLabelText('Confirm new password')).toHaveValue('')
   })
 
   it('renders model capabilities and cost hints for the selected model', async () => {

@@ -68,6 +68,11 @@ def test_password_change_invalidates_old_tokens(api_context):
         },
     )
     assert change.status_code == 200
+    assert change.json() == {
+        "success": True,
+        "message": "Password changed",
+        "data": None,
+    }
 
     # Old token should now be invalid
     me_after = api_context.client.get("/api/auth/me", headers=auth_headers)

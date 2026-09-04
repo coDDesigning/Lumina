@@ -280,6 +280,12 @@ jobs:
           push: true
           tags: ${{ env.ECR_REPOSITORY }}:${{ steps.release.outputs.release_id }}
           provenance: false
+          # The image carries the interface as well, so it is built with the
+          # same prefix the S3 copy is published with. CloudFront routes only
+          # /api* to the ALB, so no browser reaches the copy inside the
+          # container; this keeps the two from disagreeing anyway.
+          build-args: |
+            VITE_API_BASE_URL=${{ env.VITE_API_BASE_URL }}
 
       - name: Register task definitions
         id: tasks

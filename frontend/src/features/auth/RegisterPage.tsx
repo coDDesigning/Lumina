@@ -3,6 +3,8 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authAPI } from '@/api/auth';
 import { describeError } from '@/api/errors';
+import { queryKeys } from '@/api/queryKeys';
+import { useQuery } from '@/lib/query/useQuery';
 import { useAuth } from '@/context/AuthContext';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
@@ -11,12 +13,6 @@ import { PasswordInput } from '@/ui/PasswordInput';
 import { AuthLayout } from './AuthLayout';
 import { ResendVerification } from './ResendVerification';
 import styles from './AuthLayout.module.css';
-
-const MAX_PASSWORD_BYTES = 72;
-// The server owns the policy and states it in full when it refuses; this is the
-// floor the form can check before anybody waits for a round trip.
-// See docs/authentication.md.
-const MIN_PASSWORD_LENGTH = 8;
 
 function passwordByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
@@ -40,6 +36,16 @@ export default function RegisterPage() {
 
   const { login } = useAuth();
   const navigate = useNavigate();
+  // The rule is configurable, so it is read rather than assumed. Until it
+  // arrives the form states no rule and imposes no length of its own: the
+  // server enforces the policy either way, and a form that guessed would
+  // sooner or later guess wrong. See docs/authentication.md.
+  const { data: passwordPolicy } = useQuery({
+    key: queryKeys.passwordPolicy(),
+    fetcher: ({ signal }) => authAPI.getPasswordPolicy({ signal }),
+    fallbackMessage: 'Could not load the password policy.',
+    staleTime: Infinity,
+  });
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -49,7 +55,7 @@ export default function RegisterPage() {
     setError(null);
     setPasswordError(null);
 
-    if (passwordByteLength(password) > MAX_PASSWORD_BYTES) {
+    if (passwordPolicy && passwordByteLength(password) > passwordPolicy.maximum_bytes) {
       setPasswordError('That password is too long.');
       return;
     }
@@ -148,18 +154,18 @@ export default function RegisterPage() {
           label="Password"
           autoComplete="new-password"
           required
-          minLength={MIN_PASSWORD_LENGTH}
+          minLength={passwordPolicy?.minimum_length}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           disabled={isSubmitting}
-          hint="At least 8 characters. A passphrase beats a short password with a digit on the end, and it cannot contain your name or email address."
+          hint={passwordPolicy?.description}
         />
 
         <PasswordInput
           label="Confirm password"
           autoComplete="new-password"
           required
-          minLength={MIN_PASSWORD_LENGTH}
+          minLength={passwordPolicy?.minimum_length}
           value={confirmPassword}
           onChange={(event) => setConfirmPassword(event.target.value)}
           disabled={isSubmitting}

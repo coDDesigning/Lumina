@@ -11,6 +11,7 @@ from schemas.auth import (
     EmailVerificationRequest,
     EmailVerificationResendRequest,
     EmailVerificationResponse,
+    PasswordPolicyResponse,
     PasswordResetConfirm,
     PasswordResetRequest,
     RegistrationResponse,
@@ -25,6 +26,7 @@ from services.email_verification import (
 from services.user import UserService
 from services.password_reset import InvalidPasswordResetTokenError, PasswordResetService
 from services.token_revocation import TokenRevocationService
+from utils import password_policy
 from utils.deps import get_current_user, oauth2_scheme
 from utils.exceptions import ConflictException
 from utils.rate_limit import (
@@ -66,6 +68,21 @@ RESET_SENT_MESSAGE = (
     "If that address belongs to an account, a password reset link is on its way."
 )
 DUMMY_PASSWORD_HASH = "$2b$12$h0nO5PzF915P7BGkRVjKbehZ9sgg5kgKPsCEF7cMiXsrmN0EwCIO."
+
+
+@router.get("/password-policy", response_model=PasswordPolicyResponse)
+def read_password_policy() -> PasswordPolicyResponse:
+    """The password rule, so a client can state it before anyone types.
+
+    Unauthenticated because the screens that need it -- registration and
+    password reset -- are reached without a session. It reveals only what the
+    server already says verbatim when it refuses a password.
+    """
+    return PasswordPolicyResponse(
+        minimum_length=password_policy.minimum_length(),
+        maximum_bytes=password_policy.MAX_PASSWORD_BYTES,
+        description=password_policy.policy_description(),
+    )
 
 
 @router.post(

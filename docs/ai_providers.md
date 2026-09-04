@@ -259,10 +259,11 @@ retries and fallbacks, and its `110` default is below one attempt at this
 profile's `180`. The deadline is checked between attempts rather than during
 one, so a first attempt still runs to completion, but every retry after a slow
 attempt is refused. Raise it alongside the per-attempt timeout. Both are capped
-at `300`. A reverse proxy in front of the API needs a read timeout above
+at `300`. A reverse proxy placed in front of the API needs a read timeout above
 whichever value is configured, or it will return its own gateway error before
-the application can produce its `X-Error-Code` contract; the `frontend` service
-in this repository already uses 330 seconds.
+the application can produce its `X-Error-Code` contract. The supported Compose
+deployment publishes the API directly and has no such proxy; its shutdown grace
+of 330 seconds is the matching figure to copy.
 
 `AI_GENERATION_TIMEOUT_SECONDS` must be raised from its `60` default. A
 twenty-question quiz emits roughly 2,700 tokens, which at this profile's

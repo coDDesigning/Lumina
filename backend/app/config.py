@@ -349,6 +349,10 @@ class Settings:
     hsts_enabled: bool
     hsts_max_age_seconds: int
 
+    # Where the built interface lives, or None to serve the API alone. See
+    # backend/app/spa.py.
+    web_root: Path | None
+
     # Periodic maintenance configuration
     course_purge_interval_seconds: float
     embedding_backfill_interval_seconds: float
@@ -1086,6 +1090,7 @@ def load_settings() -> Settings:
     hsts_max_age_seconds = _nonnegative_integer_setting(
         "SECURITY_HSTS_MAX_AGE_SECONDS", DEFAULT_HSTS_MAX_AGE_SECONDS
     )
+    web_root = _web_root_setting()
 
     course_purge_interval_seconds = _nonnegative_float_setting(
         "COURSE_PURGE_INTERVAL_SECONDS",
@@ -1288,6 +1293,7 @@ def load_settings() -> Settings:
         security_headers_enabled=security_headers_enabled,
         hsts_enabled=hsts_enabled,
         hsts_max_age_seconds=hsts_max_age_seconds,
+        web_root=web_root,
         course_purge_interval_seconds=course_purge_interval_seconds,
         embedding_backfill_interval_seconds=embedding_backfill_interval_seconds,
         embedding_backfill_batch_size=embedding_backfill_batch_size,
@@ -1829,6 +1835,28 @@ def _bounded_positive_integer_setting(
     if not minimum <= value <= maximum:
         raise ValueError(f"{name} must be between {minimum} and {maximum}.")
     return value
+
+
+def _web_root_setting() -> Path | None:
+    """The directory holding the built interface, if this deployment has one.
+
+    The image sets LUMINA_WEB_ROOT to the build output it baked in. A checkout
+    leaves it unset and serves the API alone, so neither the test suite nor the
+    `npm run dev` loop depends on a Vite build having been run. A value that
+    names nothing is a misconfiguration worth one warning rather than a refusal
+    to start: the API is still fully usable without an interface.
+    """
+    configured = os.getenv("LUMINA_WEB_ROOT", "").strip()
+    if not configured:
+        return None
+    web_root = Path(configured)
+    if not web_root.is_dir():
+        logger.warning(
+            "LUMINA_WEB_ROOT does not name a directory; serving the API alone",
+            extra={"event": "web_root_missing", "web_root": configured},
+        )
+        return None
+    return web_root
 
 
 settings = load_settings()

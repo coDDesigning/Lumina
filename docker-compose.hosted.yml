@@ -1,116 +1,36 @@
-name: ${COMPOSE_PROJECT_NAME:?set a stable COMPOSE_PROJECT_NAME in .env}
+# The hosted topology, reproduced locally: PostgreSQL with pgvector instead of
+# SQLite and Chroma, and MinIO instead of the local filesystem. AWS runs the
+# same image on ECS behind an ALB and CloudFront (see terraform/), so this file
+# exists to exercise the hosted code paths on one machine, not to be deployed.
+#
+# Shaped like docker-compose.yml on purpose: one image, one published port, and
+# .env as the only place configuration lives. See docs/deployment.md.
+name: lumina-hosted
 
-x-lumina-environment: &lumina-environment
-  APP_ENV: production
-  APP_DEBUG: "false"
-  DEPLOYMENT_MODE: hosted
-  DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/lumina
-  STORAGE_BACKEND: s3
-  STORAGE_NAMESPACE: ${STORAGE_NAMESPACE:?set STORAGE_NAMESPACE in .env}
-  S3_BUCKET: ${S3_BUCKET:-lumina}
-  S3_REGION: ${S3_REGION:-us-east-1}
-  S3_ENDPOINT_URL: http://minio:9000
-  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
-  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
-  S3_FORCE_PATH_STYLE: "true"
-  VECTOR_BACKEND: pgvector
-  MAX_UPLOAD_SIZE_BYTES: ${MAX_UPLOAD_SIZE_BYTES:-52428800}
-  MAX_REQUEST_SIZE_BYTES: ${MAX_REQUEST_SIZE_BYTES:-1048576}
-  MAX_CONCURRENT_DOCUMENT_VALIDATIONS: ${MAX_CONCURRENT_DOCUMENT_VALIDATIONS:-2}
-  UPLOAD_REQUEST_TIMEOUT_SECONDS: ${UPLOAD_REQUEST_TIMEOUT_SECONDS:-300}
-  MAX_DOCUMENTS_PER_COURSE: ${MAX_DOCUMENTS_PER_COURSE:-1000}
-  MAX_COURSE_STORAGE_BYTES: ${MAX_COURSE_STORAGE_BYTES:-2147483648}
-  MAX_PDF_PAGES: ${MAX_PDF_PAGES:-500}
-  MAX_PDF_PAGE_PIXELS: ${MAX_PDF_PAGE_PIXELS:-40000000}
-  MAX_PDF_TOTAL_PIXELS: ${MAX_PDF_TOTAL_PIXELS:-100000000}
-  MAX_PDF_CONTENT_STREAM_BYTES: ${MAX_PDF_CONTENT_STREAM_BYTES:-5242880}
-  MAX_PDF_DRAWING_OPERATIONS: ${MAX_PDF_DRAWING_OPERATIONS:-100000}
-  PROCESSING_JOB_LEASE_SECONDS: ${PROCESSING_JOB_LEASE_SECONDS:-60}
-  PROCESSING_JOB_MAX_ATTEMPTS: ${PROCESSING_JOB_MAX_ATTEMPTS:-3}
-  PROCESSING_JOB_POLL_SECONDS: ${PROCESSING_JOB_POLL_SECONDS:-1.0}
-  PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS: ${PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS:-300}
-  PROCESSING_JOB_CONCURRENCY: ${PROCESSING_JOB_CONCURRENCY:-2}
-  GENERATION_JOB_LEASE_SECONDS: ${GENERATION_JOB_LEASE_SECONDS:-120}
-  GENERATION_JOB_MAX_ATTEMPTS: ${GENERATION_JOB_MAX_ATTEMPTS:-2}
-  GENERATION_JOB_POLL_SECONDS: ${GENERATION_JOB_POLL_SECONDS:-1.0}
-  GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS: ${GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS:-600}
-  GENERATION_JOB_CONCURRENCY: ${GENERATION_JOB_CONCURRENCY:-2}
-  GENERATION_JOB_MAX_ACTIVE_PER_USER: ${GENERATION_JOB_MAX_ACTIVE_PER_USER:-2}
-  MAX_EXTRACTED_CHARACTERS: ${MAX_EXTRACTED_CHARACTERS:-2000000}
-  MAX_DOCUMENT_CHUNKS: ${MAX_DOCUMENT_CHUNKS:-1000}
-  OCR_LANGUAGE: ${OCR_LANGUAGE:-eng}
-  OCR_DPI: ${OCR_DPI:-300}
-  OCR_MIN_TEXT_CHARACTERS: ${OCR_MIN_TEXT_CHARACTERS:-20}
-  DOCUMENT_CHUNK_SIZE_CHARACTERS: ${DOCUMENT_CHUNK_SIZE_CHARACTERS:-1200}
-  DOCUMENT_CHUNK_OVERLAP_CHARACTERS: ${DOCUMENT_CHUNK_OVERLAP_CHARACTERS:-200}
-  AI_MODEL_COST_RATES: "${AI_MODEL_COST_RATES:-}"
-  AI_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-}
-  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
-  AI_GENERATION_TIMEOUT_SECONDS: ${AI_GENERATION_TIMEOUT_SECONDS:-60}
-  AI_GENERATION_OVERALL_TIMEOUT_SECONDS: ${AI_GENERATION_OVERALL_TIMEOUT_SECONDS:-110}
-  OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
-  OLLAMA_TEMPERATURE: ${OLLAMA_TEMPERATURE:-0.2}
-  OLLAMA_TOP_P: ${OLLAMA_TOP_P:-0.9}
-  OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
-  OLLAMA_NUM_PREDICT: ${OLLAMA_NUM_PREDICT:-4096}
-  OLLAMA_REPEAT_PENALTY: ${OLLAMA_REPEAT_PENALTY:-1.1}
-  STUDY_GUIDE_MATERIAL_MAX_CHARS: ${STUDY_GUIDE_MATERIAL_MAX_CHARS:-120000}
-  QUIZ_MATERIAL_MAX_CHARS: ${QUIZ_MATERIAL_MAX_CHARS:-120000}
-  FLASHCARD_MATERIAL_MAX_CHARS: ${FLASHCARD_MATERIAL_MAX_CHARS:-120000}
-  AI_TUTOR_MATERIAL_MAX_CHARS: ${AI_TUTOR_MATERIAL_MAX_CHARS:-120000}
-  COURSE_QA_MATERIAL_MAX_CHARS: ${COURSE_QA_MATERIAL_MAX_CHARS:-120000}
-  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-  # Hosted mode verifies an address before granting credits, so it needs a way
-  # to send the link. These are passed through rather than demanded here: the
-  # application states exactly which one is missing, and an operator who sets
-  # EMAIL_VERIFICATION_REQUIRED=false needs none of them.
-  EMAIL_VERIFICATION_REQUIRED: ${EMAIL_VERIFICATION_REQUIRED:-true}
-  EMAIL_VERIFICATION_TOKEN_TTL_HOURS: ${EMAIL_VERIFICATION_TOKEN_TTL_HOURS:-24}
-  APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-}
-  EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
-  SMTP_HOST: ${SMTP_HOST:-}
-  SMTP_PORT: ${SMTP_PORT:-587}
-  SMTP_USERNAME: ${SMTP_USERNAME:-}
-  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-  SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
-  SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
-  PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-8}
-  SECURITY_HEADERS_ENABLED: ${SECURITY_HEADERS_ENABLED:-true}
-  SECURITY_HSTS_ENABLED: ${SECURITY_HSTS_ENABLED:-true}
-  SECURITY_HSTS_MAX_AGE_SECONDS: ${SECURITY_HSTS_MAX_AGE_SECONDS:-31536000}
-  EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
-  COURSE_PURGE_INTERVAL_SECONDS: ${COURSE_PURGE_INTERVAL_SECONDS:-3600}
-  EMBEDDING_BACKFILL_INTERVAL_SECONDS: ${EMBEDDING_BACKFILL_INTERVAL_SECONDS:-3600}
-  EMBEDDING_BACKFILL_BATCH_SIZE: ${EMBEDDING_BACKFILL_BATCH_SIZE:-64}
-  EMBEDDING_BACKFILL_PRUNE_ORPHANS: ${EMBEDDING_BACKFILL_PRUNE_ORPHANS:-false}
-  # Rate limiting
-  RATE_LIMIT_LOGIN_MAX_ATTEMPTS: ${RATE_LIMIT_LOGIN_MAX_ATTEMPTS:-10}
-  RATE_LIMIT_LOGIN_WINDOW_SECONDS: ${RATE_LIMIT_LOGIN_WINDOW_SECONDS:-300}
-  RATE_LIMIT_REGISTER_MAX_ATTEMPTS: ${RATE_LIMIT_REGISTER_MAX_ATTEMPTS:-5}
-  RATE_LIMIT_REGISTER_WINDOW_SECONDS: ${RATE_LIMIT_REGISTER_WINDOW_SECONDS:-3600}
-  RATE_LIMIT_GENERATION_MAX_ATTEMPTS: ${RATE_LIMIT_GENERATION_MAX_ATTEMPTS:-30}
-  RATE_LIMIT_GENERATION_WINDOW_SECONDS: ${RATE_LIMIT_GENERATION_WINDOW_SECONDS:-3600}
-  RATE_LIMIT_LOCKOUT_BASE_SECONDS: ${RATE_LIMIT_LOCKOUT_BASE_SECONDS:-30}
-  RATE_LIMIT_LOCKOUT_MAX_SECONDS: ${RATE_LIMIT_LOCKOUT_MAX_SECONDS:-1800}
-  RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS: ${RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS:-5}
-  RATE_LIMIT_VERIFICATION_WINDOW_SECONDS: ${RATE_LIMIT_VERIFICATION_WINDOW_SECONDS:-3600}
-  RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS: ${RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS:-5}
-  RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS: ${RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS:-3600}
-  # Proxy trust for client IP resolution (hosted ALB is the only trusted proxy)
-  FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-10.0.0.0/8}
-  # Hosted advertising configuration
-  ENABLE_HOSTED_ADS: ${ENABLE_HOSTED_ADS:-false}
-  HOSTED_ADS_PROVIDER: ${HOSTED_ADS_PROVIDER:-adsense}
-  HOSTED_ADS_PUBLISHER_ID: ${HOSTED_ADS_PUBLISHER_ID:-ca-pub-3125212202463432}
-
-x-lumina-service: &lumina-service
-  image: ${LUMINA_IMAGE:-lumina:local}
-  build:
-    context: .
+x-lumina: &lumina
+  image: lumina
+  build: .
+  env_file: .env
+  environment:
+    APP_ENV: production
+    APP_DEBUG: "false"
+    DEPLOYMENT_MODE: hosted
+    DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/lumina
+    VECTOR_BACKEND: pgvector
+    STORAGE_BACKEND: s3
+    S3_BUCKET: ${S3_BUCKET:-lumina}
+    # The container-internal address of the MinIO service below. No browser
+    # resolves it: every document is streamed through the API, which is why
+    # nothing here ever mints a presigned URL.
+    S3_ENDPOINT_URL: http://minio:9000
+    S3_FORCE_PATH_STYLE: "true"
+    EMBEDDING_MODEL_CACHE_DIRECTORY: /opt/lumina/embedding-models
+    # Empty for the same reason as in docker-compose.yml: this file publishes
+    # the container directly, with no proxy in front of it. AWS is the case
+    # where a load balancer really is in front, and terraform/modules/ecs sets
+    # this there.
+    FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-}
   user: "10001:10001"
-  environment: *lumina-environment
   read_only: true
   tmpfs:
     - /tmp:rw,noexec,nosuid,nodev,size=${LUMINA_TMPFS_SIZE_BYTES:-268435456}
@@ -119,6 +39,8 @@ x-lumina-service: &lumina-service
   security_opt:
     - no-new-privileges:true
   pids_limit: 256
+  init: true
+  restart: unless-stopped
 
 services:
   db:
@@ -136,6 +58,10 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Not a Lumina image, so it gets no env_file and its credentials come from
+  # interpolation. These two are the only variables this file still demands
+  # outright: without them MinIO would start with defaults the API is not
+  # configured for.
   minio:
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     command: ["server", "/data", "--console-address", ":9001"]
@@ -170,7 +96,7 @@ services:
     restart: "no"
 
   migrate:
-    <<: *lumina-service
+    <<: *lumina
     command:
       ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check"]
     depends_on:
@@ -178,22 +104,18 @@ services:
         condition: service_healthy
     restart: "no"
 
-  api:
-    <<: *lumina-service
-    environment:
-      <<: *lumina-environment
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
-      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?set BOOTSTRAP_ADMIN_EMAIL in .env}
-      BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:?set BOOTSTRAP_ADMIN_TOKEN in .env}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
-    command: ["sh", "-c", "exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330 --no-access-log --proxy-headers --forwarded-allow-ips \"${FORWARDED_ALLOW_IPS:-127.0.0.1}\""]
+  lumina:
+    <<: *lumina
+    pull_policy: build
+    ports:
+      - "${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-10312}:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
+      # MinIO has no shell, so it cannot declare a healthcheck. Readiness is
+      # gated by the API's own probe, which writes and reads an object.
       minio:
         condition: service_started
-    ports:
-      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     healthcheck:
       test:
         ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()"]
@@ -201,17 +123,11 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
-    init: true
     stop_grace_period: 345s
-    restart: unless-stopped
 
-  worker:
-    <<: *lumina-service
-    environment:
-      <<: *lumina-environment
-      JWT_SECRET_KEY: worker-does-not-serve-authentication
-      BOOTSTRAP_ADMIN_EMAIL: worker@example.com
-      BOOTSTRAP_ADMIN_TOKEN: worker-does-not-accept-admin-bootstrap
+  lumina-worker:
+    <<: *lumina
+    pull_policy: build
     command: ["python", "-m", "workers.worker"]
     depends_on:
       migrate:
@@ -224,92 +140,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    init: true
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-345s}
-    restart: unless-stopped
-
-  # AWS production serves the frontend from S3 behind CloudFront; this
-  # service is the same routing contract for a local hosted-topology stack,
-  # built from the same Dockerfile and the same ops/nginx configuration as
-  # the self-hosted one so the two cannot drift.
-  # Written out rather than merged from *lumina-service: that anchor carries the
-  # lumina-data volume and every AI provider key, and neither belongs in a
-  # public-facing static server. It also builds a different image entirely.
-  frontend:
-    image: ${LUMINA_FRONTEND_IMAGE:-lumina-frontend:local}
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-      args:
-        # Baked into the bundle at build time. Changing it requires
-        # `docker compose build frontend`, not a restart.
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
-    # The base image's own user. Stated explicitly for auditability; it is not
-    # 10001 because nothing in this image is owned by the backend's user.
-    user: "101:101"
-    # Waiting for a healthy API keeps first-run startup ordered. The trade-off
-    # is that a permanently unhealthy API means no interface at all, rather than
-    # an interface that loads and then fails every request.
-    depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-8080}:8080"
-    read_only: true
-    tmpfs:
-      # The base image puts the pid file and all five *_temp_path directories
-      # here. Nothing is spooled to disk in either direction, so this stays small.
-      - /tmp:rw,noexec,nosuid,nodev,mode=1777,size=${LUMINA_FRONTEND_TMPFS_SIZE_BYTES:-67108864}
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 128
-    init: true
-    healthcheck:
-      # Answered by nginx itself. Probing the API here would report this
-      # service unhealthy for the whole of every ops/self_hosted_backup.sh run,
-      # which stops api and worker by design.
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-    stop_grace_period: 30s
-    restart: unless-stopped
-
-  course-purge:
-    <<: *lumina-service
-    profiles: ["maintenance"]
-    environment:
-      <<: *lumina-environment
-      JWT_SECRET_KEY: maintenance-does-not-serve-authentication
-      BOOTSTRAP_ADMIN_EMAIL: maintenance@example.com
-      BOOTSTRAP_ADMIN_TOKEN: maintenance-does-not-accept-admin-bootstrap
-      GEMINI_API_KEY: maintenance-does-not-call-ai-providers
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      minio:
-        condition: service_started
-    command: ["python", "-m", "workers.course_purge"]
-    restart: "no"
-
-  embedding-backfill:
-    <<: *lumina-service
-    profiles: ["maintenance"]
-    environment:
-      <<: *lumina-environment
-      JWT_SECRET_KEY: maintenance-does-not-serve-authentication
-      BOOTSTRAP_ADMIN_EMAIL: maintenance@example.com
-      BOOTSTRAP_ADMIN_TOKEN: maintenance-does-not-accept-admin-bootstrap
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      minio:
-        condition: service_started
-    command: ["python", "-m", "workers.embedding_backfill"]
-    restart: "no"
 
 volumes:
   pgdata:

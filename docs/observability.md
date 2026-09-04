@@ -118,7 +118,7 @@ fields @timestamp, service, event, message, http_status, duration_ms, error_code
 
 #### Local / Self-Hosted (Docker Compose):
 ```bash
-docker compose logs api worker | grep '<CORRELATION_ID>' | jq .
+docker compose logs lumina lumina-worker | grep '<CORRELATION_ID>' | jq .
 ```
 
 ## Operational Runbooks

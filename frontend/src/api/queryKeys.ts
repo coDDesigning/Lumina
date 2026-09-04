@@ -147,4 +147,5 @@ export const queryKeys = {
     limit,
   ],
   adsConfig: (): QueryKey => ['ads', 'config'],
+  passwordPolicy: (): QueryKey => ['auth', 'passwordPolicy'],
 };

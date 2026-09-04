@@ -37,7 +37,7 @@ running_services=
 validate_services() {
   for service in $1; do
     case "$service" in
-      api|worker) ;;
+      lumina|lumina-worker) ;;
       *)
         echo "Invalid service in persisted backup recovery state." >&2
         return 1
@@ -71,7 +71,9 @@ cleanup() {
   trap - EXIT INT TERM
   if [ -n "$running_services" ]; then
     # Intentional splitting restores exactly the services that were running.
-    if docker compose up -d --wait --wait-timeout 180 $running_services; then
+    # --no-build because a scheduled backup must not depend on a build
+    # succeeding, and `docker compose run` below cannot opt out of one.
+    if docker compose up -d --no-build --wait --wait-timeout 180 $running_services; then
       if ! clear_restart_state; then
         [ "$status" -ne 0 ] || status=1
       fi
@@ -90,8 +92,9 @@ pending_services=$(read_restart_state | tr '\r\n' ' ' | sed 's/[[:space:]]*$//')
 validate_services "$pending_services"
 if [ -n "$pending_services" ]; then
   running_services=$pending_services
-  # Intentional splitting recovers the persisted service set.
-  docker compose up -d --wait --wait-timeout 180 $running_services
+  # Intentional splitting recovers the persisted service set. --no-build
+  # for the same reason as the restart in the trap above.
+  docker compose up -d --no-build --wait --wait-timeout 180 $running_services
   clear_restart_state
   running_services=
 fi
@@ -100,13 +103,13 @@ if [ ! -d "$LUMINA_BACKUP_DIRECTORY" ]; then
   echo "LUMINA_BACKUP_DIRECTORY must be provisioned before backup." >&2
   exit 2
 fi
-running_services=$(docker compose ps --status running --services api worker | tr '\r\n' ' ' | sed 's/[[:space:]]*$//')
+running_services=$(docker compose ps --status running --services lumina lumina-worker | tr '\r\n' ' ' | sed 's/[[:space:]]*$//')
 validate_services "$running_services"
 if [ -n "$running_services" ]; then
   write_restart_state
 fi
-docker compose stop api worker
-if [ -n "$(docker compose ps --status running --services api worker)" ]; then
+docker compose stop lumina lumina-worker
+if [ -n "$(docker compose ps --status running --services lumina lumina-worker)" ]; then
   echo "API or worker is still running; refusing an offline Chroma snapshot." >&2
   exit 4
 fi

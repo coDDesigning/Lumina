@@ -45,20 +45,20 @@ fields @timestamp, service, event, message
 
 1. **Perform a dry-run first:**
    ```bash
-   docker compose run --rm api \
+   docker compose run --rm lumina \
      python -m workers.course_purge --dry-run
    ```
    Inspect the summary output: `examined=X purged=0 failed=0`.
 
 2. **Execute the live purge across all tombstoned courses:**
    ```bash
-   docker compose run --rm api \
+   docker compose run --rm lumina \
      python -m workers.course_purge
    ```
 
 3. **Purge a specific course ID:**
    ```bash
-   docker compose run --rm api \
+   docker compose run --rm lumina \
      python -m workers.course_purge --course-id <COURSE_ID>
    ```
 

@@ -35,6 +35,7 @@ const ROUTES = [
   { name: 'the account', path: '/account' },
   { name: 'account background', path: '/account/background' },
   { name: 'account AI preferences', path: '/account/ai' },
+  { name: 'account security', path: '/account/security' },
   { name: 'the admin screen', path: '/admin' },
   { name: 'Exam Mode', path: '/courses/1/exam-mode' },
   { name: 'an exam plan', path: '/courses/1/exam-mode/plans/601' },
@@ -135,6 +136,7 @@ for (const modal of MODAL_FLOWS) {
 }
 
 test('the known contrast gap is still only the one colour', async ({ page }) => {
+  test.slow()
   const pairs = new Set<string>()
 
   for (const route of ROUTES) {

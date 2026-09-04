@@ -35,7 +35,12 @@ router = APIRouter(prefix="/api/courses", tags=["Study Guide"])
     response_model=BaseResponse[StudyGuideGenerationResult],
     dependencies=[Depends(rate_limit_generation("study_guide"))],
     responses={
-        400: {"description": "No processed course material is available"},
+        400: {
+            "description": (
+                "Personal API key is invalid, AI model is unavailable, or no "
+                "processed course material is available"
+            )
+        },
         401: {"description": "Authentication required"},
         402: {"description": "Insufficient credits"},
         404: {"description": "Course not found"},

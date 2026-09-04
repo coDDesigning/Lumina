@@ -1,7 +1,9 @@
-import { CheckCircle2, Clock3 } from 'lucide-react';
+import { CheckCircle2, Clock3, X } from 'lucide-react';
 import type { GenerationJob } from '@/api/types';
 import { relativeDay } from '@/lib/relativeDay';
+import { Button } from '@/ui/Button';
 import { ErrorState } from '@/ui/ErrorState';
+import { IconButton } from '@/ui/IconButton';
 import { Skeleton } from '@/ui/Skeleton';
 import { Spinner } from '@/ui/Spinner';
 import styles from './GenerationRail.module.css';
@@ -13,6 +15,7 @@ interface GenerationRailProps {
   retryingId: number | null;
   onReload: () => void;
   onRetry: (jobId: number) => void;
+  onDismiss: (jobId: number) => void;
   onOpenGuide: (outputId: number) => void;
   onOpenQuiz: (quizId: number) => void;
   onOpenFlashcards?: (outputId: number) => void;
@@ -48,6 +51,7 @@ export function GenerationRail({
   retryingId,
   onReload,
   onRetry,
+  onDismiss,
   onOpenGuide,
   onOpenQuiz,
   onOpenFlashcards,
@@ -83,6 +87,11 @@ export function GenerationRail({
                 title={`${label} failed`}
                 onRetry={() => onRetry(job.id)}
                 retryLabel={retryingId === job.id ? 'Queueing…' : 'Try again'}
+                actions={
+                  <Button variant="ghost" size="sm" onClick={() => onDismiss(job.id)}>
+                    {`Dismiss ${label}`}
+                  </Button>
+                }
               >
                 {job.error_message ?? 'The generation could not be completed.'}
               </ErrorState>
@@ -118,13 +127,22 @@ export function GenerationRail({
         return (
           <li key={job.id}>
             {completed ? (
-              <button
-                type="button"
-                className={styles.entry}
-                onClick={() => openResult(job, onOpenGuide, onOpenQuiz, onOpenFlashcards)}
-              >
-                {content}
-              </button>
+              <div className={styles.row}>
+                <button
+                  type="button"
+                  className={styles.entry}
+                  onClick={() => openResult(job, onOpenGuide, onOpenQuiz, onOpenFlashcards)}
+                >
+                  {content}
+                </button>
+                <IconButton
+                  className={styles.dismiss}
+                  size="sm"
+                  label={`Dismiss ${label}`}
+                  icon={<X aria-hidden="true" />}
+                  onClick={() => onDismiss(job.id)}
+                />
+              </div>
             ) : (
               <div className={styles.entry}>{content}</div>
             )}

@@ -4,9 +4,11 @@ import { COURSE, open } from './support'
 
 /**
  * The core learning interaction, end to end in a real browser. Opening a quiz
- * from the course page configures it in a dialog and then hands off to
- * `/courses/:id/practice/:quizId`, so the flow deliberately crosses that
- * boundary rather than stopping at the modal.
+ * from the course page configures it in a dialog, which queues the generation
+ * and closes; the run then appears in the generation rail and opening it from
+ * there hands off to `/courses/:id/practice/:quizId`. The flow deliberately
+ * crosses that boundary rather than stopping at the modal, which never sits the
+ * quiz itself.
  */
 
 async function generateQuiz(page: Page) {
@@ -21,7 +23,7 @@ async function generateQuiz(page: Page) {
 
   await page
     .getByRole('list', { name: 'Background generations' })
-    .getByRole('button', { name: /practice quiz/i })
+    .getByRole('button', { name: /^practice quiz/i })
     .click()
 
   await expect(page).toHaveURL(/\/practice\/4$/)

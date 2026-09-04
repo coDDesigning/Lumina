@@ -552,10 +552,14 @@ questions and `answer_text` for written ones, plus `is_correct`, `score`, and
 `feedback`.
 
 Multiple-choice and true/false grade by option index. Short answers are matched
-against the stored accepted variants after normalizing case, punctuation, and
-whitespace. Open-ended answers are scored by the text-generation provider
-against the stored reference answer, which costs one credit per attempt that
-contains at least one of them.
+against the stored accepted variants after normalizing case, edge punctuation,
+and whitespace. Normalization removes only surface variation: an operator is the
+answer, so `|r| < 1` and `|r| > 1` never agree, while `x >= 0`, `x>=0`, and
+`x ≥ 0` all do. An answer key that normalizes to nothing at all is refused at
+validation rather than persisted, because grading could never match it.
+Open-ended answers are scored by the text-generation provider against the stored
+reference answer, which costs one credit per attempt that contains at least one
+of them.
 
 `is_correct` and `score` are both nullable, and are null together, for one
 reason: an open-ended answer the grader could not score. Such an answer is
@@ -563,6 +567,16 @@ recorded ungraded rather than wrong, is excluded from the attempt score's
 denominator, and is skipped by topic mastery. Losing a student's written work
 because a grading model timed out would be a much worse outcome than an unscored
 answer, so a grading failure never fails the attempt.
+
+`quiz_attempts.score` is nullable for the case where that denominator reaches
+zero, which is every answer on the attempt being ungraded. The attempt then
+reports no score rather than 0.0, because a fabricated zero is indistinguishable
+from every answer being wrong and would be persisted for good. A null-scored
+attempt still counts in `attempts_count` but is left out of `average_score` and
+`completion`, so an outage that graded nothing cannot drag a course average down.
+The materialized `progress.completion` stays `0.0` in that case because the
+column is not nullable; it is a cache, and every read derives completion from the
+attempt history instead.
 
 ## Exam Mode
 

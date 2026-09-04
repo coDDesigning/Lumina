@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { APIError } from '@/api/client';
 import { quizAPI } from '@/api/quiz';
 import type { QuizAttemptResponse, QuizView } from '@/api/types';
 import type { Workspace } from '@/data/workspaces';
@@ -198,6 +199,93 @@ describe('QuizAttemptPage keyboard-only completion', () => {
       { question_id: 1, selected_option_index: 1 },
       { question_id: 2, selected_option_index: 1 },
     ]);
+  });
+});
+
+describe('answering an ordinary practice quiz', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGet.mockResolvedValue(multipleChoiceQuiz(3));
+    vi.mocked(quizAPI.submitAttempt).mockResolvedValue(ATTEMPT);
+  });
+
+  it('never shows the answer while the question is still being answered', async () => {
+    renderPage();
+    await screen.findByRole('radio', { name: 'First' });
+
+    for (const option of screen.getAllByRole('radio')) {
+      expect(option).not.toBeChecked();
+      expect(option).not.toHaveAttribute('data-correct');
+    }
+  });
+
+  it('marks in the navigator which questions have been answered', async () => {
+    renderPage();
+    const navigator = await screen.findByRole('navigation', { name: 'Questions' });
+
+    expect(
+      within(navigator).getByRole('button', { name: 'Question 1, not answered' }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Second' }));
+
+    expect(
+      within(navigator).getByRole('button', { name: 'Question 1, answered' }),
+    ).toBeInTheDocument();
+    expect(
+      within(navigator).getByRole('button', { name: 'Question 2, not answered' }),
+    ).toBeInTheDocument();
+  });
+
+  it('warns about unanswered questions before handing in', async () => {
+    renderPage();
+    await screen.findByRole('radio', { name: 'First' });
+
+    await userEvent.click(screen.getByRole('button', { name: /next question/i }));
+    await userEvent.click(screen.getByRole('button', { name: /next question/i }));
+    await userEvent.click(screen.getByRole('button', { name: /hand it in/i }));
+
+    expect(await screen.findByText(/3 questions are still unanswered/)).toBeInTheDocument();
+  });
+});
+
+describe('when the answers cannot be handed in', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGet.mockResolvedValue(multipleChoiceQuiz(1));
+  });
+
+  it('names why the answers were not saved and keeps the student on the questions', async () => {
+    vi.mocked(quizAPI.submitAttempt).mockRejectedValue(new TypeError('Failed to fetch'));
+    renderPage();
+    await screen.findByRole('radio', { name: 'First' });
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Second' }));
+    await userEvent.click(screen.getByRole('button', { name: /hand it in/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/network error/i);
+    expect(screen.getByRole('radio', { name: 'Second' })).toBeChecked();
+    expect(screen.queryByText('Attempt recorded')).not.toBeInTheDocument();
+  });
+
+  it('hands the same answers in again rather than losing them', async () => {
+    vi.mocked(quizAPI.submitAttempt)
+      .mockRejectedValueOnce(new APIError(503, { detail: 'upstream unavailable' }))
+      .mockResolvedValue(ATTEMPT);
+    renderPage();
+    await screen.findByRole('radio', { name: 'First' });
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Second' }));
+    await userEvent.click(screen.getByRole('button', { name: /hand it in/i }));
+    await screen.findByRole('alert');
+    await userEvent.click(screen.getByRole('button', { name: /hand it in/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(quizAPI.submitAttempt)).toHaveBeenCalledTimes(2);
+    });
+    const [, , retried] = vi.mocked(quizAPI.submitAttempt).mock.calls[1];
+    expect(retried.answers).toEqual([{ question_id: 1, selected_option_index: 1 }]);
+    expect(mockGet).toHaveBeenCalledTimes(1);
   });
 });
 

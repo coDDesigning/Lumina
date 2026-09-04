@@ -16,7 +16,7 @@ vi.mock('@/api/studyGuide', () => ({
 }));
 
 vi.mock('@/api/quiz', () => ({
-  quizAPI: { generate: vi.fn(), submitAttempt: vi.fn() },
+  quizAPI: { enqueue: vi.fn() },
 }));
 
 vi.mock('@/api/flashcards', () => ({
@@ -32,7 +32,7 @@ vi.mock('@/context/AuthContext', () => ({
 }));
 
 const mockStudyGuideEnqueue = vi.mocked(studyGuideAPI.enqueue);
-const mockQuizGenerate = vi.mocked(quizAPI.generate);
+const mockQuizEnqueue = vi.mocked(quizAPI.enqueue);
 const mockFlashcardEnqueue = vi.mocked(flashcardsAPI.enqueue);
 const mockGetCredits = vi.mocked(userAPI.getCredits);
 
@@ -135,32 +135,7 @@ describe('Generation surfaces profile context toggle', () => {
 
   describe('QuizModal', () => {
     it('defaults toggle to false, explains course material primacy, and submits false when untouched', async () => {
-      mockQuizGenerate.mockResolvedValueOnce({
-        generated_output_id: 10,
-        quiz: {
-          quiz_id: 10,
-          course_id: 1,
-          title: 'Quiz 1',
-          created_at: '2026-08-21T10:00:00Z',
-          user_id: 1,
-          model_used: null,
-          generation_settings: null,
-          generation_context: null,
-          quiz_purpose: null,
-          exam_plan_output_id: null,
-          exam_topic_key: null,
-          timed: false,
-          time_limit_seconds: null,
-          answers_hidden: false,
-          questions: [],
-        },
-        context_truncated: false,
-        retrieval_narrowed: false,
-        lowest_similarity: 0.5,
-        highest_similarity: 0.9,
-        chunks_used: 2,
-        chunks_available: 5,
-      });
+      mockQuizEnqueue.mockResolvedValueOnce({ job_id: 10, status: 'queued' });
 
       render(
         <CreditProvider>
@@ -168,6 +143,7 @@ describe('Generation surfaces profile context toggle', () => {
             courseId={1}
             topics={['All Topics']}
             readyDocumentCount={2}
+            onQueued={vi.fn()}
             onClose={vi.fn()}
           />
         </CreditProvider>,
@@ -185,7 +161,7 @@ describe('Generation surfaces profile context toggle', () => {
       );
 
       await waitFor(() => {
-        expect(mockQuizGenerate).toHaveBeenCalledWith(
+        expect(mockQuizEnqueue).toHaveBeenCalledWith(
           1,
           expect.objectContaining({
             use_profile_knowledge: false,
@@ -197,32 +173,7 @@ describe('Generation surfaces profile context toggle', () => {
     });
 
     it('submits use_profile_knowledge: true when toggle is checked in QuizModal', async () => {
-      mockQuizGenerate.mockResolvedValueOnce({
-        generated_output_id: 11,
-        quiz: {
-          quiz_id: 11,
-          course_id: 1,
-          title: 'Quiz 2',
-          created_at: '2026-08-21T10:00:00Z',
-          user_id: 1,
-          model_used: null,
-          generation_settings: null,
-          generation_context: null,
-          quiz_purpose: null,
-          exam_plan_output_id: null,
-          exam_topic_key: null,
-          timed: false,
-          time_limit_seconds: null,
-          answers_hidden: false,
-          questions: [],
-        },
-        context_truncated: false,
-        retrieval_narrowed: false,
-        lowest_similarity: 0.5,
-        highest_similarity: 0.9,
-        chunks_used: 2,
-        chunks_available: 5,
-      });
+      mockQuizEnqueue.mockResolvedValueOnce({ job_id: 10, status: 'queued' });
 
       render(
         <CreditProvider>
@@ -230,6 +181,7 @@ describe('Generation surfaces profile context toggle', () => {
             courseId={1}
             topics={['All Topics']}
             readyDocumentCount={2}
+            onQueued={vi.fn()}
             onClose={vi.fn()}
           />
         </CreditProvider>,
@@ -244,7 +196,7 @@ describe('Generation surfaces profile context toggle', () => {
       );
 
       await waitFor(() => {
-        expect(mockQuizGenerate).toHaveBeenCalledWith(
+        expect(mockQuizEnqueue).toHaveBeenCalledWith(
           1,
           expect.objectContaining({
             use_profile_knowledge: true,

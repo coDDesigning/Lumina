@@ -658,7 +658,7 @@ export interface QuizAnswerResult {
 export interface QuizHistoryItem {
   attempt_id: number;
   quiz_id: number;
-  score: number;
+  score: number | null;
   correct_count: number;
   total_questions: number;
   time_spent_seconds?: number | null;
@@ -671,7 +671,7 @@ export interface QuizHistoryItem {
 export interface QuizAttemptResponse {
   attempt_id: number;
   quiz_id: number;
-  score: number;
+  score: number | null;
   correct_count: number;
   graded_count: number;
   total_questions: number;
@@ -747,7 +747,7 @@ export interface CourseProgressResponse {
   correct_count?: number;
   incorrect_count?: number;
   total_questions_answered?: number;
-  completion?: number;
+  completion?: number | null;
   weak_topics?: string[];
   topic_mastery: TopicMastery[];
   quiz_history?: QuizHistoryItem[];

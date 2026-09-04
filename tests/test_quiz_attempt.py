@@ -1,5 +1,5 @@
 import pytest
-from sqlalchemy import select
+from sqlalchemy import insert, select
 
 from backend.app.models import (
     Course,
@@ -479,7 +479,8 @@ def test_submit_attempt_written_questions_are_stored_ungraded(upload_api) -> Non
 
     assert response.status_code == 201, response.text
     payload = response.json()["data"]
-    assert payload["score"] == 0.0  # Documented rule: 0.0 when 0 gradable questions
+    assert payload["score"] is None
+    assert payload["graded_count"] == 0
     assert payload["correct_count"] == 0
     assert payload["total_questions"] == 2
     assert payload["answers"][0]["is_correct"] is None  # Explicit ungraded state
@@ -728,6 +729,178 @@ def test_progress_aggregates_multiple_quizzes_and_identifies_weak_topics(
     assert len(data["quiz_history"]) == 2
 
 
+def test_a_concurrent_first_attempt_does_not_discard_a_graded_attempt(
+    upload_api, monkeypatch
+) -> None:
+    """The first attempt in a course races another on the Progress insert.
+
+    Both requests read no ``progress`` row and both insert one, so the loser
+    hits ``uq_progress_user_course`` when it flushes. The competing row is
+    written here on the request's own connection because SQLite would not let a
+    second connection write while this transaction holds the file, but the
+    failure the service must survive is the same one: an ``IntegrityError``
+    raised between reading no row and inserting one.
+    """
+    quiz_id, question_ids = _quiz_with_question_ids(upload_api, ["Algebra"])
+
+    import services.quiz_attempt as quiz_attempt_service
+    from backend.app.models import Progress
+
+    sessions: list = []
+    real_aggregate = quiz_attempt_service.QuizAttemptService._aggregate
+    competitor_ran = False
+
+    def capturing_aggregate(db, course_id, user_id):
+        sessions.append(db)
+        return real_aggregate(db, course_id, user_id)
+
+    class RacingProgress(Progress):
+        def __init__(self, **kwargs):
+            nonlocal competitor_ran
+            if not competitor_ran:
+                competitor_ran = True
+                sessions[-1].execute(
+                    insert(Progress).values(
+                        user_id=kwargs["user_id"],
+                        course_id=kwargs["course_id"],
+                        completion=0.0,
+                        quizzes_completed=0,
+                        correct_answers_count=0,
+                        incorrect_answers_count=0,
+                        total_questions_answered=0,
+                    )
+                )
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(
+        quiz_attempt_service.QuizAttemptService,
+        "_aggregate",
+        staticmethod(capturing_aggregate),
+    )
+    monkeypatch.setattr(quiz_attempt_service, "Progress", RacingProgress)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quizzes/{quiz_id}/attempts",
+        json={
+            "answers": [{"question_id": question_ids[0], "selected_option_index": 0}]
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert competitor_ran is True
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["score"] == pytest.approx(1.0)
+
+    with upload_api.session_factory() as session:
+        assert len(session.scalars(select(QuizAttempt)).all()) == 1
+        progress = session.scalars(select(Progress)).one()
+        assert progress.quizzes_completed == 1
+        assert progress.correct_answers_count == 1
+
+
+def test_an_attempt_that_graded_nothing_never_reaches_the_course_average(
+    upload_api, monkeypatch
+) -> None:
+    """A grader outage costs a student marks, never their standing.
+
+    Every answer on the attempt is ungraded, so the denominator is zero and the
+    attempt has no score to report. Fabricating 0.0 would persist a mark the
+    backend cannot produce and drag the course average down for an outage that
+    graded nothing.
+    """
+    import routes.quiz as quiz_route
+    from backend.app.models import Progress
+    from services.text_generation import TextGenerationConnectionError
+
+    graded_quiz_id, graded_question_ids = _quiz_with_question_ids(
+        upload_api, ["Algebra"]
+    )
+    first = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quizzes/{graded_quiz_id}/attempts",
+        json={
+            "answers": [
+                {"question_id": graded_question_ids[0], "selected_option_index": 0}
+            ]
+        },
+        headers=upload_api.authorization,
+    )
+    assert first.status_code == 201, first.text
+    assert first.json()["data"]["score"] == pytest.approx(1.0)
+
+    with upload_api.session_factory() as session:
+        quiz = Quiz(course_id=upload_api.course_id, title="Open-ended only")
+        session.add(quiz)
+        session.flush()
+        for index in range(2):
+            session.add(
+                QuizQuestion(
+                    quiz_id=quiz.id,
+                    question_index=index,
+                    question_type="open_ended",
+                    difficulty="medium",
+                    question_text=f"Explain concept {index + 1}.",
+                    topic="Algorithms",
+                    correct_answer={
+                        "type": "open_ended",
+                        "reference_answer": "A function that calls itself.",
+                    },
+                    explanation="Recursion has a base case and a recursive case.",
+                )
+            )
+        session.commit()
+        open_ended_quiz_id = quiz.id
+        open_ended_question_ids = [question.id for question in quiz.questions]
+
+    def unavailable(**_):
+        raise TextGenerationConnectionError("AI provider unreachable")
+
+    monkeypatch.setattr(quiz_route, "get_text_generation_provider", unavailable)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/quizzes/{open_ended_quiz_id}/attempts",
+        json={
+            "answers": [
+                {
+                    "question_id": question_id,
+                    "text_response": "A function calls itself.",
+                }
+                for question_id in open_ended_question_ids
+            ]
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()["data"]
+    assert payload["graded_count"] == 0
+    assert payload["correct_count"] == 0
+    assert payload["score"] is None
+    assert all(answer["score"] is None for answer in payload["answers"])
+
+    with upload_api.session_factory() as session:
+        stored = session.scalars(
+            select(QuizAttempt).order_by(QuizAttempt.id.desc())
+        ).first()
+        assert stored.score is None
+        assert session.scalars(select(Progress)).one().quizzes_completed == 2
+
+    progress = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/progress",
+        headers=upload_api.authorization,
+    ).json()["data"]
+
+    assert progress["attempts_count"] == 2
+    assert progress["average_score"] == pytest.approx(1.0)
+    assert progress["quiz_history"][0]["score"] is None
+
+    summary = upload_api.client.get(
+        "/api/progress", headers=upload_api.authorization
+    ).json()["data"]
+    course = next(row for row in summary if row["course_id"] == upload_api.course_id)
+    assert course["attempts_count"] == 2
+    assert course["average_score"] == pytest.approx(1.0)
+
+
 def test_transaction_rollback_on_failure_leaves_no_orphaned_state(
     upload_api, monkeypatch
 ) -> None:
@@ -972,6 +1145,7 @@ def test_get_attempt_detail_ungraded_answer_stays_null(upload_api, monkeypatch) 
 
     assert data["graded_count"] == 0
     assert data["correct_count"] == 0
+    assert data["score"] is None
     assert data["total_questions"] == 1
     assert data["answers"][0]["is_correct"] is None
     assert data["answers"][0]["score"] is None

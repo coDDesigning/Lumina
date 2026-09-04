@@ -30,6 +30,7 @@ function renderRail(jobs: GenerationJob[], overrides: Record<string, unknown> = 
     retryingId: null,
     onReload: vi.fn(),
     onRetry: vi.fn(),
+    onDismiss: vi.fn(),
     onOpenGuide: vi.fn(),
     onOpenQuiz: vi.fn(),
     onOpenFlashcards: vi.fn(),
@@ -70,9 +71,9 @@ describe('GenerationRail', () => {
     ]);
     const person = userEvent.setup();
 
-    await person.click(screen.getByRole('button', { name: /Study guide/ }));
-    await person.click(screen.getByRole('button', { name: /Practice quiz/ }));
-    await person.click(screen.getByRole('button', { name: /Flashcards/ }));
+    await person.click(screen.getByRole('button', { name: /^Study guide/ }));
+    await person.click(screen.getByRole('button', { name: /^Practice quiz/ }));
+    await person.click(screen.getByRole('button', { name: /^Flashcards/ }));
 
     expect(props.onOpenGuide).toHaveBeenCalledWith(12);
     expect(props.onOpenQuiz).toHaveBeenCalledWith(42);
@@ -93,6 +94,38 @@ describe('GenerationRail', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('The model could not be reached.');
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(props.onRetry).toHaveBeenCalledWith(1);
+  });
+
+  it('lets a failure be cleared instead of nagging for a day', async () => {
+    const props = renderRail([
+      job({
+        status: 'failed',
+        attempt_count: 3,
+        finished_at: '2026-08-30T12:03:00Z',
+        error_code: 'provider_unavailable',
+        error_message: 'The model could not be reached.',
+      }),
+    ]);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss Study guide' }));
+
+    expect(props.onDismiss).toHaveBeenCalledWith(1);
+  });
+
+  it('lets a finished generation be cleared once it has been opened', async () => {
+    const props = renderRail([
+      job({ status: 'succeeded', generated_output_id: 12, finished_at: '2026-08-30T12:01:00Z' }),
+    ]);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss Study guide' }));
+
+    expect(props.onDismiss).toHaveBeenCalledWith(1);
+  });
+
+  it('offers no way to clear work that is still running', () => {
+    renderRail([job({ status: 'running' })]);
+
+    expect(screen.queryByRole('button', { name: /Dismiss/ })).not.toBeInTheDocument();
   });
 
   it('gives a failed status read a recovery route', async () => {

@@ -2898,9 +2898,15 @@
             "title": "Average Score"
           },
           "completion": {
-            "default": 0.0,
-            "title": "Completion",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion"
           },
           "correct_count": {
             "default": 0,
@@ -7831,6 +7837,7 @@
         "type": "object"
       },
       "QuizAttemptResponse": {
+        "description": "One graded attempt.\n\n``score`` is correct out of ``graded_count`` and is null when that\ndenominator is zero, because an attempt where nothing could be graded has no\nscore to report and 0.0 would be indistinguishable from every answer being\nwrong. A null-scored attempt is excluded from the course average.",
         "properties": {
           "answers": {
             "items": {
@@ -7877,8 +7884,15 @@
             "title": "Quiz Purpose"
           },
           "score": {
-            "title": "Score",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
           },
           "time_spent_seconds": {
             "anyOf": [
@@ -7904,7 +7918,6 @@
         "required": [
           "attempt_id",
           "quiz_id",
-          "score",
           "correct_count",
           "graded_count",
           "total_questions",
@@ -8028,8 +8041,15 @@
             "title": "Quiz Purpose"
           },
           "score": {
-            "title": "Score",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
           },
           "time_spent_seconds": {
             "anyOf": [
@@ -8055,7 +8075,6 @@
         "required": [
           "attempt_id",
           "quiz_id",
-          "score",
           "correct_count",
           "total_questions",
           "created_at"
@@ -13604,6 +13623,72 @@
           }
         ],
         "summary": "Get Generation Job Status",
+        "tags": [
+          "Generation Jobs"
+        ]
+      }
+    },
+    "/api/courses/{course_id}/generation-jobs/{job_id}/dismiss": {
+      "post": {
+        "description": "Clear one finished generation out of the caller's panel.\n\nScoped to the caller like the list read rather than to the course owner,\nbecause a generation belongs to whoever paid for it and dismissing one\nchanges nothing about the course.",
+        "operationId": "dismiss_finished_generation_job_api_courses__course_id__generation_jobs__job_id__dismiss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_GenerationJobView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Course or generation job not found"
+          },
+          "409": {
+            "description": "Generation job has not finished"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Dismiss Finished Generation Job",
         "tags": [
           "Generation Jobs"
         ]

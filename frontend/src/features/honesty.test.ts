@@ -25,6 +25,7 @@ const NULLABLE_METRICS = [
   'monthly_grant',
   'graded_count',
   'correct_count',
+  'scorePercent',
 ];
 
 const FABRICATED_ZERO = new RegExp(

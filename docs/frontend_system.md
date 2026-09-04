@@ -302,6 +302,9 @@ Three rules the UI enforces so nobody discovers them through an error:
   **graded**; anything ungraded is counted separately and never as an error. Deriving
   "incorrect" as `total - correct` marks unscored written answers wrong, which is the bug
   `tallyAttempt` exists to prevent.
+- When `graded_count` is `0` the backend sends `score: null` and `tallyAttempt` returns
+  `scorePercent: null`, so the headline reads **"Not scored"**. Rendering `0%` there would
+  show a number the backend did not produce.
 - Each question type gets its own layout: a radio group for multiple choice, a two-way
   choice for true/false, a line for short answer, a box for a written answer. Options are
   real `input[type=radio]` in one named group, never styled buttons — a screen reader must

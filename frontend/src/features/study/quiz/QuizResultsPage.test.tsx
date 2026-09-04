@@ -212,7 +212,7 @@ describe('QuizResultsPage', () => {
     const ungradedAttempt: QuizAttemptResponse = {
       attempt_id: 202,
       quiz_id: 1,
-      score: 0,
+      score: null,
       correct_count: 0,
       graded_count: 0,
       total_questions: 1,
@@ -258,6 +258,9 @@ describe('QuizResultsPage', () => {
     expect(await screen.findByText('Prove why eigenvalues of symmetric matrices are real.')).toBeInTheDocument();
     expect(screen.getAllByText('Not scored').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/could not be marked automatically/i)).toBeInTheDocument();
+    // The headline itself must not claim a mark the backend never produced.
+    expect(screen.getByRole('heading', { name: 'Not scored' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /^0%$/ })).not.toBeInTheDocument();
   });
 });
 

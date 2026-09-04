@@ -212,7 +212,11 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             ...state,
             [type]: {
               conversationId: detail.id,
-              messages: detail.messages.map(({ role, content }) => ({ role, content })),
+              messages: detail.messages.map(({ role, content, citations }) => ({
+                role,
+                content,
+                citations,
+              })),
               isLoading: false,
               error: null,
             },
@@ -294,7 +298,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
   } = useCourseDocuments(courseId);
 
   const navigate = useNavigate();
-  const { progress, reload: reloadProgress } = useCourseProgress(courseId);
+  const { progress } = useCourseProgress(courseId);
   const {
     artifacts,
     isLoading: areArtifactsLoading,
@@ -828,6 +832,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                   retryingId={generationJobs.retryingId}
                   onReload={() => void generationJobs.reload()}
                   onRetry={(jobId) => void generationJobs.retry(jobId)}
+                  onDismiss={(jobId) => void generationJobs.dismiss(jobId)}
                   onOpenGuide={(outputId) => setViewerGuideId(outputId)}
                   onOpenQuiz={(quizId) => navigate(`/courses/${workspace.id}/practice/${quizId}`)}
                   onOpenFlashcards={(outputId) => setOpenDeckId(outputId)}
@@ -943,7 +948,6 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
           topics={workspace.topics}
           readyDocumentCount={readyCount}
           onClose={() => setIsQuizOpen(false)}
-          onAttemptRecorded={reloadProgress}
         />
       ) : null}
 

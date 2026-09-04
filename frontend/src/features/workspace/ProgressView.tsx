@@ -220,12 +220,12 @@ export function ProgressView({
                 item.time_spent_seconds != null
                   ? formatStudyTime(item.time_spent_seconds)
                   : null;
+              const scoreLabel =
+                item.score === null ? 'Not scored' : `${Math.round(item.score * 100)}%`;
               const content = (
                 <>
                   <span className={styles.historyDate}>{formatDate(item.created_at)}</span>
-                  <span className={cx(styles.historyScore, 'tabular')}>
-                    {Math.round(item.score * 100)}%
-                  </span>
+                  <span className={cx(styles.historyScore, 'tabular')}>{scoreLabel}</span>
                   <span className={cx(styles.historyDetail, 'tabular')}>
                     {item.correct_count} of {item.total_questions}
                   </span>
@@ -241,7 +241,7 @@ export function ProgressView({
                     <Link
                       to={`/courses/${courseId}/practice/${item.quiz_id}/attempts/${item.attempt_id}`}
                       className={styles.historyLink}
-                      aria-label={`Review attempt from ${formatDate(item.created_at)}: ${Math.round(item.score * 100)}%${spent !== null ? `, ${spent} spent` : ''}`}
+                      aria-label={`Review attempt from ${formatDate(item.created_at)}: ${scoreLabel}${spent !== null ? `, ${spent} spent` : ''}`}
                     >
                       {content}
                     </Link>

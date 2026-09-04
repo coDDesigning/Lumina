@@ -8,7 +8,9 @@ from schemas.generation_job import GenerationJobAccepted, GenerationJobView
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.generation_jobs import (
+    GenerationJobNotDismissableError,
     GenerationJobNotRetryableError,
+    dismiss_generation_job,
     get_generation_job,
     list_course_generation_jobs,
     retry_generation_job,
@@ -121,4 +123,50 @@ def retry_failed_generation_job(
         success=True,
         message="Generation queued again",
         data=GenerationJobAccepted(job_id=job.id, status=job.status),
+    )
+
+
+@router.post(
+    "/{course_id}/generation-jobs/{job_id}/dismiss",
+    response_model=BaseResponse[GenerationJobView],
+    responses={
+        401: {"description": "Authentication required"},
+        404: {"description": "Course or generation job not found"},
+        409: {"description": "Generation job has not finished"},
+    },
+)
+def dismiss_finished_generation_job(
+    job_id: int,
+    course: AuthorizedCourse,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[GenerationJobView]:
+    """Clear one finished generation out of the caller's panel.
+
+    Scoped to the caller like the list read rather than to the course owner,
+    because a generation belongs to whoever paid for it and dismissing one
+    changes nothing about the course.
+    """
+    try:
+        job = dismiss_generation_job(
+            db,
+            course_id=course.id,
+            user_id=current_user.id,
+            job_id=job_id,
+        )
+    except GenerationJobNotDismissableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Generation job not found",
+        )
+
+    return BaseResponse(
+        success=True,
+        message="Generation dismissed",
+        data=GenerationJobView.from_job(job),
     )

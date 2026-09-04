@@ -640,6 +640,13 @@ const ROUTES: Answer[] = [
   [/^\/api\/courses\/(\d+)\/progress/, () => envelope(PROGRESS)],
   [/^\/api\/courses\/(\d+)\/settings/, () => envelope(SETTINGS)],
   [/^\/api\/courses\/(\d+)\/generation-jobs\/(\d+)\/retry$/, () => envelope({ job_id: GENERATION_JOB.id, status: 'queued' })],
+  [
+    /^\/api\/courses\/(\d+)\/generation-jobs\/(\d+)\/dismiss$/,
+    () => {
+      quizJobQueued = false
+      return envelope({ ...GENERATION_JOB, dismissed_at: '2026-08-30T12:05:00Z' })
+    },
+  ],
   [/^\/api\/courses\/(\d+)\/generation-jobs\/(\d+)$/, () => envelope(GENERATION_JOB)],
   [/^\/api\/courses\/(\d+)\/generation-jobs$/, () => envelope(quizJobQueued ? [GENERATION_JOB] : [])],
   [

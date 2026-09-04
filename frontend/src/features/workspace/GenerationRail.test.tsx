@@ -18,6 +18,8 @@ function job(overrides: Partial<GenerationJob> = {}): GenerationJob {
     error_message: null,
     generated_output_id: null,
     quiz_id: null,
+    requested_model: null,
+    fallback_model: null,
     ...overrides,
   };
 }
@@ -30,6 +32,7 @@ function renderRail(jobs: GenerationJob[], overrides: Record<string, unknown> = 
     retryingId: null,
     onReload: vi.fn(),
     onRetry: vi.fn(),
+    onDismiss: vi.fn(),
     onOpenGuide: vi.fn(),
     onOpenQuiz: vi.fn(),
     onOpenFlashcards: vi.fn(),
@@ -70,9 +73,9 @@ describe('GenerationRail', () => {
     ]);
     const person = userEvent.setup();
 
-    await person.click(screen.getByRole('button', { name: /Study guide/ }));
-    await person.click(screen.getByRole('button', { name: /Practice quiz/ }));
-    await person.click(screen.getByRole('button', { name: /Flashcards/ }));
+    await person.click(screen.getByRole('button', { name: /^Study guide/ }));
+    await person.click(screen.getByRole('button', { name: /^Practice quiz/ }));
+    await person.click(screen.getByRole('button', { name: /^Flashcards/ }));
 
     expect(props.onOpenGuide).toHaveBeenCalledWith(12);
     expect(props.onOpenQuiz).toHaveBeenCalledWith(42);
@@ -93,6 +96,70 @@ describe('GenerationRail', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('The model could not be reached.');
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(props.onRetry).toHaveBeenCalledWith(1);
+  });
+
+  it('lets a failure be cleared instead of nagging for a day', async () => {
+    const props = renderRail([
+      job({
+        status: 'failed',
+        attempt_count: 3,
+        finished_at: '2026-08-30T12:03:00Z',
+        error_code: 'provider_unavailable',
+        error_message: 'The model could not be reached.',
+      }),
+    ]);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss Study guide' }));
+
+    expect(props.onDismiss).toHaveBeenCalledWith(1);
+  });
+
+  it('lets a finished generation be cleared once it has been opened', async () => {
+    const props = renderRail([
+      job({ status: 'succeeded', generated_output_id: 12, finished_at: '2026-08-30T12:01:00Z' }),
+    ]);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss Study guide' }));
+
+    expect(props.onDismiss).toHaveBeenCalledWith(1);
+  });
+
+  it('offers no way to clear work that is still running', () => {
+    renderRail([job({ status: 'running' })]);
+
+    expect(screen.queryByRole('button', { name: /Dismiss/ })).not.toBeInTheDocument();
+  });
+
+  it('names the vendor that answered when the chosen one did not', () => {
+    // A silent fallback looks exactly like the model the student picked.
+    renderRail([
+      job({
+        job_type: 'generate_quiz',
+        status: 'succeeded',
+        quiz_id: 4,
+        finished_at: '2026-08-30T12:01:00Z',
+        requested_model: 'ollama:llama3',
+        fallback_model: 'gemini:gemini-3.6-flash',
+      }),
+    ]);
+
+    expect(screen.getByText(/ollama:llama3 was unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/gemini:gemini-3.6-flash/i)).toBeInTheDocument();
+  });
+
+  it('says nothing about vendors when the chosen one answered', () => {
+    renderRail([
+      job({
+        job_type: 'generate_quiz',
+        status: 'succeeded',
+        quiz_id: 4,
+        finished_at: '2026-08-30T12:01:00Z',
+        requested_model: 'gemini:gemini-3.6-flash',
+        fallback_model: null,
+      }),
+    ]);
+
+    expect(screen.queryByText(/unavailable/i)).not.toBeInTheDocument();
   });
 
   it('gives a failed status read a recovery route', async () => {

@@ -83,7 +83,11 @@ export function ReverseQuizSession({
 
         <div className={styles.section}>
           <h3>Feedback</h3>
-          <Markdown className={styles.feedback} text={result.feedback} />
+          <Markdown
+            className={styles.feedback}
+            text={result.feedback}
+            citations={result.citations}
+          />
         </div>
 
         {result.misconceptions.length > 0 ? (
@@ -98,7 +102,11 @@ export function ReverseQuizSession({
                   <div className={styles.misconceptionConcept}>
                     <strong>{m.concept}</strong>
                   </div>
-                  <Markdown className={styles.misconceptionDetail} text={m.detail} />
+                  <Markdown
+                    className={styles.misconceptionDetail}
+                    text={m.detail}
+                    citations={result.citations}
+                  />
                 </li>
               ))}
             </ul>

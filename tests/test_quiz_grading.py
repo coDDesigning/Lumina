@@ -3,8 +3,10 @@ from sqlalchemy import select
 
 import routes.quiz as quiz_route
 from backend.app.models import Quiz, QuizAttempt, QuizAttemptAnswer, QuizQuestion, User
-from schemas.quiz_attempt import OPEN_ENDED_PASS_THRESHOLD
+from schemas.quiz import ShortAnswerAnswer
+from schemas.quiz_attempt import OPEN_ENDED_PASS_THRESHOLD, QuizAnswerSubmission
 from services.prompt_loader import PromptLoader
+from services.quiz_grading import _short_answer_verdict
 from services.text_generation import (
     GenerationMetadata,
     TemperatureBindingMixin,
@@ -169,6 +171,66 @@ def test_unanswered_short_answer_scores_zero(upload_api, monkeypatch):
     )
 
     assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("stored", "written"),
+    [
+        ("|r| < 1", "|r| > 1"),
+        ("x >= 0", "x <= 0"),
+        ("2 + 2", "2 - 2"),
+        ("|r| < 1", "r 1"),
+        ("f'(x)", "f(x)"),
+        ("p -> q", "p <- q"),
+        ("n! ", "n"),
+    ],
+)
+def test_an_operator_that_reverses_the_claim_is_not_a_match(stored, written):
+    verdict = _short_answer_verdict(
+        ShortAnswerAnswer(text=stored, accepted_answers=[stored]),
+        QuizAnswerSubmission(question_id=1, text_response=written),
+    )
+
+    assert verdict == (False, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("stored", "written"),
+    [
+        ("|r| < 1", "|r| < 1."),
+        ("|r| < 1", "  |R| < 1;  "),
+        ("x >= 0", "x ≥ 0"),
+        ("x >= 0", "x>=0"),
+        ("x ≥ 0", "x >= 0"),
+        ("p -> q", "p → q"),
+        ("a != b", "a ≠ b"),
+        ("O(log n)", "  o(LOG N). "),
+        ("O(log n)", "logarithmic"),
+    ],
+)
+def test_surface_spelling_still_carries_no_meaning(stored, written):
+    accepted = [stored] if stored != "O(log n)" else ["O(log n)", "logarithmic"]
+
+    verdict = _short_answer_verdict(
+        ShortAnswerAnswer(text=stored, accepted_answers=accepted),
+        QuizAnswerSubmission(question_id=1, text_response=written),
+    )
+
+    assert verdict == (True, 1.0)
+
+
+def test_a_symbol_only_answer_is_compared_rather_than_erased(upload_api, monkeypatch):
+    correct = _short_answer_verdict(
+        ShortAnswerAnswer(text="≥", accepted_answers=["≥"]),
+        QuizAnswerSubmission(question_id=1, text_response="≥"),
+    )
+    wrong = _short_answer_verdict(
+        ShortAnswerAnswer(text="≥", accepted_answers=["≥"]),
+        QuizAnswerSubmission(question_id=1, text_response="≤"),
+    )
+
+    assert correct == (True, 1.0)
+    assert wrong == (False, 0.0)
 
 
 # ---------------------------------------------------------------------------

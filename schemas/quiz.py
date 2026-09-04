@@ -39,18 +39,36 @@ MAX_SHORT_ANSWER_CHARS = 200
 MAX_TOPIC_CHARS = 200
 MAX_TITLE_CHARS = 200
 
-_PUNCTUATION = re.compile(r"[^\w\s]", flags=re.UNICODE)
+_OPERATOR_SPELLINGS: tuple[tuple[str, str], ...] = (
+    (">=", "≥"),
+    ("<=", "≤"),
+    ("!=", "≠"),
+    ("<>", "≠"),
+    ("->", "→"),
+    ("<-", "←"),
+)
+_OPERATORS = r"<>=≤≥≠+\-*/^→←"
+_OPERATOR_SPACING = re.compile(rf"\s*([{_OPERATORS}])\s*")
 _WHITESPACE = re.compile(r"\s+")
+_EDGE_PUNCTUATION = ".,;:"
 
 
 def normalize_answer_text(value: str) -> str:
     """Reduce a free-text answer to the form short-answer grading compares.
 
-    Case, surrounding punctuation, and whitespace runs carry no meaning in a
-    one-line answer, so ``"  O(LOG N). "`` and ``"O(log n)"`` must agree.
+    Case, trailing sentence punctuation, and whitespace runs carry no meaning in
+    a one-line answer, so ``"  O(LOG N). "`` and ``"O(log n)"`` must agree.
+    Operators carry all of it, so ``"|r| < 1"`` and ``"|r| > 1"`` must not: the
+    relation is the answer. Only ``. , ; :`` are stripped, and only at the edges;
+    ``!`` stays because it is factorial. Equivalent spellings of one operator are
+    folded onto a single form and the whitespace around an operator is dropped,
+    so ``"x >= 0"``, ``"x>=0"``, and ``"x ≥ 0"`` all agree.
     """
     folded = unicodedata.normalize("NFKC", value).casefold()
-    return _WHITESPACE.sub(" ", _PUNCTUATION.sub(" ", folded)).strip()
+    for spelling, canonical in _OPERATOR_SPELLINGS:
+        folded = folded.replace(spelling, canonical)
+    collapsed = _WHITESPACE.sub(" ", _OPERATOR_SPACING.sub(r"\1", folded))
+    return collapsed.strip().strip(_EDGE_PUNCTUATION).strip()
 
 
 class QuizQuestionType(str, Enum):
@@ -240,6 +258,11 @@ class GeneratedShortAnswerQuestion(GeneratedQuestionBase):
         stripped = value.strip()
         if not stripped:
             raise ValueError("A short answer question needs a non-blank answer")
+        if not normalize_answer_text(stripped):
+            raise ValueError(
+                "A short answer question needs an answer that normalizes to "
+                "something comparable"
+            )
         return stripped
 
     def accepted_variants(self) -> list[str]:

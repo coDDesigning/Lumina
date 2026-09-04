@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from backend.app.config import settings
 from backend.app.models import Conversation, ConversationMessage, Course, User
 from schemas.ai_usage import ErrorCategory, GenerationType
+from schemas.citation import Citation
 from schemas.prompt_context import PromptContext
 from schemas.reverse_quiz import (
     Misconception,
@@ -29,6 +30,7 @@ from services.retrieval_material import (
 )
 from services.text_generation import (
     TextGenerationProvider,
+    model_identifier,
     with_template_temperature,
 )
 
@@ -174,9 +176,17 @@ class ReverseQuizService:
             evaluation.feedback, material.citation_map
         )
 
+        # Every marker the student can see resolves through one list, because a
+        # key is positional across the whole evaluation rather than per claim.
+        cited: dict[str, Citation] = {
+            citation.key: citation for citation in feedback_cited.citations
+        }
+
         misconceptions = []
         for m in evaluation.misconceptions:
             m_cited = sanitize_citation_markers(m.detail, material.citation_map)
+            for citation in m_cited.citations:
+                cited.setdefault(citation.key, citation)
             misconceptions.append(
                 Misconception(concept=m.concept, status=m.status, detail=m_cited.text)
             )
@@ -198,21 +208,14 @@ class ReverseQuizService:
             feedback=feedback_cited.text,
             misconceptions=misconceptions,
             question=request.question,
-        )
-
-        model_used = (
-            metadata.model
-            if metadata
-            else getattr(provider, "effective_model", None)
-            or getattr(provider, "model", None)
-            or provider.name
+            citations=list(cited.values()),
         )
 
         output = GeneratedOutputService.record(
             db,
             course_id=course_id,
             user_id=user.id,
-            model_used=model_used,
+            model_used=model_identifier(metadata),
             output_type="reverse_quiz",
             content=response_model.model_dump_json(),
             commit=False,

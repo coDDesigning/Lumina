@@ -49,6 +49,7 @@ const SAMPLE_RESPONSE: ReverseQuizResponse = {
       status: 'partially_correct',
     },
   ],
+  citations: [],
 };
 
 function renderPage() {
@@ -125,6 +126,45 @@ describe('ReverseQuizPage', () => {
     expect(
       screen.getByText('A zero eigenvalue is valid and indicates a non-invertible matrix.'),
     ).toBeInTheDocument();
+  });
+
+  it('resolves a cited marker into its source instead of printing the key', async () => {
+    // The feedback keeps its [S1] markers; without the citations beside them
+    // the student is left reading a key that names nothing.
+    const user = userEvent.setup();
+    mockGenerateReverseQuiz.mockResolvedValueOnce({
+      ...SAMPLE_RESPONSE,
+      feedback: 'Soil is not the source [S1].',
+      misconceptions: [
+        {
+          concept: 'Plant nutrition',
+          detail: 'The material says light [S1].',
+          status: 'contradicted',
+        },
+      ],
+      citations: [
+        {
+          key: 'S1',
+          document_id: '11111111-1111-1111-1111-111111111111',
+          document_label: 'Lecture 4',
+          page_start: 12,
+          page_end: 12,
+        },
+      ],
+    });
+
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Eigenvalues' }));
+    await user.type(screen.getByRole('textbox'), 'Plants eat soil.');
+    await user.click(screen.getByRole('button', { name: 'Submit Explanation' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Analysis for: Eigenvalues')).toBeInTheDocument();
+    });
+
+    expect(screen.getAllByText(/Lecture 4/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/\[S1\]/)).not.toBeInTheDocument();
   });
 
   it('names a provider outage and retries without a retype', async () => {

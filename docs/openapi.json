@@ -8861,7 +8861,15 @@
         "type": "object"
       },
       "ReverseQuizResponse": {
+        "description": "One evaluation, with the sources its markers point at.\n\n``feedback`` and each misconception ``detail`` keep the ``[S1]`` markers the\ngrader resolved, so ``citations`` is what turns them back into a document\nand a page. It is stored alongside the text rather than rebuilt on read, so\nreopening the session names the same sources with no provider call. It\ndefaults to empty because rows written before citations were carried have\nnone, and a marker nothing resolves is shown as plain text rather than as a\nsource the student cannot check.",
         "properties": {
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
           "course_id": {
             "title": "Course Id",
             "type": "integer"

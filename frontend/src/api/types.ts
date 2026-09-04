@@ -1366,6 +1366,7 @@ export interface ReverseQuizResponse {
   feedback: string;
   misconceptions: Misconception[];
   question?: string | null;
+  citations?: Citation[];
 }
 
 export interface ReverseQuizQuestion {

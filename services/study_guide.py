@@ -47,6 +47,7 @@ from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
     model_identifier,
+    with_template_temperature,
 )
 from services.credits import ChargeReceipt, CreditService, GENERATION_CREDIT_COSTS
 from utils.ai_errors import (
@@ -219,8 +220,6 @@ class StudyGuideService:
                 "DETAIL_LEVEL": DETAIL_LEVEL_DIRECTIVES[options.detail_level],
                 "SUMMARY_MODE": SUMMARY_MODE_DIRECTIVES[options.summary_mode],
                 "TOPIC_FOCUS": options.topic_focus,
-                # Rendered last so course material and profile context can never forge a placeholder
-                # that a later substitution would then fill in.
                 "TEXT": course_material,
                 "PROFILE_CONTEXT": format_profile_context(profile_knowledge),
             },
@@ -395,6 +394,10 @@ class StudyGuideService:
             metadata = None
 
             try:
+                # The template's own declared temperature, applied to the call it was declared for.
+                provider = with_template_temperature(
+                    provider, PromptLoader.temperature_for(cls.PROMPT_TEMPLATE_NAME)
+                )
                 if hasattr(provider, "generate_json_with_metadata"):
                     result, metadata = provider.generate_json_with_metadata(prompt)
                 else:

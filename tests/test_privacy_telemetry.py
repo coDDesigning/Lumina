@@ -72,7 +72,10 @@ class PrivacySafeMockProvider:
             }
             return quiz_data, self.metadata
 
-        if "PROMPT" in prompt.upper() or "generated_prompt" in prompt.lower():
+        # Matched on the output key the prompt-generator template asks for rather
+        # than on the word "prompt": every rendered prompt now carries the shared
+        # safety directive, which speaks of system prompt overrides.
+        if "generated_prompt" in prompt.lower():
             prompt_gen_data = {
                 "generated_prompt": "Clean generated system prompt",
             }

@@ -9,7 +9,11 @@ from services.ai_usage_logger import AiUsageLogger
 from schemas.prompt_context import PromptContext
 from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
-from services.text_generation import TextGenerationError, TextGenerationProvider
+from services.text_generation import (
+    TextGenerationError,
+    TextGenerationProvider,
+    with_template_temperature,
+)
 from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from utils.ai_errors import InsufficientCreditsError
 
@@ -88,6 +92,10 @@ class PromptGeneratorService:
                 raise InsufficientCreditsError("Insufficient credits.")
 
         try:
+            # The template's own declared temperature, applied to the call it was declared for.
+            provider = with_template_temperature(
+                provider, PromptLoader.temperature_for(cls.PROMPT_TEMPLATE_NAME)
+            )
             if hasattr(provider, "generate_json_with_metadata"):
                 result, metadata = provider.generate_json_with_metadata(prompt)
             else:

@@ -193,9 +193,6 @@ def _build_prompt(
             "DIFFICULTY_DIRECTIVE": difficulty_directive(policy),
             "QUESTION_TYPE_DIRECTIVES": _type_block(question_types),
             "QUESTION_TYPE_SCHEMAS": _schema_block(question_types),
-            # Rendered last so a placeholder appearing inside the topic label,
-            # an original question, or the course material can never be filled
-            # in by a later substitution.
             "TOPIC_LABEL": topic.display_label,
             "ORIGINAL_QUESTIONS": originals,
             "TEXT": material,

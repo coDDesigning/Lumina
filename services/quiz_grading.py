@@ -37,7 +37,10 @@ from services.prompt_context import resolve_prompt_context
 from schemas.reverse_quiz import Misconception
 from services.prompt_loader import PromptLoader
 from services.quiz import parse_correct_answer
-from services.text_generation import TextGenerationProvider
+from services.text_generation import (
+    TextGenerationProvider,
+    with_template_temperature,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +237,10 @@ class QuizGradingService:
         metadata = None
 
         try:
+            # The template's own declared temperature, applied to the call it was declared for.
+            provider = with_template_temperature(
+                provider, PromptLoader.temperature_for(cls.PROMPT_TEMPLATE_NAME)
+            )
             if hasattr(provider, "generate_json_with_metadata"):
                 result, metadata = provider.generate_json_with_metadata(prompt)
             else:

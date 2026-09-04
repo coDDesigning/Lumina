@@ -19,7 +19,7 @@ from schemas.reverse_quiz import (
     ReverseQuizResponse,
 )
 from services.ai_usage_logger import AiUsageLogger
-from services.citations import sanitize_citation_markers
+from services.citations import sanitize_citation_markers, strip_citation_markers
 from services.generated_output import GeneratedOutputService
 from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
@@ -28,7 +28,11 @@ from services.retrieval_material import (
     RetrievedCourseMaterial,
     load_retrieved_material,
 )
-from services.text_generation import TextGenerationProvider, model_identifier
+from services.text_generation import (
+    TextGenerationProvider,
+    model_identifier,
+    with_template_temperature,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +136,10 @@ class ReverseQuizService:
 
         metadata = None
         try:
+            # The template's own declared temperature, applied to the call it was declared for.
+            provider = with_template_temperature(
+                provider, PromptLoader.temperature_for(cls.PROMPT_TEMPLATE_NAME)
+            )
             if hasattr(provider, "generate_json_with_metadata"):
                 result, metadata = provider.generate_json_with_metadata(prompt)
             else:
@@ -233,10 +241,17 @@ class ReverseQuizService:
         if not rows:
             return ""
 
-        lines = [
-            f"{'Student' if role == 'user' else 'Assistant'}: {content.strip()}"
+        # Markers are stripped here for the same reason ConversationService.format_history
+        # strips them: a key stored with an earlier turn resolves against a later turn's
+        # own map and would name the wrong passage.
+        turns = (
+            (role, strip_citation_markers(content or "").strip())
             for role, content in reversed(rows)
-            if content and content.strip()
+        )
+        lines = [
+            f"{'Student' if role == 'user' else 'Assistant'}: {text}"
+            for role, text in turns
+            if text
         ]
         digest = "\n".join(lines)
         if len(digest) > REVERSE_QUIZ_HISTORY_MAX_CHARS:
@@ -291,6 +306,11 @@ class ReverseQuizService:
 
         metadata = None
         try:
+            # The template's own declared temperature, applied to the call it was declared for.
+            provider = with_template_temperature(
+                provider,
+                PromptLoader.temperature_for(cls.QUESTIONS_PROMPT_TEMPLATE_NAME),
+            )
             if hasattr(provider, "generate_json_with_metadata"):
                 result, metadata = provider.generate_json_with_metadata(prompt)
             else:

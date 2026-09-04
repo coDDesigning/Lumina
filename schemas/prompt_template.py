@@ -152,6 +152,11 @@ class PromptTemplateModel(BaseModel):
         Every placeholder declared in the template body must have a value, checked
         against the body rather than the rendered output so that a placeholder
         appearing inside a variable's value stays inert.
+
+        Substitution is a single pass over the template body: a placeholder that a
+        substituted value contains is never rescanned, so no value can forge a
+        placeholder another value then fills in. The guarantee holds for every
+        variable regardless of the order the caller supplied them in.
         """
         render_vars = dict(variables)
 
@@ -164,9 +169,6 @@ class PromptTemplateModel(BaseModel):
                 f"placeholder(s): {', '.join(sorted(unresolved))}"
             )
 
-        rendered = self.template
-        for key, value in render_vars.items():
-            placeholder = f"{{{{{key}}}}}"
-            rendered = rendered.replace(placeholder, str(value))
-
-        return rendered
+        return _PLACEHOLDER_PATTERN.sub(
+            lambda match: str(render_vars[match.group(1)]), self.template
+        )

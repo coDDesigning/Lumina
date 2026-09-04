@@ -16,6 +16,7 @@ from schemas.prompt_template import (
     PromptTemplateValidationError,
     UnexpectedPromptVariableError,
 )
+from services.prompt_components import build_governance_block
 
 __all__ = [
     "PromptLoader",
@@ -104,6 +105,12 @@ class PromptLoader:
         A deferred template is refused unless the caller opts in explicitly. Only
         rendering is guarded: `load_template` and `load_all` keep the whole catalog
         introspectable so tooling and tests can read a deferred template's metadata.
+
+        This is the single production rendering path, so it is also where the
+        shared grounding and safety directives of `services/prompt_components.py`
+        and the template's own declared `safety_constraints`/`style_constraints`
+        are appended. A template body cannot drift away from those protections,
+        and a constraint declared in template metadata is never inert.
         """
         template = cls.load_template(name, directory=directory, reload=reload)
         if template.status == "deferred" and not allow_deferred:
@@ -111,7 +118,27 @@ class PromptLoader:
                 f"Prompt template '{template.name}' is deferred and must not be "
                 f"rendered in production: {template.deferral_reason}"
             )
-        return template.render(variables)
+        rendered = template.render(variables)
+        governance = build_governance_block(
+            safety_constraints=template.safety_constraints,
+            style_constraints=template.style_constraints,
+        )
+        return f"{rendered.rstrip()}\n\n{governance}"
+
+    @classmethod
+    def temperature_for(cls, name: str, directory: Path | None = None) -> float | None:
+        """The sampling temperature this template declares, or None if it declares none.
+
+        Read by the call site that generates from the template, so a declared
+        `model_hints.temperature` reaches the provider instead of sitting inert
+        beside it. A non-numeric hint is ignored rather than raised on, because a
+        malformed hint must not be able to fail a generation.
+        """
+        template = cls.load_template(name, directory=directory)
+        declared = template.model_hints.get("temperature")
+        if isinstance(declared, bool) or not isinstance(declared, (int, float)):
+            return None
+        return float(declared)
 
     @classmethod
     def get_render_metadata(

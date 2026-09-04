@@ -232,9 +232,6 @@ def _build_prompt(
     }
     if style is not None:
         variables["PAST_QUESTION_STYLE"] = style
-    # Rendered last so a placeholder appearing inside the topic label, the past
-    # questions, or the course material can never be filled in by a later
-    # substitution.
     variables["TOPIC_LABEL"] = topic.display_label
     variables["TEXT"] = material
     return PromptLoader.render(kind.template, variables)

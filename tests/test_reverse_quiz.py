@@ -3,7 +3,7 @@ import json
 import pytest
 from sqlalchemy import select
 
-from backend.app.models import GeneratedOutput
+from backend.app.models import Conversation, ConversationMessage, GeneratedOutput
 from schemas.reverse_quiz import ConceptStatus
 from services.text_generation import GenerationMetadata
 from tests.generation_fixtures import seed_ready_material
@@ -490,3 +490,59 @@ def test_reverse_quiz_omits_mastered_topics_from_weak_topics(upload_api) -> None
     payload = response.json()["data"]
 
     assert "Cell Biology (Reverse Quiz)" not in payload["weak_topics"]
+
+
+def test_reverse_quiz_questions_prompt_strips_citation_markers_from_history(
+    upload_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """History re-entering a prompt is sanitized here too, not only in format_history.
+
+    A key stored with an earlier Q&A turn resolves against a later turn's own
+    citation map, so it would name the wrong passage if it survived into a new prompt.
+    """
+    with upload_api.session_factory() as session:
+        seed_ready_material(
+            session,
+            upload_api.course_id,
+            [
+                "Insertion sort builds a sorted prefix by shifting larger elements right."
+            ],
+            file_hash="e" * 64,
+            retrieval_env=retrieval_env,
+        )
+        conversation = Conversation(
+            user_id=upload_api.user_id,
+            course_id=upload_api.course_id,
+            conversation_type="course_qa",
+        )
+        session.add(conversation)
+        session.flush()
+        session.add_all(
+            [
+                ConversationMessage(
+                    conversation_id=conversation.id,
+                    role="user",
+                    content="Why is insertion sort quadratic?",
+                ),
+                ConversationMessage(
+                    conversation_id=conversation.id,
+                    role="assistant",
+                    content="It shifts every larger element on each pass. [S2]",
+                ),
+            ]
+        )
+        session.commit()
+
+    stub = _EvalStub({"questions": []})
+    _install_provider(monkeypatch, stub)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/reverse-quiz/questions",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert stub.prompts, "the prompt was never built"
+    prompt = stub.prompts[0]
+    assert "It shifts every larger element on each pass." in prompt
+    assert "[S2]" not in prompt

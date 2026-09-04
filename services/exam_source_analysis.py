@@ -83,6 +83,7 @@ from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
     model_identifier,
+    with_template_temperature,
 )
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
@@ -295,9 +296,6 @@ class ExamSourceAnalysisService:
             {
                 **context.as_variables(),
                 "TOPIC_FOCUS": request.topic_focus,
-                # Rendered last so a placeholder appearing inside student text
-                # or course material can never be filled in by a later
-                # substitution.
                 "DECLARED_TOPICS": (
                     topics_text[:MAX_DECLARED_TOPICS_PROMPT_CHARS]
                     or NO_DECLARED_TOPICS_TEXT
@@ -522,6 +520,10 @@ class ExamSourceAnalysisService:
 
             metadata = None
             try:
+                # The template's own declared temperature, applied to the call it was declared for.
+                provider = with_template_temperature(
+                    provider, PromptLoader.temperature_for(cls.PROMPT_TEMPLATE_NAME)
+                )
                 if hasattr(provider, "generate_json_with_metadata"):
                     result, metadata = provider.generate_json_with_metadata(prompt)
                 else:

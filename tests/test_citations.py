@@ -367,3 +367,20 @@ def test_a_citation_document_reads_back_when_a_later_version_added_fields():
     )
 
     assert citation.key == "S1"
+
+
+def test_sanitize_caps_how_many_keys_one_marker_group_can_carry():
+    supplied_citations = supplied_map(
+        *[
+            supplied(f"S{index}", page_start=index, page_end=index, chunk_id=index)
+            for index in range(1, MAX_CITATIONS_PER_CLAIM + 3)
+        ]
+    )
+
+    group = ",".join(supplied_citations)
+    answer = sanitize_citation_markers(f"Claim [{group}].", supplied_citations)
+
+    assert answer.text.count("[") == MAX_CITATIONS_PER_CLAIM
+    assert len(answer.citations) == MAX_CITATIONS_PER_CLAIM
+    kept = [f"[{citation.key}]" for citation in answer.citations]
+    assert answer.text == f"Claim {''.join(kept)}."

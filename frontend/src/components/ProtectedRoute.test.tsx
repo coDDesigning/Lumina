@@ -19,6 +19,7 @@ describe('ProtectedRoute', () => {
       login: vi.fn(),
       logout: vi.fn(),
       refreshUser: vi.fn(),
+      sessionEndReason: null,
     });
 
     render(
@@ -43,6 +44,7 @@ describe('ProtectedRoute', () => {
       login: vi.fn(),
       logout: vi.fn(),
       refreshUser: vi.fn(),
+      sessionEndReason: null,
     });
 
     render(
@@ -78,6 +80,7 @@ describe('ProtectedRoute', () => {
       login: vi.fn(),
       logout: vi.fn(),
       refreshUser: vi.fn(),
+      sessionEndReason: null,
     });
 
     render(

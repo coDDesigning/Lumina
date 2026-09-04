@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '@/api/client';
 import { progressAPI } from '@/api/progress';
+import { generationJobsAPI } from '@/api/generationJobs';
 import { quizAPI } from '@/api/quiz';
 import { userAPI } from '@/api/user';
 import type { CreditStatus } from '@/api/types';
@@ -22,6 +23,10 @@ vi.mock('@/api/settings', () => ({
 }));
 
 vi.mock('@/api/user', () => ({ userAPI: { getCredits: vi.fn() } }));
+
+vi.mock('@/api/generationJobs', () => ({
+  generationJobsAPI: { list: vi.fn(), retry: vi.fn(), dismiss: vi.fn() },
+}));
 
 vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({ isAuthenticated: true, user: { id: 1 } }),
@@ -43,6 +48,8 @@ vi.mock('@/hooks/useCourseDocuments', () => ({
 const mockProgress = vi.mocked(progressAPI.get);
 const mockQuizList = vi.mocked(quizAPI.list);
 const mockEnqueue = vi.mocked(quizAPI.enqueue);
+const mockJobs = vi.mocked(generationJobsAPI.list);
+const mockDismissJob = vi.mocked(generationJobsAPI.dismiss);
 const mockGetCredits = vi.mocked(userAPI.getCredits);
 
 const STATUS: CreditStatus = {
@@ -74,6 +81,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetCredits.mockResolvedValue(STATUS);
   mockQuizList.mockResolvedValue([]);
+  mockJobs.mockResolvedValue([]);
   mockProgress.mockResolvedValue({
     status: 'practiced',
     attempts_count: 2,
@@ -130,6 +138,60 @@ describe('ProgressPage', () => {
     expect(mockEnqueue.mock.calls[0][1]).toMatchObject({
       topic_focus: 'Graph Algorithms',
     });
+  });
+
+  it('shows the queued quiz here rather than only on the course page', async () => {
+    // A quiz queued from Progress used to leave no trace at all on this screen,
+    // so the student had to go back to the course to find out it existed.
+    mockJobs.mockResolvedValue([
+      {
+        id: 12,
+        job_type: 'generate_quiz',
+        status: 'succeeded',
+        attempt_count: 1,
+        max_attempts: 3,
+        created_at: '2026-08-30T12:00:00Z',
+        started_at: '2026-08-30T12:00:01Z',
+        finished_at: '2026-08-30T12:00:20Z',
+        error_code: null,
+        error_message: null,
+        generated_output_id: null,
+        quiz_id: 4,
+      },
+    ]);
+
+    renderPage();
+
+    const rail = await screen.findByRole('list', { name: 'Background generations' });
+    expect(within(rail).getByText('Practice quiz')).toBeInTheDocument();
+  });
+
+  it('clears a failed generation from this screen too', async () => {
+    mockJobs.mockResolvedValue([
+      {
+        id: 13,
+        job_type: 'generate_quiz',
+        status: 'failed',
+        attempt_count: 3,
+        max_attempts: 3,
+        created_at: '2026-08-30T12:00:00Z',
+        started_at: '2026-08-30T12:00:01Z',
+        finished_at: '2026-08-30T12:00:20Z',
+        error_code: 'provider_unavailable',
+        error_message: 'The model could not be reached.',
+        generated_output_id: null,
+        quiz_id: null,
+      },
+    ]);
+    mockDismissJob.mockResolvedValue({} as never);
+
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Dismiss Practice quiz' }),
+    );
+
+    await waitFor(() => expect(mockDismissJob).toHaveBeenCalledWith(10, 13));
   });
 });
 

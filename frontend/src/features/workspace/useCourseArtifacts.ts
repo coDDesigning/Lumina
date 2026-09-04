@@ -16,7 +16,7 @@ export type CourseArtifact =
   | {
       kind: 'quiz';
       key: string;
-      score: number;
+      score: number | null;
       correctCount: number;
       totalQuestions: number;
       createdAt: string;

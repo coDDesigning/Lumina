@@ -239,6 +239,8 @@ export interface GenerationJob {
   error_message: string | null;
   generated_output_id: number | null;
   quiz_id: number | null;
+  requested_model?: string | null;
+  fallback_model?: string | null;
 }
 
 export type ProcessingStage =
@@ -658,7 +660,7 @@ export interface QuizAnswerResult {
 export interface QuizHistoryItem {
   attempt_id: number;
   quiz_id: number;
-  score: number;
+  score: number | null;
   correct_count: number;
   total_questions: number;
   time_spent_seconds?: number | null;
@@ -671,7 +673,7 @@ export interface QuizHistoryItem {
 export interface QuizAttemptResponse {
   attempt_id: number;
   quiz_id: number;
-  score: number;
+  score: number | null;
   correct_count: number;
   graded_count: number;
   total_questions: number;
@@ -747,7 +749,7 @@ export interface CourseProgressResponse {
   correct_count?: number;
   incorrect_count?: number;
   total_questions_answered?: number;
-  completion?: number;
+  completion?: number | null;
   weak_topics?: string[];
   topic_mastery: TopicMastery[];
   quiz_history?: QuizHistoryItem[];
@@ -1364,6 +1366,7 @@ export interface ReverseQuizResponse {
   feedback: string;
   misconceptions: Misconception[];
   question?: string | null;
+  citations?: Citation[];
 }
 
 export interface ReverseQuizQuestion {

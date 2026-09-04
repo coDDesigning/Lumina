@@ -57,8 +57,29 @@ button.entry:hover {
   color: var(--text-muted);
 }
 
+.fallback {
+  font-size: var(--text-2xs);
+  color: var(--warning);
+}
+
 .failure {
   padding: var(--space-3);
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.row .entry {
+  flex: 1;
+  min-width: 0;
+}
+
+.dismiss {
+  flex-shrink: 0;
+  margin-top: var(--space-1);
 }
 
 @media (prefers-reduced-motion: reduce) {

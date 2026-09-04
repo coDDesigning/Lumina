@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from backend.app.models import GeneratedOutput
 from schemas.reverse_quiz import ConceptStatus
+from services.text_generation import GenerationMetadata
 from tests.generation_fixtures import seed_ready_material
 
 
@@ -88,6 +89,155 @@ def test_reverse_quiz_endpoint_returns_grounded_evaluation(
         ).all()
     assert len(stored) == 1
     assert json.loads(stored[0].content)["topic"] == "Photosynthesis"
+
+
+class _MeteredEvalStub(_EvalStub):
+    """An evaluator that reports which vendor and model actually answered."""
+
+    def __init__(self, payload: dict) -> None:
+        super().__init__(payload)
+        self.metadata = GenerationMetadata(
+            provider="gemini", model="gemini-3.6-flash", latency_ms=5
+        )
+
+    def generate_json_with_metadata(self, prompt: str):
+        self.prompts.append(prompt)
+        return self._payload, self.metadata
+
+
+def test_reverse_quiz_records_attribution_the_same_way_every_feature_does(
+    upload_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Attribution is ``provider:model`` everywhere or it cannot be compared.
+
+    Reverse quiz used to store the bare model name while every other feature
+    stored ``provider:model``, so one course's history disagreed with itself
+    about which vendor wrote what.
+    """
+    with upload_api.session_factory() as session:
+        seed_ready_material(
+            session,
+            upload_api.course_id,
+            ["Plants build sugars from sunlight and CO2 in photosynthesis."],
+            file_hash="c" * 64,
+            retrieval_env=retrieval_env,
+        )
+    stub = _MeteredEvalStub({"feedback": "Close.", "misconceptions": []})
+    _install_provider(monkeypatch, stub)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/reverse-quiz",
+        json={
+            "topic": "Photosynthesis",
+            "question": "How do plants feed themselves?",
+            "explanation": "Plants take their food from the soil.",
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 201, response.text
+    with upload_api.session_factory() as session:
+        stored = session.scalars(
+            select(GeneratedOutput).where(
+                GeneratedOutput.output_type == "reverse_quiz",
+            )
+        ).one()
+
+    assert stored.model_used == "gemini:gemini-3.6-flash"
+
+
+def test_reverse_quiz_resolves_the_sources_its_feedback_cites(
+    upload_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A marker the student can see must resolve to a source they can read.
+
+    Reverse quiz sanitised its markers and then dropped the citations it had
+    just resolved, so the answer reached the screen carrying a bare ``[S1]``
+    that nothing could turn into a document and page.
+    """
+    with upload_api.session_factory() as session:
+        seed_ready_material(
+            session,
+            upload_api.course_id,
+            ["Plants build sugars from sunlight and CO2 in photosynthesis."],
+            file_hash="d" * 64,
+            retrieval_env=retrieval_env,
+        )
+
+    stub = _EvalStub(
+        {
+            "feedback": "Not soil [S1].",
+            "misconceptions": [
+                {
+                    "concept": "Plant nutrition",
+                    "status": ConceptStatus.CONTRADICTED.value,
+                    "detail": "The material says light [S1].",
+                }
+            ],
+        }
+    )
+    _install_provider(monkeypatch, stub)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/reverse-quiz",
+        json={
+            "topic": "Photosynthesis",
+            "question": "How do plants feed themselves?",
+            "explanation": "Plants take their food from the soil.",
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+
+    assert "[S1]" in data["feedback"]
+    assert [citation["key"] for citation in data["citations"]] == ["S1"]
+    assert data["citations"][0]["document_label"]
+
+    with upload_api.session_factory() as session:
+        stored = session.scalars(
+            select(GeneratedOutput).where(
+                GeneratedOutput.output_type == "reverse_quiz",
+            )
+        ).one()
+
+    # A reopen must render the same sources with no provider call.
+    assert json.loads(stored.content)["citations"][0]["key"] == "S1"
+
+
+def test_reverse_quiz_history_keeps_rows_written_before_citations_existed(
+    upload_api,
+) -> None:
+    """An older row carries no citations and must still be readable."""
+    with upload_api.session_factory() as session:
+        session.add(
+            GeneratedOutput(
+                course_id=upload_api.course_id,
+                user_id=1,
+                output_type="reverse_quiz",
+                content=json.dumps(
+                    {
+                        "id": 0,
+                        "course_id": upload_api.course_id,
+                        "topic": "Photosynthesis",
+                        "explanation": "Soil.",
+                        "feedback": "No [S1].",
+                        "misconceptions": [],
+                        "question": None,
+                    }
+                ),
+            )
+        )
+        session.commit()
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/reverse-quizzes",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["citations"] == []
 
 
 def test_reverse_quiz_endpoint_evaluates_without_indexed_material(

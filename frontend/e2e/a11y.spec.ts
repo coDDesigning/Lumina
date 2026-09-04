@@ -35,6 +35,7 @@ const ROUTES = [
   { name: 'the account', path: '/account' },
   { name: 'account background', path: '/account/background' },
   { name: 'account AI preferences', path: '/account/ai' },
+  { name: 'account security', path: '/account/security' },
   { name: 'the admin screen', path: '/admin' },
   { name: 'Exam Mode', path: '/courses/1/exam-mode' },
   { name: 'an exam plan', path: '/courses/1/exam-mode/plans/601' },

@@ -362,6 +362,7 @@ jobs:
       APP_ENV: staging
       APP_DEBUG: "false"
       DEPLOYMENT_MODE: hosted
+      EMAIL_VERIFICATION_REQUIRED: "false"
       DATABASE_URL: postgresql+psycopg://lumina:lumina-ci-password@localhost:5432/lumina_ci
       STORAGE_BACKEND: local
       STORAGE_NAMESPACE: postgresql-ci
@@ -664,7 +665,7 @@ jobs:
           assert settings.web_root is not None
           '
           test "$(docker compose exec -T lumina id -u | tr -d '\r')" = "10001"
-          test "$(docker compose exec -T worker id -u | tr -d '\r')" = "10001"
+          test "$(docker compose exec -T lumina-worker id -u | tr -d '\r')" = "10001"
           docker compose exec -T lumina python -c '
           import shutil
 

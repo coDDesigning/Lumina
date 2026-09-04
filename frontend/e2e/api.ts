@@ -12,6 +12,8 @@ import type { Page, Route } from '@playwright/test'
 
 const envelope = (data: unknown) => ({ success: true, message: 'ok', data })
 
+let quizJobQueued = false
+
 export const USER = {
   id: 1,
   name: 'Bora Kafadar',
@@ -177,6 +179,21 @@ const CITATION = {
 }
 
 export { EXAM_PLAN, EXAM_ROADMAP }
+
+export const GENERATION_JOB = {
+  id: 12,
+  job_type: 'generate_quiz',
+  status: 'succeeded',
+  attempt_count: 1,
+  max_attempts: 3,
+  created_at: '2026-08-22T12:59:00Z',
+  started_at: '2026-08-22T12:59:10Z',
+  finished_at: '2026-08-22T13:00:00Z',
+  error_code: null,
+  error_message: null,
+  generated_output_id: null,
+  quiz_id: 4,
+}
 
 export const QUIZ = {
   quiz_id: 4,
@@ -621,6 +638,16 @@ const ROUTES: Answer[] = [
   [/^\/api\/courses\/(\d+)\/documents/, () => envelope(DOCUMENTS)],
   [/^\/api\/courses\/(\d+)\/progress/, () => envelope(PROGRESS)],
   [/^\/api\/courses\/(\d+)\/settings/, () => envelope(SETTINGS)],
+  [/^\/api\/courses\/(\d+)\/generation-jobs\/(\d+)\/retry$/, () => envelope({ job_id: GENERATION_JOB.id, status: 'queued' })],
+  [/^\/api\/courses\/(\d+)\/generation-jobs\/(\d+)$/, () => envelope(GENERATION_JOB)],
+  [/^\/api\/courses\/(\d+)\/generation-jobs$/, () => envelope(quizJobQueued ? [GENERATION_JOB] : [])],
+  [
+    /^\/api\/courses\/(\d+)\/quiz\/jobs$/,
+    () => {
+      quizJobQueued = true
+      return envelope({ job_id: GENERATION_JOB.id, status: 'queued' })
+    },
+  ],
   [/^\/api\/courses\/(\d+)\/generated-outputs/, () => envelope([])],
   [/^\/api\/courses\/(\d+)\/conversations/, () => envelope([])],
   [
@@ -678,6 +705,7 @@ const ROUTES: Answer[] = [
  * loudly here instead of hanging.
  */
 export async function stubApi(page: Page) {
+  quizJobQueued = false
   await page.route('**/api/**', async (route: Route) => {
     const path = new URL(route.request().url()).pathname
 

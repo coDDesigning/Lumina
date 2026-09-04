@@ -379,6 +379,7 @@ taxonomy in `services/text_generation.py`, all subclasses of
 
 | Provider condition | Exception | Category | HTTP |
 |---|---|---|---|
+| Personal (BYOK) key invalid or expired | `PersonalKeyAuthError` | `authentication_error` | `400` |
 | Ollama unreachable at the configured base URL | `TextGenerationConnectionError` | `provider_error` | `503` |
 | No response within `AI_GENERATION_TIMEOUT_SECONDS` | `TextGenerationTimeoutError` | `timeout` | `504` |
 | Ollama answers HTTP 429 | `TextGenerationRateLimitError` | `rate_limit` | `429` |

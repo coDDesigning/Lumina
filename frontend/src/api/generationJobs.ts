@@ -34,4 +34,17 @@ export const generationJobsAPI = {
     );
     return unwrapData(response, 'Generation retry');
   },
+
+  dismiss: async (
+    courseId: number,
+    jobId: number,
+    options?: RequestInit,
+  ): Promise<GenerationJob> => {
+    const response = await apiClient.post<BaseResponse<GenerationJob>>(
+      `/courses/${courseId}/generation-jobs/${jobId}/dismiss`,
+      undefined,
+      options,
+    );
+    return unwrapData(response, 'Generation dismissal');
+  },
 };

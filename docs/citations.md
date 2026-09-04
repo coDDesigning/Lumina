@@ -44,6 +44,7 @@ prompt strips them for the same reason, including
 | Quiz | `citations` array per question | `quiz_questions.citations` |
 | Course Q&A | inline `[S1]` markers in the answer text | `conversation_messages.citations` |
 | AI Tutor | inline `[S1]` markers in the answer text | `conversation_messages.citations` |
+| Reverse quiz | inline `[S1]` markers in the feedback and each misconception detail | one `citations` array inside `generated_outputs.content` |
 | Flashcards | none | — |
 | Exam Mode topics | `citations` array per discovered topic | `exam_topic_candidates.citations` |
 | Past exam paper questions | `citations` array per question | `past_exam_questions.citations` |

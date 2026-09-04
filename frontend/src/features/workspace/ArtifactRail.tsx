@@ -57,7 +57,9 @@ function metaOf(artifact: CourseArtifact): string {
     }
   }
   if (artifact.kind === 'quiz' && 'score' in artifact) {
-    return `Scored ${Math.round(artifact.score * 100)}% · ${when}`;
+    return artifact.score === null
+      ? `Not scored · ${when}`
+      : `Scored ${Math.round(artifact.score * 100)}% · ${when}`;
   }
   if (!artifact.topic) {
     return `Whole course · ${when}`;

@@ -130,3 +130,8 @@
   padding-top: var(--space-2);
   border-top: var(--border-width) solid var(--border);
 }
+
+.spoilerNote {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}

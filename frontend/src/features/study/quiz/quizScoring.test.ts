@@ -6,7 +6,7 @@ function attempt(overrides: Partial<QuizAttemptResponse>): QuizAttemptResponse {
   return {
     attempt_id: 1,
     quiz_id: 1,
-    score: 0,
+    score: 0 as number | null,
     correct_count: 0,
     graded_count: 0,
     total_questions: 0,
@@ -46,6 +46,22 @@ describe('tallyAttempt', () => {
       .toBe(50);
     expect(tallyAttempt(attempt({ score: 1, total_questions: 2, graded_count: 2 })).scorePercent)
       .toBe(100);
+  });
+
+  it('reports no score when nothing on the attempt could be graded', () => {
+    const tally = tallyAttempt(
+      attempt({ total_questions: 2, graded_count: 0, correct_count: 0, score: null }),
+    );
+
+    expect(tally.scorePercent).toBeNull();
+    expect(tally.graded).toBe(0);
+    expect(tally.ungraded).toBe(2);
+  });
+
+  it('reports no score when the server sends a null score', () => {
+    expect(
+      tallyAttempt(attempt({ total_questions: 2, graded_count: 2, score: null })).scorePercent,
+    ).toBeNull();
   });
 
   it('holds the parts together when the server sends something impossible', () => {

@@ -278,6 +278,42 @@ def test_short_answer_rejects_a_blank_answer() -> None:
         )
 
 
+@pytest.mark.parametrize("value", ["...", ".", " ;; ", ",.,"])
+def test_short_answer_rejects_an_answer_that_normalizes_to_nothing(value) -> None:
+    """An answer key grading can never match must be refused, not persisted.
+
+    ``accepted_variants`` drops every candidate whose normalized key is empty, so
+    a key like ``"..."`` would leave the variant list empty and make
+    ``stored_answer`` raise ``IndexError`` from inside the persistence loop.
+    """
+    with pytest.raises(ValidationError):
+        GeneratedShortAnswerQuestion.model_validate(
+            _question(1, "short_answer", correct_answer=value)
+        )
+
+
+@pytest.mark.parametrize("value", ["≥", "∞", "→", "±"])
+def test_short_answer_accepts_a_symbolic_answer(value) -> None:
+    question = GeneratedShortAnswerQuestion.model_validate(
+        _question(1, "short_answer", correct_answer=value, accepted_answers=[])
+    )
+
+    stored = question.stored_answer()
+
+    assert stored.text == value
+    assert stored.accepted_answers == [value]
+
+
+def test_a_symbol_only_answer_survives_whole_response_validation() -> None:
+    payload = _payload("short_answer")
+    payload["questions"][0]["correct_answer"] = "≥"
+    payload["questions"][0]["accepted_answers"] = []
+
+    quiz = QuizGenerationResponse.model_validate(payload)
+
+    assert quiz.questions[0].stored_answer().text == "≥"
+
+
 def test_open_ended_rejects_a_blank_reference_answer() -> None:
     with pytest.raises(ValidationError):
         GeneratedOpenEndedQuestion.model_validate(

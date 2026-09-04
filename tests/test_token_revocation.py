@@ -49,9 +49,7 @@ def test_logout_revokes_token(api_context):
     assert me_after.status_code == 401
 
 
-def test_logout_does_not_report_success_when_revocation_fails(
-    api_context, monkeypatch
-):
+def test_logout_does_not_report_success_when_revocation_fails(api_context, monkeypatch):
     _register(api_context.client, email="logout-failure@example.com")
     login = api_context.client.post(
         "/api/auth/login",

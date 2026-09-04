@@ -231,7 +231,7 @@ prose is explicitly not a stable contract. Codes to handle distinctly:
 `no_ready_material` · `no_relevant_material` · `material_not_indexed` ·
 `retrieval_unavailable` · `provider_unavailable` · `provider_timeout` ·
 `provider_rate_limited` · `invalid_generated_structure` · `insufficient_credits` ·
-`generation_failed`
+`personal_key_invalid` · `generation_failed`
 
 Use `describeGenerationError()` and `isInsufficientCredits()` from `src/api/errors.ts`.
 

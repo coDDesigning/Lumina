@@ -84,9 +84,6 @@ def _render(
         {
             **context.as_variables(),
             "PRIORITY_NOTE": _priority_note(topic),
-            # Rendered last so a placeholder appearing inside the topic label
-            # or the course material can never be filled in by a later
-            # substitution.
             "TOPIC_LABEL": topic.display_label,
             "TEXT": material,
         },

@@ -33,6 +33,7 @@ from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
     model_identifier,
+    with_template_temperature,
 )
 from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from utils.ai_errors import (
@@ -218,6 +219,10 @@ class AiTutorService:
             metadata = None
 
             try:
+                # The template's own declared temperature, applied to the call it was declared for.
+                provider = with_template_temperature(
+                    provider, PromptLoader.temperature_for(cls.PROMPT_TEMPLATE_NAME)
+                )
                 if hasattr(provider, "generate_text_with_metadata"):
                     answer, metadata = provider.generate_text_with_metadata(prompt)
                 else:

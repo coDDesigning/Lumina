@@ -27,6 +27,7 @@ from services.profile_knowledge import (
     PROFILE_CONTEXT_DIRECTIVE,
     PROFILE_CONTEXT_HEADER,
 )
+from services.prompt_components import SHARED_SAFETY_DIRECTIVE
 from services.quiz import QuizService
 from services.study_guide import StudyGuideService
 from services.text_generation import GenerationMetadata
@@ -293,10 +294,22 @@ def persisted_quizzes(session_factory, course_id: int):
         return session.scalars(select(Quiz).where(Quiz.course_id == course_id)).all()
 
 
+def template_body(prompt: str) -> str:
+    """The rendered template alone, without the governance block appended after it.
+
+    `PromptLoader.render` ends every prompt with the shared safety and grounding
+    directives, which belong to no template section and would otherwise be
+    counted as whatever section happens to come last.
+    """
+    start = prompt.find(SHARED_SAFETY_DIRECTIVE)
+    return prompt if start == -1 else prompt[:start].rstrip("\n")
+
+
 def profile_block(prompt: str) -> str:
     """The rendered supplementary block, which the templates always place last."""
-    start = prompt.find(PROFILE_CONTEXT_HEADER)
-    return "" if start == -1 else prompt[start:]
+    body = template_body(prompt)
+    start = body.find(PROFILE_CONTEXT_HEADER)
+    return "" if start == -1 else body[start:]
 
 
 def profile_text_in_prompt(prompt: str) -> str:
@@ -309,6 +322,12 @@ def profile_text_in_prompt(prompt: str) -> str:
 
 
 def course_material_region(prompt: str) -> str:
-    """Everything the model sees before the supplementary block begins."""
-    start = prompt.find(PROFILE_CONTEXT_HEADER)
-    return prompt if start == -1 else prompt[:start]
+    """Everything the model sees before the supplementary block begins.
+
+    Trailing blank lines are not part of that text and are dropped: an empty
+    supplementary block leaves the separator that preceded it at the end of the
+    body, where the loader strips it before appending the governance block.
+    """
+    body = template_body(prompt)
+    start = body.find(PROFILE_CONTEXT_HEADER)
+    return (body if start == -1 else body[:start]).rstrip()

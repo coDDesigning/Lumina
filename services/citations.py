@@ -185,6 +185,8 @@ def sanitize_citation_markers(
         survivors: list[str] = []
         identities: set[tuple[UUID, int | None, int | None]] = set()
         for key in keys:
+            if len(survivors) == MAX_CITATIONS_PER_CLAIM:
+                break
             citation = supplied.get(key)
             if citation is None:
                 dropped += 1

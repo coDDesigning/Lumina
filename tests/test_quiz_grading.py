@@ -4,7 +4,12 @@ from sqlalchemy import select
 import routes.quiz as quiz_route
 from backend.app.models import Quiz, QuizAttempt, QuizAttemptAnswer, QuizQuestion, User
 from schemas.quiz_attempt import OPEN_ENDED_PASS_THRESHOLD
-from services.text_generation import GenerationMetadata, TextGenerationConnectionError
+from services.prompt_loader import PromptLoader
+from services.text_generation import (
+    GenerationMetadata,
+    TemperatureBindingMixin,
+    TextGenerationConnectionError,
+)
 from tests.conftest import set_balance
 
 STUB_METADATA = GenerationMetadata(provider="ollama", model="qwen3:8b", latency_ms=5)
@@ -20,10 +25,14 @@ class GradingProvider:
         self._error = error
         self.calls = 0
         self.prompt = ""
+        # A list rather than a scalar: a temperature-bound provider is a shallow
+        # copy, so only a shared object records what that copy was called with.
+        self.temperatures: list[float | None] = []
 
     def generate_json_with_metadata(self, prompt: str):
         self.calls += 1
         self.prompt = prompt
+        self.temperatures.append(getattr(self, "_temperature", None))
         if self._error is not None:
             raise self._error
         return self._result, STUB_METADATA
@@ -691,3 +700,36 @@ def test_attempt_and_answers_are_written_together(upload_api, monkeypatch):
 
     assert [attempt.id for attempt in attempts] == [attempt_id]
     assert len(_stored_answers(upload_api, attempt_id)) == 2
+
+
+def test_open_ended_grading_runs_at_the_temperature_the_template_declares(
+    upload_api, monkeypatch
+):
+    """A score lands on the student's record, so the declared 0.0 has to reach the call.
+
+    `quiz_grading.json` declares `model_hints.temperature: 0.0` for determinism;
+    the provider must be handed that value rather than the vendor default.
+    """
+
+    class TemperatureAwareGradingProvider(GradingProvider, TemperatureBindingMixin):
+        pass
+
+    provider = _install_provider(
+        monkeypatch,
+        TemperatureAwareGradingProvider(
+            {"verdicts": [{"question_number": 1, "score": 1.0, "feedback": "Yes."}]}
+        ),
+    )
+    quiz_id, question_ids = _quiz(upload_api, upload_api.course_id, ["open_ended"])
+
+    response = _submit(
+        upload_api,
+        upload_api.course_id,
+        quiz_id,
+        [{"question_id": question_ids[0], "text_response": "Because it is sorted."}],
+        upload_api.authorization,
+    )
+
+    assert response.status_code == 201, response.text
+    assert PromptLoader.temperature_for("quiz_grading") == 0.0
+    assert provider.temperatures == [0.0]

@@ -56,6 +56,7 @@ from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
     model_identifier,
+    with_template_temperature,
 )
 from utils.ai_errors import (
     EXAM_PLAN_REQUIRED_MESSAGE,
@@ -406,6 +407,10 @@ class ExamArtifactService:
 
             metadata = None
             try:
+                # The template's own declared temperature, applied to the call it was declared for.
+                provider = with_template_temperature(
+                    provider, PromptLoader.temperature_for(spec.prompt_template)
+                )
                 if hasattr(provider, "generate_json_with_metadata"):
                     result, metadata = provider.generate_json_with_metadata(prompt)
                 else:
@@ -534,6 +539,10 @@ class ExamArtifactService:
 
             metadata = None
             try:
+                # The template's own declared temperature, applied to the call it was declared for.
+                provider = with_template_temperature(
+                    provider, PromptLoader.temperature_for(spec.prompt_template)
+                )
                 if hasattr(provider, "generate_json_with_metadata"):
                     result, metadata = provider.generate_json_with_metadata(prompt)
                 else:

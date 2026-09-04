@@ -205,6 +205,14 @@ validation, and schema failures are deliberately not retried. Measured on
 The dominant failure at `0.8` was `multiple_choice.options` carrying three
 entries instead of four.
 
+A prompt template may declare its own `model_hints.temperature`, and that value
+wins for the call it was declared for, on every provider. `PromptLoader.temperature_for`
+reads it and `with_template_temperature` binds it to a copy of the provider for
+that one generation, so the environment default stays in force everywhere else.
+This is what keeps open-ended grading at the `0.0` `quiz_grading.json` declares:
+a score written to a student's record must not move between two runs of the same
+answer. A hint that is missing or not a number leaves the provider default alone.
+
 `num_ctx` is sent per request, which has two consequences worth knowing. A model
 needs no custom Modelfile to run at the intended window, and a server-wide
 `OLLAMA_CONTEXT_LENGTH` cannot silently inflate the KV cache — an oversized

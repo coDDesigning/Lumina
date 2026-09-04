@@ -6840,6 +6840,17 @@
             ],
             "title": "Error Message"
           },
+          "fallback_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Model"
+          },
           "finished_at": {
             "anyOf": [
               {
@@ -6890,6 +6901,17 @@
               }
             ],
             "title": "Quiz Id"
+          },
+          "requested_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Model"
           },
           "started_at": {
             "anyOf": [

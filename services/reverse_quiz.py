@@ -27,7 +27,7 @@ from services.retrieval_material import (
     RetrievedCourseMaterial,
     load_retrieved_material,
 )
-from services.text_generation import TextGenerationProvider
+from services.text_generation import TextGenerationProvider, model_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -193,19 +193,11 @@ class ReverseQuizService:
             question=request.question,
         )
 
-        model_used = (
-            metadata.model
-            if metadata
-            else getattr(provider, "effective_model", None)
-            or getattr(provider, "model", None)
-            or provider.name
-        )
-
         output = GeneratedOutputService.record(
             db,
             course_id=course_id,
             user_id=user.id,
-            model_used=model_used,
+            model_used=model_identifier(metadata),
             output_type="reverse_quiz",
             content=response_model.model_dump_json(),
             commit=False,

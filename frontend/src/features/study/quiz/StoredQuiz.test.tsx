@@ -1,8 +1,31 @@
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
-import type { QuizQuestionView, QuizView } from '@/api/types';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { quizAPI } from '@/api/quiz';
+import type { QuizHistoryItem, QuizQuestionView, QuizView } from '@/api/types';
 import { StoredQuiz } from './StoredQuiz';
+
+vi.mock('@/api/quiz', () => ({ quizAPI: { listAttempts: vi.fn() } }));
+
+const mockListAttempts = vi.mocked(quizAPI.listAttempts);
+
+const AN_ATTEMPT: QuizHistoryItem = {
+  attempt_id: 1,
+  quiz_id: 7,
+  score: 0.5,
+  correct_count: 1,
+  total_questions: 2,
+  time_spent_seconds: 30,
+  created_at: '2026-08-24T10:00:00Z',
+  quiz_purpose: null,
+  timed: false,
+  expired: false,
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockListAttempts.mockResolvedValue([AN_ATTEMPT]);
+});
 
 function question(overrides: Partial<QuizQuestionView> = {}): QuizQuestionView {
   return {
@@ -49,6 +72,12 @@ function renderQuiz(view: QuizView) {
   );
 }
 
+async function seeReview(view: QuizView) {
+  renderQuiz(view);
+  // The review only appears once the history says this quiz was sat.
+  await screen.findByText(/Merge sort|Reference answer|Accepted answer|Lecture 4|Sources:/);
+}
+
 describe('a quiz kept in the course history', () => {
   it('names the quiz and sends the student to take it', () => {
     renderQuiz(quiz());
@@ -86,8 +115,8 @@ describe('a quiz kept in the course history', () => {
     expect(screen.queryByText('multiple_choice')).toBeNull();
   });
 
-  it('marks which option was the right one', () => {
-    renderQuiz(quiz());
+  it('marks which option was the right one', async () => {
+    await seeReview(quiz());
 
     const correct = screen.getByText('Merge sort').closest('li') as HTMLElement;
     expect(within(correct).getByText('Correct')).toBeInTheDocument();
@@ -96,7 +125,7 @@ describe('a quiz kept in the course history', () => {
     expect(within(wrong).queryByText('Correct')).toBeNull();
   });
 
-  it('calls a written answer a reference rather than the accepted one', () => {
+  it('calls a written answer a reference rather than the accepted one', async () => {
     renderQuiz(
       quiz({
         questions: [
@@ -110,9 +139,49 @@ describe('a quiz kept in the course history', () => {
       }),
     );
 
-    expect(screen.getByText('Reference answer')).toBeInTheDocument();
+    expect(await screen.findByText('Reference answer')).toBeInTheDocument();
     expect(screen.getByText('It buffers.')).toBeInTheDocument();
     expect(screen.queryByText('Accepted answer')).toBeNull();
+  });
+
+  it('keeps the answers back from a student who has not sat it yet', async () => {
+    // Opening a quiz from the history used to hand over every answer, so a
+    // student could read the paper before taking it and never know they had.
+    mockListAttempts.mockResolvedValue([]);
+
+    renderQuiz(
+      quiz({
+        questions: [
+          question({ citations: [{ key: 'S1', document_id: 'd', document_label: 'Lecture 4', page_start: 12, page_end: 14 }] }),
+        ],
+      }),
+    );
+
+    expect(await screen.findByText(/answers are held back/i)).toBeInTheDocument();
+    expect(screen.getByText('Quicksort')).toBeInTheDocument();
+    expect(screen.queryByText('Correct')).toBeNull();
+    expect(screen.queryByText('Accepted answer')).toBeNull();
+    expect(screen.queryByText(/preserves the order of equal keys/)).toBeNull();
+    expect(screen.queryByText(/Lecture 4/)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /take this quiz/i })).toBeInTheDocument();
+  });
+
+  it('holds the answers back while the history is still being read', () => {
+    mockListAttempts.mockReturnValue(new Promise(() => {}));
+
+    renderQuiz(quiz());
+
+    expect(screen.queryByText('Correct')).toBeNull();
+    expect(screen.queryByText(/preserves the order of equal keys/)).toBeNull();
+  });
+
+  it('holds the answers back when the history cannot be read at all', async () => {
+    mockListAttempts.mockRejectedValue(new Error('offline'));
+
+    renderQuiz(quiz());
+
+    expect(await screen.findByText(/answers are held back/i)).toBeInTheDocument();
+    expect(screen.queryByText('Correct')).toBeNull();
   });
 
   it('shows the topic it was generated for only when it was not the whole course', () => {
@@ -158,10 +227,10 @@ describe('sources on a stored quiz', () => {
     page_end: 14,
   };
 
-  it('names the document and pages a question came from', () => {
+  it('names the document and pages a question came from', async () => {
     renderQuiz(quiz({ questions: [question({ citations: [CITATION] })] }));
 
-    expect(screen.getByText('Lecture 4 · pp. 12–14')).toBeInTheDocument();
+    expect(await screen.findByText('Lecture 4 · pp. 12–14')).toBeInTheDocument();
   });
 
   it('shows no sources for a question that carries none', () => {

@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from backend.app.models import GeneratedOutput
 from schemas.reverse_quiz import ConceptStatus
+from services.text_generation import GenerationMetadata
 from tests.generation_fixtures import seed_ready_material
 
 
@@ -88,6 +89,61 @@ def test_reverse_quiz_endpoint_returns_grounded_evaluation(
         ).all()
     assert len(stored) == 1
     assert json.loads(stored[0].content)["topic"] == "Photosynthesis"
+
+
+class _MeteredEvalStub(_EvalStub):
+    """An evaluator that reports which vendor and model actually answered."""
+
+    def __init__(self, payload: dict) -> None:
+        super().__init__(payload)
+        self.metadata = GenerationMetadata(
+            provider="gemini", model="gemini-3.6-flash", latency_ms=5
+        )
+
+    def generate_json_with_metadata(self, prompt: str):
+        self.prompts.append(prompt)
+        return self._payload, self.metadata
+
+
+def test_reverse_quiz_records_attribution_the_same_way_every_feature_does(
+    upload_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Attribution is ``provider:model`` everywhere or it cannot be compared.
+
+    Reverse quiz used to store the bare model name while every other feature
+    stored ``provider:model``, so one course's history disagreed with itself
+    about which vendor wrote what.
+    """
+    with upload_api.session_factory() as session:
+        seed_ready_material(
+            session,
+            upload_api.course_id,
+            ["Plants build sugars from sunlight and CO2 in photosynthesis."],
+            file_hash="c" * 64,
+            retrieval_env=retrieval_env,
+        )
+    stub = _MeteredEvalStub({"feedback": "Close.", "misconceptions": []})
+    _install_provider(monkeypatch, stub)
+
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/reverse-quiz",
+        json={
+            "topic": "Photosynthesis",
+            "question": "How do plants feed themselves?",
+            "explanation": "Plants take their food from the soil.",
+        },
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 201, response.text
+    with upload_api.session_factory() as session:
+        stored = session.scalars(
+            select(GeneratedOutput).where(
+                GeneratedOutput.output_type == "reverse_quiz",
+            )
+        ).one()
+
+    assert stored.model_used == "gemini:gemini-3.6-flash"
 
 
 def test_reverse_quiz_endpoint_evaluates_without_indexed_material(

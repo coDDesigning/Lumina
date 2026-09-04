@@ -57,6 +57,11 @@ button.entry:hover {
   color: var(--text-muted);
 }
 
+.fallback {
+  font-size: var(--text-2xs);
+  color: var(--warning);
+}
+
 .failure {
   padding: var(--space-3);
 }

@@ -100,7 +100,9 @@ def test_get_ad_config_endpoint_default():
 def test_security_headers_present_on_response():
     """Standard security headers and CSP are attached by middleware to HTTP responses."""
     client = TestClient(app)
-    res = client.get("/")
+    # A probe rather than "/": the root is the interface shell now, and whether
+    # it exists depends on whether a build was baked into this deployment.
+    res = client.get("/health/live")
     assert res.status_code == 200
     assert res.headers.get("X-Content-Type-Options") == "nosniff"
     assert res.headers.get("X-Frame-Options") == "DENY"

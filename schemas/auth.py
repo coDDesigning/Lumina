@@ -1,6 +1,20 @@
 from pydantic import BaseModel, EmailStr, Field
 
 
+class PasswordPolicyResponse(BaseModel):
+    """The password rule this deployment enforces, for a client to state.
+
+    A sign-up form has to tell someone the rule before they type, and the rule
+    is configurable, so the form cannot know it. Everything here is rendered
+    from the same values utils/password_policy.py refuses with, which is what
+    stops a screen from describing a rule the server does not enforce.
+    """
+
+    minimum_length: int
+    maximum_bytes: int
+    description: str
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str

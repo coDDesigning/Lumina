@@ -128,10 +128,10 @@ Verify API and downstream dependency readiness.
 * **Command**:
   ```bash
   # Self-Hosted / Direct API:
-  curl -s -f http://127.0.0.1:8000/health/ready
+  curl -s -f http://127.0.0.1:10312/health/ready
 
   # Through Frontend Reverse Proxy:
-  curl -s -f http://127.0.0.1:8080/api/health/ready
+  curl -s -f http://127.0.0.1:10312/health/ready
   ```
 * **Expected Output**:
   ```json
@@ -153,7 +153,7 @@ Confirm the asynchronous document processing worker is running and capable of le
   ```bash
   docker compose ps worker
   ```
-  *Expected Output*: `worker` service status is `Up` / `healthy`.
+  *Expected Output*: `lumina-worker` service status is `Up` / `healthy`.
 
 * **Hosted (AWS ECS)**:
   ```bash
@@ -170,7 +170,7 @@ Upload a sample test document and verify automatic text extraction, chunking, an
 
 1. **Obtain Learner Authentication Token**:
    ```bash
-   TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/auth/login \
+   TOKEN=$(curl -s -X POST http://127.0.0.1:10312/api/auth/login \
      -H "Content-Type: application/json" \
      -d '{"email": "student@example.com", "password": "StudentPassword123!"}' \
      | jq -r '.access_token')
@@ -178,7 +178,7 @@ Upload a sample test document and verify automatic text extraction, chunking, an
 
 2. **Upload Document**:
    ```bash
-   DOC_RESP=$(curl -s -X POST http://127.0.0.1:8000/api/courses/1/documents \
+   DOC_RESP=$(curl -s -X POST http://127.0.0.1:10312/api/courses/1/documents \
      -H "Authorization: Bearer $TOKEN" \
      -F "file=@tests/fixtures/sample_lecture.pdf")
    DOC_ID=$(echo "$DOC_RESP" | jq -r '.id')
@@ -188,7 +188,7 @@ Upload a sample test document and verify automatic text extraction, chunking, an
 3. **Verify Transition to Ready**:
    ```bash
    # Poll until status is ready (typically 2-10s)
-   curl -s -X GET http://127.0.0.1:8000/api/courses/1/documents/$DOC_ID \
+   curl -s -X GET http://127.0.0.1:10312/api/courses/1/documents/$DOC_ID \
      -H "Authorization: Bearer $TOKEN" | jq '{id: .id, status: .status}'
    ```
    *Expected Output*:
@@ -205,7 +205,7 @@ Trigger semantic retrieval and AI study guide generation for a course topic.
 
 * **Command**:
   ```bash
-  curl -s -X POST http://127.0.0.1:8000/api/courses/1/study-guide \
+  curl -s -X POST http://127.0.0.1:10312/api/courses/1/study-guide \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"topic": "Core Architecture Concepts"}'
@@ -221,7 +221,7 @@ Generate a dynamic quiz, submit an attempt, and verify automated evaluation.
 
 1. **Generate Quiz**:
    ```bash
-   QUIZ_RESP=$(curl -s -X POST http://127.0.0.1:8000/api/courses/1/quiz \
+   QUIZ_RESP=$(curl -s -X POST http://127.0.0.1:10312/api/courses/1/quiz \
      -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"topic": "System Design", "question_count": 3}')
@@ -231,7 +231,7 @@ Generate a dynamic quiz, submit an attempt, and verify automated evaluation.
 
 2. **Submit Graded Attempt**:
    ```bash
-   curl -s -X POST "http://127.0.0.1:8000/api/courses/1/quizzes/$QUIZ_ID/attempts" \
+   curl -s -X POST "http://127.0.0.1:10312/api/courses/1/quizzes/$QUIZ_ID/attempts" \
      -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"answers": [{"question_id": 1, "selected_option_index": 0}]}'
@@ -244,7 +244,7 @@ Verify that the dashboard correctly derives course status, mastery levels, and w
 
 * **Command**:
   ```bash
-  curl -s -X GET http://127.0.0.1:8000/api/progress \
+  curl -s -X GET http://127.0.0.1:10312/api/progress \
     -H "Authorization: Bearer $TOKEN" | jq '.courses[] | {course_id: .course_id, status: .status, average_score: .average_score}'
   ```
 * **Expected Output**:
@@ -258,7 +258,7 @@ Verify strict role-based access control by asserting that learner tokens cannot 
 
 * **Command**:
   ```bash
-  curl -s -w "\nHTTP_STATUS:%{http_code}\n" -X GET http://127.0.0.1:8000/api/admin/users \
+  curl -s -w "\nHTTP_STATUS:%{http_code}\n" -X GET http://127.0.0.1:10312/api/admin/users \
     -H "Authorization: Bearer $TOKEN"
   ```
 * **Expected Output**:
@@ -286,7 +286,7 @@ If a live document upload remains in `processing` or fails:
 1. **Run Instant Lease Recovery**:
    ```bash
    # Self-Hosted
-   docker compose run --rm worker python -m workers.document_processor --once
+   docker compose run --rm lumina-worker python -m workers.document_processor --once
 
    # Hosted ECS Task
    aws ecs run-task --cluster lumina-prod-cluster --task-definition lumina-worker-task \

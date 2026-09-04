@@ -90,8 +90,21 @@ def test_the_documentation_pages_name_their_cdn_exactly() -> None:
 @pytest.mark.parametrize("path", sorted(DOCUMENTATION_PATHS))
 def test_only_the_documentation_paths_get_the_looser_policy(path: str) -> None:
     assert content_security_policy_for(path) == DOCS_CONTENT_SECURITY_POLICY
-    assert content_security_policy_for(path + "/x") == API_CONTENT_SECURITY_POLICY
+    # A near miss is not a documentation page. It is served the interface
+    # shell, so it gets the interface policy -- but never the CDN allowance.
+    assert content_security_policy_for(path + "/x") != DOCS_CONTENT_SECURITY_POLICY
+    assert DOCS_CDN_ORIGIN not in content_security_policy_for(path + "/x")
     assert content_security_policy_for("/api/courses") == API_CONTENT_SECURITY_POLICY
+
+
+def test_the_interface_gets_a_policy_that_can_load_its_own_bundle() -> None:
+    shell = content_security_policy_for("/courses/123/progress")
+
+    # default-src 'none' is right for JSON and would render a blank page here.
+    assert "default-src 'self'" in shell
+    assert "script-src 'self'" in shell
+    assert content_security_policy_for("/health/ready") == API_CONTENT_SECURITY_POLICY
+    assert content_security_policy_for("/openapi.json") == API_CONTENT_SECURITY_POLICY
 
 
 # --- what a response actually carries ----------------------------------------

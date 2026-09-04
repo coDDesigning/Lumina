@@ -3,6 +3,8 @@ import type { FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { authAPI } from '@/api/auth';
 import { describeError } from '@/api/errors';
+import { queryKeys } from '@/api/queryKeys';
+import { useQuery } from '@/lib/query/useQuery';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
 import { PasswordInput } from '@/ui/PasswordInput';
@@ -18,6 +20,15 @@ export default function ResetPasswordPage() {
   const [status, setStatus] = useState<'idle' | 'submitting' | 'success'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Read rather than assumed: the minimum is configurable, and a screen that
+  // stated a different one from the server would be telling people the wrong
+  // rule. See docs/authentication.md.
+  const { data: passwordPolicy } = useQuery({
+    key: queryKeys.passwordPolicy(),
+    fetcher: ({ signal }) => authAPI.getPasswordPolicy({ signal }),
+    fallbackMessage: 'Could not load the password policy.',
+    staleTime: Infinity,
+  });
 
   if (!token) {
     return (
@@ -64,7 +75,7 @@ export default function ResetPasswordPage() {
       tone={0}
       documentTitle="Choose new password"
       title="Choose a new password."
-      subtitle="Make sure it's at least 8 characters long."
+      subtitle={passwordPolicy?.description}
       footer={
         status === 'success' ? (
           <>
@@ -91,6 +102,7 @@ export default function ResetPasswordPage() {
             label="New password"
             autoComplete="new-password"
             required
+            minLength={passwordPolicy?.minimum_length}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             disabled={status === 'submitting'}
@@ -100,6 +112,7 @@ export default function ResetPasswordPage() {
             label="Confirm password"
             autoComplete="new-password"
             required
+            minLength={passwordPolicy?.minimum_length}
             value={confirmPassword}
             onChange={(event) => setConfirmPassword(event.target.value)}
             disabled={status === 'submitting'}

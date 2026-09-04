@@ -34,7 +34,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     id     = "noncurrent-versions"
     status = "Enabled"
     filter {}
-    
+
     expiration {
       expired_object_delete_marker = true
     }

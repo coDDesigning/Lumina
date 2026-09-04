@@ -22,8 +22,8 @@ docker compose --profile maintenance run --rm ai-usage-cleanup
 2. Stop every SQLite writer and verify that none remains:
 
 ```bash
-docker compose stop api worker
-test -z "$(docker compose ps --status running --services api worker)"
+docker compose stop lumina lumina-worker
+test -z "$(docker compose ps --status running --services lumina lumina-worker)"
 ```
 
 3. Checkpoint, compact, and verify the database in the mounted data volume:
@@ -35,8 +35,8 @@ docker compose run --rm --no-deps migrate python -c "import sqlite3; c=sqlite3.c
 4. Start the services and verify readiness:
 
 ```bash
-docker compose up -d --wait --wait-timeout 180 api worker
-curl --fail --show-error http://127.0.0.1:8000/health/ready   # or http://127.0.0.1:8080/api/health/ready through the frontend
+docker compose up -d --wait --wait-timeout 180 lumina lumina-worker
+curl --fail --show-error http://127.0.0.1:10312/health/ready
 ```
 
 Verify each erased profile-knowledge or course identifier returns `404`, the

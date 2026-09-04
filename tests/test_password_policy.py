@@ -97,6 +97,48 @@ def test_the_described_policy_is_the_enforced_one(
     assert validate_password("kangaroo-typewriter-hymn", identifiers=())
 
 
+# --- the rule a client is told is the rule that is enforced -------------------
+
+
+def test_the_endpoint_reports_the_configured_minimum(
+    api_context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        password_policy, "settings", replace(settings, password_min_length=14)
+    )
+
+    payload = api_context.client.get("/api/auth/password-policy").json()
+
+    assert payload["minimum_length"] == 14
+    assert payload["maximum_bytes"] == MAX_PASSWORD_BYTES
+
+
+def test_the_endpoint_states_exactly_what_a_refusal_would_say(
+    api_context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sign-up form renders this sentence, so it has to be that sentence.
+
+    A form carrying its own copy of the rule is how a screen ends up promising
+    eight characters while the server demands twelve.
+    """
+    monkeypatch.setattr(
+        password_policy, "settings", replace(settings, password_min_length=20)
+    )
+
+    payload = api_context.client.get("/api/auth/password-policy").json()
+
+    assert payload["description"] == policy_description()
+    with pytest.raises(PasswordPolicyError) as refusal:
+        validate_password("kangaroo-typewriter", identifiers=())
+    assert str(refusal.value) == payload["description"]
+
+
+def test_the_policy_is_readable_without_a_session(api_context) -> None:
+    # The screens that need it -- registration and password reset -- are
+    # reached without one.
+    assert api_context.client.get("/api/auth/password-policy").status_code == 200
+
+
 # --- registration and change enforce the same policy -------------------------
 
 

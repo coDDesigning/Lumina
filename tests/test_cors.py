@@ -56,9 +56,9 @@ from fastapi.testclient import TestClient
 from main import app
 
 client = TestClient(app)
-simple = client.get("/", headers={"Origin": "https://app.example.com"})
+simple = client.get("/health/live", headers={"Origin": "https://app.example.com"})
 preflight = client.options(
-    "/",
+    "/health/live",
     headers={
         "Origin": "https://app.example.com",
         "Access-Control-Request-Method": "GET",
@@ -100,10 +100,10 @@ def cors_unhandled_probe() -> None:
     raise RuntimeError("probe")
 
 client = TestClient(app, raise_server_exceptions=False)
-allowed = client.get("/", headers={"Origin": "https://app.example.com"})
-disallowed = client.get("/", headers={"Origin": "https://other.example.com"})
+allowed = client.get("/health/live", headers={"Origin": "https://app.example.com"})
+disallowed = client.get("/health/live", headers={"Origin": "https://other.example.com"})
 preflight = client.options(
-    "/",
+    "/health/live",
     headers={
         "Origin": "https://app.example.com",
         "Access-Control-Request-Method": "POST",

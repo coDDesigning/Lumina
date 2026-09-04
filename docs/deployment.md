@@ -27,83 +27,80 @@ The production image:
 - keeps application files root-owned and non-writable; and
 - uses an inert entrypoint that never applies migrations.
 
-Compose runs three roles from that image in both topologies, plus a `frontend`
-role built from `Dockerfile.frontend` as a separate image:
+Its first build stage compiles the interface with Vite and the second copies
+the result to `/opt/lumina/web`, outside `/app`, so one image carries both
+halves and there is no second image to keep in step.
+
+Compose runs three roles from that image in both topologies:
 
 | Service | Responsibility | Expected state |
 | --- | --- | --- |
 | `migrate` | Apply `alembic upgrade head` once before runtime roles start | Exited with code 0 |
-| `api` | Serve HTTP and readiness probes | Running and healthy |
-| `worker` | Claim and process durable document jobs | Running and healthy |
-| `frontend` | Serve the built interface and proxy `/api` to `api` under one origin | Running and healthy |
+| `lumina` | Serve the interface, the API, and the readiness probes | Running and healthy |
+| `lumina-worker` | Claim and process durable document jobs | Running and healthy |
 
-Four further services exist under the `maintenance` profile and are run on
-demand rather than left running: `backup`, `restore`, `course-purge`, and
-`embedding-backfill`.
+Two further services exist under the `maintenance` profile and are run on
+demand rather than left running: `backup` and `restore`. Anything else that
+runs once takes the worker's image and command directly, for example
+`docker compose run --rm --no-deps lumina-worker python -m workers.course_purge`.
 
 All roles run without Linux capabilities, with `no-new-privileges`, a read-only
 root filesystem, and a bounded temporary filesystem. Only `/data` is
-persistently writable. Both published ports bind to host loopback by default.
+persistently writable.
 
-`frontend` is the entrypoint a browser uses, and it is the only one that has to
-be reachable: it serves the interface and proxies `/api` to `api` under a single
-origin, which is why `VITE_API_BASE_URL=/api` needs no CORS configuration. It
-publishes `${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-8080}:8080`. `api`
-continues to publish `${BACKEND_PORT:-8000}` for direct access, probes, and the
-runbook commands in this repository; an operator who does not want it exposed
-can remove that mapping without affecting the interface.
+`lumina` publishes the only port,
+`${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-10312}:8000`, and it is the
+whole address: the interface and `/api` answer on one origin, which is why the
+default `VITE_API_BASE_URL=/api` needs no CORS configuration and why changing
+`LUMINA_PORT` needs no rebuild. The container-internal port is fixed at 8000.
 
 ### Self-hosted routing contract
 
-The `frontend` service is Nginx serving the built interface and proxying the
-API under one browser origin. It mirrors the hosted CloudFront behaviours in
-`terraform/modules/frontend/`, and the two are kept deliberately in step:
+Every router in `routes/` is prefixed `/api`, so the rest of the URL space
+belongs to the interface. `backend/app/spa.py` answers it, installed as the
+router's fallback rather than mounted at `/` so that the API keeps FastAPI's own
+trailing-slash redirect and its 405-for-the-wrong-method behaviour. It mirrors
+the hosted CloudFront behaviours in `terraform/modules/frontend/`, and the two
+are kept deliberately in step:
 
 | Request | Handling |
 | --- | --- |
-| `/api`, `/api/*` | Proxied to `api:8000` with the prefix preserved and no caching |
-| `/api/health/live`, `/api/health/ready` | Aliased onto the application's root-level probes |
+| `/api`, `/api/*` | The API, with no caching. An unknown path here is a JSON 404, never the shell |
+| `/health/live`, `/health/ready` | The operational probes, at the server root |
 | `/assets/*` | Served immutably for a year; a missing file is a real 404 |
 | Extensionless `GET`/`HEAD` | Served `index.html`, so a hard refresh on a nested route works |
 | Anything else | A real 404, or 405 for a non-`GET`/`HEAD` method |
 
-The `/api` prefix is never rewritten. `backend/app/request_size.py` recognises a
-document upload by matching the request path, so stripping the prefix would
-reclassify a 50 MiB upload as an ordinary 1 MiB request.
+A path whose final segment contains a dot is a request for a file and is never
+answered with the shell: serving HTML there reaches a browser as a module
+MIME-type error rather than as a missing file. `tests/test_spa.py` drives the
+whole table, and `tests/test_static_contract.py` holds the rule and the cache
+regimes against `terraform/modules/frontend/`.
 
-There is deliberately no distribution-wide error fallback and
-`proxy_intercept_errors` is off, so an unknown API route keeps its status, its
-JSON body, `X-Error-Code`, and `X-Request-ID` instead of returning `index.html`.
+The interface and the API get different Content-Security-Policies from the one
+origin, chosen per path in `backend/app/security_headers.py`:
+`default-src 'none'` is correct for JSON and would render the interface as a
+blank page. The interface policy matches the hosted distribution's, minus
+`upgrade-insecure-requests`, and HSTS is off by default for the same reason: on
+`http://<lan-address>:10312` both directives would make a browser refuse every
+subresource. A TLS terminator in front supplies them, and is where
+`SECURITY_HSTS_ENABLED=true` belongs.
 
-Static responses carry the same CSP, `X-Content-Type-Options`,
-`X-Frame-Options`, and `Referrer-Policy` as the hosted distribution, minus
-`upgrade-insecure-requests` and HSTS: the default entrypoint is plain HTTP, and
-on `http://<lan-address>:8080` those two directives would make a browser refuse
-every subresource. A TLS terminator in front of this container supplies both,
-and is also where `SECURITY_HSTS_ENABLED=true` belongs.
+The application is now the only authority for every size limit it publishes.
+`backend/app/request_size.py` recognises a document upload by matching the
+request path, so `MAX_UPLOAD_SIZE_BYTES` can be raised without editing anything
+else and without rebuilding a proxy configuration.
 
-The application stays authoritative for every size limit it publishes. The
-proxy sets `client_max_body_size` on `/api` only as an outer ceiling, above
-`MAX_UPLOAD_SIZE_BYTES` plus the multipart overhead, so an oversized upload
-still reaches the application and receives its own JSON refusal rather than an
-Nginx error page. That ceiling is a literal in `ops/nginx/default.conf` because
-the configuration is baked into a read-only image; raising
-`MAX_UPLOAD_SIZE_BYTES` past it therefore also requires editing that file and
-rebuilding the frontend image.
-`tests/test_frontend_proxy_config.py` fails if the two drift apart.
+Nothing stands between a browser and the container, so `--proxy-headers` is not
+passed to uvicorn unless `FORWARDED_ALLOW_IPS` is set, and the per-IP login and
+registration limits key on the real peer address. Setting that variable wider
+than the proxy you actually run lets a caller send its own `X-Forwarded-For`,
+and so choose its own rate-limit identity. See `docs/rate_limiting.md`.
 
-The upstream address is resolved per request through Docker's embedded DNS
-rather than once at startup, so recreating `api` does not strand the proxy on a
-stale address.
-
-`frontend` writes nothing durable. It is not part of the backup set and
-`ops/self_hosted_backup.sh` does not stop it; while that script has `api`
-stopped, the interface still loads and its API calls fail until `api` returns.
-
-Because every browser request now reaches the API from the proxy's address, the
-per-IP login and registration limits share one bucket for all users unless
-forwarded headers are trusted. See the proxy-trust limitation in
-`docs/rate_limiting.md`.
+Because one container serves both halves, `ops/self_hosted_backup.sh` takes the
+interface down for the duration of a backup rather than leaving it loading with
+failing API calls. That is the cost of the single-container topology, and it is
+why the wrapper restores exactly the services it stopped.
 
 ## First deployment
 
@@ -122,16 +119,20 @@ contains `$` to prevent interpolation. Never commit `.env`. Then run:
 
 ```bash
 set -euo pipefail
-docker compose build --pull
-docker compose up --detach --wait --wait-timeout 180
+docker compose up --detach --wait --wait-timeout 600
 docker compose ps --all
-curl --fail http://127.0.0.1:8000/health/ready
+curl --fail "http://127.0.0.1:${LUMINA_PORT:-10312}/health/ready"
 ```
+
+`up` rebuilds before starting, so a `git pull` cannot leave the previous image
+running; `--no-build` opts out. An operator deploying a prebuilt image tags it
+`lumina` and starts with `docker compose up --detach --no-build`.
 
 Migration failure prevents dependent runtime roles from starting. A readiness
 failure makes `docker compose up --wait` return nonzero, but leaves containers
 available for inspection. Keep ingress closed until the command succeeds and
-`migrate` is exited with code 0 while both `api` and `worker` are healthy.
+`migrate` is exited with code 0 while both `lumina` and `lumina-worker` are
+healthy.
 Register `BOOTSTRAP_ADMIN_EMAIL` with the configured token in the
 `X-Bootstrap-Token` header over a trusted route before opening public ingress.
 
@@ -146,9 +147,8 @@ S3-compatible object store, using the same pinned production image:
 | `minio` | S3-compatible document storage | Running |
 | `minio-init` | Create `S3_BUCKET` once | Exited with code 0 |
 | `migrate` | Apply `alembic upgrade head` once | Exited with code 0 |
-| `api` | Serve HTTP and readiness probes | Running and healthy |
-| `worker` | Claim and process durable document jobs | Running and healthy |
-| `frontend` | Serve the built interface and proxy `/api` to `api` under one origin | Running and healthy |
+| `lumina` | Serve the interface, the API, and the readiness probes | Running and healthy |
+| `lumina-worker` | Claim and process durable document jobs | Running and healthy |
 
 The stack requires `COMPOSE_PROJECT_NAME`, `STORAGE_NAMESPACE`,
 `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `JWT_SECRET_KEY`,
@@ -190,13 +190,15 @@ image (`Dockerfile`) and runs the same three roles:
 
 ### Hosted frontend decision and routing contract
 
-This section is about AWS production. It rejects an Nginx sidecar *there*; it
-does not apply to Compose, where the `frontend` service described under
-"Self-hosted routing contract" below is the supported entrypoint.
+This section is about AWS production, where static delivery is CloudFront's
+job. Compose is the other case: there the application serves the interface
+itself, as described under "Self-hosted routing contract" above.
 
-Hosted production uses private S3 plus CloudFront rather than an Nginx ECS
-sidecar. Static delivery therefore does not consume API/worker capacity or add
-frontend files to the backend image. The public application hostname points to
+Hosted production uses private S3 plus CloudFront rather than a static-file
+sidecar. Static delivery therefore does not consume API or worker capacity.
+The interface is still baked into the image, so the one ECS runs is byte for
+byte the one a self-hoster runs, but CloudFront routes only `/api*` to the ALB
+and no browser reaches the copy inside the container. The public application hostname points to
 CloudFront. CloudFront serves `current/` from the frontend bucket by OAC and
 routes exact `/api` plus `/api/*` paths to the ALB with caching disabled. The
 browser sees one origin, so the production setting `VITE_API_BASE_URL=/api`
@@ -407,7 +409,7 @@ GitHub variables, evidence requirements, and escalation procedure.
 
 The previous experimental Compose file is not an in-place upgrade. It stored
 state in the `./data` bind mount and named its API service `lumina-backend`; the
-supported topology uses a project-scoped named volume and an `api` service.
+supported topology uses a project-scoped named volume and a `lumina` service.
 
 If that experimental stack contains state, stop it with
 its original Compose file, verify no old container is still writing, take a
@@ -424,12 +426,11 @@ default processing timeout plus 45 seconds.
 
 ```bash
 set -euo pipefail
-docker compose build --pull
-docker compose stop api worker
+docker compose stop lumina lumina-worker
 docker compose run --rm --no-deps --entrypoint sh migrate -c 'test -s /data/lumina.db'
 docker compose run --rm --no-deps migrate
-docker compose up --detach --no-deps --wait --wait-timeout 180 api worker
-curl --fail http://127.0.0.1:8000/health/ready
+docker compose up --detach --no-deps --wait --wait-timeout 600 lumina lumina-worker
+curl --fail "http://127.0.0.1:${LUMINA_PORT:-10312}/health/ready"
 ```
 
 Do not place migration commands in the API or worker startup path and do not run
@@ -591,11 +592,12 @@ Use liveness only to recycle an unresponsive process. Route traffic only while
 readiness succeeds. Keep both endpoints on a trusted probe network instead of
 exposing them through public ingress.
 
-Compose reaches the same two probes at `/api/health/live` and
-`/api/health/ready` through the `frontend` service, which is what the quickstart
-in `README.md` checks. That entrypoint binds to loopback by default, so it is
-still a trusted path; an operator who changes `LUMINA_BIND_ADDRESS` or places a
-public ingress in front must restrict `/api/health/*` at that edge. The `api`
-container probes itself directly, and the `frontend` container probes its own
-`/healthz`, which answers without reaching the API so that stopping `api` for a
-backup does not mark a working proxy unhealthy.
+Compose reaches the same two probes at `/health/live` and `/health/ready` on
+the published port, which is what the quickstart in `README.md` checks. There
+is deliberately no `/api/health/*` alias: the hosted distribution forwards
+`/api/*` to the ALB, so an alias there would publish readiness on the public
+hostname, and `/health/ready` writes and reads an object in document storage on
+every call. The port binds to loopback by default, so it is still a trusted
+path; an operator who changes `LUMINA_BIND_ADDRESS` or places a public ingress
+in front must restrict `/health/*` at that edge. The container probes itself
+directly.

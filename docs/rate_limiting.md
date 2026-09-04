@@ -167,15 +167,20 @@ Supported deployments propagate these settings:
 
 Hosted deployments run behind an ALB. Uvicorn is started with
 `--proxy-headers --forwarded-allow-ips <VPC_CIDR>`, so `request.client.host`
-resolves to the original client address. Self-hosted deployments default to
-trusting only `127.0.0.1`; operators placing a reverse proxy in front of the
-API container must set `FORWARDED_ALLOW_IPS` to that proxy's CIDR. The
-application never parses `X-Forwarded-For` itself — trusting untrusted headers
-would allow spoofing.
+resolves to the original client address. The application never parses
+`X-Forwarded-For` itself: trusting an untrusted header would allow spoofing.
 
-The self-hosted `frontend` service is exactly such a reverse proxy: it sets
-`X-Forwarded-For`, but the API only believes it when the proxy's address falls
-inside `FORWARDED_ALLOW_IPS`. Left at a value that does not cover the Compose
-network, every browser shares one per-IP bucket for login, registration, and
-verification, so one person mistyping a password throttles sign-in for
-everyone. The per-account lockout is unaffected, since it does not key on IP.
+Self-hosted deployments trust nothing by default. `FORWARDED_ALLOW_IPS` is
+unset, and the image passes `--proxy-headers` only when it is set, so uvicorn
+installs no proxy-header middleware at all and `request.client.host` is always
+the real peer. This matters because the container is published directly: were
+the variable set wide enough to cover the Docker network, any caller could send
+its own `X-Forwarded-For` and so choose its own bucket for login, registration,
+verification, and password reset. Set it only to the address of a TLS reverse
+proxy you actually run, and to that address alone.
+
+One consequence of Docker's userland proxy is that on some platforms the peer
+the container sees is the bridge gateway rather than the client, which puts
+every browser in a single per-IP bucket. One person mistyping a password then
+throttles sign-in for everyone. The per-account lockout is unaffected, since it
+does not key on IP.

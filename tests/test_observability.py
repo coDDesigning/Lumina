@@ -41,7 +41,11 @@ def test_request_id_is_preserved_only_when_header_safe() -> None:
 
 
 def test_request_middleware_returns_correlation_header(api_context) -> None:
-    response = api_context.client.get("/", headers={"X-Request-ID": "client-42"})
+    # A probe rather than "/": the root is the interface shell now, and whether
+    # it exists depends on whether a build was baked into this deployment.
+    response = api_context.client.get(
+        "/health/live", headers={"X-Request-ID": "client-42"}
+    )
 
     assert response.status_code == 200
     assert response.headers["X-Request-ID"] == "client-42"

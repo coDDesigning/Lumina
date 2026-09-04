@@ -7,11 +7,14 @@ hostname directly until DNS is cut over. Setting them here means the guarantee
 travels with the application rather than with one topology, and the CDN policy
 overrides these with its own equivalents where it is in front.
 
-The default policy is written for what this application actually serves: JSON.
-``default-src 'none'`` is the correct policy for an API, and the exception is
-the interactive documentation, which loads Swagger UI from one named CDN host.
-That page gets its own policy naming that exact origin rather than relaxing the
-policy everywhere, and no policy here uses a scheme or host wildcard.
+This application serves three kinds of response from one origin, so there are
+three policies rather than one. JSON gets ``default-src 'none'``, which is the
+correct policy for an API. The interactive documentation loads Swagger UI from
+one named CDN host and gets a policy naming that exact origin. The built
+interface (backend/app/spa.py) is a browsing context and gets the policy the
+hosted CloudFront distribution declares, so the two stay comparable; the
+self-hosted deployment serves no ads and so gets a narrower one still. No
+policy here uses a scheme or host wildcard.
 
 HSTS is a promise a browser remembers for a year, so it is emitted only where
 the deployment says TLS is terminated in front of the API. See
@@ -59,10 +62,22 @@ DOCS_CONTENT_SECURITY_POLICY = (
 # so nothing is sent rather than an origin.
 REFERRER_POLICY = "no-referrer"
 
+# The interface is a browsing context and does have outbound links, so it sends
+# the origin cross-site and the full URL same-site. This is the value the
+# hosted CloudFront response-headers policy sets in
+# terraform/modules/frontend/main.tf.
+STATIC_REFERRER_POLICY = "strict-origin-when-cross-origin"
+
 CONTENT_TYPE_OPTIONS = "nosniff"
 FRAME_OPTIONS = "DENY"
 
 DOCUMENTATION_PATHS = frozenset({"/docs", "/docs/oauth2-redirect", "/redoc"})
+
+# Everything the application answers as an API rather than as a page. The
+# remaining paths are the built interface served by backend/app/spa.py, which
+# is a browsing context and needs a policy that lets it load its own bundle.
+API_PATH_PREFIXES = ("/api/", "/health/")
+API_PATHS = frozenset({"/api", "/openapi.json"})
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -112,6 +127,10 @@ def build_csp_header(settings: Settings | None = None) -> str:
         )
         return (
             f"default-src 'self'; "
+            f"base-uri 'self'; "
+            f"font-src 'self'; "
+            f"form-action 'self'; "
+            f"frame-ancestors 'none'; "
             f"script-src {script_sources} 'unsafe-inline'; "
             f"style-src 'self' 'unsafe-inline'; "
             f"img-src {img_sources}; "
@@ -119,23 +138,44 @@ def build_csp_header(settings: Settings | None = None) -> str:
             f"frame-src {frame_sources}; "
             f"object-src 'none';"
         )
+    # No ad host appears here at all: a self-hosted deployment serves no ads,
+    # so its interface gets a strictly narrower policy than the hosted one.
     return (
         "default-src 'self'; "
+        "base-uri 'self'; "
+        "font-src 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'; "
         "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
+        "img-src 'self' data: blob:; "
         "connect-src 'self'; "
         "frame-src 'none'; "
         "object-src 'none';"
     )
 
 
-def content_security_policy_for(path: str) -> str:
-    return (
-        DOCS_CONTENT_SECURITY_POLICY
-        if path in DOCUMENTATION_PATHS
-        else API_CONTENT_SECURITY_POLICY
-    )
+def is_api_path(path: str) -> bool:
+    return path in API_PATHS or path.startswith(API_PATH_PREFIXES)
+
+
+def content_security_policy_for(path: str, settings: Settings | None = None) -> str:
+    """The policy for one path: documentation, API, or the interface.
+
+    The application serves the built interface from the same origin as the API
+    (see backend/app/spa.py), so one policy can no longer cover both.
+    ``default-src 'none'`` is right for JSON and would render the interface as
+    a blank page.
+    """
+    if path in DOCUMENTATION_PATHS:
+        return DOCS_CONTENT_SECURITY_POLICY
+    if is_api_path(path):
+        return API_CONTENT_SECURITY_POLICY
+    return build_csp_header(settings)
+
+
+def referrer_policy_for(path: str) -> str:
+    return REFERRER_POLICY if is_api_path(path) else STATIC_REFERRER_POLICY
 
 
 class SecurityHeadersMiddleware:
@@ -159,6 +199,7 @@ class SecurityHeadersMiddleware:
         settings: Settings | None = None,
     ) -> None:
         self.app = app
+        self._settings = settings
         if settings is not None:
             self._hsts_value = (
                 f"max-age={settings.hsts_max_age_seconds}; includeSubDomains"
@@ -177,7 +218,9 @@ class SecurityHeadersMiddleware:
             await self.app(scope, receive, send)
             return
 
-        policy = content_security_policy_for(scope.get("path", ""))
+        request_path = scope.get("path", "")
+        policy = content_security_policy_for(request_path, self._settings)
+        referrer_policy = referrer_policy_for(request_path)
 
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -189,7 +232,7 @@ class SecurityHeadersMiddleware:
                         CONTENT_TYPE_OPTIONS.encode("latin-1"),
                     ),
                     (FRAME_OPTIONS_HEADER, FRAME_OPTIONS.encode("latin-1")),
-                    (REFERRER_POLICY_HEADER, REFERRER_POLICY.encode("latin-1")),
+                    (REFERRER_POLICY_HEADER, referrer_policy.encode("latin-1")),
                     (CONTENT_SECURITY_POLICY_HEADER, policy.encode("latin-1")),
                 ]
                 if self._hsts_value is not None:

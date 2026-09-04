@@ -42,14 +42,27 @@ vi.mock('@/api/auth', () => ({
     verifyEmail: vi.fn(),
     resendVerification: vi.fn(),
     me: vi.fn(),
+    getPasswordPolicy: vi.fn(),
   },
 }));
+
+// What the server would answer. The form states no rule until this arrives, so
+// every test that reads the rule or relies on it waits for it first.
+const PASSWORD_POLICY = {
+  minimum_length: 8,
+  maximum_bytes: 72,
+  description:
+    'Passwords must be at least 8 characters, must not be a commonly used ' +
+    'password or a simple repeated or sequential pattern, and must not ' +
+    'contain your name or email address.',
+};
 
 const { authAPI } = await import('@/api/auth');
 const mockedLogin = vi.mocked(authAPI.login);
 const mockedRegister = vi.mocked(authAPI.register);
 const mockedVerifyEmail = vi.mocked(authAPI.verifyEmail);
 const mockedResend = vi.mocked(authAPI.resendVerification);
+const mockedPasswordPolicy = vi.mocked(authAPI.getPasswordPolicy);
 
 function renderAt(
   element: ReactElement,
@@ -76,6 +89,8 @@ beforeEach(() => {
   mockedRegister.mockReset();
   mockedVerifyEmail.mockReset();
   mockedResend.mockReset();
+  mockedPasswordPolicy.mockReset();
+  mockedPasswordPolicy.mockResolvedValue(PASSWORD_POLICY);
 });
 
 describe('LoginPage', () => {
@@ -152,6 +167,10 @@ describe('RegisterPage', () => {
   it('refuses a password over the 72-byte bcrypt ceiling', async () => {
     renderAt(<RegisterPage />, '/register');
 
+    // The ceiling is part of the policy, so it cannot be enforced by the
+    // form until the policy has arrived.
+    await screen.findByText(PASSWORD_POLICY.description);
+
     const tooLong = 'ü'.repeat(40);
     await userEvent.type(screen.getByLabelText('Name'), 'Deniz Kaya');
     await userEvent.type(screen.getByLabelText('Email'), 'deniz@uni.edu');
@@ -192,11 +211,13 @@ describe('RegisterPage', () => {
     expect(await screen.findByRole('heading', { name: 'Courses' })).toBeInTheDocument();
   });
 
-  it('states the password rules before the user submits', () => {
+  it('states the rules the server actually enforces, not its own', async () => {
     renderAt(<RegisterPage />, '/register');
-    expect(
-      screen.getByText(/At least 8 characters\./),
-    ).toBeInTheDocument();
+
+    // Rendered from the sentence the server refuses with, so the form can
+    // never describe a minimum this deployment does not enforce.
+    expect(await screen.findByText(PASSWORD_POLICY.description)).toBeInTheDocument();
+    expect(mockedPasswordPolicy).toHaveBeenCalled();
   });
 
   it('holds a hosted registration at the inbox instead of the dashboard', async () => {

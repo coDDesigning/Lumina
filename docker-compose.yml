@@ -1,118 +1,39 @@
-name: ${COMPOSE_PROJECT_NAME:?set a stable COMPOSE_PROJECT_NAME in .env}
+# Lumina, self-hosted.
+#
+# Configuration lives in .env and nowhere else. Compose reads that file for the
+# ${...} substitutions below and hands the same file to the containers as it
+# stands, so a setting added there reaches the application without being
+# repeated here. Only the values that must differ inside a container are
+# restated under `environment:`, which always wins over `env_file`.
+#
+# COMPOSE_PROJECT_NAME in .env overrides the name below, and names the
+# lumina-data volume with it.
+name: lumina
 
-x-lumina-environment: &lumina-environment
-  APP_ENV: production
-  APP_DEBUG: "false"
-  DEPLOYMENT_MODE: self_hosted
-  DATABASE_URL: sqlite:////data/lumina.db
-  CHROMA_PERSIST_DIRECTORY: /data/chroma
-  UPLOAD_DIRECTORY: /data/uploads
-  STORAGE_BACKEND: local
-  STORAGE_NAMESPACE: ${STORAGE_NAMESPACE:-self-hosted}
-  MAX_UPLOAD_SIZE_BYTES: ${MAX_UPLOAD_SIZE_BYTES:-52428800}
-  MAX_REQUEST_SIZE_BYTES: ${MAX_REQUEST_SIZE_BYTES:-1048576}
-  MAX_CONCURRENT_DOCUMENT_VALIDATIONS: ${MAX_CONCURRENT_DOCUMENT_VALIDATIONS:-2}
-  UPLOAD_REQUEST_TIMEOUT_SECONDS: ${UPLOAD_REQUEST_TIMEOUT_SECONDS:-300}
-  MAX_DOCUMENTS_PER_COURSE: ${MAX_DOCUMENTS_PER_COURSE:-1000}
-  MAX_COURSE_STORAGE_BYTES: ${MAX_COURSE_STORAGE_BYTES:-2147483648}
-  MAX_PDF_PAGES: ${MAX_PDF_PAGES:-500}
-  MAX_PDF_PAGE_PIXELS: ${MAX_PDF_PAGE_PIXELS:-40000000}
-  MAX_PDF_TOTAL_PIXELS: ${MAX_PDF_TOTAL_PIXELS:-100000000}
-  MAX_PDF_CONTENT_STREAM_BYTES: ${MAX_PDF_CONTENT_STREAM_BYTES:-5242880}
-  MAX_PDF_DRAWING_OPERATIONS: ${MAX_PDF_DRAWING_OPERATIONS:-100000}
-  PROCESSING_JOB_LEASE_SECONDS: ${PROCESSING_JOB_LEASE_SECONDS:-60}
-  PROCESSING_JOB_MAX_ATTEMPTS: ${PROCESSING_JOB_MAX_ATTEMPTS:-3}
-  PROCESSING_JOB_POLL_SECONDS: ${PROCESSING_JOB_POLL_SECONDS:-1.0}
-  PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS: ${PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS:-300}
-  PROCESSING_JOB_CONCURRENCY: ${PROCESSING_JOB_CONCURRENCY:-2}
-  GENERATION_JOB_LEASE_SECONDS: ${GENERATION_JOB_LEASE_SECONDS:-120}
-  GENERATION_JOB_MAX_ATTEMPTS: ${GENERATION_JOB_MAX_ATTEMPTS:-2}
-  GENERATION_JOB_POLL_SECONDS: ${GENERATION_JOB_POLL_SECONDS:-1.0}
-  GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS: ${GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS:-600}
-  GENERATION_JOB_CONCURRENCY: ${GENERATION_JOB_CONCURRENCY:-2}
-  GENERATION_JOB_MAX_ACTIVE_PER_USER: ${GENERATION_JOB_MAX_ACTIVE_PER_USER:-2}
-  MAX_EXTRACTED_CHARACTERS: ${MAX_EXTRACTED_CHARACTERS:-2000000}
-  MAX_DOCUMENT_CHUNKS: ${MAX_DOCUMENT_CHUNKS:-1000}
-  OCR_LANGUAGE: ${OCR_LANGUAGE:-eng}
-  OCR_DPI: ${OCR_DPI:-300}
-  OCR_MIN_TEXT_CHARACTERS: ${OCR_MIN_TEXT_CHARACTERS:-20}
-  DOCUMENT_CHUNK_SIZE_CHARACTERS: ${DOCUMENT_CHUNK_SIZE_CHARACTERS:-1200}
-  DOCUMENT_CHUNK_OVERLAP_CHARACTERS: ${DOCUMENT_CHUNK_OVERLAP_CHARACTERS:-200}
-  VECTOR_BACKEND: ${VECTOR_BACKEND:-chroma}
-  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-  AI_DEFAULT_MODEL: ${AI_DEFAULT_MODEL:-}
-  AI_GENERATION_TIMEOUT_SECONDS: ${AI_GENERATION_TIMEOUT_SECONDS:-60}
-  AI_GENERATION_OVERALL_TIMEOUT_SECONDS: ${AI_GENERATION_OVERALL_TIMEOUT_SECONDS:-110}
-  OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
-  OLLAMA_TEMPERATURE: ${OLLAMA_TEMPERATURE:-0.2}
-  OLLAMA_TOP_P: ${OLLAMA_TOP_P:-0.9}
-  OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
-  OLLAMA_NUM_PREDICT: ${OLLAMA_NUM_PREDICT:-4096}
-  OLLAMA_REPEAT_PENALTY: ${OLLAMA_REPEAT_PENALTY:-1.1}
-  STUDY_GUIDE_MATERIAL_MAX_CHARS: ${STUDY_GUIDE_MATERIAL_MAX_CHARS:-120000}
-  QUIZ_MATERIAL_MAX_CHARS: ${QUIZ_MATERIAL_MAX_CHARS:-120000}
-  FLASHCARD_MATERIAL_MAX_CHARS: ${FLASHCARD_MATERIAL_MAX_CHARS:-120000}
-  AI_TUTOR_MATERIAL_MAX_CHARS: ${AI_TUTOR_MATERIAL_MAX_CHARS:-120000}
-  COURSE_QA_MATERIAL_MAX_CHARS: ${COURSE_QA_MATERIAL_MAX_CHARS:-120000}
-  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-  # Self-hosted deployments do not verify addresses by default: there are no
-  # introductory credits to farm, so demanding a relay would be a cost with no
-  # benefit. An operator running a shared instance turns it on and supplies the
-  # rest; the application names whichever one is missing. A relay on the Docker
-  # host is reached at host.docker.internal, not localhost.
-  EMAIL_VERIFICATION_REQUIRED: ${EMAIL_VERIFICATION_REQUIRED:-false}
-  EMAIL_VERIFICATION_TOKEN_TTL_HOURS: ${EMAIL_VERIFICATION_TOKEN_TTL_HOURS:-24}
-  APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-}
-  EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
-  SMTP_HOST: ${SMTP_HOST:-}
-  SMTP_PORT: ${SMTP_PORT:-587}
-  SMTP_USERNAME: ${SMTP_USERNAME:-}
-  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-  SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
-  SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-10}
-  PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-8}
-  SECURITY_HEADERS_ENABLED: ${SECURITY_HEADERS_ENABLED:-true}
-  # Off unless this deployment is reached over HTTPS. Turn it on once a TLS
-  # reverse proxy fronts the API; browsers remember the promise for a year.
-  SECURITY_HSTS_ENABLED: ${SECURITY_HSTS_ENABLED:-false}
-  SECURITY_HSTS_MAX_AGE_SECONDS: ${SECURITY_HSTS_MAX_AGE_SECONDS:-31536000}
-  AI_MODEL_COST_RATES: "${AI_MODEL_COST_RATES:-}"
-  EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
-  COURSE_PURGE_INTERVAL_SECONDS: ${COURSE_PURGE_INTERVAL_SECONDS:-3600}
-  EMBEDDING_BACKFILL_INTERVAL_SECONDS: ${EMBEDDING_BACKFILL_INTERVAL_SECONDS:-3600}
-  EMBEDDING_BACKFILL_BATCH_SIZE: ${EMBEDDING_BACKFILL_BATCH_SIZE:-64}
-  EMBEDDING_BACKFILL_PRUNE_ORPHANS: ${EMBEDDING_BACKFILL_PRUNE_ORPHANS:-false}
-  # Rate limiting
-  RATE_LIMIT_LOGIN_MAX_ATTEMPTS: ${RATE_LIMIT_LOGIN_MAX_ATTEMPTS:-10}
-  RATE_LIMIT_LOGIN_WINDOW_SECONDS: ${RATE_LIMIT_LOGIN_WINDOW_SECONDS:-300}
-  RATE_LIMIT_REGISTER_MAX_ATTEMPTS: ${RATE_LIMIT_REGISTER_MAX_ATTEMPTS:-5}
-  RATE_LIMIT_REGISTER_WINDOW_SECONDS: ${RATE_LIMIT_REGISTER_WINDOW_SECONDS:-3600}
-  RATE_LIMIT_GENERATION_MAX_ATTEMPTS: ${RATE_LIMIT_GENERATION_MAX_ATTEMPTS:-30}
-  RATE_LIMIT_GENERATION_WINDOW_SECONDS: ${RATE_LIMIT_GENERATION_WINDOW_SECONDS:-3600}
-  RATE_LIMIT_LOCKOUT_BASE_SECONDS: ${RATE_LIMIT_LOCKOUT_BASE_SECONDS:-30}
-  RATE_LIMIT_LOCKOUT_MAX_SECONDS: ${RATE_LIMIT_LOCKOUT_MAX_SECONDS:-1800}
-  RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS: ${RATE_LIMIT_VERIFICATION_MAX_ATTEMPTS:-5}
-  RATE_LIMIT_VERIFICATION_WINDOW_SECONDS: ${RATE_LIMIT_VERIFICATION_WINDOW_SECONDS:-3600}
-  RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS: ${RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS:-5}
-  RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS: ${RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS:-3600}
-  # Proxy trust for client IP resolution
-  # The frontend service proxies every browser request, so the API must trust
-  # the forwarded client address from it or all users collapse into a single
-  # per-IP rate-limit bucket. This covers the private range Docker allocates
-  # Compose networks from; a daemon configured with a different address pool
-  # needs this set explicitly. Widening it is safe here only because the API
-  # port is published on loopback and the proxy overwrites X-Forwarded-For
-  # rather than appending to whatever the client sent.
-  FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}
-
-x-lumina-service: &lumina-service
-  image: ${LUMINA_IMAGE:-lumina:local}
-  build:
-    context: .
+x-lumina: &lumina
+  image: lumina
+  build: .
+  env_file: .env
+  environment:
+    APP_ENV: production
+    APP_DEBUG: "false"
+    DEPLOYMENT_MODE: self_hosted
+    STORAGE_BACKEND: local
+    # Four slashes: an absolute path inside the volume, not the relative path
+    # a checkout uses.
+    DATABASE_URL: sqlite:////data/lumina.db
+    CHROMA_PERSIST_DIRECTORY: /data/chroma
+    UPLOAD_DIRECTORY: /data/uploads
+    # Baked into the image and read offline. A relative path from .env would
+    # send fastembed looking in an empty directory under HF_HUB_OFFLINE=1 and
+    # every embedding would fail at runtime.
+    EMBEDDING_MODEL_CACHE_DIRECTORY: /opt/lumina/embedding-models
+    # Empty unless .env says otherwise, and empty is the safe value: nothing
+    # stands between a browser and this container, so no X-Forwarded-For is
+    # believed and per-IP rate limits key on the real peer. Set it in .env only
+    # to the address of a TLS reverse proxy you run yourself.
+    FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-}
   user: "10001:10001"
-  environment: *lumina-environment
   volumes:
     - lumina-data:/data
   read_only: true
@@ -125,32 +46,35 @@ x-lumina-service: &lumina-service
   extra_hosts:
     - host.docker.internal:host-gateway
   pids_limit: 256
+  init: true
+  restart: unless-stopped
 
 services:
+  # Runs to completion before anything serves. Migrations are deliberately not
+  # applied on startup: /health/ready refuses to report ready while the schema
+  # is behind, so a failed migration blocks the deployment here instead of
+  # producing a crash-looping application.
   migrate:
-    <<: *lumina-service
-    environment:
-      APP_ENV: production
-      DEPLOYMENT_MODE: self_hosted
-      DATABASE_URL: sqlite:////data/lumina.db
+    <<: *lumina
     command:
       ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check"]
     restart: "no"
 
-  api:
-    <<: *lumina-service
-    environment:
-      <<: *lumina-environment
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
-      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?set BOOTSTRAP_ADMIN_EMAIL in .env}
-      BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:?set BOOTSTRAP_ADMIN_TOKEN in .env}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
-    command: ["sh", "-c", "exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330 --no-access-log --proxy-headers --forwarded-allow-ips \"${FORWARDED_ALLOW_IPS:-127.0.0.1}\""]
+  lumina:
+    <<: *lumina
+    # Rebuild before starting, so `docker compose up -d` after a `git pull`
+    # cannot run yesterday's code from a stale image tag. A cached rebuild
+    # takes a moment; `--no-build` skips it. Deliberately not on the one-shot
+    # services: `docker compose run` has no --no-build to opt out with.
+    pull_policy: build
+    # The only published port, and the whole address. Change LUMINA_PORT alone
+    # -- nothing needs rebuilding, because the interface calls /api on whatever
+    # origin served it. 8000 is inside the container and is not configurable.
+    ports:
+      - "${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-10312}:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
-    ports:
-      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     healthcheck:
       test:
         ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()"]
@@ -158,17 +82,11 @@ services:
       timeout: 5s
       retries: 6
       start_period: 10s
-    init: true
     stop_grace_period: 345s
-    restart: unless-stopped
 
-  worker:
-    <<: *lumina-service
-    environment:
-      <<: *lumina-environment
-      JWT_SECRET_KEY: worker-does-not-serve-authentication
-      BOOTSTRAP_ADMIN_EMAIL: worker@example.com
-      BOOTSTRAP_ADMIN_TOKEN: worker-does-not-accept-admin-bootstrap
+  lumina-worker:
+    <<: *lumina
+    pull_policy: build
     command: ["python", "-m", "workers.worker"]
     depends_on:
       migrate:
@@ -179,65 +97,13 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    init: true
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-345s}
-    restart: unless-stopped
 
-  # Written out rather than merged from *lumina-service: that anchor carries the
-  # lumina-data volume and every AI provider key, and neither belongs in a
-  # public-facing static server. It also builds a different image entirely.
-  frontend:
-    image: ${LUMINA_FRONTEND_IMAGE:-lumina-frontend:local}
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-      args:
-        # Baked into the bundle at build time. Changing it requires
-        # `docker compose build frontend`, not a restart.
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
-    # The base image's own user. Stated explicitly for auditability; it is not
-    # 10001 because nothing in this image is owned by the backend's user.
-    user: "101:101"
-    # Waiting for a healthy API keeps first-run startup ordered. The trade-off
-    # is that a permanently unhealthy API means no interface at all, rather than
-    # an interface that loads and then fails every request.
-    depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-8080}:8080"
-    read_only: true
-    tmpfs:
-      # The base image puts the pid file and all five *_temp_path directories
-      # here. Nothing is spooled to disk in either direction, so this stays small.
-      - /tmp:rw,noexec,nosuid,nodev,mode=1777,size=${LUMINA_FRONTEND_TMPFS_SIZE_BYTES:-67108864}
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 128
-    init: true
-    healthcheck:
-      # Answered by nginx itself. Probing the API here would report this
-      # service unhealthy for the whole of every ops/self_hosted_backup.sh run,
-      # which stops api and worker by design.
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-    stop_grace_period: 30s
-    restart: unless-stopped
-
+  # Run through ops/self_hosted_backup.sh, which stops the services first.
+  # See docs/self-hosted-backup.md.
   backup:
-    <<: *lumina-service
+    <<: *lumina
     profiles: ["maintenance"]
-    environment:
-      <<: *lumina-environment
-      JWT_SECRET_KEY: maintenance-does-not-serve-authentication
-      BOOTSTRAP_ADMIN_EMAIL: maintenance@example.com
-      BOOTSTRAP_ADMIN_TOKEN: maintenance-does-not-accept-admin-bootstrap
-      GEMINI_API_KEY: maintenance-does-not-call-ai-providers
     volumes:
       - lumina-data:/data
       - ${LUMINA_BACKUP_DIRECTORY:-./backups}:/backup
@@ -245,47 +111,16 @@ services:
       ["python", "-m", "workers.self_hosted_backup", "backup", "/backup/${BACKUP_ARCHIVE_NAME:-lumina-backup.tar.gz}", "--archive-root", "/backup", "--include-chroma-offline"]
     restart: "no"
 
+  # Separate from backup because the archive is mounted read-only here: a
+  # restore must not be able to write over the archive it is reading.
   restore:
-    <<: *lumina-service
+    <<: *lumina
     profiles: ["maintenance"]
-    environment:
-      <<: *lumina-environment
-      JWT_SECRET_KEY: maintenance-does-not-serve-authentication
-      BOOTSTRAP_ADMIN_EMAIL: maintenance@example.com
-      BOOTSTRAP_ADMIN_TOKEN: maintenance-does-not-accept-admin-bootstrap
-      GEMINI_API_KEY: maintenance-does-not-call-ai-providers
     volumes:
       - lumina-data:/data
       - ${LUMINA_BACKUP_DIRECTORY:-./backups}:/backup:ro
     command:
       ["python", "-m", "workers.self_hosted_backup", "restore", "/backup/${BACKUP_ARCHIVE_NAME:-lumina-backup.tar.gz}", "--archive-root", "/backup"]
-    restart: "no"
-
-  course-purge:
-    <<: *lumina-service
-    profiles: ["maintenance"]
-    environment:
-      <<: *lumina-environment
-      JWT_SECRET_KEY: maintenance-does-not-serve-authentication
-      BOOTSTRAP_ADMIN_EMAIL: maintenance@example.com
-      BOOTSTRAP_ADMIN_TOKEN: maintenance-does-not-accept-admin-bootstrap
-      GEMINI_API_KEY: maintenance-does-not-call-ai-providers
-    volumes:
-      - lumina-data:/data
-    command: ["python", "-m", "workers.course_purge"]
-    restart: "no"
-
-  embedding-backfill:
-    <<: *lumina-service
-    profiles: ["maintenance"]
-    environment:
-      <<: *lumina-environment
-      JWT_SECRET_KEY: maintenance-does-not-serve-authentication
-      BOOTSTRAP_ADMIN_EMAIL: maintenance@example.com
-      BOOTSTRAP_ADMIN_TOKEN: maintenance-does-not-accept-admin-bootstrap
-    volumes:
-      - lumina-data:/data
-    command: ["python", "-m", "workers.embedding_backfill"]
     restart: "no"
 
 volumes:

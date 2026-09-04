@@ -30,7 +30,6 @@ from services.document_validation import (
 )
 from services.processing_jobs import (
     ProcessingJobStateError,
-    _database_now,
     enqueue_document_job,
     retry_failed_job,
 )

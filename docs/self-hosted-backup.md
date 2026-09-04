@@ -44,9 +44,11 @@ referenced by the database snapshot and checks each against its recorded byte
 size and SHA-256 digest. Chroma is a raw snapshot and therefore requires the API
 and worker to be stopped.
 
-`frontend` holds no durable state, is not part of the backup set, and is never
-stopped by the wrapper. While `api` is stopped the interface still loads and its
-API calls fail; it recovers by itself when `api` returns.
+One container serves the interface and the API, so stopping `lumina` takes the
+interface down with it: for the duration of a backup the deployment does not
+answer at all, rather than loading and failing every request. The wrapper
+restarts exactly the services it stopped, and records which ones those were in
+the volume so an interrupted run can still recover them.
 
 ## Complete backup
 
@@ -110,26 +112,25 @@ the original volume available for immediate rollback:
 set -euo pipefail
 export ORIGINAL_PROJECT_NAME="lumina-production" # exact value from .env
 export RESTORE_PROJECT_NAME="lumina-restore-$(date -u +%Y%m%dT%H%M%SZ)"
-docker compose stop api worker
-test -z "$(docker compose ps --status running --services api worker)"
+docker compose stop lumina lumina-worker
+test -z "$(docker compose ps --status running --services lumina lumina-worker)"
 
 COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" \
 BACKUP_ARCHIVE_NAME="lumina-20260820T120000Z.tar.gz" \
 docker compose --profile maintenance run --rm restore
 
 COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose run --rm migrate
-COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose run --rm worker \
+COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose run --rm lumina-worker \
   python -m workers.embedding_backfill --prune-orphans
-COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" LUMINA_PORT=8081 docker compose up -d \
-  --wait --wait-timeout 180 api worker frontend
-curl --fail --show-error http://127.0.0.1:8000/health/ready
+COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" LUMINA_PORT=10313 docker compose up -d \
+  --no-build --wait --wait-timeout 180 lumina lumina-worker
+curl --fail --show-error http://127.0.0.1:10313/health/ready
 ```
 
-The restored project starts `frontend` too, because a project serving no
-interface has not been shown usable. It is given its own `LUMINA_PORT` so it
-cannot collide with the original project's entrypoint, which stays published
-even while `api` is stopped. Verify the restored copy at
-`http://127.0.0.1:8081` before cutting over.
+The restored project is given its own `LUMINA_PORT` so it cannot collide with
+the original, and it is started by explicit service name so nothing else in it
+claims a port either. Verify the restored copy at `http://127.0.0.1:10313`,
+interface included, before cutting over.
 
 The restore rejects an existing database, nonempty upload/Chroma directories,
 unsafe archive paths, links, checksum mismatches, foreign-key violations, and an
@@ -154,11 +155,11 @@ original project:
 
 ```bash
 set -euo pipefail
-COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose stop api worker frontend
-test -z "$(COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose ps --status running --services api worker frontend)"
+COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose stop lumina lumina-worker
+test -z "$(COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose ps --status running --services lumina lumina-worker)"
 COMPOSE_PROJECT_NAME="${ORIGINAL_PROJECT_NAME}" docker compose up -d \
-  --wait --wait-timeout 180 api worker frontend
-curl --fail --show-error http://127.0.0.1:8000/health/ready
+  --no-build --wait --wait-timeout 180 lumina lumina-worker
+curl --fail --show-error "http://127.0.0.1:${LUMINA_PORT:-10312}/health/ready"
 ```
 
 Investigate the failed archive or restore without modifying either volume. Never

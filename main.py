@@ -9,6 +9,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 from backend.app.config import settings
 from backend.app.database import get_db
@@ -24,6 +25,7 @@ from backend.app.request_size import (
     RequestSizeLimitMiddleware,
 )
 from backend.app.security_headers import SecurityHeadersMiddleware
+from backend.app.spa import SinglePageApplication
 from routes import (
     activity,
     admin,
@@ -80,6 +82,11 @@ app = FastAPI(
     debug=settings.app_debug,
     lifespan=lifespan,
 )
+# Innermost, so it wraps the router and compresses both the JSON the API
+# returns and the bundle the interface loads. The thresholds are the ones the
+# reverse proxy this replaced used. Streaming event responses are excluded by
+# the middleware itself; this application serves none.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 app.add_middleware(
     RequestSizeLimitMiddleware,
     max_request_body_size=settings.max_request_size_bytes,
@@ -165,11 +172,6 @@ async def observe_request(request: Request, call_next):
         reset_request_id(token)
 
 
-@app.get("/")
-def read_root():
-    return {"status": "ok", "message": "Lumina API Core is running!"}
-
-
 @app.get("/ads.txt", response_class=PlainTextResponse)
 def ads_txt() -> PlainTextResponse:
     return ads.get_ads_txt()
@@ -195,6 +197,14 @@ def health_ready(
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "not_ready"}
     return {"status": "ready"}
+
+
+if settings.web_root is not None:
+    # Installed as the router's fallback rather than mounted at "/", so every
+    # API route, the documentation and the health probes are matched first and
+    # keep FastAPI's own trailing-slash redirect and wrong-method handling.
+    # See backend/app/spa.py.
+    app.router.default = SinglePageApplication(settings.web_root, app.router.default)
 
 
 if settings.cors_allowed_origins:

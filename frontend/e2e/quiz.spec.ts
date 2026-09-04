@@ -19,6 +19,11 @@ async function generateQuiz(page: Page) {
   await dialog.getByLabel(/How many questions/).selectOption('5')
   await dialog.getByRole('button', { name: /start the quiz/i }).click()
 
+  await page
+    .getByRole('list', { name: 'Background generations' })
+    .getByRole('button', { name: /practice quiz/i })
+    .click()
+
   await expect(page).toHaveURL(/\/practice\/4$/)
   await expect(
     page.getByText('Which algorithm finds the fewest-edge path in an unweighted graph?'),

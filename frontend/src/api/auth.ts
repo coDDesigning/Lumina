@@ -1,7 +1,18 @@
 import { apiClient } from './client';
-import { AuthResponse, EmailVerificationResult, RegistrationResult, User } from './types';
+import {
+  AuthResponse,
+  EmailVerificationResult,
+  PasswordPolicy,
+  RegistrationResult,
+  User,
+} from './types';
 
 export const authAPI = {
+  /** Needs no session: it is read by the sign-up and reset screens. */
+  getPasswordPolicy: async (options?: RequestInit): Promise<PasswordPolicy> => {
+    return apiClient.get<PasswordPolicy>('/auth/password-policy', options);
+  },
+
   login: async (email: string, password: string): Promise<AuthResponse> => {
     // Backend uses OAuth2 password flow which requires form data
     const formData = new URLSearchParams();

@@ -1,3 +1,7 @@
+# One build context now, for one image: the first stage compiles the interface
+# out of frontend/, the second installs the API. Anything excluded here is
+# excluded from both, so a rule that hides frontend sources breaks the build
+# rather than shrinking it.
 .git
 **/.git
 .github
@@ -17,16 +21,20 @@ venv
 **/.mypy_cache
 .coverage
 **/.coverage
+coverage
+**/coverage
 htmlcov
 **/htmlcov
-data
-**/data
-uploads
-**/uploads
-chroma
-**/chroma
-chroma_db
-**/chroma_db
+
+# Anchored to the repository root on purpose. These are the runtime state
+# directories; `**/data` would also match frontend/src/data, which is
+# application source, and the interface build would fail on a missing module.
+/data
+/uploads
+/chroma
+/chroma_db
+/logs
+/tmp
 **/*.db
 **/*.sqlite
 **/*.sqlite3
@@ -34,10 +42,25 @@ chroma_db
 **/*.pem
 **/*.key
 **/credentials*.json
+
 node_modules
 **/node_modules
-frontend
-tests
-docs
+# Including frontend/dist: the interface is built inside the image, so a stale
+# local build must never be able to reach it.
 dist
 **/dist
+
+# frontend/tsconfig.json carries a project reference to the Playwright suite,
+# and Vite parses that reference graph, so one file survives from a suite the
+# image never runs.
+frontend/e2e
+!frontend/e2e/tsconfig.json
+frontend/playwright-report
+frontend/blob-report
+frontend/test-results
+
+tests
+docs
+terraform
+ops
+.user

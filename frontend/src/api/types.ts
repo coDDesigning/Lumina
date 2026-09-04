@@ -117,6 +117,18 @@ export interface AuthResponse {
 }
 
 /**
+ * The password rule this deployment enforces. It is configurable, so the form
+ * cannot know it: every sentence shown to a person is rendered from what the
+ * server would refuse with, which is what stops a screen from stating a rule
+ * that is not the one in force.
+ */
+export interface PasswordPolicy {
+  minimum_length: number;
+  maximum_bytes: number;
+  description: string;
+}
+
+/**
  * What registration answers with. The account exists either way; where the
  * deployment verifies, it holds no introductory credits until the emailed link
  * is redeemed, so the screen after this one is a prompt rather than a workspace.

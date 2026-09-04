@@ -466,8 +466,8 @@ def test_personal_key_auth_error_disables_silent_fallback(
             exc_info.value
         )
 
-        # Verify ai_generation_http_exception creates HTTP 401 with X-Error-Code: personal_key_invalid
+        # A provider credential failure must not masquerade as session authentication.
         http_exc = ai_generation_http_exception(exc_info.value, feature="study_guide")
-        assert http_exc.status_code == 401
+        assert http_exc.status_code == 400
         assert http_exc.detail == "Your personal OpenAI API key is invalid or expired."
         assert http_exc.headers.get("X-Error-Code") == "personal_key_invalid"

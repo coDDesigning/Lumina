@@ -179,6 +179,26 @@ describe('form controls', () => {
     expect(screen.getByRole('button', { name: 'Show password' })).toBeInTheDocument();
   });
 
+  it('names each password visibility action for its field', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <PasswordInput label="New password" defaultValue="new-secret" />
+        <PasswordInput label="Confirm password" defaultValue="new-secret" />
+      </>,
+    );
+
+    const newPassword = screen.getByLabelText('New password');
+    const confirmation = screen.getByLabelText('Confirm password');
+    expect(screen.getByRole('button', { name: 'Show new password' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Show confirm password' }));
+
+    expect(newPassword).toHaveAttribute('type', 'password');
+    expect(confirmation).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: 'Hide confirm password' })).toBeInTheDocument();
+  });
+
   it('labels textareas and selects the same way', () => {
     render(
       <>

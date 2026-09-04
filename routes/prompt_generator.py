@@ -31,6 +31,8 @@ router = APIRouter(
     response_model=BaseResponse[PromptGenerationResponse],
     dependencies=[Depends(rate_limit_generation("prompt_generator"))],
     responses={
+        400: {"description": "Personal API key is invalid or AI model is unavailable"},
+        401: {"description": "Authentication required"},
         402: {"description": "Insufficient credits"},
         429: {"description": "AI provider or per-user generation rate limited"},
         503: {"description": "AI provider unreachable"},

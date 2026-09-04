@@ -324,14 +324,139 @@ describe('apiClient HTTP requests', () => {
       }),
     );
 
-    const unauthorizedListener = vi.fn();
+    let receivedReason: string | undefined;
+    const unauthorizedListener = vi.fn((event: Event) => {
+      if (event instanceof CustomEvent) {
+        receivedReason = event.detail?.reason;
+      }
+    });
     window.addEventListener('auth:unauthorized', unauthorizedListener);
 
     await expect(apiClient.get('/user/me')).rejects.toThrow(APIError);
 
     expect(localStorage.getItem('token')).toBeNull();
     expect(unauthorizedListener).toHaveBeenCalledTimes(1);
+    expect(receivedReason).toBe('unauthorized');
 
+    window.removeEventListener('auth:unauthorized', unauthorizedListener);
+  });
+
+  it('dispatches auth:unauthorized event with banned reason and clears token on 403 account_banned', async () => {
+    localStorage.setItem('token', 'active-token');
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Your account has been banned.' }), {
+        status: 403,
+        statusText: 'Forbidden',
+        headers: { 'X-Error-Code': 'account_banned' },
+      }),
+    );
+
+    let receivedReason: string | undefined;
+    const unauthorizedListener = vi.fn((event: Event) => {
+      if (event instanceof CustomEvent) {
+        receivedReason = event.detail?.reason;
+      }
+    });
+    window.addEventListener('auth:unauthorized', unauthorizedListener);
+
+    await expect(apiClient.get('/courses')).rejects.toThrow(APIError);
+
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(unauthorizedListener).toHaveBeenCalledTimes(1);
+    expect(receivedReason).toBe('banned');
+
+    window.removeEventListener('auth:unauthorized', unauthorizedListener);
+  });
+
+  it('does not end session on ordinary 403 response', async () => {
+    localStorage.setItem('token', 'student-token');
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Not enough privileges.' }), {
+        status: 403,
+        statusText: 'Forbidden',
+      }),
+    );
+
+    const unauthorizedListener = vi.fn();
+    window.addEventListener('auth:unauthorized', unauthorizedListener);
+
+    await expect(apiClient.get('/admin/users')).rejects.toThrow(APIError);
+
+    expect(localStorage.getItem('token')).toBe('student-token');
+    expect(unauthorizedListener).not.toHaveBeenCalled();
+
+    window.removeEventListener('auth:unauthorized', unauthorizedListener);
+  });
+
+  it('does not dispatch session ended event on 401 when no token was sent', async () => {
+    localStorage.clear();
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Incorrect email or password' }), {
+        status: 401,
+        statusText: 'Unauthorized',
+      }),
+    );
+
+    const unauthorizedListener = vi.fn();
+    window.addEventListener('auth:unauthorized', unauthorizedListener);
+
+    await expect(apiClient.post('/auth/login', { username: 'a', password: 'b' })).rejects.toThrow(APIError);
+
+    expect(unauthorizedListener).not.toHaveBeenCalled();
+
+    window.removeEventListener('auth:unauthorized', unauthorizedListener);
+  });
+
+  it('keeps the Lumina session for a personal API key 401', async () => {
+    localStorage.setItem('token', 'valid-lumina-token');
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ detail: 'Your personal OpenAI API key is invalid or expired.' }),
+        {
+          status: 401,
+          headers: { 'X-Error-Code': 'personal_key_invalid' },
+        },
+      ),
+    );
+    const unauthorizedListener = vi.fn();
+    window.addEventListener('auth:unauthorized', unauthorizedListener);
+
+    await expect(apiClient.post('/courses/1/study-guide', {})).rejects.toMatchObject({
+      status: 401,
+      code: 'personal_key_invalid',
+    });
+
+    expect(localStorage.getItem('token')).toBe('valid-lumina-token');
+    expect(unauthorizedListener).not.toHaveBeenCalled();
+    window.removeEventListener('auth:unauthorized', unauthorizedListener);
+  });
+
+  it('keeps the Lumina session for a personal API key 400 bad request', async () => {
+    localStorage.setItem('token', 'valid-lumina-token');
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ detail: 'Your personal OpenAI API key is invalid or expired.' }),
+        {
+          status: 400,
+          headers: { 'X-Error-Code': 'personal_key_invalid' },
+        },
+      ),
+    );
+    const unauthorizedListener = vi.fn();
+    window.addEventListener('auth:unauthorized', unauthorizedListener);
+
+    await expect(apiClient.post('/courses/1/study-guide', {})).rejects.toMatchObject({
+      status: 400,
+      code: 'personal_key_invalid',
+    });
+
+    expect(localStorage.getItem('token')).toBe('valid-lumina-token');
+    expect(unauthorizedListener).not.toHaveBeenCalled();
     window.removeEventListener('auth:unauthorized', unauthorizedListener);
   });
 });

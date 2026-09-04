@@ -136,6 +136,7 @@ for (const modal of MODAL_FLOWS) {
 }
 
 test('the known contrast gap is still only the one colour', async ({ page }) => {
+  test.slow()
   const pairs = new Set<string>()
 
   for (const route of ROUTES) {

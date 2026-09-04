@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.models import (
@@ -55,7 +56,7 @@ class _ProgressAggregate:
     attempts_count: int
     average_score: float | None
     total_time_spent_seconds: int | None
-    completion: float
+    completion: float | None
     correct_count: int
     incorrect_count: int
     topic_mastery: list[TopicMastery]
@@ -193,7 +194,7 @@ class QuizAttemptService:
 
         scored = [answer for answer in graded if answer.score is not None]
         correct_count = sum(1 for answer in graded if answer.is_correct)
-        score = sum(answer.score for answer in scored) / len(scored) if scored else 0.0
+        score = sum(answer.score for answer in scored) / len(scored) if scored else None
 
         recorded_time_spent = (
             min(time_spent_seconds_override, MAX_TIME_SPENT_SECONDS)
@@ -204,7 +205,7 @@ class QuizAttemptService:
         attempt = QuizAttempt(
             user_id=user_id,
             quiz_id=quiz.id,
-            score=min(max(score, 0.0), 1.0),
+            score=min(max(score, 0.0), 1.0) if score is not None else None,
             time_spent_seconds=recorded_time_spent,
         )
 
@@ -372,13 +373,14 @@ class QuizAttemptService:
                 pass
 
         attempts_count = len(attempts)
+        scored_attempts = [attempt for attempt in attempts if attempt.score is not None]
         average_score = (
-            sum(attempt.score for attempt in attempts) / attempts_count
-            if attempts_count
+            sum(attempt.score for attempt in scored_attempts) / len(scored_attempts)
+            if scored_attempts
             else None
         )
         completion = (
-            min(1.0, max(0.0, average_score)) if average_score is not None else 0.0
+            min(1.0, max(0.0, average_score)) if average_score is not None else None
         )
         recorded_times = [
             attempt.time_spent_seconds
@@ -422,18 +424,25 @@ class QuizAttemptService:
         """
         summary = cls._aggregate(db, course_id, user_id)
 
-        progress = db.scalars(
-            select(Progress).where(
-                Progress.user_id == user_id,
-                Progress.course_id == course_id,
-            )
-        ).one_or_none()
+        lookup = select(Progress).where(
+            Progress.user_id == user_id,
+            Progress.course_id == course_id,
+        )
+        progress = db.scalars(lookup).one_or_none()
 
         if progress is None:
-            progress = Progress(user_id=user_id, course_id=course_id)
-            db.add(progress)
+            candidate = Progress(user_id=user_id, course_id=course_id)
+            try:
+                with db.begin_nested():
+                    db.add(candidate)
+                    db.flush()
+                progress = candidate
+            except IntegrityError:
+                progress = db.scalars(lookup).one()
 
-        progress.completion = summary.completion
+        progress.completion = (
+            summary.completion if summary.completion is not None else 0.0
+        )
         progress.quizzes_completed = summary.attempts_count
         progress.correct_answers_count = summary.correct_count
         progress.incorrect_answers_count = summary.incorrect_count

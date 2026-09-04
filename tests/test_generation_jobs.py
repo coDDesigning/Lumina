@@ -28,6 +28,7 @@ from backend.app.models import (
     Role,
     User,
 )
+from schemas.generation_job import GenerationJobView
 from generation_fixtures import (
     GENERATION_FEATURES,
     RecordingProvider,
@@ -36,6 +37,7 @@ from generation_fixtures import (
 from services.credits import GENERATION_CREDIT_COSTS
 from services.generation_jobs import (
     CREDIT_SOURCE_TYPES,
+    GenerationJobNotDismissableError,
     GenerationJobStateError,
     InsufficientCreditsForGenerationError,
     claim_next_generation_job,
@@ -47,6 +49,7 @@ from services.generation_jobs import (
     heartbeat_generation_job,
     list_course_generation_jobs,
     recover_expired_generation_jobs,
+    dismiss_generation_job,
     retry_generation_job,
 )
 
@@ -435,6 +438,133 @@ def _persisted_output(session: Session, course: Course, owner: User) -> Generate
     return output
 
 
+def _succeeded_quiz_job(
+    session: Session,
+    course: Course,
+    owner: User,
+    *,
+    requested: str | None,
+    produced: str | None,
+) -> GenerationJob:
+    """One finished quiz run, told what was asked for and what answered."""
+    payload = (
+        '{"question_count": 5}'
+        if requested is None
+        else ('{"question_count": 5, "model": "%s"}' % requested)
+    )
+    enqueue_generation_job(
+        session,
+        course_id=course.id,
+        user_id=owner.id,
+        job_type=JOB_TYPE_GENERATE_QUIZ,
+        request_payload=payload,
+        credit_cost=1.0,
+    )
+    claimed = claim_next_generation_job(session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+    quiz = Quiz(course_id=course.id, title="Q", model_used=produced)
+    session.add(quiz)
+    session.commit()
+    complete_generation_job(session, claimed.id, claimed.claim_token, quiz_id=quiz.id)
+    session.expire_all()
+    finished = session.get(GenerationJob, claimed.id)
+    assert finished is not None
+    return finished
+
+
+def test_a_run_answered_by_another_vendor_says_so(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """A silent fallback looks identical to the model the student chose.
+
+    The student picked Ollama; it could not be reached, so Gemini wrote the
+    quiz. Saying nothing leaves them believing their choice was honoured.
+    """
+    job = _succeeded_quiz_job(
+        db_session,
+        course,
+        owner,
+        requested="ollama:llama3",
+        produced="gemini:gemini-3.6-flash",
+    )
+
+    view = GenerationJobView.from_job(job)
+
+    assert view.requested_model == "ollama:llama3"
+    assert view.fallback_model == "gemini:gemini-3.6-flash"
+
+
+def test_the_chosen_vendor_answering_is_not_reported_as_a_fallback(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    job = _succeeded_quiz_job(
+        db_session,
+        course,
+        owner,
+        requested="gemini:gemini-3.6-flash",
+        produced="gemini:gemini-3.6-flash",
+    )
+
+    view = GenerationJobView.from_job(job)
+
+    assert view.requested_model == "gemini:gemini-3.6-flash"
+    assert view.fallback_model is None
+
+
+def test_the_same_vendor_on_a_different_model_is_not_a_fallback(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """Attribution spelling drifts, so only a change of vendor is reportable.
+
+    Comparing the whole identifier would call ``gemini:gemini-3.6-flash`` and
+    ``gemini:models/gemini-3.6-flash`` a fallback and warn about an outage that
+    never happened.
+    """
+    job = _succeeded_quiz_job(
+        db_session,
+        course,
+        owner,
+        requested="gemini:gemini-3.6-flash",
+        produced="gemini:models/gemini-3.6-flash",
+    )
+
+    assert GenerationJobView.from_job(job).fallback_model is None
+
+
+@pytest.mark.parametrize(
+    ("requested", "produced"),
+    [(None, "gemini:gemini-3.6-flash"), ("ollama:llama3", None), (None, None)],
+)
+def test_a_fallback_is_claimed_only_when_both_vendors_are_known(
+    db_session: Session, owner: User, course: Course, requested, produced
+) -> None:
+    job = _succeeded_quiz_job(
+        db_session, course, owner, requested=requested, produced=produced
+    )
+
+    assert GenerationJobView.from_job(job).fallback_model is None
+
+
+def test_an_unreadable_request_payload_never_fails_the_panel(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """One bad row must not take the whole generation panel down with it."""
+    job = _succeeded_quiz_job(
+        db_session,
+        course,
+        owner,
+        requested="ollama:llama3",
+        produced="gemini:gemini-3.6-flash",
+    )
+    job.request_payload = "{not json at all"
+    db_session.commit()
+
+    view = GenerationJobView.from_job(job)
+
+    assert view.requested_model is None
+    assert view.fallback_model is None
+
+
 def test_complete_records_the_artifact_the_run_produced(
     db_session: Session, owner: User, course: Course
 ) -> None:
@@ -674,6 +804,123 @@ def test_a_long_finished_job_falls_out_of_the_panel(
         list_course_generation_jobs(db_session, course.id, owner.id, now=much_later)
         == []
     )
+
+
+def _fail(session: Session, job: GenerationJob) -> GenerationJob:
+    claimed = claim_next_generation_job(session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+    fail_generation_job(
+        session,
+        claimed.id,
+        claimed.claim_token,
+        error_code="PROVIDER_TIMEOUT",
+        error_message="Timed out.",
+        retryable=False,
+    )
+    session.expire_all()
+    failed = session.get(GenerationJob, claimed.id)
+    assert failed is not None
+    assert failed.status == JOB_STATUS_FAILED
+    return failed
+
+
+def test_a_dismissed_job_leaves_the_panel(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """A failure the student has read must be clearable, or it nags for a day."""
+    failed = _fail(db_session, _enqueue(db_session, course, owner))
+
+    dismissed = dismiss_generation_job(
+        db_session, course_id=course.id, user_id=owner.id, job_id=failed.id
+    )
+
+    assert dismissed is not None
+    assert dismissed.dismissed_at is not None
+    assert list_course_generation_jobs(db_session, course.id, owner.id) == []
+
+
+def test_dismissing_the_same_job_twice_changes_nothing(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    failed = _fail(db_session, _enqueue(db_session, course, owner))
+
+    first = dismiss_generation_job(
+        db_session, course_id=course.id, user_id=owner.id, job_id=failed.id
+    )
+    assert first is not None
+    stamped = first.dismissed_at
+
+    second = dismiss_generation_job(
+        db_session, course_id=course.id, user_id=owner.id, job_id=failed.id
+    )
+
+    assert second is not None
+    assert second.dismissed_at == stamped
+
+
+def test_an_unfinished_job_cannot_be_dismissed(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """Hiding a run that is still going would strand the student's credit."""
+    job = _enqueue(db_session, course, owner)
+
+    with pytest.raises(GenerationJobNotDismissableError):
+        dismiss_generation_job(
+            db_session, course_id=course.id, user_id=owner.id, job_id=job.id
+        )
+
+    assert [
+        row.id for row in list_course_generation_jobs(db_session, course.id, owner.id)
+    ] == [job.id]
+
+
+def test_dismissal_is_scoped_to_its_course_and_owner(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    failed = _fail(db_session, _enqueue(db_session, course, owner))
+    stranger = _make_user(db_session, "stranger@example.com", credits=100.0)
+    elsewhere = _make_course(db_session, owner, "Elsewhere")
+
+    assert (
+        dismiss_generation_job(
+            db_session, course_id=course.id, user_id=stranger.id, job_id=failed.id
+        )
+        is None
+    )
+    assert (
+        dismiss_generation_job(
+            db_session, course_id=elsewhere.id, user_id=owner.id, job_id=failed.id
+        )
+        is None
+    )
+
+
+def test_retrying_a_failure_clears_the_run_it_replaces(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """Try again replaced the run, so the panel must stop offering it again."""
+    failed = _fail(db_session, _enqueue(db_session, course, owner))
+
+    replacement = retry_generation_job(
+        db_session, course_id=course.id, user_id=owner.id, job_id=failed.id
+    )
+
+    assert replacement is not None
+    assert replacement.id != failed.id
+    listed = [
+        row.id for row in list_course_generation_jobs(db_session, course.id, owner.id)
+    ]
+    assert listed == [replacement.id]
+
+    again = retry_generation_job(
+        db_session, course_id=course.id, user_id=owner.id, job_id=failed.id
+    )
+
+    assert again is not None
+    assert again.id == replacement.id
+    assert [
+        row.id for row in list_course_generation_jobs(db_session, course.id, owner.id)
+    ] == [replacement.id]
 
 
 def test_get_generation_job_is_scoped_to_its_course_and_owner(

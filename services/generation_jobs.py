@@ -19,7 +19,7 @@ from collections.abc import Callable
 from uuid import uuid4
 
 from sqlalchemy import case, func, select, update
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from backend.app.config import settings
 from backend.app.models import (
@@ -77,6 +77,10 @@ class InsufficientCreditsForGenerationError(InsufficientCreditsError):
 
 class GenerationJobNotRetryableError(RuntimeError):
     """Only a terminal failed generation can be retried."""
+
+
+class GenerationJobNotDismissableError(RuntimeError):
+    """Only a generation that has finished can be cleared from the panel."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,7 +238,11 @@ def retry_generation_job(
         select(GenerationJob).where(GenerationJob.retry_of_job_id == original.id)
     )
     if existing is not None:
-        session.rollback()
+        if original.dismissed_at is None:
+            original.dismissed_at = _database_now(session, now)
+            session.commit()
+        else:
+            session.rollback()
         return existing
     if original.charge_amount is None:
         session.rollback()
@@ -268,10 +276,51 @@ def retry_generation_job(
         charge_refunded=False,
         retry_of_job_id=original.id,
     )
+    original.dismissed_at = _database_now(session, now)
     session.add(retried)
     session.commit()
     session.refresh(retried)
     return retried
+
+
+def dismiss_generation_job(
+    session: Session,
+    *,
+    course_id: int,
+    user_id: int,
+    job_id: int,
+    now: datetime | None = None,
+) -> GenerationJob | None:
+    """Clear one finished generation out of the student's panel for good.
+
+    A failure the student has read otherwise sits there for the whole recent
+    window with a retry button that has already been taken, so dismissal is what
+    makes the panel a list of work rather than a list of history. Only a run
+    that has finished may be cleared: hiding one still queued would leave the
+    student watching for a result nothing is going to show them.
+    """
+    _start_transition(session)
+    job = session.scalar(
+        select(GenerationJob).where(
+            GenerationJob.id == job_id,
+            GenerationJob.course_id == course_id,
+            GenerationJob.user_id == user_id,
+        )
+    )
+    if job is None:
+        session.rollback()
+        return None
+    if job.status not in (JOB_STATUS_SUCCEEDED, JOB_STATUS_FAILED):
+        session.rollback()
+        raise GenerationJobNotDismissableError(
+            "Only a finished generation can be dismissed."
+        )
+    if job.dismissed_at is None:
+        job.dismissed_at = _database_now(session, now)
+        session.commit()
+    else:
+        session.rollback()
+    return job
 
 
 def generation_queue_metrics(
@@ -755,9 +804,14 @@ def list_course_generation_jobs(
     cutoff = read_at - timedelta(seconds=RECENT_WINDOW_SECONDS)
     statement = (
         select(GenerationJob)
+        .options(
+            selectinload(GenerationJob.quiz),
+            selectinload(GenerationJob.generated_output),
+        )
         .where(
             GenerationJob.course_id == course_id,
             GenerationJob.user_id == user_id,
+            GenerationJob.dismissed_at.is_(None),
             (GenerationJob.status.in_((JOB_STATUS_QUEUED, JOB_STATUS_RUNNING)))
             | (GenerationJob.finished_at >= cutoff),
         )

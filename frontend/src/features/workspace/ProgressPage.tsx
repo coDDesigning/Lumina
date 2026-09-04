@@ -1,11 +1,14 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import { useAuth } from '@/context/AuthContext';
 import { QuizModal } from '@/features/study/quiz/QuizModal';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
+import { GenerationRail } from './GenerationRail';
 import { PastQuizzes } from './PastQuizzes';
 import { ProgressView } from './ProgressView';
+import { useGenerationJobs } from './useGenerationJobs';
 import type { Workspace } from '@/data/workspaces';
 import { useCourseDocuments } from '@/hooks/useCourseDocuments';
 import { LinkButton } from '@/ui/LinkButton';
@@ -24,8 +27,10 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
 
   const [practiceTopic, setPracticeTopic] = useState<string | null>(null);
 
+  const navigate = useNavigate();
   const { entries, readyCount } = useCourseDocuments(courseId);
   const { progress, isLoading, error, reload } = useCourseProgress(courseId);
+  const generationJobs = useGenerationJobs(courseId);
 
   const isSupportView = Boolean(user && workspace.ownerId != null && workspace.ownerId !== user.id);
   const ownerDisplayName =
@@ -73,6 +78,27 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
           }
         />
 
+        {!isSupportView &&
+        (generationJobs.isLoading || generationJobs.error || generationJobs.jobs.length > 0) ? (
+          <section className={styles.generation} aria-labelledby="progress-generation-heading">
+            <h2 id="progress-generation-heading" className={styles.generationLabel}>
+              Generation activity
+            </h2>
+            <GenerationRail
+              jobs={generationJobs.jobs}
+              isLoading={generationJobs.isLoading}
+              error={generationJobs.error}
+              retryingId={generationJobs.retryingId}
+              onReload={() => void generationJobs.reload()}
+              onRetry={(jobId) => void generationJobs.retry(jobId)}
+              onDismiss={(jobId) => void generationJobs.dismiss(jobId)}
+              onOpenQuiz={(quizId) => navigate(`/courses/${workspace.id}/practice/${quizId}`)}
+              onOpenGuide={() => navigate(`/courses/${workspace.id}`)}
+              onOpenFlashcards={() => navigate(`/courses/${workspace.id}`)}
+            />
+          </section>
+        ) : null}
+
         <PastQuizzes courseId={courseId} workspaceId={workspace.id} />
       </div>
 
@@ -82,9 +108,11 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
           topics={workspace.topics}
           readyDocumentCount={readyCount}
           initialTopic={practiceTopic}
-          onQueued={() => setPracticeTopic(null)}
+          onQueued={() => {
+            setPracticeTopic(null);
+            void generationJobs.reload();
+          }}
           onClose={() => setPracticeTopic(null)}
-          onAttemptRecorded={reload}
         />
       ) : null}
     </div>

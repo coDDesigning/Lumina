@@ -65,10 +65,12 @@ export function QuizResults({ attempt, questions }: QuizResultsProps) {
       <section className={styles.headline} aria-labelledby="quiz-score-heading">
         <div>
           <h3 id="quiz-score-heading" className={cx(styles.score, 'tabular')}>
-            {tally.scorePercent}%
+            {tally.scorePercent === null ? 'Not scored' : `${tally.scorePercent}%`}
           </h3>
           <p className={cx(styles.scoreDetail, 'tabular')}>
-            {`${tally.correct} of ${tally.graded} marked answers correct`}
+            {tally.graded === 0
+              ? 'Nothing on this attempt could be marked automatically'
+              : `${tally.correct} of ${tally.graded} marked answers correct`}
             {spent ? ` · ${spent}` : ''}
           </p>
         </div>

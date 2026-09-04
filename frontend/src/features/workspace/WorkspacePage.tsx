@@ -212,7 +212,11 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
             ...state,
             [type]: {
               conversationId: detail.id,
-              messages: detail.messages.map(({ role, content }) => ({ role, content })),
+              messages: detail.messages.map(({ role, content, citations }) => ({
+                role,
+                content,
+                citations,
+              })),
               isLoading: false,
               error: null,
             },

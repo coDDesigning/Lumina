@@ -105,6 +105,7 @@ function parseApiErrorBody(data: unknown): ParsedApiError {
 
 export const ERROR_CODE_HEADER = 'X-Error-Code';
 const RETRY_AFTER_HEADER = 'Retry-After';
+const PERSONAL_KEY_INVALID_ERROR_CODE = 'personal_key_invalid';
 
 function parseRetryAfterSeconds(value: string | null): number | null {
   const normalized = value?.trim();
@@ -211,17 +212,24 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       errorData = { detail: response.statusText };
     }
 
-    if (response.status === 401) {
-      localStorage.removeItem('token');
-      window.dispatchEvent(new Event('auth:unauthorized'));
-    }
-
-    throw new APIError(
+    const error = new APIError(
       response.status,
       errorData,
       response.headers?.get(ERROR_CODE_HEADER) ?? null,
       response.headers?.get(RETRY_AFTER_HEADER) ?? null,
     );
+
+    if (
+      response.status === 401 &&
+      error.code !== PERSONAL_KEY_INVALID_ERROR_CODE &&
+      token !== null &&
+      localStorage.getItem('token') === token
+    ) {
+      localStorage.removeItem('token');
+      window.dispatchEvent(new Event('auth:unauthorized'));
+    }
+
+    throw error;
   }
 
   const text = await response.text();

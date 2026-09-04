@@ -29,6 +29,7 @@ from services.retrieval_material import (
     NoRelevantMaterialError,
 )
 from services.text_generation import (
+    PersonalKeyAuthError,
     TextGenerationConnectionError,
     TextGenerationRateLimitError,
     TextGenerationTimeoutError,
@@ -259,6 +260,11 @@ def test_unexpected_failure_returns_500_with_error_code_and_refunds(
 
 PROVIDER_FAILURE_CASES = [
     (
+        PersonalKeyAuthError(),
+        400,
+        AiErrorCode.PERSONAL_KEY_INVALID,
+    ),
+    (
         TextGenerationTimeoutError("Timed out"),
         504,
         AiErrorCode.PROVIDER_TIMEOUT,
@@ -274,6 +280,36 @@ PROVIDER_FAILURE_CASES = [
         AiErrorCode.PROVIDER_UNAVAILABLE,
     ),
 ]
+
+
+PERSONAL_KEY_ROUTE_PATHS = (
+    "/api/courses/{course_id}/study-guide",
+    "/api/courses/{course_id}/flashcards",
+    "/api/courses/{course_id}/quiz",
+    "/api/courses/{course_id}/qa",
+    "/api/courses/{course_id}/ai-tutor",
+    "/api/courses/{course_id}/reverse-quiz",
+    "/api/prompt-generator",
+    "/api/courses/{course_id}/exam-mode/analysis",
+    "/api/courses/{course_id}/exam-mode/analysis/rescan",
+    "/api/courses/{course_id}/exam-mode/topics/{topic_key}/guide",
+    "/api/courses/{course_id}/exam-mode/topics/{topic_key}/summary",
+    "/api/courses/{course_id}/exam-mode/topics/{topic_key}/practice",
+    "/api/courses/{course_id}/exam-mode/topics/{topic_key}/exam",
+    "/api/courses/{course_id}/exam-mode/topics/{topic_key}/similar-questions",
+    "/api/courses/{course_id}/exam-mode/mock-exam",
+    "/api/courses/{course_id}/exam-mode/review-sheet",
+)
+
+
+def test_personal_key_routes_document_configuration_failure() -> None:
+    from main import app
+
+    paths = app.openapi()["paths"]
+    for path in PERSONAL_KEY_ROUTE_PATHS:
+        responses = paths[path]["post"]["responses"]
+        assert responses["401"]["description"] == "Authentication required"
+        assert "Personal API key" in responses["400"]["description"]
 
 
 @pytest.mark.parametrize(

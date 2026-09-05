@@ -14,6 +14,11 @@ import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';
 import { Input, Select } from '@/ui/Input';
 import { useElapsed } from './useElapsed';
+import {
+  MAX_QUESTION_COUNT,
+  MIN_QUESTION_COUNT,
+  parseQuestionCount,
+} from './questionCount';
 import styles from './ExamMockExamBuilder.module.css';
 
 /** Exactly the four types the quiz engine can persist. */
@@ -42,7 +47,7 @@ export function ExamMockExamBuilder({ courseId, plan }: ExamMockExamBuilderProps
   const navigate = useNavigate();
   const { isMetered, canAfford } = useCredits();
 
-  const [questionCount, setQuestionCount] = useState(6);
+  const [questionCount, setQuestionCount] = useState('6');
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [types, setTypes] = useState<ReadonlySet<QuizQuestionType>>(
     new Set<QuizQuestionType>(['multiple_choice']),
@@ -57,23 +62,32 @@ export function ExamMockExamBuilder({ courseId, plan }: ExamMockExamBuilderProps
 
   // The backend is authoritative, but a paper that cannot cover every topic it
   // was asked for is a 422, so the form says so before it spends a request.
-  const tooFewQuestions = topicKeys.size > questionCount;
+  const count = parseQuestionCount(questionCount);
+  const tooFewQuestions = topicKeys.size > count.value;
+  // A type that rounds to zero questions is dropped from the mix rather than
+  // refused, so a paper the student configured would quietly omit a format
+  // they asked for. Same rule as the topics above, for the same reason.
+  const tooFewForTypes = types.size > count.value;
   const noTypes = types.size === 0;
   const noTopics = topicKeys.size === 0;
-  const invalid = tooFewQuestions || noTypes || noTopics;
+  // A count the field itself rejects is reported by the field, so the alert is
+  // left to say what no single field can: the choices do not fit together.
+  const configurationInvalid = noTopics || noTypes || tooFewQuestions || tooFewForTypes;
+  const invalid = count.error !== null || configurationInvalid;
 
+  const total = count.value;
   const mix = useMemo(() => {
     const chosen = QUESTION_TYPES.filter((entry) => types.has(entry.value));
-    if (chosen.length === 0) return [];
-    const base = Math.floor(questionCount / chosen.length);
+    if (chosen.length === 0 || !Number.isInteger(total)) return [];
+    const base = Math.floor(total / chosen.length);
     const counts = chosen.map(() => base);
-    for (let index = 0; index < questionCount - base * chosen.length; index += 1) {
+    for (let index = 0; index < total - base * chosen.length; index += 1) {
       counts[index] += 1;
     }
     return chosen
       .map((entry, index) => ({ question_type: entry.value, count: counts[index] }))
       .filter((entry) => entry.count > 0);
-  }, [types, questionCount]);
+  }, [types, total]);
 
   function toggleType(value: QuizQuestionType) {
     setTypes((current) => {
@@ -104,7 +118,7 @@ export function ExamMockExamBuilder({ courseId, plan }: ExamMockExamBuilderProps
     try {
       const result = await examModeAPI.generateMockExam(courseId, {
         plan_output_id: plan.generated_output_id,
-        question_count: questionCount,
+        question_count: count.value,
         duration_minutes: durationMinutes,
         question_mix: mix,
         topic_keys: [...topicKeys],
@@ -142,10 +156,11 @@ export function ExamMockExamBuilder({ courseId, plan }: ExamMockExamBuilderProps
           <Input
             label="Questions"
             type="number"
-            min={1}
-            max={20}
+            min={MIN_QUESTION_COUNT}
+            max={MAX_QUESTION_COUNT}
             value={questionCount}
-            onChange={(event) => setQuestionCount(Number(event.target.value))}
+            error={count.error ?? undefined}
+            onChange={(event) => setQuestionCount(event.target.value)}
           />
           <Select
             label="Time allowed"
@@ -189,13 +204,15 @@ export function ExamMockExamBuilder({ courseId, plan }: ExamMockExamBuilderProps
         </fieldset>
       </div>
 
-      {invalid ? (
+      {configurationInvalid ? (
         <Alert tone="warning" title="This paper cannot be built yet">
           {noTopics
             ? 'Choose at least one topic for the paper to cover.'
             : noTypes
               ? 'Choose at least one question type.'
-              : `Every topic gets at least one question, so ${topicKeys.size} topics need at least ${topicKeys.size} questions.`}
+              : tooFewQuestions
+                ? `Every topic gets at least one question, so ${topicKeys.size} topics need at least ${topicKeys.size} questions.`
+                : `Every type gets at least one question, so ${types.size} question types need at least ${types.size} questions.`}
         </Alert>
       ) : null}
 

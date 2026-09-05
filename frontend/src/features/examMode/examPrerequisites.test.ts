@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ExamSourceDocument, ExamSourceInventory } from '@/api/types';
-import { deriveReadiness, examDateHasPassed } from './examPrerequisites';
+import { deriveReadiness, examDateHasPassed, examDateIsFuture } from './examPrerequisites';
 
 const TODAY = new Date('2026-05-01T09:00:00Z');
 
@@ -44,6 +44,19 @@ describe('examDateHasPassed', () => {
   });
 });
 
+describe('examDateIsFuture', () => {
+  // The plan gate, which is a different rule from examDateHasPassed: the server
+  // refuses a first plan for an exam happening today, so the client must too.
+  it.each([
+    ['2026-05-02', true],
+    ['2026-05-01', false],
+    ['2026-04-30', false],
+    ['not-a-date', true],
+  ])('reads %s as still to come: %s', (examDate, expected) => {
+    expect(examDateIsFuture(examDate, TODAY)).toBe(expected);
+  });
+});
+
 describe('deriveReadiness', () => {
   it('clears a course with sources, a syllabus, topics and a future exam', () => {
     const readiness = deriveReadiness({
@@ -83,6 +96,22 @@ describe('deriveReadiness', () => {
 
     expect(kinds(readiness.blockers)).toEqual(['exam_date_passed']);
     expect(readiness.canPlan).toBe(false);
+  });
+
+  it('blocks a first plan on the day of the exam, the way the server does', () => {
+    // The exam has not passed, but a first plan needs one still to come. The
+    // student is told before the click rather than by a refusal that would
+    // call today's date a past one.
+    const readiness = deriveReadiness({
+      inventory: inventory(),
+      examDate: '2026-05-01',
+      hasPlan: false,
+      today: TODAY,
+    });
+
+    expect(kinds(readiness.blockers)).toEqual(['exam_date_not_future']);
+    expect(readiness.canPlan).toBe(false);
+    expect(readiness.canAnalyse).toBe(true);
   });
 
   it('blocks nothing once a plan exists, however old the exam date is', () => {

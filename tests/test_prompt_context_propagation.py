@@ -160,6 +160,7 @@ def _exam_style_question_prompt(context: PromptContext) -> str:
         _PLANNED_TOPIC,
         context,
         originals="1. Explain breadth-first search.",
+        original_count=1,
         question_count=5,
         policy=SimilarQuestionDifficultyPolicy.MATCH_SOURCE,
         question_types=exam_similar_questions.SIMILAR_QUESTION_TYPES,

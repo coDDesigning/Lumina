@@ -142,9 +142,9 @@ const GENERATION_FAILURES: Record<string, FailureCopy> = {
     remedy: null,
   },
   exam_date_not_future: {
-    title: 'That exam date has passed',
+    title: 'A first plan needs an exam still to come',
     message:
-      'A first plan needs an exam still to come. Update the course exam date, then try again.',
+      'Update the course exam date, then try again. A day-by-day roadmap can still plan an exam happening today.',
     retryable: false,
     remedy: null,
   },

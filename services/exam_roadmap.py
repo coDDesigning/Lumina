@@ -69,6 +69,7 @@ from utils.ai_errors import (
     EXAM_DATE_REQUIRED_MESSAGE,
     EXAM_TOPICS_REQUIRED_MESSAGE,
 )
+from utils.clock import utc_today
 from utils.json_documents import parse_json_object
 
 OUTPUT_TYPE = "exam_roadmap"
@@ -350,7 +351,7 @@ class ExamRoadmapService:
         if course is None or course.exam_date is None:
             raise ExamDateRequiredError(EXAM_DATE_REQUIRED_MESSAGE)
 
-        current_day = today if today is not None else date.today()
+        current_day = today if today is not None else utc_today()
         if course.exam_date < current_day:
             raise ExamDatePassedError(EXAM_DATE_PASSED_MESSAGE)
 

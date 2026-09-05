@@ -445,7 +445,7 @@ class ImageExtractor:
     """
 
     def validate(self, content: bytes, options: PipelineOptions) -> None:
-        _validate_image(content)
+        _validate_image(content, options)
 
     def extract(
         self,
@@ -1218,6 +1218,17 @@ def _page_work(
     xref_images = page.get_images(full=True)
     image_info = _page_image_regions(page, xref_images)
     drawings = page.get_drawings()
+    # ``page.rect`` is free; a full-resolution pixmap of an oversized MediaBox
+    # is hundreds of MB. Reject on the dimension before rendering, the way
+    # every other render path in this module (_validate_render_budget,
+    # _pdf_preflight_locked) already gates on rect-derived pixels.
+    page_pixels = int(page.rect.width * page.rect.height)
+    if page_pixels > options.max_pdf_page_pixels:
+        raise _failure(
+            ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
+            PipelineStage.VALIDATING,
+            retryable=False,
+        )
     page.get_pixmap(alpha=False)
     text = page.get_text("text").replace("\x00", "")
     text_blocks, header_candidates, footer_candidates = _pdf_layout_content(page)
@@ -1231,7 +1242,7 @@ def _page_work(
         header_candidates=header_candidates,
         footer_candidates=footer_candidates,
         has_images=bool(image_info),
-        page_pixels=int(page.rect.width * page.rect.height),
+        page_pixels=page_pixels,
         uncounted_image_pixels=sum(
             image["width"] * image["height"]
             for image in image_info
@@ -1413,7 +1424,7 @@ def _image_filetype(content: bytes) -> str:
     return "png" if content.startswith(_PNG_MAGIC) else "jpg"
 
 
-def _validate_image(content: bytes) -> None:
+def _validate_image(content: bytes, options: PipelineOptions) -> None:
     """Confirm the upload is a single, decodable PNG or JPEG raster."""
     if not content.startswith(_IMAGE_MAGIC_PREFIXES):
         raise _failure(
@@ -1450,6 +1461,16 @@ def _validate_image(content: bytes) -> None:
             PipelineStage.VALIDATING,
             retryable=False,
         )
+    # ``rect`` comes from the header alone; the full raster is only decoded by
+    # the later ``get_pixmap``. A source larger than the whole-document render
+    # budget can never be needed even after down-scaling, so reject it here
+    # rather than allocating it first (BUG-005).
+    if int(rect.width * rect.height) > options.max_pdf_total_pixels:
+        raise _failure(
+            ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
+            PipelineStage.VALIDATING,
+            retryable=False,
+        )
 
 
 def _image_transcode_scale(
@@ -1475,6 +1496,18 @@ def _image_to_single_page_pdf(content: bytes, options: PipelineOptions) -> bytes
                 stream=content, filetype=_image_filetype(content)
             ) as image:
                 source_rect = image.load_page(0).rect
+                # Defence in depth: ``validate`` already rejected this, but a
+                # direct caller must not reach ``get_pixmap`` on an unbounded
+                # source raster either (BUG-005).
+                if (
+                    int(source_rect.width * source_rect.height)
+                    > options.max_pdf_total_pixels
+                ):
+                    raise _failure(
+                        ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
+                        PipelineStage.EXTRACTING_TEXT,
+                        retryable=False,
+                    )
                 scale = _image_transcode_scale(
                     source_rect.width, source_rect.height, options
                 )
@@ -1493,6 +1526,8 @@ def _image_to_single_page_pdf(content: bytes, options: PipelineOptions) -> bytes
             if not isinstance(rendered, bytes) or not rendered.startswith(b"%PDF-"):
                 raise RuntimeError("image transcode did not produce a PDF")
             return rendered
+        except DocumentProcessingError:
+            raise
         except Exception:
             logger.exception("Image-to-PDF transcode failed")
             raise _failure(

@@ -101,6 +101,36 @@ def test_non_upload_request_body_uses_general_limit() -> None:
     assert response.json() == {"detail": "Request body too large"}
 
 
+@pytest.mark.parametrize("path", ["/api/profile-documents", "/api/courses/1/documents"])
+def test_profile_document_upload_gets_the_upload_body_limit(path: str) -> None:
+    """BUG-003: /api/profile-documents validates against MAX_UPLOAD_SIZE_BYTES
+    like a course document, so it must not be capped at the 1 MiB generic
+    request limit."""
+    app = FastAPI()
+    app.add_middleware(
+        RequestSizeLimitMiddleware,
+        max_request_body_size=4,
+        max_upload_body_size=64,
+        max_concurrent_uploads=1,
+        upload_request_timeout_seconds=1,
+    )
+
+    @app.post("/api/profile-documents")
+    async def upload_profile(request: Request) -> dict[str, int]:
+        return {"size": len(await request.body())}
+
+    @app.post("/api/courses/{course_id}/documents")
+    async def upload_course(course_id: int, request: Request) -> dict[str, int]:
+        return {"size": len(await request.body())}
+
+    body = b"x" * 16  # over the 4-byte generic limit, under the 64-byte upload one
+    with TestClient(app) as client:
+        response = client.post(path, content=body)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"size": len(body)}
+
+
 def test_upload_concurrency_is_limited_before_body_consumption() -> None:
     async def run_requests() -> None:
         first_started = anyio.Event()

@@ -6,11 +6,23 @@ from pathlib import Path
 from typing import TypedDict
 
 from fastapi import UploadFile
+from fastapi.responses import JSONResponse
 
 from backend.app.config import settings
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "app" / "config.json"
 MESSAGES_PATH = Path(__file__).resolve().parents[1] / "app" / "messages.json"
+
+# Content signatures for the validators declared in ``app/config.json``. These
+# mirror what the extraction pipeline already enforces (``%PDF-`` at offset 0 in
+# ``services.document_pipeline._pdf_preflight``; the PNG/JPEG magic in
+# ``_validate_image``) so a byte/extension mismatch is rejected at upload time
+# with a clean 415 instead of being persisted and later marked failed by a
+# worker. ``text`` has no reliable signature and stays unchecked.
+_PDF_MAGIC = b"%PDF-"
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+_IMAGE_MAGIC = (_PNG_MAGIC, _JPEG_MAGIC)
 
 
 class FileTypeDefinition(TypedDict):
@@ -144,6 +156,45 @@ class DocumentValidationError(ValueError):
         self.error_key = error_key
         super().__init__(error_key)
 
+    @property
+    def code(self) -> str:
+        """The stable ``UPLOAD_*`` machine code clients branch on."""
+        return UPLOAD_ERRORS[self.error_key]["code"]
+
+    @property
+    def status_code(self) -> int:
+        """The HTTP status the catalogued error maps to."""
+        return UPLOAD_ERRORS[self.error_key]["status_code"]
+
+
+def upload_error_response(error_key: str) -> JSONResponse:
+    """Render a :class:`DocumentValidationError` as the shared upload envelope.
+
+    Both the course-document and profile-document upload routes go through this
+    so the two surfaces cannot drift on the status code, the machine code, or
+    the envelope shape (the divergence behind P2-008, where the profile route
+    read a non-existent ``exc.code`` and 500'd on every rejection).
+    """
+    error = UPLOAD_ERRORS[error_key]
+    return JSONResponse(
+        status_code=error["status_code"],
+        content={
+            "success": False,
+            "message": error["message"],
+            "data": {"code": error["code"]},
+        },
+    )
+
+
+def _content_matches_declared_type(file_type: str, content: bytes) -> bool:
+    """Whether the leading bytes are consistent with the declared extension."""
+    validator = FILE_TYPES[file_type]["validator"]
+    if validator == "pdf":
+        return content.startswith(_PDF_MAGIC)
+    if validator == "image":
+        return content.startswith(_IMAGE_MAGIC)
+    return True
+
 
 def check_file_type(filename: str | None) -> bool:
     """Check whether the filename has a configured, supported extension."""
@@ -165,7 +216,12 @@ def _derive_file_type_and_mime_type(filename: str | None) -> tuple[str, str]:
 
 
 def validate_basic_upload(upload: UploadFile) -> DocumentMetadata:
-    """Validate bounded upload metadata without interpreting document content."""
+    """Validate bounded upload metadata and the declared type's magic bytes.
+
+    Content inspection stops at the leading signature: enough to reject an
+    obvious extension/byte mismatch (HTML named ``x.pdf``) at the request
+    boundary, without parsing the document, which stays the worker's job.
+    """
     try:
         stream = upload.file
     except Exception as exc:
@@ -183,6 +239,8 @@ def validate_basic_upload(upload: UploadFile) -> DocumentMetadata:
                 raise DocumentValidationError("file_too_large")
             if len(content) == 0:
                 raise DocumentValidationError("empty_file")
+            if not _content_matches_declared_type(file_type, content):
+                raise DocumentValidationError("unsupported_file_type")
 
             return DocumentMetadata(
                 original_file_name=filename,

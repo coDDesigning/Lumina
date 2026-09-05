@@ -164,6 +164,12 @@ class RequestSizeLimitMiddleware:
         # needs the upload body budget rather than the ordinary request one.
         if path == "/api/courses/syllabus/extract":
             return True
+        # Profile-document upload validates against the same
+        # MAX_UPLOAD_SIZE_BYTES budget as a course document, so it must get
+        # the upload body limit, the concurrency slot and the extended
+        # timeout rather than the 1 MiB generic-request limit.
+        if path in ("/api/profile-documents", "/api/profile-documents/"):
+            return True
         return path.startswith("/api/courses/") and path.endswith("/documents")
 
     @staticmethod

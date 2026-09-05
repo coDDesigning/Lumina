@@ -15234,6 +15234,12 @@
             },
             "description": "Successful Response"
           },
+          "413": {
+            "description": "Document too large"
+          },
+          "415": {
+            "description": "Unsupported file type"
+          },
           "422": {
             "content": {
               "application/json": {

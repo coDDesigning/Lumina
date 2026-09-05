@@ -297,6 +297,7 @@ class Settings:
     document_chunk_overlap_characters: int
     retrieval_chunk_limit: int
     retrieval_min_similarity: float
+    material_max_chars_ceiling: int | None
     study_guide_material_max_chars: int
     quiz_material_max_chars: int
     flashcard_material_max_chars: int
@@ -781,6 +782,25 @@ def load_settings() -> Settings:
         maximum=1.0,
     )
 
+    # One knob to size every per-feature material budget down for a small local
+    # context window, so a local-model profile is a single setting rather than
+    # thirteen the docs must keep in step (P2-031). Unset means no clamp.
+    material_ceiling_raw = os.getenv("MATERIAL_MAX_CHARS_CEILING", "").strip()
+    material_max_chars_ceiling: int | None = None
+    if material_ceiling_raw:
+        try:
+            material_max_chars_ceiling = int(material_ceiling_raw)
+        except ValueError as exc:
+            raise ValueError(
+                "MATERIAL_MAX_CHARS_CEILING must be a positive integer."
+            ) from exc
+        if material_max_chars_ceiling < document_chunk_size_characters:
+            raise ValueError(
+                "MATERIAL_MAX_CHARS_CEILING must be at least "
+                f"DOCUMENT_CHUNK_SIZE_CHARACTERS ({document_chunk_size_characters}) "
+                "so a single stored chunk can always fit."
+            )
+
     material_budgets: dict[str, int] = {}
     for name, default in (
         ("STUDY_GUIDE_MATERIAL_MAX_CHARS", DEFAULT_CITED_MATERIAL_MAX_CHARACTERS),
@@ -816,6 +836,8 @@ def load_settings() -> Settings:
                 f"({document_chunk_size_characters}) so a single stored chunk "
                 "can always fit."
             )
+        if material_max_chars_ceiling is not None:
+            budget = min(budget, material_max_chars_ceiling)
         material_budgets[name] = budget
 
     ai_generation_timeout_seconds = _bounded_positive_integer_setting(
@@ -1244,6 +1266,7 @@ def load_settings() -> Settings:
         document_chunk_overlap_characters=document_chunk_overlap_characters,
         retrieval_chunk_limit=retrieval_chunk_limit,
         retrieval_min_similarity=retrieval_min_similarity,
+        material_max_chars_ceiling=material_max_chars_ceiling,
         study_guide_material_max_chars=material_budgets[
             "STUDY_GUIDE_MATERIAL_MAX_CHARS"
         ],

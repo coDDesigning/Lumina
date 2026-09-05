@@ -272,6 +272,50 @@ def test_self_hosted_defaults_are_safe_and_runnable() -> None:
     assert loaded.quiz_material_max_chars == DEFAULT_CITED_MATERIAL_MAX_CHARACTERS
     assert loaded.flashcard_material_max_chars == DEFAULT_MATERIAL_MAX_CHARACTERS
     assert loaded.ai_tutor_material_max_chars == DEFAULT_CITED_MATERIAL_MAX_CHARACTERS
+    assert loaded.material_max_chars_ceiling is None
+
+
+_ALL_MATERIAL_BUDGET_ATTRS = (
+    "study_guide_material_max_chars",
+    "quiz_material_max_chars",
+    "flashcard_material_max_chars",
+    "ai_tutor_material_max_chars",
+    "course_qa_material_max_chars",
+    "exam_analysis_material_max_chars",
+    "exam_past_paper_max_chars",
+    "exam_topic_guide_material_max_chars",
+    "exam_topic_summary_material_max_chars",
+    "exam_topic_quiz_material_max_chars",
+    "exam_similar_questions_material_max_chars",
+    "exam_mock_exam_material_max_chars",
+    "exam_review_sheet_material_max_chars",
+)
+
+
+def test_material_ceiling_clamps_every_per_feature_budget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """P2-031: one setting has to cap all thirteen budgets, not just the five
+    the README used to list, so Exam Mode cannot overflow a local window."""
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("MATERIAL_MAX_CHARS_CEILING", "16000")
+
+    loaded = load_settings()
+
+    assert loaded.material_max_chars_ceiling == 16000
+    for attr in _ALL_MATERIAL_BUDGET_ATTRS:
+        assert getattr(loaded, attr) <= 16000, attr
+    assert loaded.exam_mock_exam_material_max_chars == 16000
+
+
+def test_material_ceiling_below_a_stored_chunk_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("MATERIAL_MAX_CHARS_CEILING", "10")
+
+    with pytest.raises(ValueError, match="MATERIAL_MAX_CHARS_CEILING"):
+        load_settings()
 
 
 def test_cors_allowed_origins_are_loaded_as_an_immutable_tuple(

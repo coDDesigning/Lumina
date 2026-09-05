@@ -703,6 +703,8 @@ def recover_expired_generation_jobs(
     if limit <= 0:
         raise ValueError("limit must be positive")
 
+    is_postgresql = session.get_bind().dialect.name == "postgresql"
+
     _start_transition(session)
     recovered_at = _database_now(session, now)
     statement = (
@@ -714,12 +716,9 @@ def recover_expired_generation_jobs(
         .order_by(GenerationJob.id)
         .limit(limit)
     )
-    if session.get_bind().dialect.name == "postgresql":
+    if is_postgresql:
         statement = statement.with_for_update(of=GenerationJob, skip_locked=True)
     jobs = list(session.scalars(statement))
-    if not jobs:
-        session.rollback()
-        return 0
 
     for job in jobs:
         should_retry = job.attempt_count < job.max_attempts
@@ -743,8 +742,54 @@ def recover_expired_generation_jobs(
             if CreditService.refund(session, receipt, commit=False):
                 job.charge_refunded = True
 
-    recovered = len(jobs)
-    session.commit()
+    # A job that was never claimed (attempt_count == 0) and has waited far past
+    # any plausible backlog means no worker is claiming this queue at all -- the
+    # documented failure of running `workers.document_processor` instead of
+    # `workers.worker` (P2-019). Fail and refund it so the student sees an error
+    # instead of a permanent spinner with the credit already spent.
+    stale_after = timedelta(
+        seconds=max(3600.0, 10 * settings.generation_job_attempt_timeout_seconds)
+    )
+    stale_statement = (
+        select(GenerationJob)
+        .where(
+            GenerationJob.status == JOB_STATUS_QUEUED,
+            GenerationJob.attempt_count == 0,
+            GenerationJob.available_at <= recovered_at - stale_after,
+        )
+        .order_by(GenerationJob.id)
+        .limit(limit)
+    )
+    if is_postgresql:
+        stale_statement = stale_statement.with_for_update(
+            of=GenerationJob, skip_locked=True
+        )
+    stale_jobs = list(session.scalars(stale_statement))
+
+    for job in stale_jobs:
+        job.status = JOB_STATUS_FAILED
+        job.available_at = recovered_at
+        job.finished_at = recovered_at
+        job.last_error_code = "WORKER_UNAVAILABLE"
+        job.last_error_message = (
+            "No worker claimed this job; the generation worker may not be running."
+        )
+        job.updated_at = recovered_at
+        _clear_lease(job)
+        if not job.charge_refunded and job.charge_amount is not None:
+            receipt = ChargeReceipt(
+                user_id=job.user_id,
+                amount=job.charge_amount,
+                transaction_id=job.charge_transaction_id,
+            )
+            if CreditService.refund(session, receipt, commit=False):
+                job.charge_refunded = True
+
+    recovered = len(jobs) + len(stale_jobs)
+    if recovered:
+        session.commit()
+    else:
+        session.rollback()
 
     return recovered
 

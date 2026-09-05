@@ -7,6 +7,7 @@ is allowed to see.
 
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import json
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -24,6 +25,7 @@ from backend.app.models import (
     JOB_TYPE_GENERATE_STUDY_GUIDE,
     JOB_TYPE_GENERATE_FLASHCARD,
     Course,
+    CourseSettings,
     CreditTransaction,
     GeneratedOutput,
     GenerationJob,
@@ -36,7 +38,9 @@ from schemas.generation_job import GenerationJobView
 from generation_fixtures import (
     GENERATION_FEATURES,
     RecordingProvider,
+    _study_guide_request,
     seed_ready_material,
+    study_guide_payload,
 )
 from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from services.generation_jobs import (
@@ -253,6 +257,155 @@ def test_worker_runs_the_shipped_runner_and_links_what_it_wrote(
         output = db_session.get(GeneratedOutput, finished.generated_output_id)
         assert output is not None
         assert output.output_type == feature.output_type
+
+
+def test_worker_threads_the_job_owner_through_model_and_provider_resolution(
+    db_session: Session,
+    session_factory: sessionmaker[Session],
+    owner: User,
+    course: Course,
+    retrieval_env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-003: a BYOK key only takes effect when ``user=`` is threaded through.
+
+    The worker never loaded ``User`` at all, so a study guide / quiz / flashcard
+    queued by a user whose only route to the model is a personal key failed
+    permanently. Assert the owner now reaches both resolution calls.
+    """
+    from utils.crypto import encrypt_value
+
+    owner.encrypted_openai_api_key = encrypt_value("sk-personal-key-123")
+    db_session.commit()
+
+    seed_ready_material(
+        db_session,
+        course.id,
+        ["Sorting compares elements pairwise until the list is ordered."],
+        file_hash=hashlib.sha256(b"byok-runner").hexdigest(),
+        retrieval_env=retrieval_env,
+    )
+
+    seen_users: dict[str, object] = {}
+
+    def record_resolve(*args, **kwargs):
+        seen_users["resolve"] = kwargs.get("user")
+        return "ollama:llama3.1"
+
+    def record_provider(*args, **kwargs):
+        seen_users["provider"] = kwargs.get("user")
+        return RecordingProvider(study_guide_payload())
+
+    monkeypatch.setattr(generation_processor, "resolve_effective_model", record_resolve)
+    monkeypatch.setattr(
+        generation_processor, "get_text_generation_provider", record_provider
+    )
+
+    queued = _enqueue(
+        db_session,
+        course,
+        owner,
+        job_type=JOB_TYPE_GENERATE_STUDY_GUIDE,
+        payload=_study_guide_request(use_profile_knowledge=False).model_dump_json(),
+    )
+
+    assert generation_processor.process_next_generation_job(
+        session_factory=session_factory,
+        worker_id="byok-test-worker",
+        lease_seconds=LEASE_SECONDS,
+    )
+
+    db_session.expire_all()
+    assert db_session.get(GenerationJob, queued.id).status == JOB_STATUS_SUCCEEDED
+    for call in ("resolve", "provider"):
+        threaded = seen_users[call]
+        assert isinstance(threaded, User), f"{call} received user={threaded!r}"
+        assert threaded.id == owner.id
+        assert threaded.encrypted_openai_api_key is not None
+
+
+def test_queued_quiz_still_honours_the_courses_saved_settings(
+    db_session: Session,
+    session_factory: sessionmaker[Session],
+    owner: User,
+    course: Course,
+    retrieval_env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-003 / P2-043: the enqueue route persists the payload with
+    ``exclude_unset=True``, so a body carrying only ``topic_focus`` leaves the
+    per-course settings fallback live on the queued path too.
+    """
+    from schemas.quiz import QuizRequest
+
+    db_session.add(
+        CourseSettings(course_id=course.id, difficulty="Hard", question_count=15)
+    )
+    db_session.commit()
+    seed_ready_material(
+        db_session,
+        course.id,
+        ["Sorting compares elements pairwise until the list is ordered."],
+        file_hash=hashlib.sha256(b"p2043-runner").hexdigest(),
+        retrieval_env=retrieval_env,
+    )
+
+    # Exactly what the fixed enqueue route now stores.
+    client_body = QuizRequest.model_validate({"topic_focus": "All Topics"})
+    queued_payload = client_body.model_copy(
+        update={"model": "ollama:llama3.1"}
+    ).model_dump_json(exclude_unset=True)
+    reparsed = QuizRequest.model_validate_json(queued_payload)
+    assert reparsed.model_fields_set == {"topic_focus", "model"}
+
+    fifteen_hard = {
+        "title": "Course settings quiz",
+        "questions": [
+            {
+                "question_number": i,
+                "question_type": "multiple_choice",
+                "topic": "All Topics",
+                "question": f"Question {i}?",
+                "difficulty": "hard",
+                "explanation": "Because the material says so.",
+                "options": ["A", "B", "C", "D"],
+                "correct_option_index": 0,
+            }
+            for i in range(1, 16)
+        ],
+    }
+    provider = RecordingProvider(fifteen_hard)
+    monkeypatch.setattr(
+        generation_processor,
+        "get_text_generation_provider",
+        lambda *a, **k: provider,
+    )
+    monkeypatch.setattr(
+        generation_processor,
+        "resolve_effective_model",
+        lambda *a, **k: "ollama:llama3.1",
+    )
+
+    queued = _enqueue(
+        db_session,
+        course,
+        owner,
+        job_type=JOB_TYPE_GENERATE_QUIZ,
+        payload=queued_payload,
+    )
+
+    assert generation_processor.process_next_generation_job(
+        session_factory=session_factory,
+        worker_id="p2043-worker",
+        lease_seconds=LEASE_SECONDS,
+    )
+
+    db_session.expire_all()
+    finished = db_session.get(GenerationJob, queued.id)
+    assert finished.status == JOB_STATUS_SUCCEEDED, finished.last_error_message
+    stored = json.loads(db_session.get(Quiz, finished.quiz_id).generation_settings)
+    assert stored["question_count"] == 15
+    assert stored["difficulty"] == "hard"
 
 
 def test_worker_rolls_back_an_artifact_when_completion_fails(
@@ -861,6 +1014,61 @@ def test_an_expired_lease_with_attempts_left_is_requeued(
     assert row is not None
     assert row.status == JOB_STATUS_QUEUED
     assert row.charge_refunded is False
+
+
+def test_a_never_claimed_job_that_waited_far_too_long_is_failed_and_refunded(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """P2-019: if no worker ever claims a queue (the documented mistake of
+    running ``workers.document_processor`` instead of ``workers.worker``), a job
+    should end in a visible failure with its credit returned, not a permanent
+    spinner.
+    """
+    queued = _enqueue(db_session, course, owner)
+    fresh = enqueue_generation_job(
+        db_session,
+        course_id=course.id,
+        user_id=owner.id,
+        job_type=JOB_TYPE_GENERATE_QUIZ,
+        request_payload="{}",
+        credit_cost=1.0,
+        now=datetime.now(timezone.utc) + timedelta(days=2, hours=-1),
+    )
+
+    # Far past 10x the attempt timeout and the 1h floor.
+    later = datetime.now(timezone.utc) + timedelta(days=2)
+    recovered = recover_expired_generation_jobs(db_session, now=later)
+    assert recovered == 1
+
+    db_session.expire_all()
+    stale = db_session.get(GenerationJob, queued.id)
+    assert stale.status == JOB_STATUS_FAILED
+    assert stale.last_error_code == "WORKER_UNAVAILABLE"
+    assert stale.charge_refunded is True
+    assert db_session.get(GenerationJob, fresh.id).status == JOB_STATUS_QUEUED
+    assert_balance_is_derivable(db_session, owner.id)
+
+
+def test_a_merely_backed_up_queue_is_not_treated_as_stale(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    """A job that a worker has already attempted once is a real backlog, not an
+    absent worker, so the stale sweep must leave it alone."""
+    _enqueue(db_session, course, owner, max_attempts=3)
+    claimed = claim_next_generation_job(db_session, "worker-1", LEASE_SECONDS)
+    fail_generation_job(
+        db_session,
+        claimed.id,
+        claimed.claim_token,
+        error_code="PROVIDER_TIMEOUT",
+        error_message="Timed out.",
+        retryable=True,
+    )
+
+    later = datetime.now(timezone.utc) + timedelta(days=2)
+    assert recover_expired_generation_jobs(db_session, now=later) == 0
+    db_session.expire_all()
+    assert db_session.get(GenerationJob, claimed.id).status == JOB_STATUS_QUEUED
 
 
 def test_heartbeat_extends_only_the_holder_of_the_claim(

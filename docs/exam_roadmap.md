@@ -56,6 +56,10 @@ attack, not what gets dropped.
 
 * The plan runs from today through the exam date inclusive, so an exam today is a
   one-day plan rather than an error.
+* "Today" is the UTC calendar date, read through `utils/clock.py::utc_today`, the
+  same clock the Exam Mode plan gate uses. The server's local calendar is never
+  read: it would move the horizon, the first planned day, and the passed-date
+  refusal by a day depending on where the process happens to run.
 * A horizon of one day or less is **triage**: every day carries the same short
   list of the highest-priority topics, because there is no time for a second pass
   to mean anything.

@@ -19,6 +19,7 @@ import type { ExamSourceDocument, ExamSourceInventory } from '@/api/types';
 export type PrerequisiteKind =
   | 'exam_date_missing'
   | 'exam_date_passed'
+  | 'exam_date_not_future'
   | 'no_sources'
   | 'sources_processing'
   | 'source_failed'
@@ -59,6 +60,24 @@ export function examDateHasPassed(examDate: string, today: Date): boolean {
   if (Number.isNaN(exam)) return false;
   const midnight = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
   return exam < midnight;
+}
+
+/**
+ * The gate a *first* plan must clear, which is not the same rule as above.
+ *
+ * The server requires an exam still to come, so an exam happening today is
+ * refused there. The roadmap's rule is deliberately the other one -- an exam
+ * today is a valid triage plan -- which is why the two predicates stay
+ * separate rather than one being expressed in terms of the other.
+ *
+ * A date this cannot read is left to the server, the way `examDateHasPassed`
+ * leaves it, so a parsing disagreement never blocks a student on its own.
+ */
+export function examDateIsFuture(examDate: string, today: Date): boolean {
+  const exam = Date.parse(`${examDate}T00:00:00Z`);
+  if (Number.isNaN(exam)) return true;
+  const midnight = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  return exam > midnight;
 }
 
 export interface ReadinessInput {
@@ -111,6 +130,12 @@ export function deriveReadiness({
       canPlan = false;
     } else if (examDateHasPassed(examDate, today)) {
       blockers.push({ kind: 'exam_date_passed', documents: [] });
+      canPlan = false;
+    } else if (!examDateIsFuture(examDate, today)) {
+      // The exam is today. It has not passed, but a first plan still needs an
+      // exam still to come, so the student is told before the click rather
+      // than by a refusal that would call today's date a past one.
+      blockers.push({ kind: 'exam_date_not_future', documents: [] });
       canPlan = false;
     }
   } else if (examDate && examDateHasPassed(examDate, today)) {

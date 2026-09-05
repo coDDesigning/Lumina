@@ -993,6 +993,29 @@ def test_a_first_plan_requires_the_exam_date_to_be_in_the_future(
     assert created.headers["X-Error-Code"] == AiErrorCode.EXAM_DATE_NOT_FUTURE
 
 
+def test_a_first_plan_on_the_day_of_the_exam_is_refused(
+    authz_api, exam_course, monkeypatch
+) -> None:
+    """The boundary the client must agree with.
+
+    A first plan needs an exam still to come, so an exam dated today is refused
+    the same way a past one is. The roadmap's rule is deliberately different --
+    an exam today is a valid triage plan there -- which is why this boundary is
+    pinned rather than left to whichever comparison a caller happens to write.
+    """
+    set_exam_date(authz_api.session_factory, authz_api.a_course_id, TODAY)
+    response, _ = run_analysis(authz_api, monkeypatch)
+    analysis_id = response.json()["data"]["analysis"]["generated_output_id"]
+
+    created = create_plan(
+        authz_api,
+        {"analysis_output_id": analysis_id, "selected_topic_keys": ["graph-traversal"]},
+    )
+
+    assert created.status_code == 400
+    assert created.headers["X-Error-Code"] == AiErrorCode.EXAM_DATE_NOT_FUTURE
+
+
 def test_automatic_selection_takes_every_discovered_topic_and_still_asks_for_review(
     authz_api, exam_course, monkeypatch
 ) -> None:

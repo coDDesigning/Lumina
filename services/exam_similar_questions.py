@@ -74,9 +74,9 @@ from services.exam_topics import TOPIC_KEY_VERSION, canonical_topic_key
 from services.generated_output import GeneratedOutputService
 from services.prompt_loader import PromptLoader
 from services.quiz import (
-    QUESTION_TYPE_DIRECTIVES,
-    QUESTION_TYPE_SCHEMAS,
     QuizService,
+    render_type_directives,
+    render_type_schemas,
 )
 from services.text_generation import TextGenerationProvider
 from utils.ai_errors import ExamAnalysisRequiredError
@@ -170,12 +170,46 @@ def difficulty_directive(policy: SimilarQuestionDifficultyPolicy) -> str:
     )
 
 
-def _type_block(types: tuple[QuizQuestionType, ...]) -> str:
-    return "\n".join(f"- {QUESTION_TYPE_DIRECTIVES[kind]}" for kind in types)
+MATCH_SOURCE_LEVEL_RULE = (
+    "Same level: not easier, not a trick, not a harder variant dressed as practice."
+)
 
 
-def _schema_block(types: tuple[QuizQuestionType, ...]) -> str:
-    return "\n\n".join(QUESTION_TYPE_SCHEMAS[kind] for kind in types)
+def source_mapping_rule(question_count: int, original_count: int) -> str:
+    """How the requested count maps onto the originals it is written from.
+
+    The count and the number of originals are separate inputs, so stating
+    one-per-original in the template body contradicted the count whenever they
+    differed -- and the validator refuses the whole set on either reading,
+    which turns an ambiguous prompt into a paid failure.
+    """
+    if question_count == original_count:
+        return (
+            "Write one new question for each numbered original, and give it that "
+            'original\'s number in "source_number".'
+        )
+    plural = "original" if original_count == 1 else "originals"
+    return (
+        f"Write {question_count} new questions in total, drawn from the "
+        f"{original_count} numbered {plural}, and give each one the number of the "
+        f'single original it mirrors in "source_number". An original may be '
+        f"mirrored more than once or not at all; {question_count} is the total to "
+        f"return."
+    )
+
+
+def level_rule(policy: SimilarQuestionDifficultyPolicy) -> str:
+    """The difficulty rule, which the caller's policy owns rather than the body.
+
+    A pinned policy asks for a level the original may not have, so the
+    match-the-original sentence is only correct for ``match_source``.
+    """
+    if policy is SimilarQuestionDifficultyPolicy.MATCH_SOURCE:
+        return MATCH_SOURCE_LEVEL_RULE
+    return (
+        f'Level: write at the "{policy.value}" difficulty the generation request '
+        f"names, even where that differs from the original's level."
+    )
 
 
 def _build_prompt(
@@ -184,6 +218,7 @@ def _build_prompt(
     context: PromptContext,
     *,
     originals: str,
+    original_count: int,
     question_count: int,
     policy: SimilarQuestionDifficultyPolicy,
     question_types: tuple[QuizQuestionType, ...],
@@ -194,8 +229,10 @@ def _build_prompt(
             **context.as_variables(),
             "QUESTION_COUNT": str(question_count),
             "DIFFICULTY_DIRECTIVE": difficulty_directive(policy),
-            "QUESTION_TYPE_DIRECTIVES": _type_block(question_types),
-            "QUESTION_TYPE_SCHEMAS": _schema_block(question_types),
+            "SOURCE_MAPPING_RULE": source_mapping_rule(question_count, original_count),
+            "LEVEL_RULE": level_rule(policy),
+            "QUESTION_TYPE_DIRECTIVES": render_type_directives(question_types),
+            "QUESTION_TYPE_SCHEMAS": render_type_schemas(question_types),
             "TOPIC_LABEL": topic.display_label,
             "ORIGINAL_QUESTIONS": originals,
             "TEXT": material,
@@ -206,6 +243,7 @@ def _build_prompt(
 def _spec(
     originals: str,
     *,
+    original_count: int,
     question_count: int,
     policy: SimilarQuestionDifficultyPolicy,
     question_types: tuple[QuizQuestionType, ...],
@@ -220,6 +258,7 @@ def _spec(
             topic,
             context,
             originals=originals,
+            original_count=original_count,
             question_count=question_count,
             policy=policy,
             question_types=question_types,
@@ -428,6 +467,7 @@ class ExamSimilarQuestionsService:
             user_id=user_id,
             spec=_spec(
                 render_originals(originals),
+                original_count=len(originals),
                 question_count=question_count,
                 policy=policy,
                 question_types=question_types,

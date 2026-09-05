@@ -55,25 +55,29 @@ cannot be reconstructed safely.
 
 ## Run the API and worker
 
-The API registers documents and enqueues extraction in one database
-transaction. Extraction runs in a separate process:
+The API registers documents and enqueues extraction and AI generation in one
+database transaction each. `workers.worker` is the single background entry
+point: it runs the document-extraction queue and the AI-generation queue
+(study guides, quizzes, flashcards) as concurrent threads, so a deployment that
+starts only `workers.document_processor` would leave every queued generation
+unclaimed with its credit already spent.
 
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330
-python -m workers.document_processor
+python -m workers.worker
 ```
 
 Process at most one available job for smoke testing:
 
 ```bash
-python -m workers.document_processor --once
+python -m workers.worker --once
 ```
 
 Check database migrations, required role seeds, and writable document storage
 without recovering or claiming a job:
 
 ```bash
-python -m workers.document_processor --check
+python -m workers.worker --check
 ```
 
 Finish course and document deletions that a storage or vector-store failure

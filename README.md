@@ -119,7 +119,7 @@ single-quote it in `.env`.
 
 The shipped defaults are sized for a hosted model with a very large context
 window. A local 8B model has an 8,192-token window, and the default material
-budget of 120,000 characters is roughly 30,000 tokens — about four times too
+budget of 126,000 characters is roughly 31,500 tokens — about four times too
 large. Ollama would silently truncate the prompt and answer from whatever
 survived. Set these in `.env`:
 
@@ -134,12 +134,10 @@ AI_GENERATION_TIMEOUT_SECONDS=180
 AI_GENERATION_OVERALL_TIMEOUT_SECONDS=300
 
 # Roughly 4,000 tokens, which leaves room for the prompt template and the answer
-# inside the same 8,192-token window.
-STUDY_GUIDE_MATERIAL_MAX_CHARS=16000
-QUIZ_MATERIAL_MAX_CHARS=16000
-FLASHCARD_MATERIAL_MAX_CHARS=16000
-AI_TUTOR_MATERIAL_MAX_CHARS=16000
-COURSE_QA_MATERIAL_MAX_CHARS=16000
+# inside the same 8,192-token window. This one ceiling caps every per-feature
+# material budget (study guide, quiz, flashcard, tutor, Q&A, and all of Exam
+# Mode), so a local profile stays one setting instead of thirteen.
+MATERIAL_MAX_CHARS_CEILING=16000
 ```
 
 These values are measured rather than estimated;

@@ -365,6 +365,67 @@ def test_stale_user_preference_falls_back_to_default(
     )
 
 
+_BYOK_CAPABLE_SETTINGS = SimpleNamespace(
+    # Only Ollama is configured on the deployment; the catalog still carries an
+    # OpenAI entry (the shipped builtin does), so a BYOK key is the only route.
+    ai_available_vendors=("ollama",),
+    ai_default_model="ollama:llama3.1",
+    ai_model_catalog={
+        "ollama": [
+            {
+                "model": "llama3.1",
+                "json_mode": True,
+                "context_window": 8192,
+                "vision": False,
+            }
+        ],
+        "openai": [
+            {
+                "model": "gpt-5.6-terra",
+                "json_mode": True,
+                "context_window": 1_048_576,
+                "vision": True,
+            }
+        ],
+    },
+)
+
+
+def test_a_model_for_an_unavailable_vendor_is_rejected_without_a_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-003: the raw-catalog fallback must not resurrect a vendor the caller
+    has no deployment credential and no personal key for."""
+    monkeypatch.setattr(text_generation, "settings", _BYOK_CAPABLE_SETTINGS)
+
+    assert text_generation._model_catalog_entry("openai:gpt-5.6-terra") is None
+    with pytest.raises(UnavailableModelError):
+        resolve_effective_model(
+            request_model="openai:gpt-5.6-terra",
+            required_capability="quiz",
+        )
+
+
+def test_a_personal_key_makes_its_vendor_resolvable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-003: with a stored OpenAI key the same model resolves, exactly as it
+    does on the synchronous route."""
+    monkeypatch.setattr(text_generation, "settings", _BYOK_CAPABLE_SETTINGS)
+    byok_user = SimpleNamespace(encrypted_openai_api_key="ciphertext")
+
+    entry = text_generation._model_catalog_entry("openai:gpt-5.6-terra", user=byok_user)
+    assert entry is not None and entry["provider"] == "openai"
+    assert (
+        resolve_effective_model(
+            request_model="openai:gpt-5.6-terra",
+            required_capability="quiz",
+            user=byok_user,
+        )
+        == "openai:gpt-5.6-terra"
+    )
+
+
 def test_json_incompatible_model_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

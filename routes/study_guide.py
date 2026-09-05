@@ -159,10 +159,14 @@ def enqueue_study_guide(
     would be reading it from nobody.
     """
     try:
+        db_user = db.get(User, current_user.id)
+        # Resolve against the caller's own key set so an unusable model is
+        # rejected now, before the charge, rather than at run time (P2-003).
         effective_model = resolve_effective_model(
             request.model,
             current_user.preferred_model,
             required_capability="study_guide",
+            user=db_user,
         )
         queued_request = request.model_copy(update={"model": effective_model})
         job = enqueue_generation_job(
@@ -170,7 +174,11 @@ def enqueue_study_guide(
             course_id=course.id,
             user_id=current_user.id,
             job_type=JOB_TYPE_GENERATE_STUDY_GUIDE,
-            request_payload=queued_request.model_dump_json(),
+            # exclude_unset keeps the worker's model_fields_set equal to the
+            # client's, so the per-course settings fallback still applies on the
+            # queued path (P2-043). The model override survives because
+            # model_copy(update=...) marks it set.
+            request_payload=queued_request.model_dump_json(exclude_unset=True),
             credit_cost=GENERATION_CREDIT_COSTS["study_guide"],
         )
     except Exception as exc:

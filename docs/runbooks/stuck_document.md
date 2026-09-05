@@ -67,7 +67,7 @@ LIMIT 20;
 
 4. **Re-process one-off job manually:**
    ```bash
-   docker compose run --rm lumina-worker python -m workers.document_processor --once
+   docker compose run --rm lumina-worker python -m workers.worker --once
    ```
 
 5. **Re-index document embeddings if chunks are stored but missing vectors:**

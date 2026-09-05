@@ -5,11 +5,12 @@ what an abandoned run costs the student, and what a client rebuilding its panel
 is allowed to see.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -352,6 +353,56 @@ def test_claim_takes_the_oldest_queued_job(
     assert row.claim_token == claimed.claim_token
     assert row.lease_owner == "worker-1"
     assert row.started_at is not None
+
+
+@pytest.mark.database_contract
+def test_concurrent_claim_is_exclusive_and_charges_only_once(
+    db_session: Session,
+    session_factory: sessionmaker[Session],
+    owner: User,
+    course: Course,
+) -> None:
+    starting_balance = owner.credits
+    queued = _enqueue(db_session, course, owner)
+    job_id = queued.id
+    owner_id = owner.id
+    db_session.rollback()
+
+    def claim(worker_id: str):
+        with session_factory() as session:
+            return claim_next_generation_job(
+                session,
+                worker_id,
+                LEASE_SECONDS,
+                max_active_per_user=2,
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        claims = list(executor.map(claim, ["worker-a", "worker-b"]))
+
+    winners = [claim for claim in claims if claim is not None]
+    assert len(winners) == 1
+    assert winners[0].id == job_id
+
+    with session_factory() as session:
+        job = session.get(GenerationJob, job_id)
+        user = session.get(User, owner_id)
+        charge_count = session.scalar(
+            select(func.count())
+            .select_from(CreditTransaction)
+            .where(
+                CreditTransaction.user_id == owner_id,
+                CreditTransaction.reason == CreditReason.GENERATION_CHARGE.value,
+            )
+        )
+        assert job is not None
+        assert job.status == JOB_STATUS_RUNNING
+        assert job.attempt_count == 1
+        assert job.claim_token == winners[0].claim_token
+        assert user is not None
+        assert user.credits == pytest.approx(starting_balance - 1.0)
+        assert charge_count == 1
+        assert_balance_is_derivable(session, owner_id)
 
 
 def test_claim_holds_a_third_job_until_a_slot_frees(

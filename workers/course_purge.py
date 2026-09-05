@@ -43,7 +43,7 @@ from backend.app.config import (
     settings,
 )
 from backend.app.database import SessionLocal
-from backend.app.models import Course, UploadedDocument
+from backend.app.models import Course, ProfileDocument, UploadedDocument
 from backend.app.observability import configure_logging, emit_emf_metrics
 from backend.app.readiness import ReadinessError, check_readiness
 from services.course import CourseDeletionError, CourseService
@@ -51,6 +51,10 @@ from services.document import (
     DocumentActiveError,
     DocumentDeletionError,
     DocumentService,
+)
+from services.profile_document import (
+    ProfileDocumentDeletionError,
+    ProfileDocumentService,
 )
 from services.vector_store import VectorStore, get_vector_store
 from storage.base import Storage
@@ -109,6 +113,9 @@ class DocumentPurgeReport:
     documents_examined: int = 0
     documents_purged: int = 0
     documents_failed: int = 0
+    profile_documents_examined: int = 0
+    profile_documents_purged: int = 0
+    profile_documents_failed: int = 0
     aged_tombstones: int = 0
     oldest_tombstone_age_seconds: float = 0.0
 
@@ -117,6 +124,9 @@ class DocumentPurgeReport:
             f"documents_examined={self.documents_examined} "
             f"documents_purged={self.documents_purged} "
             f"documents_failed={self.documents_failed} "
+            f"profile_documents_examined={self.profile_documents_examined} "
+            f"profile_documents_purged={self.profile_documents_purged} "
+            f"profile_documents_failed={self.profile_documents_failed} "
             f"aged_tombstones={self.aged_tombstones}"
         )
 
@@ -160,6 +170,21 @@ def _tombstoned_document_ids(
         statement = statement.where(UploadedDocument.course_id == course_id)
     if document_id is not None:
         statement = statement.where(UploadedDocument.id == document_id)
+    return list(session.scalars(statement).all())
+
+
+def _tombstoned_profile_document_ids(
+    session: Session,
+    *,
+    document_id: UUID | None,
+) -> list[UUID]:
+    statement = (
+        select(ProfileDocument.id)
+        .where(ProfileDocument.status == "deleting")
+        .order_by(ProfileDocument.id)
+    )
+    if document_id is not None:
+        statement = statement.where(ProfileDocument.id == document_id)
     return list(session.scalars(statement).all())
 
 
@@ -283,6 +308,10 @@ def run_document_purge(
     rerunning it is idempotent. ``force`` is used because a failed phase two may
     have left a job requeued against the document, which is not a reason to keep
     a row the owner already asked to delete.
+
+    Profile documents carry the same tombstone through the same two phases and
+    are reconciled in a second pass, unless the run is scoped to one course:
+    a profile document belongs to a user, not to a course.
     """
     if storage is None:
         storage = get_storage()
@@ -363,11 +392,28 @@ def run_document_purge(
                 continue
             report.documents_purged += 1
 
+    if course_id is None:
+        _purge_profile_documents(
+            report,
+            session_factory=session_factory,
+            storage=storage,
+            vector_store=vector_store,
+            document_id=document_id,
+            dry_run=dry_run,
+            stop_event=stop_event,
+            aged_threshold_seconds=aged_threshold_seconds,
+            grace_seconds=grace_seconds,
+            utc_now=utc_now,
+        )
+
     emit_emf_metrics(
         {
             "DocumentsExamined": report.documents_examined,
             "DocumentsPurged": report.documents_purged,
             "DocumentsFailed": report.documents_failed,
+            "ProfileDocumentsExamined": report.profile_documents_examined,
+            "ProfileDocumentsPurged": report.profile_documents_purged,
+            "ProfileDocumentsFailed": report.profile_documents_failed,
             "AgedDocumentTombstones": report.aged_tombstones,
             "OldestDocumentTombstoneAgeSeconds": round(
                 report.oldest_tombstone_age_seconds, 3
@@ -378,6 +424,89 @@ def run_document_purge(
     )
     logger.info("Document purge finished: %s", report.summary())
     return report
+
+
+def _purge_profile_documents(
+    report: DocumentPurgeReport,
+    *,
+    session_factory: SessionFactory,
+    storage: Storage,
+    vector_store: VectorStore,
+    document_id: UUID | None,
+    dry_run: bool,
+    stop_event: StopEvent | None,
+    aged_threshold_seconds: float,
+    grace_seconds: float,
+    utc_now: datetime,
+) -> None:
+    """Finish profile document deletions stranded the same way, into ``report``."""
+    with session_factory() as session:
+        document_ids = _tombstoned_profile_document_ids(
+            session,
+            document_id=document_id,
+        )
+
+    for identifier in document_ids:
+        if stop_event is not None and stop_event.is_set():
+            break
+        with session_factory() as session:
+            document = session.get(ProfileDocument, identifier)
+            if document is None or document.status != "deleting":
+                continue
+            owner_id = document.user_id
+            age_seconds = _tombstone_age_seconds(
+                utc_now,
+                document.updated_at or document.created_at,
+            )
+            report.profile_documents_examined += 1
+            if age_seconds > report.oldest_tombstone_age_seconds:
+                report.oldest_tombstone_age_seconds = age_seconds
+
+            if aged_threshold_seconds > 0 and age_seconds >= aged_threshold_seconds:
+                report.aged_tombstones += 1
+                logger.warning(
+                    "Aged profile document tombstone detected for document %s "
+                    "(user %s, age: %.1fs)",
+                    identifier,
+                    owner_id,
+                    age_seconds,
+                    extra={
+                        "event": "aged_tombstone_detected",
+                        "document_id": str(identifier),
+                        "user_id": owner_id,
+                        "duration_ms": round(age_seconds * 1000, 1),
+                        "runbook": "docs/runbooks/stranded_tombstone.md",
+                    },
+                )
+
+            if age_seconds < grace_seconds or dry_run:
+                continue
+
+            try:
+                ProfileDocumentService.delete_document(
+                    session,
+                    storage,
+                    owner_id,
+                    identifier,
+                    vector_store,
+                )
+            except NotFoundException:
+                logger.warning(
+                    "Profile document %s tombstone could not be resolved "
+                    "to a deletable row",
+                    identifier,
+                )
+                report.profile_documents_failed += 1
+                continue
+            except ProfileDocumentDeletionError:
+                logger.exception(
+                    "Profile document %s could not be purged; "
+                    "its tombstone is retained",
+                    identifier,
+                )
+                report.profile_documents_failed += 1
+                continue
+            report.profile_documents_purged += 1
 
 
 def run_purge_worker(
@@ -522,7 +651,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         grace_seconds=arguments.document_grace_seconds,
     )
     print(document_report.summary())
-    if report.courses_failed or document_report.documents_failed:
+    if (
+        report.courses_failed
+        or document_report.documents_failed
+        or document_report.profile_documents_failed
+    ):
         raise SystemExit(1)
 
 

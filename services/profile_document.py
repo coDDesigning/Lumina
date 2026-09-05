@@ -245,6 +245,15 @@ class ProfileDocumentService:
         document_id: UUID,
         vector_store: VectorStore | None = None,
     ) -> None:
+        """Tombstone the document, remove its source and vectors, then the row.
+
+        The ``deleting`` tombstone is committed before anything outside the
+        database is touched, exactly as ``DocumentService.delete_document``
+        commits it, so a failure in any later step leaves a marked row that the
+        caller can retry and that ``workers.course_purge`` finishes unattended.
+        Nothing here is swallowed: deleting the row while its object or its
+        vectors still exist would orphan them with nothing left to name them.
+        """
         try:
             begin_serialized_write(db)
             document = db.scalar(
@@ -265,46 +274,103 @@ class ProfileDocumentService:
                 pass
             raise NotFoundException("Profile document not found")
 
-        if document.status == "deleting":
-            try:
-                db.rollback()
-            except SQLAlchemyError:
-                pass
-            raise ConflictException("Document is already being deleted")
-
+        storage_provider = document.storage_provider
         storage_key = document.storage_key
-        document.status = "deleting"
-        try:
-            db.flush()
-        except SQLAlchemyError as exc:
+        if document.status != "deleting":
+            document.status = "deleting"
+            try:
+                db.commit()
+            except SQLAlchemyError as exc:
+                try:
+                    db.rollback()
+                except SQLAlchemyError:
+                    pass
+                # The commit may have landed and only its acknowledgement been
+                # lost; the tombstone itself decides whether to carry on.
+                if not ProfileDocumentService._deletion_is_prepared(
+                    db,
+                    document_id,
+                    user_id,
+                    storage_provider,
+                    storage_key,
+                ):
+                    raise ProfileDocumentDeletionError from exc
+        else:
+            # A retry of a deletion whose later phase failed resumes here.
             try:
                 db.rollback()
             except SQLAlchemyError:
                 pass
-            raise ProfileDocumentDeletionError from exc
 
-        # Clean vectors
-        store = vector_store if vector_store is not None else get_vector_store()
-        try:
-            store.delete_profile_document_vectors(db, document_id)
-        except VectorStoreError as exc:
-            logger.warning(
-                "Could not delete vectors for profile document %s: %s", document_id, exc
-            )
-
-        # Clean storage
         try:
             storage.delete(storage_key)
-        except Exception as exc:
-            logger.warning("Could not delete storage key %s: %s", storage_key, exc)
+        except (StorageError, ValueError, OSError) as exc:
+            raise ProfileDocumentDeletionError from exc
 
-        # Delete database row (cascades chunks, pages, visuals, jobs, embeddings)
         try:
-            db.delete(document)
+            begin_serialized_write(db)
+            deleting_document = db.scalar(
+                select(ProfileDocument)
+                .where(
+                    ProfileDocument.id == document_id,
+                    ProfileDocument.user_id == user_id,
+                    ProfileDocument.status == "deleting",
+                )
+                .with_for_update()
+            )
+            if deleting_document is None:
+                db.rollback()
+                if ProfileDocumentService._document_is_absent(db, document_id):
+                    return
+                raise ProfileDocumentDeletionError
+
+            store = vector_store if vector_store is not None else get_vector_store()
+            try:
+                store.delete_profile_document_vectors(db, document_id)
+            except VectorStoreError as exc:
+                db.rollback()
+                raise ProfileDocumentDeletionError from exc
+
+            # Deleting the row cascades chunks, pages, visuals, jobs, embeddings.
+            db.delete(deleting_document)
             db.commit()
         except SQLAlchemyError as exc:
             try:
                 db.rollback()
             except SQLAlchemyError:
                 pass
-            raise ProfileDocumentDeletionError from exc
+            if not ProfileDocumentService._document_is_absent(db, document_id):
+                raise ProfileDocumentDeletionError from exc
+
+    @staticmethod
+    def _deletion_is_prepared(
+        db: Session,
+        document_id: UUID,
+        user_id: int,
+        storage_provider: str,
+        storage_key: str,
+    ) -> bool:
+        try:
+            with Session(bind=db.get_bind()) as verification_db:
+                return (
+                    verification_db.scalar(
+                        select(ProfileDocument.id).where(
+                            ProfileDocument.id == document_id,
+                            ProfileDocument.user_id == user_id,
+                            ProfileDocument.status == "deleting",
+                            ProfileDocument.storage_provider == storage_provider,
+                            ProfileDocument.storage_key == storage_key,
+                        )
+                    )
+                    is not None
+                )
+        except SQLAlchemyError:
+            return False
+
+    @staticmethod
+    def _document_is_absent(db: Session, document_id: UUID) -> bool:
+        try:
+            with Session(bind=db.get_bind()) as verification_db:
+                return verification_db.get(ProfileDocument, document_id) is None
+        except SQLAlchemyError:
+            return False

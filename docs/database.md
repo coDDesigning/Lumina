@@ -504,6 +504,12 @@ owner cannot see does not consume their quota. No job transition may take a
 document out of `deleting` either, so an expired lease or a late failure cannot
 resurrect a document whose deletion is under way.
 
+Profile documents are erased the same way. `ProfileDocumentService.delete_document`
+commits `profile_documents.status = 'deleting'`, then removes the object, then the
+vectors, then the row, and reports a failure in any of those steps to the caller
+instead of returning success over an orphaned file. A repeat delete resumes the
+tombstone it finds, and the same purge command finishes the ones nobody retried.
+
 ## Quizzes
 
 A quiz belongs to one course, carries the attribution of the generation that

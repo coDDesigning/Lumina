@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
@@ -131,6 +132,7 @@ class PersistedSimilarQuestions:
     quiz: Quiz
     view: QuizView
     output: GeneratedOutput
+    context: ExamArtifactGenerationContext
     credits_charged: float
     source_question_ids: list[int]
 
@@ -320,6 +322,51 @@ def build_quiz_data(
 
 class ExamSimilarQuestionsService:
     @staticmethod
+    def find_by_request_id(
+        db: Session,
+        course_id: int,
+        user_id: int,
+        generation_request_id: str | None,
+    ) -> PersistedSimilarQuestions | None:
+        quiz = QuizService.find_by_generation_request_id(
+            db,
+            course_id=course_id,
+            user_id=user_id,
+            generation_request_id=generation_request_id,
+        )
+        if quiz is None:
+            return None
+        if quiz.purpose != QUIZ_PURPOSE_EXAM_SIMILAR_QUESTIONS:
+            raise RuntimeError(
+                "Generation request identifier belongs to another quiz purpose."
+            )
+        view = QuizService.build_quiz_view(quiz)
+        output = GeneratedOutputService.find_quiz_output(
+            db,
+            course_id=course_id,
+            user_id=user_id,
+            output_type=OUTPUT_TYPE_EXAM_SIMILAR_QUESTIONS,
+            quiz_id=quiz.id,
+        )
+        if output is None:
+            raise RuntimeError("Similar-question history row is missing.")
+        questions = sorted(quiz.questions, key=lambda row: (row.question_index, row.id))
+        return PersistedSimilarQuestions(
+            quiz=quiz,
+            view=view,
+            output=output,
+            context=ExamArtifactGenerationContext.model_validate(
+                view.generation_context or {}
+            ),
+            credits_charged=0.0,
+            source_question_ids=[
+                row.source_past_exam_question_id
+                for row in questions
+                if row.source_past_exam_question_id is not None
+            ],
+        )
+
+    @staticmethod
     def source_questions(
         db: Session,
         course_id: int,
@@ -483,6 +530,14 @@ class ExamSimilarQuestionsService:
                 generation_settings=applied_json,
                 generation_context=context_json,
             )
+        except IntegrityError:
+            db.rollback()
+            existing = cls.find_by_request_id(
+                db, course_id, user_id, generation_request_id
+            )
+            if existing is None:
+                raise
+            return existing
         except Exception:
             db.rollback()
             raise
@@ -492,6 +547,7 @@ class ExamSimilarQuestionsService:
             quiz=quiz,
             view=QuizService.build_quiz_view(quiz),
             output=output,
+            context=context,
             credits_charged=generation.unlock.amount,
             source_question_ids=source_ids,
         )

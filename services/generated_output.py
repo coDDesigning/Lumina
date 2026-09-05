@@ -110,6 +110,33 @@ class GeneratedOutputService:
         return output
 
     @staticmethod
+    def find_quiz_output(
+        db: Session,
+        *,
+        course_id: int,
+        user_id: int,
+        output_type: str,
+        quiz_id: int,
+    ) -> GeneratedOutput | None:
+        """Find the history row atomically persisted beside one Exam Mode quiz."""
+        outputs = db.scalars(
+            select(GeneratedOutput)
+            .where(
+                GeneratedOutput.course_id == course_id,
+                GeneratedOutput.user_id == user_id,
+                GeneratedOutput.output_type == output_type,
+            )
+            .order_by(GeneratedOutput.created_at.desc(), GeneratedOutput.id.desc())
+        ).all()
+        for output in outputs:
+            content = _parse_object(
+                output.content, field="content", output_id=output.id
+            )
+            if content is not None and content.get("quiz_id") == quiz_id:
+                return output
+        return None
+
+    @staticmethod
     def summarize(row: GeneratedOutput) -> GeneratedOutputSummary:
         return GeneratedOutputSummary(
             id=row.id,

@@ -63,6 +63,7 @@ from services.credits import CreditService
 from services.exam_artifacts import ExamArtifactError, ExamArtifactService
 from services.exam_entitlements import ExamEntitlementService
 from services.exam_course_artifacts import (
+    PersistedMockExam,
     MockExamTopicError,
     topic_quotas,
     type_quotas,
@@ -75,6 +76,7 @@ from services.quiz import QuizService
 from services.exam_similar_questions import (
     SIMILAR_QUESTION_TYPES,
     ExamSimilarQuestionsService,
+    PersistedSimilarQuestions,
 )
 from services.exam_source_analysis import ExamModeError, ExamSourceAnalysisService
 from services.exam_topic_study import ExamTopicStudyService
@@ -1035,6 +1037,31 @@ def generate_topic_exam(
 # --------------------------------------------------------------- similar questions
 
 
+def _similar_questions_response(
+    persisted: PersistedSimilarQuestions,
+) -> BaseResponse[ExamSimilarQuestionsResult]:
+    context = persisted.context
+    return BaseResponse(
+        success=True,
+        message="Similar questions generated successfully",
+        data=ExamSimilarQuestionsResult(
+            quiz=ExamQuizService.hide_answers(persisted.view),
+            generated_output_id=persisted.output.id,
+            created_at=persisted.output.created_at,
+            model_used=persisted.output.model_used,
+            credits_charged=persisted.credits_charged,
+            answers_hidden=True,
+            source_question_ids=persisted.source_question_ids,
+            context_truncated=context.truncated,
+            chunks_used=context.chunks_used,
+            chunks_available=context.chunks_available,
+            retrieval_narrowed=context.chunks_used < context.chunks_available,
+            lowest_similarity=context.lowest_similarity,
+            highest_similarity=context.highest_similarity,
+        ),
+    )
+
+
 @router.post(
     "/{course_id}/exam-mode/topics/{topic_key}/similar-questions",
     response_model=BaseResponse[ExamSimilarQuestionsResult],
@@ -1059,7 +1086,15 @@ def generate_similar_questions(
     student is meant to sit, and the answers arrive through the attempt they
     submit rather than through the page that sets it.
     """
+    generation_request_id = (
+        str(request.request_id) if request.request_id is not None else None
+    )
     try:
+        existing = ExamSimilarQuestionsService.find_by_request_id(
+            db, course.id, current_user.id, generation_request_id
+        )
+        if existing is not None:
+            return _similar_questions_response(existing)
         topic = ExamArtifactService.resolve_topic(
             db, course.id, topic_key, plan_output_id=request.plan_output_id
         )
@@ -1121,9 +1156,7 @@ def generate_similar_questions(
             policy=request.difficulty_policy,
             question_types=question_types,
             other_topic_keys=other_topic_keys,
-            generation_request_id=(
-                str(request.request_id) if request.request_id is not None else None
-            ),
+            generation_request_id=generation_request_id,
         )
     except HTTPException:
         _release(db, generation)
@@ -1140,26 +1173,7 @@ def generate_similar_questions(
             exc, feature=FEATURE_SIMILAR_QUESTIONS
         ) from exc
 
-    material = generation.material
-    return BaseResponse(
-        success=True,
-        message="Similar questions generated successfully",
-        data=ExamSimilarQuestionsResult(
-            quiz=ExamQuizService.hide_answers(persisted.view),
-            generated_output_id=persisted.output.id,
-            created_at=persisted.output.created_at,
-            model_used=persisted.output.model_used,
-            credits_charged=persisted.credits_charged,
-            answers_hidden=True,
-            source_question_ids=persisted.source_question_ids,
-            context_truncated=material.truncated,
-            chunks_used=material.chunks_used,
-            chunks_available=material.chunks_available,
-            retrieval_narrowed=material.retrieval_narrowed,
-            lowest_similarity=material.lowest_similarity,
-            highest_similarity=material.highest_similarity,
-        ),
-    )
+    return _similar_questions_response(persisted)
 
 
 @router.get(
@@ -1206,6 +1220,33 @@ def _resolve_plan(course, request: ExamPlanArtifactRequest, db: Session, feature
         raise ai_generation_http_exception(exc, feature=feature) from exc
 
 
+def _mock_exam_response(
+    persisted: PersistedMockExam,
+) -> BaseResponse[ExamMockExamResult]:
+    context = persisted.context
+    time_limit_seconds = persisted.quiz.time_limit_seconds or 0
+    return BaseResponse(
+        success=True,
+        message="Mock exam generated successfully",
+        data=ExamMockExamResult(
+            quiz=ExamQuizService.hide_answers(persisted.view),
+            generated_output_id=persisted.output.id,
+            created_at=persisted.output.created_at,
+            model_used=persisted.output.model_used,
+            credits_charged=persisted.credits_charged,
+            answers_hidden=True,
+            duration_minutes=time_limit_seconds // 60,
+            time_limit_seconds=time_limit_seconds,
+            context_truncated=context.truncated,
+            chunks_used=context.chunks_used,
+            chunks_available=context.chunks_available,
+            retrieval_narrowed=context.chunks_used < context.chunks_available,
+            lowest_similarity=context.lowest_similarity,
+            highest_similarity=context.highest_similarity,
+        ),
+    )
+
+
 @router.post(
     "/{course_id}/exam-mode/mock-exam",
     response_model=BaseResponse[ExamMockExamResult],
@@ -1224,6 +1265,18 @@ def generate_mock_exam(
     one topic has not paid for a paper covering twelve. Served with its answers
     hidden, because a paper you can read the answers to is not a mock exam.
     """
+    generation_request_id = (
+        str(request.request_id) if request.request_id is not None else None
+    )
+    try:
+        existing = ExamMockExamService.find_by_request_id(
+            db, course.id, current_user.id, generation_request_id
+        )
+    except Exception as exc:
+        raise ai_generation_http_exception(exc, feature=FEATURE_MOCK_EXAM) from exc
+    if existing is not None:
+        return _mock_exam_response(existing)
+
     plan = _resolve_plan(course, request, db, FEATURE_MOCK_EXAM)
 
     requested_mix = (
@@ -1286,9 +1339,7 @@ def generate_mock_exam(
             quotas=quotas,
             types=types,
             duration_minutes=request.duration_minutes,
-            generation_request_id=(
-                str(request.request_id) if request.request_id is not None else None
-            ),
+            generation_request_id=generation_request_id,
         )
     except HTTPException:
         _release(db, generation)
@@ -1303,27 +1354,7 @@ def generate_mock_exam(
         _release(db, generation)
         raise ai_generation_http_exception(exc, feature=FEATURE_MOCK_EXAM) from exc
 
-    material = generation.material
-    return BaseResponse(
-        success=True,
-        message="Mock exam generated successfully",
-        data=ExamMockExamResult(
-            quiz=ExamQuizService.hide_answers(persisted.view),
-            generated_output_id=persisted.output.id,
-            created_at=persisted.output.created_at,
-            model_used=persisted.output.model_used,
-            credits_charged=persisted.credits_charged,
-            answers_hidden=True,
-            duration_minutes=request.duration_minutes,
-            time_limit_seconds=persisted.quiz.time_limit_seconds or 0,
-            context_truncated=material.truncated,
-            chunks_used=material.chunks_used,
-            chunks_available=material.chunks_available,
-            retrieval_narrowed=material.retrieval_narrowed,
-            lowest_similarity=material.lowest_similarity,
-            highest_similarity=material.highest_similarity,
-        ),
-    )
+    return _mock_exam_response(persisted)
 
 
 @router.get(

@@ -8,6 +8,7 @@ export interface ErrorStateProps {
   children?: ReactNode;
   onRetry?: () => void;
   retryLabel?: string;
+  isRetrying?: boolean;
   actions?: ReactNode;
   className?: string;
 }
@@ -17,6 +18,7 @@ export function ErrorState({
   children,
   onRetry,
   retryLabel = 'Try again',
+  isRetrying = false,
   actions,
   className,
 }: ErrorStateProps) {
@@ -29,6 +31,7 @@ export function ErrorState({
             size="sm"
             icon={<RefreshCw aria-hidden="true" />}
             onClick={onRetry}
+            isLoading={isRetrying}
           >
             {retryLabel}
           </Button>

@@ -161,10 +161,12 @@ def enqueue_flashcards(
     """Queue flashcard generation and return immediately with a handle to poll."""
     try:
         req = request or FlashcardRequest()
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             req.model,
             current_user.preferred_model,
             required_capability="flashcard",
+            user=db_user,
         )
         queued_request = req.model_copy(update={"model": effective_model})
         job = enqueue_generation_job(
@@ -172,7 +174,9 @@ def enqueue_flashcards(
             course_id=course.id,
             user_id=current_user.id,
             job_type=JOB_TYPE_GENERATE_FLASHCARD,
-            request_payload=queued_request.model_dump_json(),
+            # exclude_unset so the queued path honours per-course settings too
+            # (P2-043); the model override stays set via model_copy(update=...).
+            request_payload=queued_request.model_dump_json(exclude_unset=True),
             credit_cost=GENERATION_CREDIT_COSTS["flashcard"],
         )
     except HTTPException:

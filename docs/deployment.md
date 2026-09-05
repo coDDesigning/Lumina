@@ -564,7 +564,7 @@ storage directories must already exist and be persistent. Apply migrations once:
 python -m alembic upgrade head
 python -m alembic current --check-heads
 python -m alembic check
-python -m workers.document_processor --check
+python -m workers.worker --check
 ```
 
 Then start these as two separate supervisor units, not as sequential shell
@@ -573,7 +573,7 @@ termination:
 
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330
-python -m workers.document_processor
+python -m workers.worker
 ```
 
 The image installs Tesseract with English language data. Custom `OCR_LANGUAGE`

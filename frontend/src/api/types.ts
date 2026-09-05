@@ -385,8 +385,9 @@ export interface AiModelInfo {
 }
 
 export interface StudyGuideRequest {
-  summary_format?: SummaryFormat;
-  topic_focus?: string;
+  // Required by schemas/study_guide.py (no server default); omitting either is a 422.
+  summary_format: SummaryFormat;
+  topic_focus: string;
   summary_length?: SummaryLength;
   detail_level?: DetailLevel;
   summary_mode?: SummaryMode;

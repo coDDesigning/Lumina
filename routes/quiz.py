@@ -589,8 +589,12 @@ def enqueue_quiz(
     that turns out to be open-ended has already been charged as one.
     """
     try:
+        db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
-            request.model, current_user.preferred_model, required_capability="quiz"
+            request.model,
+            current_user.preferred_model,
+            required_capability="quiz",
+            user=db_user,
         )
         queued_request = request.model_copy(update={"model": effective_model})
         job = enqueue_generation_job(
@@ -598,7 +602,9 @@ def enqueue_quiz(
             course_id=course.id,
             user_id=current_user.id,
             job_type=JOB_TYPE_GENERATE_QUIZ,
-            request_payload=queued_request.model_dump_json(),
+            # exclude_unset so the queued path honours per-course settings too
+            # (P2-043); the model override stays set via model_copy(update=...).
+            request_payload=queued_request.model_dump_json(exclude_unset=True),
             credit_cost=QuizService.credit_cost(request),
         )
     except Exception as exc:

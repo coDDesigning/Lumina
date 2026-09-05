@@ -45,6 +45,30 @@ def _get_shared_http_client() -> httpx.Client:
         return _shared_http_client
 
 
+_BYOK_KEY_ATTR_BY_PROVIDER = {
+    AI_PROVIDER_GEMINI: "encrypted_gemini_api_key",
+    AI_PROVIDER_OPENAI: "encrypted_openai_api_key",
+    AI_PROVIDER_CLAUDE: "encrypted_anthropic_api_key",
+}
+
+
+def _available_provider_names(user: object | None = None) -> list[str]:
+    """Vendors this caller can actually reach: the deployment's, plus any a
+    user's own stored key adds. This is the single definition every model
+    lookup must agree on so the queued path and the synchronous path resolve
+    the same set (P2-003)."""
+    provider_names = list(settings.ai_available_vendors)
+    if user is None:
+        return provider_names
+    for provider, attr in _BYOK_KEY_ATTR_BY_PROVIDER.items():
+        has_key = getattr(user, attr, None) or (
+            isinstance(user, dict) and user.get(attr)
+        )
+        if has_key and provider not in provider_names:
+            provider_names.append(provider)
+    return provider_names
+
+
 @dataclass(frozen=True)
 class GenerationMetadata:
     """Operational telemetry metadata for an AI model call."""
@@ -186,6 +210,12 @@ def _model_catalog_entry(
             return model
     if ":" in model_id:
         provider, model_name = model_id.split(":", 1)
+        # The raw-catalog fallback must not resurrect a vendor the caller has no
+        # route to: without this a queued job could resolve `openai:...` on a
+        # deployment with no OpenAI credential and no personal key, then fail
+        # hard and non-retryably at run time (P2-003).
+        if provider not in _available_provider_names(user):
+            return None
         catalog_dict = getattr(settings, "ai_model_catalog", None) or {}
         for entry in catalog_dict.get(provider, []):
             if str(entry.get("model")) == model_name:
@@ -1402,24 +1432,7 @@ class ReliableTextGenerationProvider:
 def get_available_models(user: object | None = None) -> list[dict[str, object]]:
     # The deployment's credentials set the base; a user's own key can add a
     # vendor the deployment does not configure.
-    provider_names = list(settings.ai_available_vendors)
-
-    if user is not None:
-        if getattr(user, "encrypted_gemini_api_key", None) or (
-            isinstance(user, dict) and user.get("encrypted_gemini_api_key")
-        ):
-            if AI_PROVIDER_GEMINI not in provider_names:
-                provider_names.append(AI_PROVIDER_GEMINI)
-        if getattr(user, "encrypted_openai_api_key", None) or (
-            isinstance(user, dict) and user.get("encrypted_openai_api_key")
-        ):
-            if AI_PROVIDER_OPENAI not in provider_names:
-                provider_names.append(AI_PROVIDER_OPENAI)
-        if getattr(user, "encrypted_anthropic_api_key", None) or (
-            isinstance(user, dict) and user.get("encrypted_anthropic_api_key")
-        ):
-            if AI_PROVIDER_CLAUDE not in provider_names:
-                provider_names.append(AI_PROVIDER_CLAUDE)
+    provider_names = _available_provider_names(user)
 
     standard_capabilities = [
         "study_guide",

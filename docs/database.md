@@ -658,7 +658,11 @@ one paper disagree about what it asks.
 
 `document_id` is therefore `NOT NULL` and `(document_id, position)` is the
 unique key: a question nobody can attribute to a paper is not a question this
-system records. A composite foreign key `(document_id, course_id)` into
+system records. That pair is also how a client names one of these rows when it
+asks for similar questions, because the primary key is a global counter and
+handing it out would let a caller probe for rows in courses it does not hold.
+
+A composite foreign key `(document_id, course_id)` into
 `uploaded_documents` carries the course with it, so a question can never be
 attributed to another course's paper.
 
@@ -829,7 +833,19 @@ what lets three vocabularies that have never agreed resolve to one topic:
 model-generated free text, and the analysis model invents its own wording. The
 key is computed at read time as well as write time, so a mastery label recorded
 months earlier can still find its topic without anything having been stored to
-connect them.
+connect them. It folds the Turkish dotted and dotless I onto ASCII `i` before
+case-folding, because Python's default rules leave `I` and `i` apart and would
+split one Turkish topic into two.
+
+A merge keeps the label it displays reachable. When two discovered topics merge
+through an alias, the survivor takes the smallest key in the group but keeps its
+own display label, so its own canonical key is recorded as an alias key and the
+index is also built over the label itself — otherwise every attempt on that
+topic would land in `unmapped_mastery_labels` and its past questions would be
+unreachable. Only `aliases` is persisted and the index is rebuilt from it, so
+the stored surfaces are capped by keeping one spelling per alias key rather than
+by slicing the list, and the alias keys are narrowed to the ones the retained
+surfaces still spell.
 
 Nothing references `course_topics.id`. Saving a course deletes and reinserts
 every one of its topic rows, so those identifiers churn; the names are re-read

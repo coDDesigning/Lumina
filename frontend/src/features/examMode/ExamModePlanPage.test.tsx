@@ -242,20 +242,55 @@ describe('ExamModePlanPage', () => {
     expect(document.body.textContent).not.toMatch(/\b0%\s*mastery/i);
   });
 
-  it('regenerates the plan when asked', async () => {
+  it('says so when the newest analysis no longer ranks a topic this plan did', async () => {
     const createPlan = vi.mocked(examModeAPI.createPlan);
-    createPlan.mockResolvedValue(planFixture({ generated_output_id: 9 }));
+    createPlan.mockRejectedValue(
+      new APIError(409, { detail: 'Topic not discovered' }, 'exam_topic_not_discovered'),
+    );
+    vi.mocked(examModeAPI.getPlan).mockResolvedValue(
+      planFixture({
+        staleness: {
+          is_stale: true,
+          requires_rescan: false,
+          stale_reasons: ['analysis_superseded'],
+        },
+      }),
+    );
     const user = userEvent.setup();
 
     renderPage();
     await waitFor(() => expect(screen.getAllByText('Photosynthesis').length).toBeGreaterThan(0));
 
-    const regenerate = screen
-      .getAllByRole('button')
-      .find((element) => /regenerate|rebuild|update/i.test(element.textContent ?? ''));
-    if (!regenerate) return;
+    await user.click(screen.getByRole('button', { name: 'Refresh ranking' }));
 
-    await user.click(regenerate);
+    await waitFor(() =>
+      expect(document.body.textContent).toContain('That topic is not in this analysis'),
+    );
+  });
+
+  it('re-ranks against the newest analysis rather than the superseded one', async () => {
+    const createPlan = vi.mocked(examModeAPI.createPlan);
+    createPlan.mockResolvedValue(planFixture({ generated_output_id: 9 }));
+    vi.mocked(examModeAPI.getPlan).mockResolvedValue(
+      planFixture({
+        staleness: {
+          is_stale: true,
+          requires_rescan: false,
+          stale_reasons: ['analysis_superseded'],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderPage();
+    await waitFor(() => expect(screen.getAllByText('Photosynthesis').length).toBeGreaterThan(0));
+
+    expect(document.body.textContent).toContain('scanned again since this ranking');
+    expect(document.body.textContent).not.toContain('analysis_superseded');
+
+    await user.click(screen.getByRole('button', { name: 'Refresh ranking' }));
+
     await waitFor(() => expect(createPlan).toHaveBeenCalled());
+    expect(createPlan.mock.calls[0][1]).not.toHaveProperty('analysis_output_id');
   });
 });

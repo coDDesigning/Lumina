@@ -62,6 +62,7 @@ def test_no_stored_fingerprint_reports_nothing_rather_than_everything() -> None:
         ("high_priority_topic_keys", ["graph-traversal"], "selection_changed"),
         ("ranking_policy_version", 99, "ranking_policy_updated"),
         ("topic_key_version", 99, "topic_keys_updated"),
+        ("analysis_output_id", 99, "analysis_superseded"),
     ],
 )
 def test_each_moved_input_reports_its_own_reason(field, value, reason) -> None:
@@ -121,6 +122,14 @@ def test_a_field_the_stored_document_lacks_is_skipped_rather_than_flagged() -> N
     )
 
     assert reasons == ()
+
+
+def test_a_superseded_analysis_asks_for_a_re_rank_rather_than_another_scan() -> None:
+    reasons = compare_fingerprints(stored(), fingerprint(analysis_output_id=99))
+
+    assert reasons == ("analysis_superseded",)
+    assert requires_rescan(reasons) is False
+    assert "analysis_superseded" not in RESCAN_REASONS
 
 
 def test_a_moved_exam_date_is_stale_without_demanding_another_scan() -> None:

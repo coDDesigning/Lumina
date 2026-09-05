@@ -163,7 +163,6 @@ export default function ExamModePlanPage({ workspace }: ExamModePlanPageProps) {
     setFailure(null);
     try {
       const next = await examModeAPI.createPlan(courseId, {
-        analysis_output_id: current.analysis_output_id,
         selected_topic_keys: current.topics.map((topic) => topic.topic_key),
         high_priority_topic_keys: current.topics
           .filter((topic) => topic.is_high_priority)

@@ -76,14 +76,22 @@ without recovering or claiming a job:
 python -m workers.document_processor --check
 ```
 
-Finish course deletions that a storage or vector-store failure left unfinished.
-It is idempotent, so rerunning it is always safe:
+Finish course and document deletions that a storage or vector-store failure
+left unfinished. It is idempotent, so rerunning it is always safe:
 
 ```bash
 python -m workers.course_purge
 python -m workers.course_purge --dry-run
 python -m workers.course_purge --course-id 42
+python -m workers.course_purge --document-id 0f8e1c22-2f7c-4f19-9f0e-2f1f2c1d4a55
+python -m workers.course_purge --document-grace-seconds 0
 ```
+
+Every run makes two passes: tombstoned courses first, then documents left at
+`status = 'deleting'` by a second phase that failed. A document tombstone is
+only finished once it is older than `--document-grace-seconds` (default 300),
+because a delete request that is still inside its own storage call holds exactly
+the same tombstone.
 
 The worker performs this readiness check before entering its processing loop and
 exits nonzero if a dependency is not ready. `--check` and `--once` are mutually
@@ -124,7 +132,7 @@ immutable `pgvector/pgvector` image digest; the pgvector extension is required
 because the schema declares a `vector` column and an HNSW index. The live job
 verifies the complete Alembic upgrade/downgrade/re-upgrade cycle, schema drift,
 role seeds, readiness, UUID and timezone round trips, unloaded database cascades
-across all 43 tables, pgvector provisioning and cosine ranking, and
+across all 44 tables, pgvector provisioning and cosine ranking, and
 `SKIP LOCKED` worker claims. Tests marked `database_contract` run unchanged
 against copies of an Alembic-migrated SQLite database and the disposable
 PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other
@@ -486,6 +494,33 @@ leaving deleted material semantically searchable.
 courses soft-deleted under the older behavior. It reruns this same path against
 every tombstoned course, so it is idempotent, and a course it cannot finish is
 logged and left tombstoned rather than blocking the rest.
+
+The same command reruns document deletion for every `uploaded_documents` row left
+at `status = 'deleting'`, whose course is not itself tombstoned, once the
+tombstone has outlived the grace period. Until it runs, such a row is hidden from
+the document list and status endpoints and blocks a re-upload of the same file,
+but it no longer spends the course's document count or byte allowance: a row the
+owner cannot see does not consume their quota. No job transition may take a
+document out of `deleting` either, so an expired lease or a late failure cannot
+resurrect a document whose deletion is under way.
+
+A document that a generation is actively reading is not deletable at all, and
+that hold is durable: `services/document_lock.py` writes one committed
+`document_generation_locks` row per generation and per document, and
+`DocumentService.delete_document` reads them back inside the transaction that
+would tombstone the document. The row is what makes the rule work across
+processes, since generation runs in the worker and deletion in the API. Holds
+are shared, so several generations may read one document at once, and each
+carries a lease of `GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS` plus five minutes:
+a worker killed mid-generation cannot release its own row, and the lease is what
+stops it from blocking that document permanently. Expired rows are dropped on
+the next acquisition and by the worker's periodic maintenance pass.
+
+Profile documents are erased the same way. `ProfileDocumentService.delete_document`
+commits `profile_documents.status = 'deleting'`, then removes the object, then the
+vectors, then the row, and reports a failure in any of those steps to the caller
+instead of returning success over an orphaned file. A repeat delete resumes the
+tombstone it finds, and the same purge command finishes the ones nobody retried.
 
 ## Quizzes
 

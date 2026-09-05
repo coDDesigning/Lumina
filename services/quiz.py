@@ -425,7 +425,7 @@ class QuizService:
 
         try:
             material = cls.get_course_material(db, course_id, query=query)
-            with acquire_generation_locks(material.document_ids):
+            with acquire_generation_locks(db, material.document_ids):
                 generation_ctx = assemble_generation_context(
                     db,
                     course_id=course_id,

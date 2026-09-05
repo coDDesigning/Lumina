@@ -1,18 +1,26 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Barrier
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from backend.app.models import DocumentPage, ProcessingJob, UploadedDocument
+from backend.app.models import (
+    DocumentChunk,
+    DocumentPage,
+    ProcessingJob,
+    UploadedDocument,
+)
 from main import app
 from services.document import DocumentService
 import services.document as document_service
 from services.processing_jobs import claim_next_job, fail_job
+from services.vector_store import PgVectorStore
 from utils.exceptions import ConflictException
+from workers.course_purge import run_document_purge
 
 
 def _upload(context, content: bytes = b"Queued API document"):
@@ -340,6 +348,101 @@ def test_storage_delete_failure_retains_tombstone_for_retry(
     assert retried.status_code == 204
     with upload_api.session_factory() as session:
         assert session.get(UploadedDocument, document_id) is None
+
+
+def test_vector_failure_tombstone_is_finished_by_the_document_purge(
+    upload_api,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """P2-035: a failed second phase is recoverable without database access."""
+    content = b"Stranded tombstone document"
+    uploaded = _upload(upload_api, content)
+    document_id = UUID(uploaded.json()["document"]["id"])
+    path = f"/api/courses/{upload_api.course_id}/documents/{document_id}"
+    with upload_api.session_factory() as session:
+        stored = session.get(UploadedDocument, document_id)
+        assert stored is not None
+        storage_key = stored.storage_key
+
+    class UnavailableVectorStore:
+        def delete_document_vectors(self, _db, _document_id):
+            raise document_service.VectorStoreError("simulated vector outage")
+
+    monkeypatch.setattr(
+        document_service, "get_vector_store", lambda: UnavailableVectorStore()
+    )
+    failed = upload_api.client.delete(
+        f"{path}?force=true", headers=upload_api.authorization
+    )
+    monkeypatch.undo()
+
+    assert failed.status_code == 500
+    with upload_api.session_factory() as session:
+        document = session.get(UploadedDocument, document_id)
+        assert document is not None
+        assert document.status == "deleting"
+
+    # The tombstone is hidden from every read the owner has, and the same file
+    # cannot be uploaded again while it survives.
+    listed = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/documents",
+        headers=upload_api.authorization,
+    )
+    assert listed.status_code == 200
+    assert listed.json()["data"] == []
+    assert (
+        upload_api.client.get(path, headers=upload_api.authorization).status_code == 404
+    )
+    blocked = _upload(upload_api, content)
+    assert blocked.status_code == 409
+    assert blocked.json()["data"]["code"] == "UPLOAD_DOCUMENT_DELETION_IN_PROGRESS"
+
+    report = run_document_purge(
+        session_factory=upload_api.session_factory,
+        storage=upload_api.storage,
+        vector_store=PgVectorStore(),
+        grace_seconds=0.0,
+    )
+
+    assert report.documents_purged == 1
+    with upload_api.session_factory() as session:
+        assert session.get(UploadedDocument, document_id) is None
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(DocumentChunk)
+                .where(DocumentChunk.document_id == document_id)
+            )
+            == 0
+        )
+    assert upload_api.storage.exists(storage_key) is False
+
+    # The same file can be uploaded again once the tombstone is gone.
+    reuploaded = _upload(upload_api, content)
+    assert reuploaded.status_code == 201
+
+
+def test_a_deleting_tombstone_does_not_spend_the_course_document_allowance(
+    upload_api,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """P2-035: a row the owner cannot see must not consume their quota."""
+    uploaded = _upload(upload_api, b"Quota tombstone document")
+    document_id = UUID(uploaded.json()["document"]["id"])
+    with upload_api.session_factory() as session:
+        document = session.get(UploadedDocument, document_id)
+        assert document is not None
+        document.status = "deleting"
+        session.commit()
+
+    monkeypatch.setattr(
+        document_service,
+        "settings",
+        SimpleNamespace(max_documents_per_course=1, max_course_storage_bytes=10_000),
+    )
+    accepted = _upload(upload_api, b"A different document entirely")
+
+    assert accepted.status_code == 201
 
 
 def test_delete_recovers_lost_final_commit_acknowledgement(

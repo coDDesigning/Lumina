@@ -7,7 +7,7 @@ same as running it once.
 
 import hashlib
 from io import BytesIO
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
@@ -31,7 +31,12 @@ from services.vector_store import (
 from storage.base import StorageError
 from storage.local import LocalStorage
 from workers import course_purge
-from workers.course_purge import PurgeReport, run_purge
+from workers.course_purge import (
+    DocumentPurgeReport,
+    PurgeReport,
+    run_document_purge,
+    run_purge,
+)
 
 pytestmark = pytest.mark.database_contract
 
@@ -132,6 +137,200 @@ def _purge(session_factory, storage, store, **kwargs) -> PurgeReport:
         vector_store=store,
         **kwargs,
     )
+
+
+def _document_of(session, course_id: int) -> UploadedDocument:
+    document = session.scalar(
+        select(UploadedDocument).where(UploadedDocument.course_id == course_id)
+    )
+    assert document is not None
+    return document
+
+
+def _tombstone_document(session_factory, course_id: int) -> UUID:
+    """Leave exactly what a delete whose second phase failed leaves behind."""
+    with session_factory() as session:
+        document = _document_of(session, course_id)
+        document.status = "deleting"
+        session.commit()
+        return document.id
+
+
+def _purge_documents(session_factory, storage, store, **kwargs) -> DocumentPurgeReport:
+    kwargs.setdefault("grace_seconds", 0.0)
+    return run_document_purge(
+        session_factory=session_factory,
+        storage=storage,
+        vector_store=store,
+        **kwargs,
+    )
+
+
+def test_document_purge_finishes_a_stranded_document_tombstone(
+    session_factory, storage, store
+) -> None:
+    """P2-035: nothing but this worker can finish a failed second phase."""
+    with session_factory() as session:
+        course_id = _seed_course(
+            session, storage, store, email="doc-purge@example.com", tombstoned=False
+        )
+    document_id = _tombstone_document(session_factory, course_id)
+    assert len(_stored_files(storage)) == 1
+    with session_factory() as session:
+        assert store.count_course_vectors(session, course_id) == 1
+
+    report = _purge_documents(session_factory, storage, store)
+
+    assert report.documents_examined == 1
+    assert report.documents_purged == 1
+    assert report.documents_failed == 0
+    assert _stored_files(storage) == []
+    with session_factory() as session:
+        assert session.get(UploadedDocument, document_id) is None
+        assert store.count_course_vectors(session, course_id) == 0
+        # The course itself is untouched: only the document was being deleted.
+        assert session.get(Course, course_id) is not None
+
+
+def test_document_purge_is_idempotent(session_factory, storage, store) -> None:
+    with session_factory() as session:
+        course_id = _seed_course(
+            session,
+            storage,
+            store,
+            email="doc-purge-twice@example.com",
+            tombstoned=False,
+        )
+    _tombstone_document(session_factory, course_id)
+
+    first = _purge_documents(session_factory, storage, store)
+    second = _purge_documents(session_factory, storage, store)
+
+    assert first.documents_purged == 1
+    assert second.documents_examined == 0
+    assert second.documents_purged == 0
+    assert second.documents_failed == 0
+
+
+def test_document_purge_leaves_a_fresh_tombstone_to_its_own_request(
+    session_factory, storage, store
+) -> None:
+    """A delete still inside its storage call holds the same tombstone."""
+    with session_factory() as session:
+        course_id = _seed_course(
+            session,
+            storage,
+            store,
+            email="doc-purge-fresh@example.com",
+            tombstoned=False,
+        )
+    document_id = _tombstone_document(session_factory, course_id)
+
+    report = _purge_documents(session_factory, storage, store, grace_seconds=3600.0)
+
+    assert report.documents_examined == 1
+    assert report.documents_purged == 0
+    with session_factory() as session:
+        document = session.get(UploadedDocument, document_id)
+        assert document is not None
+        assert document.status == "deleting"
+    assert len(_stored_files(storage)) == 1
+
+
+def test_document_purge_ignores_documents_of_a_tombstoned_course(
+    session_factory, storage, store
+) -> None:
+    """The course purge erases those wholesale; reconciling them here only races it."""
+    with session_factory() as session:
+        course_id = _seed_course(
+            session,
+            storage,
+            store,
+            email="doc-purge-course@example.com",
+            tombstoned=True,
+        )
+    document_id = _tombstone_document(session_factory, course_id)
+
+    report = _purge_documents(session_factory, storage, store)
+
+    assert report.documents_examined == 0
+    with session_factory() as session:
+        assert session.get(UploadedDocument, document_id) is not None
+
+
+def test_document_purge_dry_run_changes_nothing(
+    session_factory, storage, store
+) -> None:
+    with session_factory() as session:
+        course_id = _seed_course(
+            session, storage, store, email="doc-purge-dry@example.com", tombstoned=False
+        )
+    document_id = _tombstone_document(session_factory, course_id)
+
+    report = _purge_documents(session_factory, storage, store, dry_run=True)
+
+    assert report.documents_examined == 1
+    assert report.documents_purged == 0
+    with session_factory() as session:
+        assert session.get(UploadedDocument, document_id) is not None
+    assert len(_stored_files(storage)) == 1
+
+
+def test_document_purge_retains_a_tombstone_it_cannot_finish(
+    session_factory, storage, store, monkeypatch
+) -> None:
+    with session_factory() as session:
+        course_id = _seed_course(
+            session,
+            storage,
+            store,
+            email="doc-purge-stuck@example.com",
+            tombstoned=False,
+        )
+    document_id = _tombstone_document(session_factory, course_id)
+
+    def fail_delete(_key: str) -> None:
+        raise StorageError("simulated cleanup failure")
+
+    monkeypatch.setattr(storage, "delete", fail_delete)
+    blocked = _purge_documents(session_factory, storage, store)
+
+    assert blocked.documents_failed == 1
+    with session_factory() as session:
+        document = session.get(UploadedDocument, document_id)
+        assert document is not None
+        assert document.status == "deleting"
+
+    monkeypatch.undo()
+    retried = _purge_documents(session_factory, storage, store)
+
+    assert retried.documents_purged == 1
+    with session_factory() as session:
+        assert session.get(UploadedDocument, document_id) is None
+
+
+def test_document_purge_can_target_one_document(
+    session_factory, storage, store
+) -> None:
+    with session_factory() as session:
+        first_course = _seed_course(
+            session, storage, store, email="doc-purge-a@example.com", tombstoned=False
+        )
+        second_course = _seed_course(
+            session, storage, store, email="doc-purge-b@example.com", tombstoned=False
+        )
+    first_document = _tombstone_document(session_factory, first_course)
+    second_document = _tombstone_document(session_factory, second_course)
+
+    report = _purge_documents(
+        session_factory, storage, store, document_id=first_document
+    )
+
+    assert report.documents_examined == 1
+    assert report.documents_purged == 1
+    with session_factory() as session:
+        assert session.get(UploadedDocument, first_document) is None
+        assert session.get(UploadedDocument, second_document) is not None
 
 
 def test_purge_erases_every_tombstoned_course(session_factory, storage, store) -> None:

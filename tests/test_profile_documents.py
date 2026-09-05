@@ -2,7 +2,9 @@
 
 import io
 from uuid import UUID, uuid4
+
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend.app.models import (
     EMBEDDING_DIMENSIONS,
@@ -11,9 +13,13 @@ from backend.app.models import (
     ProfileDocumentChunk,
     ProfileProcessingJob,
 )
+import services.profile_document as profile_document_service
 from services.profile_knowledge import (
     load_profile_knowledge_for_generation,
 )
+from services.vector_store import PgVectorStore
+from storage.base import StorageError
+from workers.course_purge import run_document_purge
 
 
 def test_upload_and_list_profile_documents(authz_api):
@@ -192,6 +198,147 @@ def test_profile_document_retry_and_delete(authz_api):
             select(ProfileDocument).where(ProfileDocument.id == doc_uuid)
         )
         assert deleted_doc is None
+
+
+def test_profile_delete_reports_a_storage_failure_and_survives_as_a_tombstone(
+    authz_api,
+    monkeypatch,
+):
+    """P2-018: a failed erase must not answer 200 and must not orphan the file."""
+    client = authz_api.client
+    headers = authz_api.authorization_a
+
+    res = client.post(
+        "/api/profile-documents",
+        headers=headers,
+        files={
+            "document": (
+                "storage-failure.txt",
+                io.BytesIO(b"Storage failure test content."),
+                "text/plain",
+            )
+        },
+    )
+    doc_id = res.json()["data"]["document"]["id"]
+    doc_uuid = UUID(doc_id)
+    with authz_api.session_factory() as session:
+        document = session.get(ProfileDocument, doc_uuid)
+        assert document is not None
+        storage_key = document.storage_key
+
+    def unavailable_storage(_key: str) -> None:
+        raise StorageError("simulated object store outage")
+
+    monkeypatch.setattr(authz_api.storage, "delete", unavailable_storage)
+    failed = client.delete(f"/api/profile-documents/{doc_id}", headers=headers)
+    monkeypatch.undo()
+
+    assert failed.status_code == 500
+    # The row survives as a committed tombstone and the object is still there,
+    # so nothing was orphaned and the deletion can be finished later.
+    with authz_api.session_factory() as session:
+        document = session.get(ProfileDocument, doc_uuid)
+        assert document is not None
+        assert document.status == "deleting"
+    assert authz_api.storage.exists(storage_key) is True
+
+    # The tombstone is hidden from the owner's reads while it lasts.
+    listed = client.get("/api/profile-documents", headers=headers)
+    assert all(entry["id"] != doc_id for entry in listed.json()["data"])
+    assert (
+        client.get(f"/api/profile-documents/{doc_id}", headers=headers).status_code
+        == 404
+    )
+
+    # Retrying against working storage resumes the same tombstone.
+    retried = client.delete(f"/api/profile-documents/{doc_id}", headers=headers)
+
+    assert retried.status_code == 200
+    with authz_api.session_factory() as session:
+        assert session.get(ProfileDocument, doc_uuid) is None
+    assert authz_api.storage.exists(storage_key) is False
+
+
+def test_profile_delete_leaves_a_tombstone_when_the_final_commit_fails(
+    authz_api,
+    monkeypatch,
+):
+    """P2-018: a lost final commit must not report success or resurrect the row."""
+    client = authz_api.client
+    headers = authz_api.authorization_a
+
+    res = client.post(
+        "/api/profile-documents",
+        headers=headers,
+        files={
+            "document": (
+                "commit-failure.txt",
+                io.BytesIO(b"Final commit failure test content."),
+                "text/plain",
+            )
+        },
+    )
+    doc_id = res.json()["data"]["document"]["id"]
+    doc_uuid = UUID(doc_id)
+
+    original_commit = profile_document_service.Session.commit
+    commit_count = 0
+
+    def fail_the_final_commit(session) -> None:
+        nonlocal commit_count
+        commit_count += 1
+        if commit_count == 2:
+            raise SQLAlchemyError("simulated lost delete commit")
+        original_commit(session)
+
+    monkeypatch.setattr(
+        profile_document_service.Session, "commit", fail_the_final_commit
+    )
+    failed = client.delete(f"/api/profile-documents/{doc_id}", headers=headers)
+    monkeypatch.undo()
+
+    assert failed.status_code == 500
+    with authz_api.session_factory() as session:
+        document = session.get(ProfileDocument, doc_uuid)
+        assert document is not None
+        assert document.status == "deleting"
+
+
+def test_profile_document_tombstone_is_finished_by_the_document_purge(authz_api):
+    """P2-018: profile tombstones are reconciled by the same purge worker."""
+    client = authz_api.client
+    headers = authz_api.authorization_a
+
+    res = client.post(
+        "/api/profile-documents",
+        headers=headers,
+        files={
+            "document": (
+                "stranded.txt",
+                io.BytesIO(b"Stranded profile tombstone content."),
+                "text/plain",
+            )
+        },
+    )
+    doc_uuid = UUID(res.json()["data"]["document"]["id"])
+    with authz_api.session_factory() as session:
+        document = session.get(ProfileDocument, doc_uuid)
+        assert document is not None
+        storage_key = document.storage_key
+        document.status = "deleting"
+        session.commit()
+
+    report = run_document_purge(
+        session_factory=authz_api.session_factory,
+        storage=authz_api.storage,
+        vector_store=PgVectorStore(),
+        grace_seconds=0.0,
+    )
+
+    assert report.profile_documents_purged == 1
+    with authz_api.session_factory() as session:
+        assert session.get(ProfileDocument, doc_uuid) is None
+    assert authz_api.storage.exists(storage_key) is False
 
 
 def test_retrieval_priority_and_opt_out(authz_api):

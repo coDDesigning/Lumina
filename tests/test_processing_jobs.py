@@ -1756,6 +1756,75 @@ def test_expired_leases_are_requeued_then_failed(session_factory, tmp_path):
         assert document.status == "failed"
 
 
+def test_failing_a_job_never_resurrects_a_deleting_document(session_factory, tmp_path):
+    """P2-036: fail_job is fenced on the document, not only on the job row."""
+    queued = _queue_document(session_factory, tmp_path)
+    claim_at = queued.available_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session, "worker", queued.storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+
+    # A delete request commits phase one of its two-phase erase out of band.
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        assert document is not None
+        document.status = "deleting"
+        session.commit()
+
+    with session_factory() as session:
+        assert (
+            fail_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                error_code="STORAGE_UNAVAILABLE",
+                error_message="The source object disappeared.",
+                retryable=True,
+                now=claim_at + timedelta(seconds=2),
+            )
+            is None
+        )
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        job = session.get(ProcessingJob, queued.job_id)
+        assert document is not None and job is not None
+        assert document.status == "deleting"
+        assert job.status == JOB_STATUS_RUNNING
+
+
+def test_lease_recovery_requeues_the_job_but_leaves_a_deleting_document(
+    session_factory, tmp_path
+):
+    """P2-036: an expired lease must not rewrite a tombstoned document."""
+    queued = _queue_document(session_factory, tmp_path)
+    claim_at = queued.available_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session, "worker", queued.storage.provider, 10, now=claim_at
+        )
+    assert claim is not None
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        assert document is not None
+        document.status = "deleting"
+        session.commit()
+
+    with session_factory() as session:
+        assert recover_expired_jobs(session, now=claim_at + timedelta(hours=2)) == 1
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        job = session.get(ProcessingJob, queued.job_id)
+        assert document is not None and job is not None
+        assert document.status == "deleting"
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.lease_expires_at is None
+
+
 @pytest.mark.database_contract
 def test_course_deletion_immediately_fences_running_claim(session_factory, tmp_path):
     queued = _queue_document(session_factory, tmp_path)

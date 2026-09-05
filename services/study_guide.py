@@ -372,7 +372,7 @@ class StudyGuideService:
 
         with (
             CreditService.refund_on_error(db, refundable),
-            acquire_generation_locks(material.document_ids),
+            acquire_generation_locks(db, material.document_ids),
         ):
             generation_ctx = assemble_generation_context(
                 db,

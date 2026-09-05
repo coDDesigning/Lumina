@@ -9,6 +9,7 @@ import {
   TOTAL_STAGES,
   attemptsLabel,
   describeFailure,
+  displayFileName,
   documentStatusLabel,
   formatFileSize,
   isDocumentBusy,
@@ -42,6 +43,7 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
   const [isConfirming, setIsConfirming] = useState(false);
   const [isForcing, setIsForcing] = useState(false);
   const { document, job } = entry;
+  const name = displayFileName(document.original_file_name);
 
   const busy = isDocumentBusy(document.status);
   const failed = document.status === 'failed';
@@ -64,8 +66,8 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
         {busy ? <Breath /> : null}
       </span>
 
-      <p className={styles.name} title={document.original_file_name}>
-        {document.original_file_name}
+      <p className={styles.name} title={name}>
+        {name}
       </p>
 
       <span className="visually-hidden">{documentStatusLabel(document.status)}</span>
@@ -100,7 +102,7 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
             aria-valuenow={step ?? 0}
             aria-valuemin={0}
             aria-valuemax={TOTAL_STAGES}
-            aria-label={`Reading ${document.original_file_name}`}
+            aria-label={`Reading ${name}`}
           >
             <div
               className={styles.barFill}
@@ -167,7 +169,7 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
             isLoading={entry.pending === 'delete'}
             loadingLabel="Removing"
             icon={<Trash2 aria-hidden="true" />}
-            aria-label={`Remove ${document.original_file_name}`}
+            aria-label={`Remove ${name}`}
           >
             Remove
           </Button>
@@ -185,7 +187,7 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
         confirmLabel="Remove it"
         destructive
       >
-        Everything built from {document.original_file_name} stays, but nothing new can draw on
+        Everything built from {name} stays, but nothing new can draw on
         it. Putting it back means uploading and processing it again.
       </ConfirmDialog>
 
@@ -200,7 +202,7 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
         confirmLabel="Remove"
         destructive
       >
-        Reading {document.original_file_name} has not finished. Removing it now will cancel
+        Reading {name} has not finished. Removing it now will cancel
         the upload and discard the document.
       </ConfirmDialog>
     </article>

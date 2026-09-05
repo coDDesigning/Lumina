@@ -12,6 +12,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
@@ -23,7 +24,10 @@ from schemas.profile_document import (
 )
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
-from services.document_validation import UPLOAD_ERRORS, DocumentValidationError
+from services.document_validation import (
+    DocumentValidationError,
+    upload_error_response,
+)
 from services.document_hash import FileHashError
 from services.profile_document import (
     ProfileDocumentDeletionError,
@@ -43,13 +47,17 @@ router = APIRouter(prefix="/api/profile-documents", tags=["Profile Documents"])
     "",
     response_model=BaseResponse[ProfileDocumentUploadResponse],
     status_code=status.HTTP_201_CREATED,
+    responses={
+        413: {"description": "Document too large"},
+        415: {"description": "Unsupported file type"},
+    },
 )
 def upload_profile_document(
     document: Annotated[UploadFile, File(...)],
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[Storage, Depends(get_storage)],
-) -> BaseResponse[ProfileDocumentUploadResponse]:
+) -> BaseResponse[ProfileDocumentUploadResponse] | JSONResponse:
     """Upload and enqueue a user profile background document."""
     try:
         result = ProfileDocumentService.register(
@@ -69,11 +77,9 @@ def upload_profile_document(
             else "Profile document already uploaded.",
         )
     except DocumentValidationError as exc:
-        error = UPLOAD_ERRORS.get(exc.code, {"message": str(exc), "status_code": 400})
-        raise HTTPException(
-            status_code=error["status_code"],
-            detail=error["message"],
-        ) from exc
+        # Shared with the course-document route so the two upload surfaces
+        # return the same status, machine code and envelope (P2-008).
+        return upload_error_response(exc.error_key)
     except FileHashError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

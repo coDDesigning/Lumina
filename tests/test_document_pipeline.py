@@ -561,6 +561,63 @@ def test_pdf_page_and_aggregate_pixel_limits_are_enforced() -> None:
     )
 
 
+def test_oversized_pdf_page_is_rejected_before_it_is_rasterized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-005: the per-page pixel budget must be checked on ``page.rect``,
+    before ``Page.get_pixmap`` allocates a full-resolution raster of an
+    oversized MediaBox."""
+    content = pdf_bytes("Only page", width=12_000, height=12_000)  # 1.44e8 px
+
+    pixmap_calls: list[object] = []
+    real_get_pixmap = pymupdf.Page.get_pixmap
+
+    def spy_get_pixmap(self, *args: object, **kwargs: object):
+        pixmap_calls.append((args, kwargs))
+        return real_get_pixmap(self, *args, **kwargs)
+
+    monkeypatch.setattr(pymupdf.Page, "get_pixmap", spy_get_pixmap)
+
+    error = assert_pipeline_error(
+        "pdf",
+        content,
+        ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
+        PipelineStage.VALIDATING,
+        options=pipeline_options(),  # default 40M per-page budget
+    )
+    assert error.retryable is False
+    assert pixmap_calls == []
+
+
+def test_oversized_standalone_image_is_rejected_before_the_raster_is_decoded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-005: a small-file, huge-pixel raster is rejected on its header
+    dimensions, before ``ImageExtractor`` transcodes the full source."""
+    big = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 12_000, 12_000), False)
+    big.clear_with(255)
+    png = big.tobytes("png")
+    assert len(png) < 1_000_000  # tiny file, 1.44e8 pixels
+
+    pixmap_calls: list[object] = []
+    real_get_pixmap = pymupdf.Page.get_pixmap
+
+    def spy_get_pixmap(self, *args: object, **kwargs: object):
+        pixmap_calls.append((args, kwargs))
+        return real_get_pixmap(self, *args, **kwargs)
+
+    monkeypatch.setattr(pymupdf.Page, "get_pixmap", spy_get_pixmap)
+
+    assert_pipeline_error(
+        "png",
+        png,
+        ProcessingErrorCode.DOCUMENT_TOO_COMPLEX,
+        PipelineStage.VALIDATING,
+        options=pipeline_options(max_pdf_total_pixels=1_000_000),
+    )
+    assert pixmap_calls == []
+
+
 def test_pdf_decoded_content_stream_limit_is_enforced() -> None:
     pdf = pymupdf.open()
     page = pdf.new_page(width=100, height=100)

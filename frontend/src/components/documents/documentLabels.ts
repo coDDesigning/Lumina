@@ -215,6 +215,32 @@ export function humanizeToken(token: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
+const FILE_NAME_DISPLAY_MAX = 60;
+
+/**
+ * A client-supplied filename as it should read in ordinary UI copy: no path
+ * segments (a name like `../../etc/x.pdf` renders as broken prose otherwise),
+ * no control characters, length-capped with an ellipsis. This is display-only
+ * and deliberately separate from the citation-facing `document_label` on the
+ * server, which is tuned for model-facing text.
+ */
+export function displayFileName(name: string, maxLength = FILE_NAME_DISPLAY_MAX): string {
+  let cleaned = '';
+  for (const ch of name) {
+    const code = ch.codePointAt(0) ?? 0;
+    // control chars, DEL, forward slash (0x2f), backslash (0x5c)
+    if (code < 0x20 || code === 0x7f || code === 0x2f || code === 0x5c) {
+      cleaned += ' ';
+    } else {
+      cleaned += ch;
+    }
+  }
+  cleaned = cleaned.replace(/\.{2,}/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return 'file';
+  if (cleaned.length <= maxLength) return cleaned;
+  return `${cleaned.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
+}
+
 export function documentStatusLabel(status: string): string {
   return STATUS_LABELS[status as DocumentStatus] ?? humanizeToken(status);
 }

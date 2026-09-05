@@ -70,6 +70,22 @@ describe('DocumentRow', () => {
     expect(remove).toHaveBeenCalledWith('doc-1', { force: true });
   });
 
+  it('shows a path-like filename as a plain name, not raw path text', () => {
+    renderRow(
+      entry('ready', {
+        document: {
+          ...entry('ready').document,
+          original_file_name: '../../../../tmp/traversal_probe.pdf',
+        },
+      }),
+    );
+
+    const name = screen.getByText(/traversal_probe\.pdf/);
+    expect(name.textContent).not.toContain('/');
+    expect(name.textContent).not.toContain('..');
+    expect(name).toHaveAttribute('title', expect.not.stringContaining('/'));
+  });
+
   it('offers no force removal in readOnly mode', () => {
     render(
       <DocumentRow entry={entry('processing')} onRetry={vi.fn()} onDelete={vi.fn()} readOnly />,

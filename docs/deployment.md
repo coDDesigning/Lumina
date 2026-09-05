@@ -89,7 +89,11 @@ subresource. A TLS terminator in front supplies them, and is where
 The application is now the only authority for every size limit it publishes.
 `backend/app/request_size.py` recognises a document upload by matching the
 request path, so `MAX_UPLOAD_SIZE_BYTES` can be raised without editing anything
-else and without rebuilding a proxy configuration.
+else and without rebuilding a proxy configuration. The match covers the
+course-document routes, `POST /api/courses/syllabus/extract`, and
+`POST /api/profile-documents` — every route whose handler validates against
+`MAX_UPLOAD_SIZE_BYTES`. A route that reads an upload but is not on that list
+gets the 1 MiB generic-request limit instead, which silently caps the feature.
 
 Nothing stands between a browser and the container, so `--proxy-headers` is not
 passed to uvicorn unless `FORWARDED_ALLOW_IPS` is set, and the per-IP login and

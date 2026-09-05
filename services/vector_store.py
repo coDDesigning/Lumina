@@ -228,6 +228,21 @@ def _validated_profile(
     return validated
 
 
+#: Cap on rows per INSERT...VALUES statement for HNSW-indexed embedding tables.
+#: A maximally sized document produces ~2,000 chunks, and SQLAlchemy's default
+#: insertmanyvalues page size (1000) would put up to 1000 1024-dimension
+#: vectors - each maintaining the HNSW index - in one statement, which can
+#: exceed the worker's PostgreSQL statement_timeout even after it is widened.
+_EMBEDDING_INSERT_PAGE_SIZE = 100
+
+
+def _cap_embedding_insert_page_size(session: Session) -> None:
+    if session.get_bind().dialect.name == "postgresql":
+        session.connection().execution_options(
+            insertmanyvalues_page_size=_EMBEDDING_INSERT_PAGE_SIZE
+        )
+
+
 class PgVectorStore:
     """Vectors as relational rows, written through the caller's transaction.
 
@@ -253,6 +268,7 @@ class PgVectorStore:
             delete(ChunkEmbedding).where(ChunkEmbedding.document_id == document_id)
         )
         session.flush()
+        _cap_embedding_insert_page_size(session)
         session.add_all(
             ChunkEmbedding(
                 chunk_id=record.chunk_id,
@@ -286,6 +302,7 @@ class PgVectorStore:
             delete(ChunkEmbedding).where(ChunkEmbedding.chunk_id.in_(chunk_ids))
         )
         session.flush()
+        _cap_embedding_insert_page_size(session)
         session.add_all(
             ChunkEmbedding(
                 chunk_id=record.chunk_id,
@@ -457,6 +474,7 @@ class PgVectorStore:
         session.flush()
         if not validated:
             return
+        _cap_embedding_insert_page_size(session)
         session.add_all(
             ProfileChunkEmbedding(
                 chunk_id=record.chunk_id,

@@ -1,4 +1,6 @@
-from sqlalchemy import select
+from math import ceil, isfinite
+
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
@@ -152,10 +154,32 @@ class CourseService:
         db: Session,
         course_id: int,
         vector_store: VectorStore | None = None,
+        *,
+        operation_timeout_seconds: float | None = None,
     ) -> None:
-        """Delete a tombstoned course after its stored documents are gone."""
+        """Delete a tombstoned course after its stored documents are gone.
+
+        The shared engine caps every PostgreSQL statement at 5s
+        (``backend/app/database_engine.py``), which is too short for a large
+        course's cascading delete (documents, chunks, vectors, quizzes).
+        ``operation_timeout_seconds`` widens that budget for this transaction
+        only, the same way ``services.processing_jobs.replace_document_pages``
+        already does for document extraction.
+        """
+        if operation_timeout_seconds is not None and (
+            isinstance(operation_timeout_seconds, bool)
+            or not isinstance(operation_timeout_seconds, (int, float))
+            or not isfinite(operation_timeout_seconds)
+            or operation_timeout_seconds <= 0
+        ):
+            raise ValueError("Operation timeout must be a positive finite number")
+
         db.rollback()
         begin_serialized_write(db)
+        if db.get_bind().dialect.name == "postgresql" and operation_timeout_seconds:
+            timeout = f"{max(1, ceil(operation_timeout_seconds * 1000))}ms"
+            db.scalar(select(func.set_config("lock_timeout", timeout, True)))
+            db.scalar(select(func.set_config("statement_timeout", timeout, True)))
         course = db.scalar(
             select(Course).where(Course.id == course_id).with_for_update()
         )
@@ -193,6 +217,8 @@ class CourseService:
         course_id: int,
         storage: Storage,
         vector_store: VectorStore | None = None,
+        *,
+        operation_timeout_seconds: float | None = None,
     ) -> None:
         """Erase a course, its stored files, and its vectors, in a resumable order.
 
@@ -210,6 +236,11 @@ class CourseService:
             raise CourseDeletionError from exc
 
         try:
-            CourseService.finalize_hard_delete(db, course_id, vector_store)
+            CourseService.finalize_hard_delete(
+                db,
+                course_id,
+                vector_store,
+                operation_timeout_seconds=operation_timeout_seconds,
+            )
         except (RuntimeError, VectorStoreError) as exc:
             raise CourseDeletionError from exc

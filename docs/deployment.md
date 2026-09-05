@@ -463,6 +463,10 @@ course deletions that answered `500` while it was down, and `python -m workers.e
 re-indexes missing vectors. In production, the background worker automatically executes
 both reconciliation tasks periodically on configured intervals (`COURSE_PURGE_INTERVAL_SECONDS`
 and `EMBEDDING_BACKFILL_INTERVAL_SECONDS`, defaulting to 1 hour), and rerunning them is always safe.
+On PostgreSQL, deleting one course (its documents, chunks, and vectors) runs under a
+transaction-local lock/statement timeout of `COURSE_PURGE_OPERATION_TIMEOUT_SECONDS`
+(default 300s) instead of the API request path's 5s cap, so a large course is not
+aborted mid-delete by `QueryCanceled`.
 
 A hosted PostgreSQL deployment sets `VECTOR_BACKEND=pgvector` instead and stores
 vectors in the database, which requires the `vector` extension to be available to

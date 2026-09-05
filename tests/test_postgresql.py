@@ -70,7 +70,7 @@ CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
 # When updating alembic versions, update this constant to the new head revision.
-HEAD_REVISION = "b6d21f4c8a37"
+HEAD_REVISION = "3317a08487dd"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -721,6 +721,19 @@ def test_postgresql_schema_readiness_and_role_seeds(
     } >= {
         "ck_quiz_questions_question_index_nonnegative",
         "ck_quiz_questions_correct_option_index_nonnegative",
+        "ck_quiz_questions_quiz_question_type_valid",
+    }
+    assert {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("quiz_attempt_answers")
+    } >= {"ck_quiz_attempt_answers_answer_time_spent_nonnegative"}
+    assert {
+        constraint["name"] for constraint in inspector.get_check_constraints("progress")
+    } >= {
+        "ck_progress_quizzes_completed_nonnegative",
+        "ck_progress_correct_answers_count_nonnegative",
+        "ck_progress_incorrect_answers_count_nonnegative",
+        "ck_progress_total_questions_answered_nonnegative",
     }
     assert {index["name"] for index in inspector.get_indexes("generated_outputs")} >= {
         "uq_generated_outputs_id_course_id"
@@ -1547,6 +1560,92 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
             ],
         )
     with postgresql_sessions() as session:
+        user = session.get(User, user_id)
+        assert user is not None
+        session.delete(user)
+        session.commit()
+
+
+def test_complete_job_honors_operation_timeout_seconds_over_a_tighter_default(
+    postgresql_sessions: sessionmaker[Session],
+) -> None:
+    """``complete_job`` must widen the connection's timeout budget itself.
+
+    The shared engine caps every PostgreSQL statement at 5s
+    (``backend/app/database_engine.py``), which is correct for the request
+    path but too short for finalizing a large document in one transaction.
+    Setting a much tighter ``statement_timeout`` here stands in for that
+    shared cap; ``operation_timeout_seconds`` must override it locally to
+    this transaction the same way it already does for
+    ``replace_document_pages``.
+    """
+    with postgresql_sessions() as session:
+        user_id, document_ids, _job_ids = _queue_documents(
+            session,
+            count=1,
+            file_type="pdf",
+        )
+    with postgresql_sessions() as session:
+        claim = claim_next_job(
+            session,
+            "postgresql-timeout-worker",
+            "local:postgresql-ci",
+            60,
+        )
+    assert claim is not None
+    with postgresql_sessions() as session:
+        assert update_job_stage(session, claim.id, claim.claim_token, "extracting_text")
+    with postgresql_sessions() as session:
+        assert replace_document_pages(
+            session,
+            claim.id,
+            claim.claim_token,
+            [
+                PageData(
+                    content_index=0,
+                    text="Timeout override page",
+                    page_number=1,
+                    extraction_method="decoded",
+                    has_images=False,
+                    needs_ocr=False,
+                )
+            ],
+        )
+    with postgresql_sessions() as session:
+        assert update_job_stage(session, claim.id, claim.claim_token, "cleaning_text")
+        assert update_job_stage(session, claim.id, claim.claim_token, "chunking")
+        assert update_job_stage(
+            session, claim.id, claim.claim_token, "generating_embeddings"
+        )
+
+    with postgresql_sessions() as session:
+        # A statement_timeout this tight would abort complete_job's bulk
+        # inserts outright unless operation_timeout_seconds overrides it.
+        session.execute(text("SET statement_timeout = '1ms'"))
+        session.commit()
+        assert complete_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            [
+                ChunkData(
+                    text="Timeout override chunk", page_number=1, end_page_number=1
+                )
+            ],
+            embeddings=[[0.1] * EMBEDDING_DIMENSIONS],
+            vector_store=PgVectorStore(),
+            operation_timeout_seconds=30,
+        )
+
+    with postgresql_sessions() as session:
+        assert (
+            session.scalar(
+                select(DocumentChunk.id).where(
+                    DocumentChunk.document_id == document_ids[0]
+                )
+            )
+            is not None
+        )
         user = session.get(User, user_id)
         assert user is not None
         session.delete(user)

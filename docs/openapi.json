@@ -3354,6 +3354,11 @@
           "detail_level": {
             "anyOf": [
               {
+                "enum": [
+                  "Concise",
+                  "Balanced",
+                  "Detailed"
+                ],
                 "type": "string"
               },
               {
@@ -3365,6 +3370,12 @@
           "difficulty": {
             "anyOf": [
               {
+                "enum": [
+                  "Adaptive",
+                  "Easy",
+                  "Medium",
+                  "Hard"
+                ],
                 "type": "string"
               },
               {
@@ -3389,6 +3400,10 @@
           "study_mode": {
             "anyOf": [
               {
+                "enum": [
+                  "Exam",
+                  "General"
+                ],
                 "type": "string"
               },
               {
@@ -3400,6 +3415,11 @@
           "summary_length": {
             "anyOf": [
               {
+                "enum": [
+                  "Short",
+                  "Medium",
+                  "Long"
+                ],
                 "type": "string"
               },
               {

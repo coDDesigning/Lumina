@@ -63,7 +63,8 @@ EMBEDDING_WIDTH_REVISION = "a1f6c3b7d284"
 ATTEMPT_SCORE_NULLABLE_REVISION = "c3b8e07a1d95"
 GENERATION_JOB_DISMISSAL_REVISION = "f2d90b4c7168"
 DOCUMENT_GENERATION_LOCKS_REVISION = "b6d21f4c8a37"
-HEAD_REVISION = DOCUMENT_GENERATION_LOCKS_REVISION
+MISSING_CHECK_CONSTRAINTS_REVISION = "3317a08487dd"
+HEAD_REVISION = MISSING_CHECK_CONSTRAINTS_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -111,6 +112,7 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        MISSING_CHECK_CONSTRAINTS_REVISION: DOCUMENT_GENERATION_LOCKS_REVISION,
         DOCUMENT_GENERATION_LOCKS_REVISION: GENERATION_JOB_DISMISSAL_REVISION,
         GENERATION_JOB_DISMISSAL_REVISION: ATTEMPT_SCORE_NULLABLE_REVISION,
         ATTEMPT_SCORE_NULLABLE_REVISION: EMBEDDING_WIDTH_REVISION,
@@ -480,6 +482,35 @@ def assert_upgraded_schema(database_path: Path) -> None:
             "ck_quiz_questions_correct_option_index_nonnegative"
             in normalized_question_sql
         )
+        assert "ck_quiz_questions_quiz_question_type_valid" in normalized_question_sql
+
+        answer_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'quiz_attempt_answers'"
+        ).fetchone()
+        assert answer_sql is not None
+        normalized_answer_sql = " ".join(answer_sql[0].lower().split())
+        assert (
+            "ck_quiz_attempt_answers_answer_time_spent_nonnegative"
+            in normalized_answer_sql
+        )
+
+        progress_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'progress'"
+        ).fetchone()
+        assert progress_sql is not None
+        normalized_progress_sql = " ".join(progress_sql[0].lower().split())
+        assert "ck_progress_quizzes_completed_nonnegative" in normalized_progress_sql
+        assert (
+            "ck_progress_correct_answers_count_nonnegative" in normalized_progress_sql
+        )
+        assert (
+            "ck_progress_incorrect_answers_count_nonnegative" in normalized_progress_sql
+        )
+        assert (
+            "ck_progress_total_questions_answered_nonnegative"
+            in normalized_progress_sql
+        )
 
         conversation_sql = connection.execute(
             "SELECT sql FROM sqlite_master "
@@ -723,6 +754,102 @@ def test_hardening_batch_failure_is_atomic_and_retryable(tmp_path: Path) -> None
                     (row_id,),
                 )
             connection.rollback()
+
+
+def test_missing_check_constraints_preflight_rejects_existing_violations(
+    tmp_path: Path,
+) -> None:
+    """The gap this closes: the shipped schema was weaker than create_all()'s.
+
+    Six CHECK constraints declared on the ORM models were never emitted by any
+    prior revision. This proves the new revision both refuses to apply over
+    existing violations and, once applied, actually enforces the invariant.
+    """
+    database_path = tmp_path / "missing-check-constraints.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", DOCUMENT_GENERATION_LOCKS_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        role_id = connection.execute(
+            "SELECT id FROM roles WHERE name = 'user'"
+        ).fetchone()[0]
+        user_id = connection.execute(
+            "INSERT INTO users "
+            "(name, email, password_hash, role_id, is_banned, preferred_model) "
+            "VALUES (?, ?, ?, ?, 0, ?)",
+            ("Constraint user", "constraint-gap@example.com", "hash", role_id, "model"),
+        ).lastrowid
+        course_id = connection.execute(
+            "INSERT INTO courses "
+            "(title, description, is_deleted, owner_id, created_at) "
+            "VALUES (?, NULL, 0, ?, ?)",
+            ("Constraint course", user_id, "2026-01-02 03:04:05"),
+        ).lastrowid
+        quiz_id = connection.execute(
+            "INSERT INTO quizzes (course_id, title, created_at) VALUES (?, ?, ?)",
+            (course_id, "Constraint quiz", "2026-01-02 03:04:05"),
+        ).lastrowid
+        question_id = connection.execute(
+            "INSERT INTO quiz_questions "
+            "(quiz_id, question_index, question_text, question_type, options, "
+            "correct_option_index) VALUES (?, 0, ?, ?, ?, ?)",
+            (quiz_id, "Bogus question", "totally_bogus_type", '["Yes", "No"]', 0),
+        ).lastrowid
+        connection.execute(
+            "INSERT INTO progress (user_id, course_id, completion, quizzes_completed, "
+            "correct_answers_count, incorrect_answers_count, total_questions_answered) "
+            "VALUES (?, ?, 0.5, -5, -5, -5, -5)",
+            (user_id, course_id),
+        )
+        connection.commit()
+
+    completed = invoke_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+    assert completed.returncode != 0
+    assert "Unrecognized quiz question types" in completed.stderr
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (DOCUMENT_GENERATION_LOCKS_REVISION,)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE quiz_questions SET question_type = 'multiple_choice' WHERE id = ?",
+            (question_id,),
+        )
+        connection.commit()
+
+    completed = invoke_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+    assert completed.returncode != 0
+    assert "Negative progress counters" in completed.stderr
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (DOCUMENT_GENERATION_LOCKS_REVISION,)
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE progress SET quizzes_completed = 0, correct_answers_count = 0, "
+            "incorrect_answers_count = 0, total_questions_answered = 0 "
+            "WHERE course_id = ?",
+            (course_id,),
+        )
+        connection.commit()
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+    assert_upgraded_schema(database_path)
+
+    with sqlite3.connect(database_path) as connection:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE quiz_questions SET question_type = 'still_bogus' WHERE id = ?",
+                (question_id,),
+            )
+        connection.rollback()
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE progress SET quizzes_completed = -1 WHERE course_id = ?",
+                (course_id,),
+            )
+        connection.rollback()
 
 
 def test_visual_enrichment_migration_backfills_and_round_trips(

@@ -182,6 +182,18 @@ targeted `ANALYZE` immediately; manual `VACUUM (ANALYZE)` is reserved for a
 measured dead-tuple backlog and must run outside a transaction with bounded
 lock and statement timeouts.
 
+Every PostgreSQL connection from the shared engine carries a 2s `lock_timeout`
+and a 5s `statement_timeout` (`backend/app/database_engine.py`), which is
+correct for the request path but too tight for a worker finalizing a large
+document or purging a large course in one transaction. Those write paths
+(`complete_job`, `complete_profile_job`, `replace_profile_document_pages`,
+`replace_document_pages`, `CourseService.finalize_hard_delete`) accept an
+`operation_timeout_seconds` argument that raises both GUCs for that
+transaction only, via `set_config(..., is_local=true)`, driven by the
+caller's remaining claim lease (document/profile jobs) or
+`COURSE_PURGE_OPERATION_TIMEOUT_SECONDS` (course purge). Request-path callers
+must not pass this argument — the 5s default is the correct ceiling there.
+
 Capture plans for the course-material, progress, activity, quiz-history, and
 AI-cost queries before and after an index change. CI verifies exact index
 definitions and executes the hot query shapes with `EXPLAIN ANALYZE` to prove

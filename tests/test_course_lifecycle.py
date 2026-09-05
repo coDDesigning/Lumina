@@ -186,6 +186,17 @@ def test_a_student_can_archive_and_unarchive_their_own_course(authz_api):
     assert restored.json()["data"]["is_archived"] is False
 
 
+def test_course_update_rejects_explicit_null_is_archived(authz_api):
+    course_url = f"/api/courses/{authz_api.a_course_id}"
+
+    updated = authz_api.client.put(
+        course_url,
+        headers=authz_api.authorization_a,
+        json={"is_archived": None},
+    )
+    assert updated.status_code == 422, updated.text
+
+
 def test_admin_cannot_archive_another_students_course(authz_api):
     course_url = f"/api/courses/{authz_api.a_course_id}"
 

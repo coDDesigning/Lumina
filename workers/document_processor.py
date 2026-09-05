@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 from typing import Protocol
 from uuid import uuid4
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
@@ -103,6 +104,20 @@ class _SignalStopEvent:
 
 def _default_worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}:{uuid4()}"
+
+
+def _is_statement_or_lock_timeout(exc: OperationalError) -> bool:
+    """Detect PostgreSQL cancelling a statement for exceeding its timeout budget.
+
+    Distinguishing this from other ``OperationalError``s turns an anonymous
+    "Failed to finalize" into an actionable signal that the transaction-local
+    timeout (see ``operation_timeout_seconds`` in ``services.processing_jobs``)
+    was too tight for this job, rather than a genuine database failure.
+    """
+    message = str(getattr(exc, "orig", None) or exc).lower()
+    return "canceling statement due to statement timeout" in message or (
+        "canceling statement due to lock timeout" in message
+    )
 
 
 def _heartbeat_loop(
@@ -539,6 +554,7 @@ def process_next_job(
                                 job.id,
                                 job.claim_token,
                                 pages,
+                                operation_timeout_seconds=remaining_seconds,
                             )
                         else:
                             updated = replace_document_pages(
@@ -652,6 +668,7 @@ def process_next_job(
                         embeddings,
                         pages=pages,
                         vector_store=vector_store,
+                        operation_timeout_seconds=lease_seconds,
                     )
                 else:
                     completed = complete_job(
@@ -662,6 +679,7 @@ def process_next_job(
                         pages,
                         embeddings=embeddings,
                         vector_store=vector_store,
+                        operation_timeout_seconds=lease_seconds,
                     )
         except VectorStoreError as exc:
             # The vector store is classified, so the job requeues instead of waiting
@@ -688,6 +706,18 @@ def process_next_job(
                     "Stage": EMBEDDING_STAGE,
                 },
             )
+            return True
+        except OperationalError as exc:
+            # Leave the fenced running state intact; periodic recovery safely retries it.
+            if _is_statement_or_lock_timeout(exc):
+                logger.error(
+                    "Finalizing job %s exceeded its database statement/lock "
+                    "timeout budget",
+                    job.id,
+                    extra={"event": "processing_job_finalize_timeout"},
+                )
+            else:
+                logger.exception("Failed to finalize processing job %s", job.id)
             return True
         except Exception:
             # Leave the fenced running state intact; periodic recovery safely retries it.

@@ -32,6 +32,7 @@ from backend.app.models import (
     User,
 )
 from schemas.credits import CreditReason
+from services.course import CourseService
 from services.credits import CreditService
 from services.generation_jobs import enqueue_generation_job
 from services.vector_store import PgVectorStore, VectorRecord, VectorStoreError
@@ -193,6 +194,47 @@ def test_owner_delete_erases_every_course_artifact(authz_api, graph) -> None:
         ):
             assert _count(session, model) == 0, model.__name__
         assert store.count_course_vectors(session, authz_api.a_course_id) == 0
+
+
+def test_finalize_hard_delete_rejects_an_invalid_operation_timeout(
+    authz_api, graph
+) -> None:
+    with authz_api.session_factory() as session:
+        with pytest.raises(ValueError):
+            CourseService.finalize_hard_delete(
+                session,
+                authz_api.a_course_id,
+                graph["store"],
+                operation_timeout_seconds=-1,
+            )
+
+
+def test_finalize_hard_delete_accepts_a_widened_operation_timeout_on_sqlite(
+    authz_api, graph
+) -> None:
+    """SQLite has no statement_timeout GUC, so the widened budget must be a no-op.
+
+    This is the course-purge counterpart to the timeout override that already
+    exists for ``services.processing_jobs.replace_document_pages`` - the same
+    ``COURSE_PURGE_OPERATION_TIMEOUT_SECONDS`` value the worker passes must not
+    break a course delete on the self-hosted default.
+    """
+    with authz_api.session_factory() as session:
+        course = session.get(Course, authz_api.a_course_id)
+        assert course is not None
+        course.is_deleted = True
+        session.commit()
+
+    with authz_api.session_factory() as session:
+        CourseService.finalize_hard_delete(
+            session,
+            authz_api.a_course_id,
+            graph["store"],
+            operation_timeout_seconds=300,
+        )
+
+    with authz_api.session_factory() as session:
+        assert session.get(Course, authz_api.a_course_id) is None
 
 
 def test_owner_delete_leaves_the_account_and_its_profile_knowledge(

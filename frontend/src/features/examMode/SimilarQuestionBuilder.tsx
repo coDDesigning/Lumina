@@ -24,6 +24,11 @@ import { ErrorState } from '@/ui/ErrorState';
 import { Input, Select } from '@/ui/Input';
 import { Skeleton } from '@/ui/Skeleton';
 import { useElapsed } from './useElapsed';
+import {
+  MAX_QUESTION_COUNT,
+  MIN_QUESTION_COUNT,
+  parseQuestionCount,
+} from './questionCount';
 import styles from './SimilarQuestionBuilder.module.css';
 
 const POLICIES: { value: SimilarQuestionDifficultyPolicy; label: string }[] = [
@@ -70,12 +75,14 @@ export function SimilarQuestionBuilder({
   const { isMetered, canAfford } = useCredits();
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [questionCount, setQuestionCount] = useState(5);
+  const [questionCount, setQuestionCount] = useState('5');
   const [policy, setPolicy] = useState<SimilarQuestionDifficultyPolicy>('match_source');
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<GenerationFailure | null>(null);
   const [exhausted, setExhausted] = useState(false);
   const elapsed = useElapsed(busy);
+
+  const count = parseQuestionCount(questionCount);
 
   const questions = useQuery<ExamQuestionPage>({
     key: queryKeys.examQuestions(courseId, analysisId, topicKey, PAGE_SIZE, 0),
@@ -137,7 +144,7 @@ export function SimilarQuestionBuilder({
             document_id: question.document_id,
             position: question.position,
           })),
-        question_count: questionCount,
+        question_count: count.value,
         difficulty_policy: policy,
       });
       afterExamSimilarQuestions(courseId, topicKey);
@@ -229,10 +236,11 @@ export function SimilarQuestionBuilder({
         <Input
           label="How many to write"
           type="number"
-          min={1}
-          max={20}
+          min={MIN_QUESTION_COUNT}
+          max={MAX_QUESTION_COUNT}
           value={questionCount}
-          onChange={(event) => setQuestionCount(Number(event.target.value))}
+          error={count.error ?? undefined}
+          onChange={(event) => setQuestionCount(event.target.value)}
         />
         <Select
           label="Difficulty"
@@ -252,7 +260,7 @@ export function SimilarQuestionBuilder({
       <div className={styles.actions}>
         <Button
           icon={<Shuffle aria-hidden="true" />}
-          disabled={selected.size === 0}
+          disabled={selected.size === 0 || count.error !== null}
           onClick={() => void generate()}
         >
           Write similar questions

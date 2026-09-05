@@ -334,6 +334,83 @@ def test_a_question_type_the_store_cannot_hold_is_refused_before_any_row(
     assert len(quizzes_of(authz_api.session_factory, authz_api.a_course_id)) == before
 
 
+def _open_ended_question() -> dict:
+    """Exactly the shape the union accepts, so only the type check can refuse it."""
+    return {
+        "question_number": 1,
+        "question_type": "open_ended",
+        "topic": "Graph Traversal",
+        "question": "Explain why BFS finds shortest paths in an unweighted graph.",
+        "difficulty": "medium",
+        "reference_answer": "A queue, and why level order gives shortest paths.",
+        "explanation": "BFS explores in level order.",
+        "citations": ["S1"],
+    }
+
+
+def _true_false_question() -> dict:
+    return {
+        "question_number": 1,
+        "question_type": "true_false",
+        "topic": "Graph Traversal",
+        "question": "BFS uses a queue.",
+        "difficulty": "medium",
+        "correct_answer": True,
+        "explanation": "BFS uses a queue.",
+        "citations": ["S1"],
+    }
+
+
+def test_an_open_ended_question_in_a_practice_set_is_refused(
+    authz_api, planned_course, monkeypatch
+) -> None:
+    """Practice excludes open_ended, and the response is held to that.
+
+    QuizGenerationResponse accepts every storable type, so without a check
+    after validation an open-ended question would be stored in a practice quiz
+    whose own settings record that open-ended was never requested -- and a set
+    meant for immediate self-check would need an LLM grading round trip.
+    """
+    before = len(quizzes_of(authz_api.session_factory, authz_api.a_course_id))
+    balance = balance_of(authz_api.session_factory, authz_api.user_a_id)
+
+    response, _ = ask(
+        authz_api,
+        "practice",
+        monkeypatch,
+        payload=quiz_payload(1, questions=[_open_ended_question()]),
+    )
+
+    assert response.status_code == 500, response.text
+    assert response.headers["X-Error-Code"] == AiErrorCode.INVALID_GENERATED_STRUCTURE
+    assert len(quizzes_of(authz_api.session_factory, authz_api.a_course_id)) == before
+    # The refusal happens after the unlock, so the student must be left neither
+    # charged nor unlocked; otherwise the retry is priced as a second purchase.
+    assert unlocks(authz_api.session_factory, authz_api.a_course_id) == []
+    assert balance_of(authz_api.session_factory, authz_api.user_a_id) == balance
+
+
+def test_a_true_false_question_in_a_topic_exam_is_refused(
+    authz_api, planned_course, monkeypatch
+) -> None:
+    """The symmetric hole: topic exams exclude true_false."""
+    before = len(quizzes_of(authz_api.session_factory, authz_api.a_course_id))
+    balance = balance_of(authz_api.session_factory, authz_api.user_a_id)
+
+    response, _ = ask(
+        authz_api,
+        "exam",
+        monkeypatch,
+        payload=quiz_payload(1, questions=[_true_false_question()]),
+    )
+
+    assert response.status_code == 500, response.text
+    assert response.headers["X-Error-Code"] == AiErrorCode.INVALID_GENERATED_STRUCTURE
+    assert len(quizzes_of(authz_api.session_factory, authz_api.a_course_id)) == before
+    assert unlocks(authz_api.session_factory, authz_api.a_course_id) == []
+    assert balance_of(authz_api.session_factory, authz_api.user_a_id) == balance
+
+
 def test_a_generated_output_row_explains_where_the_quiz_came_from(
     authz_api, planned_course, monkeypatch
 ) -> None:

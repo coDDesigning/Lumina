@@ -13,7 +13,7 @@ costs no credit and reopening one is a database read.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -72,6 +72,7 @@ from utils.ai_errors import (
     ExamTopicNotDiscoveredError,
     ExamTopicSelectionRequiredError,
 )
+from utils.clock import utc_today
 from utils.exceptions import NotFoundException
 from utils.json_documents import parse_json_object
 
@@ -503,7 +504,7 @@ def _today() -> date:
     Reading the server's local date would move the future-exam gate by a day
     depending on where the process happens to run.
     """
-    return datetime.now(timezone.utc).date()
+    return utc_today()
 
 
 def _days_until(exam_date: date | None) -> int | None:

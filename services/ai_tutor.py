@@ -198,7 +198,7 @@ class AiTutorService:
 
         with (
             CreditService.refund_on_error(db, receipt),
-            acquire_generation_locks(material.document_ids),
+            acquire_generation_locks(db, material.document_ids),
         ):
             profile_context = load_profile_knowledge_for_generation(
                 db,

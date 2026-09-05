@@ -404,7 +404,7 @@ class DocumentService:
             raise NotFoundException("Document not found")
         document, job = row
         job_is_active = (job.status in {"queued", "running"}) if not force else False
-        if job_is_active or is_document_locked_for_generation(document_id):
+        if job_is_active or is_document_locked_for_generation(db, document_id):
             db.rollback()
             raise DocumentActiveError
         if document.storage_provider != storage.provider:

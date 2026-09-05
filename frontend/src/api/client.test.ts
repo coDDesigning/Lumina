@@ -171,6 +171,7 @@ describe('apiClient HTTP requests', () => {
   afterEach(() => {
     global.fetch = originalFetch;
     localStorage.clear();
+    vi.useRealTimers();
   });
 
   it('performs GET request with Authorization header if token exists', async () => {
@@ -277,6 +278,44 @@ describe('apiClient HTTP requests', () => {
         body: JSON.stringify({ title: 'New Course' }),
       }),
     );
+  });
+
+  it('retries a GET after a transient network failure', async () => {
+    vi.useFakeTimers();
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch
+      .mockRejectedValueOnce(new TypeError('Connection reset'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 10 }), { status: 200 }));
+
+    const response = apiClient.get<{ id: number }>('/courses/10');
+    await vi.runAllTimersAsync();
+
+    await expect(response).resolves.toEqual({ id: 10 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not replay a POST after a network failure', async () => {
+    const networkError = new TypeError('Connection reset after commit');
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockRejectedValueOnce(networkError);
+
+    await expect(
+      apiClient.post('/courses/1/study-guide', { topic_focus: 'Queues' }),
+    ).rejects.toBe(networkError);
+    expect(mockFetch).toHaveBeenCalledOnce();
+  });
+
+  it('does not retry an aborted GET', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const abortError = new DOMException('The request was aborted.', 'AbortError');
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockRejectedValueOnce(abortError);
+
+    await expect(apiClient.get('/courses', { signal: controller.signal })).rejects.toBe(
+      abortError,
+    );
+    expect(mockFetch).toHaveBeenCalledOnce();
   });
 
   it('performs PUT and DELETE requests', async () => {

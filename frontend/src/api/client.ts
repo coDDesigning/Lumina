@@ -107,6 +107,7 @@ export const ERROR_CODE_HEADER = 'X-Error-Code';
 const RETRY_AFTER_HEADER = 'Retry-After';
 const PERSONAL_KEY_INVALID_ERROR_CODE = 'personal_key_invalid';
 const ACCOUNT_BANNED_ERROR_CODE = 'account_banned';
+const NETWORK_RETRY_METHODS = new Set(['GET', 'HEAD']);
 
 export type SessionEndReason = 'unauthorized' | 'banned';
 
@@ -178,6 +179,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   const url = buildApiUrl(endpoint);
+  const method = (options.method ?? 'GET').toUpperCase();
+  const mayRetryNetworkError = NETWORK_RETRY_METHODS.has(method);
 
   const maxRetries = 2;
   let response: Response | undefined;
@@ -199,7 +202,10 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       }
       break;
     } catch (networkError) {
-      if (attempt < maxRetries) {
+      const wasAborted =
+        options.signal?.aborted === true ||
+        (networkError instanceof Error && networkError.name === 'AbortError');
+      if (!wasAborted && mayRetryNetworkError && attempt < maxRetries) {
         await new Promise((resolve) => setTimeout(resolve, 500));
         continue;
       }

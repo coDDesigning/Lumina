@@ -28,7 +28,7 @@ from dataclasses import dataclass, field, replace
 TOPIC_KEY_VERSION = 1
 
 MAX_TOPIC_KEY_CHARS = 120
-MAX_ALIASES = 12
+MAX_ALIASES = 24
 TOPIC_KEY_SEPARATOR = "-"
 MIN_CONTAINMENT_TOKENS = 2
 
@@ -39,6 +39,8 @@ MIN_CONTAINMENT_TOKENS = 2
 ORDINAL_CONTEXT_WORDS = frozenset(
     {"week", "lecture", "chapter", "unit", "part", "section", "module", "topic"}
 )
+
+TURKISH_I_FOLD = str.maketrans({"ı": "i", "İ": "i"})
 
 TOPIC_STOPWORDS = frozenset(
     {
@@ -120,7 +122,7 @@ def topic_tokens(label: object) -> tuple[str, ...]:
     if not isinstance(label, str) or not label.strip():
         return ()
 
-    decomposed = unicodedata.normalize("NFKD", label)
+    decomposed = unicodedata.normalize("NFKD", label.translate(TURKISH_I_FOLD))
     stripped = "".join(
         character for character in decomposed if unicodedata.category(character) != "Mn"
     )
@@ -205,6 +207,50 @@ class RawCandidate:
     aliases: tuple[str, ...] = ()
     evidence: TopicEvidence = TopicEvidence()
     citation_keys: tuple[str, ...] = ()
+
+
+def _stored_identity(
+    aliases: Iterable[str],
+    alias_keys: Iterable[str],
+    topic_key: str,
+    display_label: str,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The surfaces to store and the keys they can still be read back as.
+
+    Only ``aliases`` is persisted, and the index is rebuilt from it by
+    re-canonicalising each surface, so a cap that slices alphabetically can
+    delete the last surface backing a key. One representative per key is taken
+    first, the rest of the budget is filled in sorted order, and the keys are
+    then narrowed to the ones the retained surfaces actually spell -- which is
+    what makes the index built here and the index rebuilt from the row equal.
+
+    The displayed label takes the first slot, because a merge under a sibling's
+    key leaves it as the only surface spelling the name the student is shown.
+    """
+    surfaces = sorted(set(aliases))
+    wanted = set(alias_keys)
+    by_key: dict[str, list[str]] = {}
+    for surface in surfaces:
+        by_key.setdefault(canonical_topic_key(surface), []).append(surface)
+
+    chosen: set[str] = set()
+    label_key = canonical_topic_key(display_label)
+    if label_key in wanted and label_key in by_key:
+        chosen.add(by_key[label_key][0])
+    for key in sorted(by_key):
+        if len(chosen) >= MAX_ALIASES:
+            break
+        if key in wanted:
+            chosen.add(by_key[key][0])
+    for surface in surfaces:
+        if len(chosen) >= MAX_ALIASES:
+            break
+        chosen.add(surface)
+
+    kept_keys = {canonical_topic_key(surface) for surface in chosen} & wanted
+    kept_keys.discard(topic_key)
+    kept_keys.discard("")
+    return tuple(sorted(chosen)), tuple(sorted(kept_keys))
 
 
 def _alias_keys(label: str, aliases: Iterable[str]) -> tuple[str, ...]:
@@ -335,14 +381,19 @@ def key_candidates(raw: Sequence[RawCandidate]) -> tuple[KeyedCandidate, ...]:
             citation_keys.extend(other.citation_keys)
             topic_key = min(topic_key, other.topic_key)
 
+        alias_keys.add(winner.topic_key)
+        aliases.add(winner.display_label)
         alias_keys.discard(topic_key)
+        stored_aliases, stored_alias_keys = _stored_identity(
+            aliases, alias_keys, topic_key, winner.display_label
+        )
         merged.append(
             replace(
                 winner,
                 topic_key=topic_key,
                 evidence=evidence,
-                aliases=tuple(sorted(aliases))[:MAX_ALIASES],
-                alias_keys=tuple(sorted(alias_keys)),
+                aliases=stored_aliases,
+                alias_keys=stored_alias_keys,
                 citation_keys=tuple(dict.fromkeys(citation_keys)),
             )
         )
@@ -365,6 +416,9 @@ def build_topic_index(candidates: Sequence[object]) -> dict[str, str]:
         if not topic_key:
             continue
         owners.setdefault(topic_key, set()).add(topic_key)
+        label_key = canonical_topic_key(getattr(candidate, "display_label", ""))
+        if label_key and label_key != topic_key:
+            owners.setdefault(label_key, set()).add(topic_key)
         aliases = getattr(candidate, "alias_keys", None)
         if aliases is None:
             aliases = [

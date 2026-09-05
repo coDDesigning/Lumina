@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from services.exam_topics import (
+    MAX_ALIASES,
     MIN_CONTAINMENT_TOKENS,
     RawCandidate,
     TopicEvidence,
@@ -79,6 +80,27 @@ def test_diacritics_fold_so_an_unaccented_search_still_matches() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("Işık", "ışık"),
+        ("IŞIK", "ışık"),
+        ("Ayrık Matematik", "AYRIK MATEMATIK"),
+        ("İstatistik", "istatistik"),
+        ("Işık Analizi", "IŞIK ANALİZİ"),
+    ],
+)
+def test_the_turkish_dotted_and_dotless_i_are_one_topic(left: str, right: str) -> None:
+    assert canonical_topic_key(left) == canonical_topic_key(right)
+
+
+def test_a_turkish_key_never_carries_a_letter_ascii_cannot_spell() -> None:
+    key = canonical_topic_key("Ayrık Matematik")
+
+    assert key == "ayrik-matematik"
+    assert "ı" not in key and "İ" not in key
+
+
 @pytest.mark.parametrize("label", ["", "   ", None, 42, "the of and"])
 def test_a_label_with_no_identity_produces_no_key(label) -> None:
     assert canonical_topic_key(label) == ""
@@ -110,6 +132,79 @@ def test_aliases_merge_candidates_the_key_alone_would_leave_apart() -> None:
     assert len(merged) == 1
     assert merged[0].topic_key == "bfs"
     assert "BFS" in merged[0].aliases
+
+
+class _PersistedRow:
+    """An ``exam_topic_candidates`` row as ``persist`` actually writes one."""
+
+    def __init__(self, topic_key: str, display_label: str, aliases) -> None:
+        self.topic_key = topic_key
+        self.display_label = display_label
+        self.aliases = list(aliases)
+
+
+def _persisted(candidate) -> _PersistedRow:
+    return _PersistedRow(
+        candidate.topic_key, candidate.display_label, candidate.aliases
+    )
+
+
+def test_a_merged_topic_still_resolves_by_the_label_it_displays() -> None:
+    merged = key_candidates(
+        [
+            _candidate("Graph Traversal", ("BFS", "DFS"), discovery_confidence=0.9),
+            _candidate("BFS", discovery_confidence=0.4, in_material=True),
+        ]
+    )
+    candidate = merged[0]
+    index = build_topic_index([_persisted(candidate)])
+
+    assert candidate.topic_key != canonical_topic_key(candidate.display_label)
+    assert match_topic_key(candidate.display_label, index) == candidate.topic_key
+
+
+def _oversized_merge():
+    aliases = ("BFS",) + tuple(
+        f"Alias Surface {index:02d}" for index in range(MAX_ALIASES + 6)
+    )
+    return [
+        _candidate("Graph Traversal", aliases, discovery_confidence=0.9),
+        _candidate("BFS", discovery_confidence=0.4, in_material=True),
+    ]
+
+
+def test_the_index_rebuilt_from_stored_rows_equals_the_one_held_in_memory() -> None:
+    merged = key_candidates(_oversized_merge())
+    candidate = merged[0]
+
+    assert len(merged) == 1
+    assert len(candidate.aliases) == MAX_ALIASES
+    assert candidate.topic_key == "bfs"
+    assert build_topic_index([_persisted(candidate)]) == build_topic_index(merged)
+
+
+def test_a_truncated_alias_list_still_spells_every_key_it_claims() -> None:
+    candidate = key_candidates(_oversized_merge())[0]
+    spelled = {canonical_topic_key(alias) for alias in candidate.aliases}
+
+    assert set(candidate.alias_keys) <= spelled
+    assert "graph-traversal" in candidate.alias_keys
+
+
+def test_a_topic_keyed_before_the_turkish_fold_still_answers_to_its_label() -> None:
+    """Rows written under the old key keep resolving, so mastery does not move."""
+    stored = _PersistedRow("ayrık-matematik", "Ayrık Matematik", [])
+    index = build_topic_index([stored])
+
+    assert canonical_topic_key(stored.display_label) != stored.topic_key
+    assert match_topic_key("Ayrık Matematik", index) == "ayrık-matematik"
+    assert match_topic_key("AYRIK MATEMATIK", index) == "ayrık-matematik"
+
+
+def test_capping_the_stored_aliases_stays_the_same_on_a_second_run() -> None:
+    raw = _oversized_merge()
+
+    assert key_candidates(raw) == key_candidates(raw)
 
 
 def test_merging_sums_counts_but_never_doubles_a_declared_weight() -> None:

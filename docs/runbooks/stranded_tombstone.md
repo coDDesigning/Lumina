@@ -1,4 +1,4 @@
-# Operational Runbook: Stranded Tombstone Course Purge
+# Operational Runbook: Stranded Tombstone Purge
 
 ## Overview
 
@@ -8,6 +8,8 @@ Course deletion in Lumina is permanent, owner-only, and executed via `CourseServ
 3. Deleting relational records via SQLAlchemy cascade.
 
 If a network timeout or crash interrupts steps 1 or 2, the course row remains tombstoned (`is_deleted = True`). The background utility `workers.course_purge` reconciles and finishes unfinished deletions idempotently.
+
+Document deletion is the same two-phase erase one level down. `DocumentService.delete_document` and `ProfileDocumentService.delete_document` commit `status = 'deleting'` on the document row, then remove the storage object, then the vectors, then the row. A failure after the tombstone is committed leaves a row that is hidden from every read endpoint, spends no course quota, cannot be resurrected by any job transition, and can only be finished by this same command, which makes a second pass over document tombstones after the course pass.
 
 In production, the running worker automatically executes periodic purge reconciliation scans every `COURSE_PURGE_INTERVAL_SECONDS` (default: 3600 seconds / 1 hour). Stranded tombstones will clear on the next cycle without manual intervention. Standalone daemon execution is also supported via `python -m workers.course_purge --interval-seconds <SECONDS>`.
 
@@ -27,6 +29,16 @@ In production, the running worker automatically executes periodic purge reconcil
 SELECT id, title, owner_id, is_deleted, created_at, updated_at
 FROM courses
 WHERE is_deleted = TRUE
+ORDER BY updated_at ASC;
+
+SELECT id, course_id, status, created_at, updated_at
+FROM uploaded_documents
+WHERE status = 'deleting'
+ORDER BY updated_at ASC;
+
+SELECT id, user_id, status, created_at, updated_at
+FROM profile_documents
+WHERE status = 'deleting'
 ORDER BY updated_at ASC;
 ```
 
@@ -62,6 +74,16 @@ fields @timestamp, service, event, message
      python -m workers.course_purge --course-id <COURSE_ID>
    ```
 
+4. **Purge a specific document tombstone:**
+   ```bash
+   docker compose run --rm lumina \
+     python -m workers.course_purge --document-id <DOCUMENT_ID>
+   ```
+   A tombstone younger than `--document-grace-seconds` (default 300) is reported
+   as examined but left alone, because a delete request that is still running
+   holds the same tombstone. Pass `--document-grace-seconds 0` only when no
+   delete request for that document is in flight.
+
 ### Hosted Environment (AWS ECS)
 
 1. **Execute Dry-Run One-Shot Task:**
@@ -91,8 +113,10 @@ fields @timestamp, service, event, message
 1. **Verify Database State:**
    ```sql
    SELECT COUNT(*) FROM courses WHERE is_deleted = TRUE;
+   SELECT COUNT(*) FROM uploaded_documents WHERE status = 'deleting';
+   SELECT COUNT(*) FROM profile_documents WHERE status = 'deleting';
    ```
-   Expected: `0`.
+   Expected: `0` for each.
 
 2. **Verify Storage Cleanup:**
    * Local: Check that `/data/uploads/courses/<COURSE_ID>` directory has been pruned.

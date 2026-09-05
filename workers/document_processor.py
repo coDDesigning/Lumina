@@ -60,7 +60,7 @@ from services.embeddings import EmbeddingProvider
 from services.vector_store import VectorStore, VectorStoreError
 from storage.base import Storage
 from storage.dependencies import get_storage
-from workers.course_purge import run_purge
+from workers.course_purge import run_document_purge, run_purge
 from workers.embedding_backfill import run_backfill
 
 logger = logging.getLogger(__name__)
@@ -824,6 +824,14 @@ def _maintenance_cycle(
             )
         except Exception:
             logger.exception("Periodic course purge reconciliation failed")
+        try:
+            run_document_purge(
+                session_factory=session_factory,
+                storage=storage,
+                stop_event=stop,
+            )
+        except Exception:
+            logger.exception("Periodic document purge reconciliation failed")
         schedule.next_purge = monotonic_now + schedule.purge_interval
 
     if stop.is_set():

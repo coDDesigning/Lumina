@@ -58,6 +58,14 @@ Lumina emits CloudWatch Embedded Metric Format events under `Lumina/Worker` and 
 | `AgedTombstones` | Count | Maximum | Number of tombstones exceeding the purge threshold |
 | `OldestTombstoneAgeSeconds` | Seconds | Maximum | Oldest unpurged course tombstone age in seconds |
 
+### Document purge (`Lumina/Worker`, `Service=document_purge`, `Environment`)
+
+| Metric | Unit | Statistic | Description / Dimensions |
+| --- | --- | --- | --- |
+| `DocumentsExamined`, `DocumentsPurged`, `DocumentsFailed` | Count | Sum | Document tombstone purge execution counts |
+| `AgedDocumentTombstones` | Count | Maximum | Number of document tombstones exceeding the purge threshold |
+| `OldestDocumentTombstoneAgeSeconds` | Seconds | Maximum | Oldest unpurged document tombstone age in seconds |
+
 Each worker reports the same queue snapshot, so dashboards and alarms use
 `Maximum`, never `Sum`, for queue gauges. Outcome metrics are event counters and
 use `Sum`. AWS Application Auto Scaling uses `OldestQueuedAgeSeconds` with

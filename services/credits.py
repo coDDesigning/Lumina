@@ -195,15 +195,18 @@ class CreditService:
         receipt: "ChargeReceipt | None",
         *,
         commit: bool = True,
-    ) -> None:
+    ) -> bool:
         """Reverse one charge, at most once.
 
         A refund is not trimmed to the balance ceiling: it returns credit the
         account already held, so capping it would quietly confiscate credit the
-        user never spent.
+        user never spent. The return value says whether the charge is already
+        settled or was refunded by this call.
         """
-        if receipt is None or receipt.is_exempt:
-            return
+        if receipt is None:
+            return False
+        if receipt.is_exempt:
+            return True
 
         already_refunded = db.scalar(
             select(CreditTransaction.id).where(
@@ -211,35 +214,53 @@ class CreditService:
             )
         )
         if already_refunded is not None:
-            return
+            return True
 
         user = db.get(User, receipt.user_id)
         if user is None or not CreditService.is_metered(user):
-            return
+            return True
 
         original = db.get(CreditTransaction, receipt.transaction_id)
         try:
-            db.execute(
-                update(User)
-                .where(User.id == receipt.user_id, User.credits.is_not(None))
-                .values(credits=User.credits + receipt.amount)
-            )
-            CreditService._record(
-                db,
-                user_id=receipt.user_id,
-                delta=receipt.amount,
-                reason=CreditReason.GENERATION_REFUND,
-                actor=CreditActor.system(),
-                source_type=original.source_type if original else None,
-                source_id=original.source_id if original else None,
-                refunds_transaction_id=receipt.transaction_id,
-            )
+            # A duplicate-refund race is expected. Keep its balance update and
+            # ledger insert inside a savepoint so losing it cannot roll back a
+            # caller's fenced job or deletion transition.
+            with db.begin_nested():
+                result = db.execute(
+                    update(User)
+                    .where(User.id == receipt.user_id, User.credits.is_not(None))
+                    .values(credits=User.credits + receipt.amount)
+                )
+                if result.rowcount == 1:
+                    CreditService._record(
+                        db,
+                        user_id=receipt.user_id,
+                        delta=receipt.amount,
+                        reason=CreditReason.GENERATION_REFUND,
+                        actor=CreditActor.system(),
+                        source_type=original.source_type if original else None,
+                        source_id=original.source_id if original else None,
+                        refunds_transaction_id=receipt.transaction_id,
+                    )
             if commit:
                 db.commit()
-            else:
-                db.flush()
+            return True
         except IntegrityError:
-            db.rollback()
+            settled = (
+                db.scalar(
+                    select(CreditTransaction.id).where(
+                        CreditTransaction.refunds_transaction_id
+                        == receipt.transaction_id
+                    )
+                )
+                is not None
+            )
+            if commit:
+                if settled:
+                    db.commit()
+                else:
+                    db.rollback()
+            return settled
 
     @staticmethod
     @contextmanager

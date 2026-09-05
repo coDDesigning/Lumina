@@ -15,10 +15,12 @@ from backend.app.models import (
     AiUsageLog,
     ChunkEmbedding,
     Course,
+    CreditTransaction,
     DocumentChunk,
     DocumentPage,
     DocumentVisual,
     GeneratedOutput,
+    GenerationJob,
     ProcessingJob,
     ProfileKnowledge,
     Progress,
@@ -29,6 +31,9 @@ from backend.app.models import (
     UploadedDocument,
     User,
 )
+from schemas.credits import CreditReason
+from services.credits import CreditService
+from services.generation_jobs import enqueue_generation_job
 from services.vector_store import PgVectorStore, VectorRecord, VectorStoreError
 
 
@@ -289,3 +294,55 @@ def test_a_vector_failure_retains_the_tombstone_and_the_retry_erases(
         assert session.get(Course, authz_api.a_course_id) is None
         assert store.count_course_vectors(session, authz_api.a_course_id) == 0
         assert session.get(ProfileKnowledge, graph["knowledge_id"]) is not None
+
+
+def test_a_refund_conflict_tombstones_before_course_cleanup(
+    authz_api, graph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with authz_api.session_factory() as session:
+        job = enqueue_generation_job(
+            session,
+            course_id=authz_api.a_course_id,
+            user_id=authz_api.user_a_id,
+            job_type="generate_study_guide",
+            request_payload='{"topic_focus":"Atomicity"}',
+            credit_cost=1.0,
+        )
+        job_id = job.id
+        charge_transaction_id = job.charge_transaction_id
+    stored_before = _stored_files(authz_api.storage_root)
+    original_record = CreditService._record
+
+    def reject_refund(db, **values):
+        if values.get("refunds_transaction_id") is not None:
+            from sqlalchemy.exc import IntegrityError
+
+            raise IntegrityError("refund conflict", {}, RuntimeError("duplicate"))
+        return original_record(db, **values)
+
+    monkeypatch.setattr(CreditService, "_record", staticmethod(reject_refund))
+
+    failed = authz_api.client.delete(
+        f"/api/courses/{authz_api.a_course_id}", headers=authz_api.authorization_a
+    )
+
+    assert failed.status_code == 500
+    assert failed.json() == {"detail": "Course cleanup failed; retry hard deletion"}
+    assert _stored_files(authz_api.storage_root) == stored_before
+    with authz_api.session_factory() as session:
+        course = session.get(Course, authz_api.a_course_id)
+        job = session.get(GenerationJob, job_id)
+        assert course is not None
+        assert course.is_deleted is True
+        assert job is not None
+        assert job.status == "failed"
+        assert job.charge_refunded is False
+        assert (
+            session.scalars(
+                select(CreditTransaction).where(
+                    CreditTransaction.reason == CreditReason.GENERATION_REFUND.value,
+                    CreditTransaction.refunds_transaction_id == charge_transaction_id,
+                )
+            ).all()
+            == []
+        )

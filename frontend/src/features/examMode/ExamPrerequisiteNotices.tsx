@@ -1,7 +1,11 @@
 import type { Prerequisite, PrerequisiteKind } from './examPrerequisites';
+import { displayFileName } from '@/components/documents/documentLabels';
 import { Alert } from '@/ui/Alert';
 import { LinkButton } from '@/ui/LinkButton';
 import styles from './ExamPrerequisiteNotices.module.css';
+
+const sourceNames = (documents: Prerequisite['documents']): string =>
+  documents.map((entry) => displayFileName(entry.label)).join(', ');
 
 interface Copy {
   title: string;
@@ -35,14 +39,14 @@ const COPY: Record<PrerequisiteKind, Copy> = {
   sources_processing: {
     title: 'Some sources are still being read',
     body: (documents) =>
-      `${documents.map((entry) => entry.label).join(', ')} ${
+      `${sourceNames(documents)} ${
         documents.length === 1 ? 'is' : 'are'
       } not ready yet. You can analyse what is ready now and scan again later.`,
   },
   source_failed: {
     title: 'Some sources could not be read',
     body: (documents) =>
-      `${documents.map((entry) => entry.label).join(', ')} failed to process, so ${
+      `${sourceNames(documents)} failed to process, so ${
         documents.length === 1 ? 'it is' : 'they are'
       } not counted as material. Retry or replace ${
         documents.length === 1 ? 'it' : 'them'

@@ -48,7 +48,10 @@ from services.document import (
 )
 from services.document_hash import FileHashError
 from services.document_pipeline import DocumentProcessingError
-from services.document_validation import UPLOAD_ERRORS, DocumentValidationError
+from services.document_validation import (
+    DocumentValidationError,
+    upload_error_response,
+)
 from storage.base import Storage
 from storage.dependencies import get_storage
 from utils.authorization import AuthorizedCourse, OwnedCourse
@@ -73,13 +76,9 @@ def _status_response(document, job) -> DocumentStatusResponse:
 
 
 def _error_response(error_key: str) -> JSONResponse:
-    error = UPLOAD_ERRORS[error_key]
-    response = UploadErrorResponse(
-        success=False,
-        message=error["message"],
-        data=UploadErrorData(code=error["code"]),
-    )
-    return JSONResponse(status_code=error["status_code"], content=response.model_dump())
+    # One shared renderer for both upload routes; see
+    # services.document_validation.upload_error_response.
+    return upload_error_response(error_key)
 
 
 def _is_document_upload(request: Request) -> bool:

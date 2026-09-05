@@ -84,6 +84,98 @@ def test_upload_duplicate_profile_document(authz_api):
     )
 
 
+def test_unsupported_profile_document_type_is_rejected_with_415(authz_api):
+    """P2-008: every validation failure on this route used to crash in its own
+    handler (``exc.code`` AttributeError -> 500). A .docx/.exe must now return
+    the catalogued 415, not an unhandled server error."""
+    client = authz_api.client
+    headers = authz_api.authorization_a
+
+    response = client.post(
+        "/api/profile-documents",
+        headers=headers,
+        files={
+            "document": (
+                "payload.exe",
+                io.BytesIO(b"MZ\x00binary"),
+                "application/octet-stream",
+            )
+        },
+    )
+
+    assert response.status_code == 415, response.text
+    body = response.json()
+    assert body["success"] is False
+    assert body["data"]["code"] == "UPLOAD_UNSUPPORTED_FILE_TYPE"
+    assert "Internal Server Error" not in body["message"]
+
+
+def test_empty_profile_document_is_rejected_with_422(authz_api):
+    """P2-008: an empty file is a catalogued 422, not a 500."""
+    client = authz_api.client
+    headers = authz_api.authorization_a
+
+    response = client.post(
+        "/api/profile-documents",
+        headers=headers,
+        files={"document": ("empty.txt", io.BytesIO(b""), "text/plain")},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["data"]["code"] == "UPLOAD_EMPTY_FILE"
+
+
+def test_oversize_profile_document_is_rejected_with_413(authz_api, monkeypatch):
+    """P2-008 / BUG-003: an over-limit profile upload reports 413, not 500."""
+    from dataclasses import replace
+
+    import services.document_validation as document_validation
+
+    monkeypatch.setattr(
+        document_validation,
+        "settings",
+        replace(document_validation.settings, max_upload_size_bytes=16),
+    )
+    client = authz_api.client
+    headers = authz_api.authorization_a
+
+    response = client.post(
+        "/api/profile-documents",
+        headers=headers,
+        files={
+            "document": (
+                "big.txt",
+                io.BytesIO(b"this body is well over sixteen bytes long"),
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 413, response.text
+    assert response.json()["data"]["code"] == "UPLOAD_FILE_TOO_LARGE"
+
+
+def test_profile_document_upload_content_type_mismatch_is_rejected(authz_api):
+    """BUG-043: HTML bytes behind a .pdf name are a 415 at upload time."""
+    client = authz_api.client
+    headers = authz_api.authorization_a
+
+    response = client.post(
+        "/api/profile-documents",
+        headers=headers,
+        files={
+            "document": (
+                "innocent.pdf",
+                io.BytesIO(b"<html><body>not a pdf</body></html>"),
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 415, response.text
+    assert response.json()["data"]["code"] == "UPLOAD_UNSUPPORTED_FILE_TYPE"
+
+
 def test_cross_user_isolation(authz_api):
     client = authz_api.client
     headers1 = authz_api.authorization_a

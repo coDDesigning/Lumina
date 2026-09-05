@@ -425,6 +425,11 @@ class ExamPlanService:
         uses the user recorded in the fingerprint rather than the reader, so an
         administrator reading an owner's plan does not see every read reported
         as new quiz results.
+
+        The candidates come from the analysis the plan names, because the topic
+        index has to stay the one the plan was keyed with, while the analysis
+        identifier compared against it is the newest the course has -- reading
+        the stored one back would compare it to itself.
         """
         stored = content.get("fingerprint")
         if not isinstance(stored, dict):
@@ -440,12 +445,13 @@ class ExamPlanService:
         candidates = ExamSourceAnalysisService.load_candidates(
             db, course_id, analysis_output_id
         )
+        latest = ExamSourceAnalysisService.latest_analysis(db, course_id)
         selected = stored.get("selected_topic_keys") or []
         priority = stored.get("high_priority_topic_keys") or []
         current = build_fingerprint(
             db,
             course_id,
-            analysis_output_id=analysis_output_id,
+            analysis_output_id=latest.id if latest is not None else analysis_output_id,
             mastery_user_id=mastery_user_id,
             topic_index=build_topic_index(candidates),
             selected_topic_keys=selected if isinstance(selected, list) else [],

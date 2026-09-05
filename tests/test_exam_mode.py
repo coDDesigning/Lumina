@@ -1305,6 +1305,46 @@ def test_a_rescan_reports_carry_over_without_changing_the_existing_plan(
     assert reopened["topics"] == original_topics
 
 
+def test_a_newer_analysis_makes_a_plan_stale_without_asking_for_another_scan(
+    authz_api, exam_course, monkeypatch
+) -> None:
+    _, created = _analyse_then_plan(authz_api, monkeypatch)
+    plan_id = created.json()["data"]["generated_output_id"]
+    assert created.json()["data"]["staleness"]["stale_reasons"] == []
+
+    response, _ = run_analysis(authz_api, monkeypatch, rescan=True)
+    assert response.status_code == 200, response.text
+
+    poison_provider(monkeypatch)
+    reopened = authz_api.client.get(
+        f"/api/courses/{authz_api.a_course_id}/exam-mode/plans/{plan_id}",
+        headers=authz_api.authorization_a,
+    ).json()["data"]
+
+    assert reopened["staleness"]["is_stale"] is True
+    assert "analysis_superseded" in reopened["staleness"]["stale_reasons"]
+    assert reopened["staleness"]["requires_rescan"] is False
+
+
+def test_re_ranking_against_the_newest_analysis_clears_the_superseded_reason(
+    authz_api, exam_course, monkeypatch
+) -> None:
+    _analyse_then_plan(authz_api, monkeypatch)
+    response, _ = run_analysis(authz_api, monkeypatch, rescan=True)
+    assert response.status_code == 200, response.text
+
+    replanned = create_plan(
+        authz_api,
+        {
+            "selected_topic_keys": ["graph-traversal", "dynamic-programming"],
+            "high_priority_topic_keys": ["dynamic-programming"],
+        },
+    )
+
+    assert replanned.status_code == 200, replanned.text
+    assert replanned.json()["data"]["staleness"]["stale_reasons"] == []
+
+
 def test_a_rescan_reports_a_previously_selected_topic_that_vanished(
     authz_api, exam_course, monkeypatch
 ) -> None:

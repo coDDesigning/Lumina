@@ -1,5 +1,7 @@
 """Similar questions: modelled on real past questions, and sat like any other quiz."""
 
+import uuid
+
 import pytest
 from sqlalchemy import select
 
@@ -17,6 +19,7 @@ from backend.app.models import (
 from services.credits import GENERATION_CREDIT_COSTS
 from tests.test_exam_mode import (  # noqa: F401 - fixtures
     CountingProvider,
+    add_material,
     create_plan,
     exam_course,
     extract_questions,
@@ -99,6 +102,18 @@ def source_ids(session_factory, document_id):
     with session_factory() as session:
         return [
             row.id
+            for row in session.scalars(
+                select(PastExamQuestion)
+                .where(PastExamQuestion.document_id == document_id)
+                .order_by(PastExamQuestion.position)
+            ).all()
+        ]
+
+
+def source_refs(session_factory, document_id):
+    with session_factory() as session:
+        return [
+            {"document_id": str(row.document_id), "position": row.position}
             for row in session.scalars(
                 select(PastExamQuestion)
                 .where(PastExamQuestion.document_id == document_id)
@@ -319,15 +334,131 @@ def test_an_explicitly_named_source_question_is_honoured(
     authz_api, planned_course, monkeypatch
 ) -> None:
     expected = source_ids(authz_api.session_factory, planned_course["paper_id"])
+    refs = source_refs(authz_api.session_factory, planned_course["paper_id"])
 
     response, _ = ask(
         authz_api,
         monkeypatch,
-        body={"question_count": 1, "source_question_ids": expected[:1]},
+        body={"question_count": 1, "source_questions": refs[:1]},
     )
 
     assert response.status_code == 200, response.text
     assert response.json()["data"]["source_question_ids"] == expected[:1]
+
+
+def test_the_identifier_the_listing_hands_out_is_the_one_the_writer_accepts(
+    authz_api, planned_course, monkeypatch
+) -> None:
+    """The boundary no test crossed: read a question out, post it straight back."""
+    listing = authz_api.client.get(
+        f"/api/courses/{authz_api.a_course_id}/exam-mode/analysis"
+        f"/{planned_course['analysis_id']}/questions",
+        params={"topic_key": "graph-traversal"},
+        headers=authz_api.authorization_a,
+    )
+    assert listing.status_code == 200, listing.text
+    listed = listing.json()["data"]["questions"]
+    assert listed
+
+    response, _ = ask(
+        authz_api,
+        monkeypatch,
+        body={
+            "question_count": 1,
+            "source_questions": [
+                {
+                    "document_id": listed[0]["document_id"],
+                    "position": listed[0]["position"],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    expected = source_ids(authz_api.session_factory, planned_course["paper_id"])
+    assert response.json()["data"]["source_question_ids"] == expected[:1]
+
+
+def test_two_papers_sharing_a_position_name_two_different_questions(
+    authz_api,
+    exam_course,  # noqa: F811
+    retrieval_env,
+    monkeypatch,
+) -> None:
+    """Position alone is per-paper, so the paper has to travel with it."""
+    with authz_api.session_factory() as session:
+        second = add_material(
+            session,
+            authz_api.a_course_id,
+            ["Past exam 2023 question one on graph traversal."],
+            file_hash="c3" + "3" * 62,
+            retrieval_env=retrieval_env,
+            material_kind="past_exam",
+            file_name="Past Exam 2023.txt",
+        )
+        second_id = second.id
+    extract_questions(
+        authz_api.session_factory,
+        second_id,
+        extraction_payload(
+            past_exam_question(
+                question_text="Prove BFS visits every reachable vertex once."
+            )
+        ),
+    )
+
+    response, _ = run_analysis(authz_api, monkeypatch)
+    analysis_id = response.json()["data"]["analysis"]["generated_output_id"]
+    created = create_plan(
+        authz_api,
+        {
+            "analysis_output_id": analysis_id,
+            "selected_topic_keys": ["graph-traversal", "dynamic-programming"],
+        },
+    )
+    assert created.status_code == 200, created.text
+    plan_id = created.json()["data"]["generated_output_id"]
+
+    first_refs = source_refs(authz_api.session_factory, exam_course["paper_id"])
+    second_refs = source_refs(authz_api.session_factory, second_id)
+    assert first_refs[0]["position"] == second_refs[0]["position"] == 0
+    assert first_refs[0]["document_id"] != second_refs[0]["document_id"]
+
+    expected = source_ids(authz_api.session_factory, second_id)
+    provider = CountingProvider(similar_payload())
+    monkeypatch.setattr(
+        exam_mode_route, "get_text_generation_provider", lambda *a, **k: provider
+    )
+    written = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}"
+        "/exam-mode/topics/graph-traversal/similar-questions",
+        json={
+            "plan_output_id": plan_id,
+            "question_count": 1,
+            "source_questions": second_refs[:1],
+        },
+        headers=authz_api.authorization_a,
+    )
+
+    assert written.status_code == 200, written.text
+    assert written.json()["data"]["source_question_ids"] == expected[:1]
+    assert "Prove BFS visits every reachable vertex once." in provider.prompt
+
+
+def test_the_first_question_of_a_paper_can_be_chosen(
+    authz_api, planned_course, monkeypatch
+) -> None:
+    """Position zero is a real question, not a falsy identifier to reject."""
+    refs = source_refs(authz_api.session_factory, planned_course["paper_id"])
+    assert refs[0]["position"] == 0
+
+    response, _ = ask(
+        authz_api,
+        monkeypatch,
+        body={"question_count": 1, "source_questions": refs[:1]},
+    )
+
+    assert response.status_code == 200, response.text
 
 
 @pytest.mark.parametrize(
@@ -336,14 +467,39 @@ def test_an_explicitly_named_source_question_is_honoured(
         pytest.param({"question_count": 0}, 422, id="question_count_below_minimum"),
         pytest.param({"question_count": 21}, 422, id="question_count_above_maximum"),
         pytest.param(
-            {"question_count": 1, "source_question_ids": [1, 1]},
+            {
+                "question_count": 1,
+                "source_questions": [
+                    {
+                        "document_id": "11111111-1111-1111-1111-111111111111",
+                        "position": 1,
+                    },
+                    {
+                        "document_id": "11111111-1111-1111-1111-111111111111",
+                        "position": 1,
+                    },
+                ],
+            },
             422,
-            id="duplicate_source_ids",
+            id="duplicate_source_questions",
         ),
         pytest.param(
-            {"question_count": 1, "source_question_ids": []},
+            {"question_count": 1, "source_questions": []},
             422,
-            id="empty_source_ids",
+            id="empty_source_questions",
+        ),
+        pytest.param(
+            {
+                "question_count": 1,
+                "source_questions": [
+                    {
+                        "document_id": "11111111-1111-1111-1111-111111111111",
+                        "position": -1,
+                    }
+                ],
+            },
+            422,
+            id="negative_source_position",
         ),
         pytest.param(
             {"question_count": 1, "difficulty_policy": "impossible"},
@@ -378,19 +534,47 @@ def test_a_malformed_request_is_refused_before_anything_is_spent(
     assert similar_quizzes(authz_api.session_factory, authz_api.a_course_id) == []
 
 
+@pytest.mark.parametrize("owned_by_another_course", [True, False])
 def test_a_source_question_from_another_course_is_answered_as_a_missing_one(
-    authz_api, planned_course, monkeypatch
+    authz_api,
+    planned_course,
+    retrieval_env,
+    monkeypatch,
+    owned_by_another_course,
 ) -> None:
-    """Distinguishing "not yours" from "does not exist" would leak what exists."""
+    """Distinguishing "not yours" from "does not exist" would leak what exists.
+
+    A real paper in owner B's course and a document identifier naming nothing
+    at all must be answered identically, or the difference between the two
+    replies is a probe for what other courses hold.
+    """
+    if owned_by_another_course:
+        with authz_api.session_factory() as session:
+            other = add_material(
+                session,
+                authz_api.b_course_id,
+                ["Owner B past exam question one on graph traversal."],
+                file_hash="d4" + "4" * 62,
+                retrieval_env=retrieval_env,
+                material_kind="past_exam",
+                file_name="Owner B Past Exam.txt",
+            )
+            other_id = other.id
+        extract_questions(authz_api.session_factory, other_id)
+        reference = {"document_id": str(other_id), "position": 0}
+    else:
+        reference = {"document_id": str(uuid.uuid4()), "position": 0}
+
     before = balance_of(authz_api.session_factory, authz_api.user_a_id)
 
     response, provider = ask(
         authz_api,
         monkeypatch,
-        body={"question_count": 1, "source_question_ids": [999_999]},
+        body={"question_count": 1, "source_questions": [reference]},
     )
 
     assert response.status_code == 404
+    assert response.json()["detail"] == "Past exam question not found"
     assert provider.calls == 0
     assert balance_of(authz_api.session_factory, authz_api.user_a_id) == before
     assert unlocks(authz_api.session_factory, authz_api.a_course_id) == []

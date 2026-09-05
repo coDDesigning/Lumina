@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
@@ -45,6 +46,7 @@ from schemas.quiz import (
     QuizView,
 )
 from services.citations import SuppliedCitation, resolve_citations
+from services.credits import CreditService
 from services.exam_artifacts import (
     ExamArtifactError,
     ExamArtifactGeneration,
@@ -123,6 +125,7 @@ class PersistedMockExam:
     quiz: Quiz
     view: QuizView
     output: GeneratedOutput
+    context: ExamCourseArtifactContext
     credits_charged: float
 
 
@@ -461,6 +464,45 @@ def _context_document(
 
 class ExamMockExamService:
     @staticmethod
+    def find_by_request_id(
+        db: Session,
+        course_id: int,
+        user_id: int,
+        generation_request_id: str | None,
+    ) -> PersistedMockExam | None:
+        quiz = QuizService.find_by_generation_request_id(
+            db,
+            course_id=course_id,
+            user_id=user_id,
+            generation_request_id=generation_request_id,
+        )
+        if quiz is None:
+            return None
+        if quiz.purpose != QUIZ_PURPOSE_EXAM_MOCK_EXAM:
+            raise RuntimeError(
+                "Generation request identifier belongs to another quiz purpose."
+            )
+        view = QuizService.build_quiz_view(quiz)
+        output = GeneratedOutputService.find_quiz_output(
+            db,
+            course_id=course_id,
+            user_id=user_id,
+            output_type=OUTPUT_TYPE_EXAM_MOCK_EXAM,
+            quiz_id=quiz.id,
+        )
+        if output is None:
+            raise RuntimeError("Mock exam history row is missing.")
+        return PersistedMockExam(
+            quiz=quiz,
+            view=view,
+            output=output,
+            context=ExamCourseArtifactContext.model_validate(
+                view.generation_context or {}
+            ),
+            credits_charged=0.0,
+        )
+
+    @staticmethod
     def resolve_question_count(requested: int | None) -> int:
         if requested is None:
             return settings.exam_mock_exam_question_count
@@ -576,6 +618,15 @@ class ExamMockExamService:
                 generation_settings=applied,
                 generation_context=context,
             )
+        except IntegrityError:
+            db.rollback()
+            existing = cls.find_by_request_id(
+                db, course_id, user_id, generation_request_id
+            )
+            if existing is None:
+                raise
+            CreditService.refund(db, generation.charge_receipt)
+            return existing
         except Exception:
             db.rollback()
             raise
@@ -585,6 +636,7 @@ class ExamMockExamService:
             quiz=quiz,
             view=QuizService.build_quiz_view(quiz),
             output=output,
+            context=_context_document(plan, generation),
             credits_charged=generation.credits_charged,
         )
 

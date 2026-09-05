@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from uuid import uuid4
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.orm import Session, aliased, selectinload
 
 from backend.app.config import settings
@@ -81,6 +81,10 @@ class GenerationJobNotRetryableError(RuntimeError):
 
 class GenerationJobNotDismissableError(RuntimeError):
     """Only a generation that has finished can be cleared from the panel."""
+
+
+class GenerationJobRefundError(RuntimeError):
+    """A cancelled generation still has an unsettled credit charge."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -666,15 +670,18 @@ def fail_generation_job(
     job.updated_at = failed_at
     _clear_lease(job)
 
-    receipt = None
     if not should_retry and not job.charge_refunded and job.charge_amount is not None:
-        receipt = ChargeReceipt(
-            user_id=job.user_id,
-            amount=job.charge_amount,
-            transaction_id=job.charge_transaction_id,
+        refund_settled = already_refunded or CreditService.refund(
+            session,
+            ChargeReceipt(
+                user_id=job.user_id,
+                amount=job.charge_amount,
+                transaction_id=job.charge_transaction_id,
+            ),
+            commit=False,
         )
-        CreditService.refund(session, receipt, commit=False)
-        job.charge_refunded = True
+        if refund_settled:
+            job.charge_refunded = True
     final_status = job.status
     session.commit()
     return final_status
@@ -733,8 +740,8 @@ def recover_expired_generation_jobs(
                 amount=job.charge_amount,
                 transaction_id=job.charge_transaction_id,
             )
-            CreditService.refund(session, receipt, commit=False)
-            job.charge_refunded = True
+            if CreditService.refund(session, receipt, commit=False):
+                job.charge_refunded = True
 
     recovered = len(jobs)
     session.commit()
@@ -754,7 +761,14 @@ def cancel_course_generation_jobs(
         select(GenerationJob)
         .where(
             GenerationJob.course_id == course_id,
-            GenerationJob.status.in_((JOB_STATUS_QUEUED, JOB_STATUS_RUNNING)),
+            or_(
+                GenerationJob.status.in_((JOB_STATUS_QUEUED, JOB_STATUS_RUNNING)),
+                and_(
+                    GenerationJob.status == JOB_STATUS_FAILED,
+                    GenerationJob.charge_refunded.is_(False),
+                    GenerationJob.charge_amount.is_not(None),
+                ),
+            ),
         )
         .order_by(GenerationJob.id)
     )
@@ -762,16 +776,20 @@ def cancel_course_generation_jobs(
         statement = statement.with_for_update(of=GenerationJob)
 
     jobs = list(session.scalars(statement))
+    refund_failed = False
     for job in jobs:
-        job.status = JOB_STATUS_FAILED
-        job.available_at = cancelled_at
-        job.finished_at = cancelled_at
-        job.last_error_code = "generation_failed"
-        job.last_error_message = "The course was deleted before generation completed."
-        job.updated_at = cancelled_at
-        _clear_lease(job)
+        if job.status in (JOB_STATUS_QUEUED, JOB_STATUS_RUNNING):
+            job.status = JOB_STATUS_FAILED
+            job.available_at = cancelled_at
+            job.finished_at = cancelled_at
+            job.last_error_code = "generation_failed"
+            job.last_error_message = (
+                "The course was deleted before generation completed."
+            )
+            job.updated_at = cancelled_at
+            _clear_lease(job)
         if not job.charge_refunded and job.charge_amount is not None:
-            CreditService.refund(
+            refund_settled = CreditService.refund(
                 session,
                 ChargeReceipt(
                     user_id=job.user_id,
@@ -780,7 +798,14 @@ def cancel_course_generation_jobs(
                 ),
                 commit=False,
             )
-            job.charge_refunded = True
+            if refund_settled:
+                job.charge_refunded = True
+            else:
+                refund_failed = True
+    if refund_failed:
+        raise GenerationJobRefundError(
+            "One or more generation charges could not be refunded."
+        )
     return len(jobs)
 
 

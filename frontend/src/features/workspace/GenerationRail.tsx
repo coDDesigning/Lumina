@@ -87,6 +87,7 @@ export function GenerationRail({
                 title={`${label} failed`}
                 onRetry={() => onRetry(job.id)}
                 retryLabel={retryingId === job.id ? 'Queueing…' : 'Try again'}
+                isRetrying={retryingId === job.id}
                 actions={
                   <Button variant="ghost" size="sm" onClick={() => onDismiss(job.id)}>
                     {`Dismiss ${label}`}

@@ -98,6 +98,20 @@ describe('GenerationRail', () => {
     expect(props.onRetry).toHaveBeenCalledWith(1);
   });
 
+  it('makes a paid retry inert while it is being queued', async () => {
+    const props = renderRail(
+      [job({ status: 'failed', error_message: 'The model could not be reached.' })],
+      { retryingId: 1 },
+    );
+    const retry = screen.getByRole('button', { name: 'Queueing…' });
+
+    expect(retry).toHaveAttribute('aria-busy', 'true');
+    await userEvent.click(retry);
+    await userEvent.click(retry);
+
+    expect(props.onRetry).not.toHaveBeenCalled();
+  });
+
   it('lets a failure be cleared instead of nagging for a day', async () => {
     const props = renderRail([
       job({

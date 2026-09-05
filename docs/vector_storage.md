@@ -156,6 +156,7 @@ backfill worker has re-embedded, or leave it — nothing reads it.
 | Document delete | Vectors are removed while the document is still tombstoned, before its row is deleted. |
 | Course delete | Vectors are removed before the course row is deleted. |
 | Course purge | `python -m workers.course_purge` reruns that same deletion for every tombstoned course; runs periodically in the background worker every `COURSE_PURGE_INTERVAL_SECONDS`. |
+| Document purge | The same command and the same interval rerun document deletion for every `uploaded_documents` or `profile_documents` row stranded at `status = 'deleting'`, so vectors whose row is already being erased are removed unattended. |
 | Backfill | Reconciles missing vectors; safe to rerun; runs periodically in the background worker every `EMBEDDING_BACKFILL_INTERVAL_SECONDS`; `--prune-orphans` removes vectors whose chunk is gone. |
 
 On PostgreSQL, `ON DELETE CASCADE` would already remove vectors with their chunks.

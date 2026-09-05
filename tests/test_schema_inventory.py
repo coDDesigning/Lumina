@@ -3,7 +3,7 @@ from pathlib import Path
 
 from backend.app.models import Base
 
-EXPECTED_TABLE_COUNT = 43
+EXPECTED_TABLE_COUNT = 44
 
 EXPECTED_TABLE_NAMES = {
     "ai_usage_logs",
@@ -15,6 +15,7 @@ EXPECTED_TABLE_NAMES = {
     "courses",
     "credit_transactions",
     "document_chunks",
+    "document_generation_locks",
     "document_pages",
     "document_visuals",
     "email_verification_tokens",

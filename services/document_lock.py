@@ -1,73 +1,225 @@
-"""In-memory generation lock management for active documents.
+"""Durable generation locks that hold across process and container boundaries.
 
-Prevents documents from being deleted while they supply active generation context.
-Multiple generations can concurrently hold shared read locks on the same document.
+A document must not be erased while a generation is still reading it. The
+generation runs in the worker process and the delete that would erase it runs in
+the API process, so a lock kept in module state is invisible to the only checker
+there is: the invariant silently disappears for every queued generation. The
+hold is therefore a database row, written and committed by the reader and read
+back by the deleter inside the same transaction that tombstones the document.
+
+Holds are shared. Several generations may read one document at once, so each
+hold is its own row and the document is locked while any unexpired row names it.
+Each hold carries a lease, because a worker killed mid-generation cannot release
+its own row and must not block that document's deletion forever.
 """
 
-from collections import defaultdict
+import logging
+import os
+import socket
 from collections.abc import Generator, Iterable
 from contextlib import contextmanager
-import threading
-from uuid import UUID
+from datetime import datetime, timedelta, timezone
+from uuid import UUID, uuid4
+
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from backend.app.config import settings
+from backend.app.database import begin_serialized_write
+from backend.app.models import (
+    DocumentGenerationLock,
+    ProfileDocument,
+    UploadedDocument,
+)
+
+logger = logging.getLogger(__name__)
+
+# A generation attempt cannot outlive its own job timeout, so a lease of that
+# plus a margin covers the longest legitimate hold. Anything still holding after
+# that is a crashed process, not a reader.
+GENERATION_LOCK_LEASE_MARGIN_SECONDS = 300
 
 
-class DocumentLockManager:
-    """Thread-safe manager for document generation locks."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._active_generations: dict[UUID, int] = defaultdict(int)
-
-    def acquire(self, document_ids: Iterable[UUID]) -> None:
-        unique_ids = set(document_ids)
-        if not unique_ids:
-            return
-        with self._lock:
-            for doc_id in unique_ids:
-                self._active_generations[doc_id] += 1
-
-    def release(self, document_ids: Iterable[UUID]) -> None:
-        unique_ids = set(document_ids)
-        if not unique_ids:
-            return
-        with self._lock:
-            for doc_id in unique_ids:
-                current = self._active_generations.get(doc_id, 0)
-                if current <= 1:
-                    self._active_generations.pop(doc_id, None)
-                else:
-                    self._active_generations[doc_id] = current - 1
-
-    def is_locked(self, document_id: UUID) -> bool:
-        with self._lock:
-            return self._active_generations.get(document_id, 0) > 0
-
-    def reset(self) -> None:
-        with self._lock:
-            self._active_generations.clear()
+class GenerationLockError(Exception):
+    """A generation lock could not be recorded durably."""
 
 
-_lock_manager = DocumentLockManager()
+def generation_lock_lease_seconds() -> float:
+    return float(
+        settings.generation_job_attempt_timeout_seconds
+        + GENERATION_LOCK_LEASE_MARGIN_SECONDS
+    )
+
+
+def _holder_identity() -> str:
+    return f"{socket.gethostname()}:{os.getpid()}"[:255]
+
+
+def _tombstoned_ids(session: Session, document_ids: list[UUID]) -> set[UUID]:
+    """Return the requested ids whose document is already pending erasure.
+
+    A lock taken after the tombstone was committed would block a deletion that
+    is already under way, so such a hold is dropped before it becomes visible.
+
+    On PostgreSQL the document rows are read ``FOR SHARE``, which is what orders
+    this hold against a delete: the deleter holds those same rows ``FOR UPDATE``
+    from before it looks for locks until it commits its tombstone, so either it
+    sees this hold or this hold sees its tombstone. SQLite needs no equivalent,
+    because both transactions contend for the one database write lock.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        documents = [
+            *session.scalars(
+                select(UploadedDocument)
+                .where(UploadedDocument.id.in_(document_ids))
+                .with_for_update(read=True, of=UploadedDocument)
+            ),
+            *session.scalars(
+                select(ProfileDocument)
+                .where(ProfileDocument.id.in_(document_ids))
+                .with_for_update(read=True, of=ProfileDocument)
+            ),
+        ]
+        return {document.id for document in documents if document.status == "deleting"}
+
+    tombstoned = set(
+        session.scalars(
+            select(UploadedDocument.id).where(
+                UploadedDocument.id.in_(document_ids),
+                UploadedDocument.status == "deleting",
+            )
+        ).all()
+    )
+    tombstoned.update(
+        session.scalars(
+            select(ProfileDocument.id).where(
+                ProfileDocument.id.in_(document_ids),
+                ProfileDocument.status == "deleting",
+            )
+        ).all()
+    )
+    return tombstoned
+
+
+def _acquire(
+    db: Session,
+    document_ids: list[UUID],
+    holder_token: UUID,
+) -> None:
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=generation_lock_lease_seconds())
+    holder = _holder_identity()
+    # A separate session, because these rows must be visible to another process
+    # immediately and the caller's own transaction is not ours to commit.
+    with Session(bind=db.get_bind()) as session:
+        begin_serialized_write(session)
+        session.execute(
+            delete(DocumentGenerationLock).where(
+                DocumentGenerationLock.expires_at <= now
+            )
+        )
+        session.add_all(
+            [
+                DocumentGenerationLock(
+                    document_id=document_id,
+                    holder_token=holder_token,
+                    holder=holder,
+                    acquired_at=now,
+                    expires_at=expires_at,
+                )
+                for document_id in document_ids
+            ]
+        )
+        session.flush()
+        tombstoned = _tombstoned_ids(session, document_ids)
+        if tombstoned:
+            session.execute(
+                delete(DocumentGenerationLock).where(
+                    DocumentGenerationLock.holder_token == holder_token,
+                    DocumentGenerationLock.document_id.in_(tombstoned),
+                )
+            )
+        session.commit()
+
+
+def _release(db: Session, holder_token: UUID) -> None:
+    with Session(bind=db.get_bind()) as session:
+        begin_serialized_write(session)
+        session.execute(
+            delete(DocumentGenerationLock).where(
+                DocumentGenerationLock.holder_token == holder_token
+            )
+        )
+        session.commit()
 
 
 @contextmanager
 def acquire_generation_locks(
+    db: Session,
     document_ids: Iterable[UUID],
 ) -> Generator[None, None, None]:
-    """Context manager to acquire and release generation locks on documents."""
-    doc_id_set = set(document_ids)
-    _lock_manager.acquire(doc_id_set)
+    """Hold every named document against deletion for the duration of the block."""
+    unique_ids = sorted(set(document_ids))
+    if not unique_ids:
+        yield
+        return
+
+    holder_token = uuid4()
+    try:
+        _acquire(db, unique_ids, holder_token)
+    except SQLAlchemyError as exc:
+        # Reading material without a recorded hold is the very failure this
+        # module exists to prevent, so the generation stops instead.
+        raise GenerationLockError(
+            "Could not record generation locks for the requested documents"
+        ) from exc
+
     try:
         yield
     finally:
-        _lock_manager.release(doc_id_set)
+        try:
+            _release(db, holder_token)
+        except SQLAlchemyError:
+            # The lease bounds the damage: the hold expires on its own.
+            logger.exception(
+                "Could not release generation locks for holder %s", holder_token
+            )
 
 
-def is_document_locked_for_generation(document_id: UUID) -> bool:
-    """Check if a document is currently locked by any active generation."""
-    return _lock_manager.is_locked(document_id)
+def is_document_locked_for_generation(db: Session, document_id: UUID) -> bool:
+    """Report whether any live generation, in any process, is reading the document."""
+    now = datetime.now(timezone.utc)
+    return (
+        db.scalar(
+            select(func.count())
+            .select_from(DocumentGenerationLock)
+            .where(
+                DocumentGenerationLock.document_id == document_id,
+                DocumentGenerationLock.expires_at > now,
+            )
+        )
+        or 0
+    ) > 0
 
 
-def reset_generation_locks() -> None:
-    """Reset all active document generation locks (primarily for tests)."""
-    _lock_manager.reset()
+def release_expired_generation_locks(db: Session) -> int:
+    """Delete the holds whose lease ran out; returns how many were removed."""
+    now = datetime.now(timezone.utc)
+    with Session(bind=db.get_bind()) as session:
+        begin_serialized_write(session)
+        result = session.execute(
+            delete(DocumentGenerationLock).where(
+                DocumentGenerationLock.expires_at <= now
+            )
+        )
+        session.commit()
+        return int(result.rowcount or 0)
+
+
+def reset_generation_locks(db: Session) -> None:
+    """Drop every generation lock (primarily for tests)."""
+    with Session(bind=db.get_bind()) as session:
+        begin_serialized_write(session)
+        session.execute(delete(DocumentGenerationLock))
+        session.commit()

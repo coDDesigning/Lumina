@@ -39,6 +39,10 @@ from services.vector_store import (
     get_vector_store,
 )
 
+# The document states a lease recovery may still rewrite. Anything else -- a
+# ``deleting`` tombstone above all -- belongs to whoever put the document there.
+RECOVERABLE_DOCUMENT_STATUSES = frozenset({"uploaded", "processing"})
+
 
 @dataclass(frozen=True, slots=True)
 class ChunkData:
@@ -1016,11 +1020,17 @@ def fail_job(
         return None
     job, document = row
     failed_at = _database_now(session, now)
+    # The document is fenced alongside the job, exactly as complete_job and
+    # replace_document_pages fence it: a document tombstoned as ``deleting``
+    # while this attempt ran must not be resurrected into ``uploaded`` or
+    # ``failed``, because the tombstone is the only thing tying the two phases
+    # of DocumentService.delete_document together.
     if (
         job.status != JOB_STATUS_RUNNING
         or job.claim_token != claim_token
         or job.lease_expires_at is None
         or job.lease_expires_at <= failed_at
+        or document.status != "processing"
     ):
         session.rollback()
         return None
@@ -1133,12 +1143,19 @@ def recover_expired_jobs(
         profile_doc_updates.append((p_document, p_should_retry, p_message))
 
     session.flush()
+    # Recovering the job never rewrites a document that has left the processing
+    # states behind it: a ``deleting`` tombstone belongs to an in-flight or
+    # stranded deletion, and the reconciler is what finishes that, not this.
     for document, should_retry, message in document_updates:
+        if document.status not in RECOVERABLE_DOCUMENT_STATUSES:
+            continue
         document.status = "uploaded" if should_retry else "failed"
         document.processing_error = None if should_retry else message
         document.updated_at = recovered_at
 
     for p_document, p_should_retry, p_message in profile_doc_updates:
+        if p_document.status not in RECOVERABLE_DOCUMENT_STATUSES:
+            continue
         p_document.status = "uploaded" if p_should_retry else "failed"
         p_document.processing_error = None if p_should_retry else p_message
         p_document.updated_at = recovered_at

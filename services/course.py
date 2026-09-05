@@ -7,7 +7,10 @@ from backend.app.models import Course, CourseTopic, UploadedDocument
 from schemas.course import CourseCreate, CourseResponse, CourseUpdate
 from schemas.user import UserResponse
 from services.processing_jobs import fence_course_jobs
-from services.generation_jobs import cancel_course_generation_jobs
+from services.generation_jobs import (
+    GenerationJobRefundError,
+    cancel_course_generation_jobs,
+)
 from services.vector_store import VectorStore, VectorStoreError, get_vector_store
 from storage.base import Storage, StorageError
 from utils.exceptions import NotFoundException
@@ -127,7 +130,11 @@ class CourseService:
 
         course.is_deleted = True
         fence_course_jobs(db, course_id)
-        cancel_course_generation_jobs(db, course_id)
+        try:
+            cancel_course_generation_jobs(db, course_id)
+        except GenerationJobRefundError as exc:
+            db.commit()
+            raise CourseDeletionError from exc
         db.commit()
         stored_documents = list(
             db.execute(
@@ -204,5 +211,5 @@ class CourseService:
 
         try:
             CourseService.finalize_hard_delete(db, course_id, vector_store)
-        except VectorStoreError as exc:
+        except (RuntimeError, VectorStoreError) as exc:
             raise CourseDeletionError from exc

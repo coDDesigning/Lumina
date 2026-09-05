@@ -125,6 +125,8 @@ module "ecs" {
   tmpfs_size_bytes                    = var.tmpfs_size_bytes
   course_purge_interval_seconds       = var.course_purge_interval_seconds
   embedding_backfill_interval_seconds = var.embedding_backfill_interval_seconds
+  ai_usage_retention_days             = var.ai_usage_retention_days
+  ai_usage_cleanup_interval_seconds   = var.ai_usage_cleanup_interval_seconds
   frontend_domain_name                = var.frontend_domain_name
   email_verification_required         = var.email_verification_required
   email_from_address                  = var.email_from_address

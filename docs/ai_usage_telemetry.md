@@ -51,7 +51,7 @@ retain the rate version applied when the event was written.
 ## Data Retention
 
 - **Self-Hosted Mode**: Telemetry records are maintained locally within the deployment's SQLite/PostgreSQL database. Records are cascaded automatically upon user or course deletion.
-- **Retention Schedule**: Telemetry data older than 90 days may be periodically purged or aggregated for reporting without impacting core student artifacts (`generated_outputs`, `quizzes`, etc.).
+- **Retention Schedule**: The background worker deletes `ai_usage_logs` rows older than `AI_USAGE_RETENTION_DAYS` (default 90) on every `AI_USAGE_CLEANUP_INTERVAL_SECONDS` (default one day), in bounded batches of `AI_USAGE_CLEANUP_BATCH_SIZE`. Setting the interval to `0` disables the scan; `python -m workers.ai_usage_cleanup` runs the same job on demand. Core student artifacts (`generated_outputs`, `quizzes`, etc.) are never touched.
 
 ## Quiz grading
 

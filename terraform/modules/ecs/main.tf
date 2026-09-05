@@ -75,6 +75,9 @@ locals {
     { name = "COURSE_QA_MATERIAL_MAX_CHARS", value = "120000" },
     { name = "COURSE_PURGE_INTERVAL_SECONDS", value = tostring(var.course_purge_interval_seconds) },
     { name = "EMBEDDING_BACKFILL_INTERVAL_SECONDS", value = tostring(var.embedding_backfill_interval_seconds) },
+    # The worker enforces masked AI-usage retention in-process on this interval.
+    { name = "AI_USAGE_RETENTION_DAYS", value = tostring(var.ai_usage_retention_days) },
+    { name = "AI_USAGE_CLEANUP_INTERVAL_SECONDS", value = tostring(var.ai_usage_cleanup_interval_seconds) },
     # Every task loads the same configuration module, so the mail settings are
     # common even though only the API sends anything: a worker missing them
     # would fail startup validation rather than start without mail.

@@ -1,11 +1,43 @@
 import json
 import logging
+import multiprocessing
+import os
+import sys
+from pathlib import Path
+from uuid import uuid4
+
+import pytest
 
 from backend.app.observability import (
     JsonFormatter,
     emit_emf_metrics,
     normalize_request_id,
 )
+from services.processing_jobs import ClaimedJob
+
+
+def _spawn_child_that_logs_an_exception(stderr_path: str, canary: str) -> None:
+    """Module-level so a "spawn" context can import it in the fresh interpreter.
+
+    Mirrors ``workers.document_processor._extraction_process``: a spawn child
+    re-applies ``configure_logging`` and binds the correlation id, then logs an
+    exception. Its stderr must be JSON, redacted, and correlated.
+    """
+    from backend.app.observability import bind_request_id, configure_logging
+
+    sink = open(stderr_path, "w", encoding="utf-8")  # noqa: SIM115
+    os.dup2(sink.fileno(), 2)
+    sys.stderr = sink
+
+    configure_logging(service="worker", environment="production")
+    bind_request_id("corr-1")
+    try:
+        raise ValueError(canary)
+    except ValueError:
+        logging.getLogger("lumina.pipeline").exception("chunking failed")
+    logging.getLogger("lumina.pipeline").info("breadcrumb below WARNING")
+    sink.flush()
+    sink.close()
 
 
 def test_json_formatter_is_single_line_and_redacts_secrets() -> None:
@@ -195,6 +227,96 @@ def test_stage_failure_emf_metrics_schema() -> None:
     assert emf["_aws"]["CloudWatchMetrics"][0]["Namespace"] == "Lumina/Worker"
     assert emf["Stage"] == "extracting_text"
     assert emf["StageFailed"] == 1
+
+
+def test_spawn_child_logs_are_json_redacted_and_correlated(tmp_path: Path) -> None:
+    """P2-025: a spawn extraction child must not fall back to logging.lastResort.
+
+    Every line it emits has to be one JSON object, carry the bound request_id,
+    and never leak a traceback or raw exception text.
+    """
+    stderr_path = tmp_path / "child-stderr.log"
+    context = multiprocessing.get_context("spawn")
+    process = context.Process(
+        target=_spawn_child_that_logs_an_exception,
+        args=(str(stderr_path), "SECRET-CANARY"),
+    )
+    process.start()
+    process.join(timeout=30)
+    assert process.exitcode == 0
+
+    lines = [
+        line for line in stderr_path.read_text(encoding="utf-8").splitlines() if line
+    ]
+    assert lines, "child emitted nothing"
+    for line in lines:
+        payload = json.loads(line)  # every line is one JSON object
+        assert payload["request_id"] == "corr-1"
+        assert payload["service"] == "worker"
+
+    body = "\n".join(lines)
+    assert "Traceback" not in body
+    assert "SECRET-CANARY" not in body
+    # The INFO breadcrumb survives because the child's root level is INFO.
+    assert any(json.loads(line)["level"] == "INFO" for line in lines)
+    assert any(json.loads(line).get("exception_type") == "ValueError" for line in lines)
+
+
+def test_extraction_process_configures_logging_before_binding_the_request_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-025: the fix itself - _extraction_process installs the JSON formatter
+    first, otherwise binding the request id renders nothing."""
+    from workers import document_processor
+
+    calls: list[str] = []
+
+    def record_configure(**kwargs) -> None:
+        calls.append(f"configure_logging:{kwargs.get('service')}")
+
+    def record_bind(value):
+        calls.append(f"bind_request_id:{value}")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("extraction blew up")
+
+    monkeypatch.setattr(document_processor, "WORKER_SHUTDOWN_SIGNALS", set())
+    monkeypatch.setattr(document_processor, "configure_logging", record_configure)
+    monkeypatch.setattr(document_processor, "bind_request_id", record_bind)
+    monkeypatch.setattr(document_processor, "extract_document", boom)
+
+    class FakeConnection:
+        def send(self, _message) -> None:
+            pass
+
+        def recv(self):
+            return ("continue",)
+
+        def close(self) -> None:
+            pass
+
+    job = ClaimedJob(
+        id=1,
+        document_id=uuid4(),
+        course_id=1,
+        claim_token=str(uuid4()),
+        attempt_count=1,
+        max_attempts=3,
+        storage_provider="test",
+        storage_key="document.txt",
+        file_hash="0" * 64,
+        file_type="txt",
+        file_size=16,
+        correlation_id="corr-99",
+    )
+
+    document_processor._extraction_process(FakeConnection(), object(), job)
+
+    assert calls[0] == "configure_logging:worker"
+    assert "bind_request_id:corr-99" in calls
+    assert calls.index("configure_logging:worker") < calls.index(
+        "bind_request_id:corr-99"
+    )
 
 
 def test_course_purge_aged_tombstone_emf_metrics_schema() -> None:

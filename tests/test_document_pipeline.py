@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+import logging
 import shutil
 from threading import BoundedSemaphore, Lock
 from time import sleep
@@ -2129,6 +2130,32 @@ def test_chunking_stage_retries_once_on_transient_failure(
     assert calls == 2
     assert len(result.chunks) >= 1
     assert result.chunks[0].text == "Retryable chunk content"
+
+
+def test_chunking_retry_warning_logs_the_exception_type_not_its_text(
+    monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """P2-025: a raw exception object carries the offending value; the retry
+    breadcrumb must name the type only."""
+    calls = 0
+    real_chunk_pages = pipeline._chunk_pages
+
+    def flaky_chunk_pages(pages, options):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("uploaded chunk text: SSN 123-45-6789")
+        return real_chunk_pages(pages, options)
+
+    monkeypatch.setattr(pipeline, "_chunk_pages", flaky_chunk_pages)
+
+    with caplog.at_level(logging.WARNING, logger="services.document_pipeline"):
+        process_document("txt", b"Retryable chunk content", options=pipeline_options())
+
+    emitted = " ".join(record.getMessage() for record in caplog.records)
+    assert "123-45-6789" not in emitted
+    assert "SSN" not in emitted
+    assert "ValueError" in emitted
 
 
 def test_chunking_stage_fails_after_retry(

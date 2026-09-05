@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -5,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.models import AiUsageLog, Role, User
+from workers import document_processor
 from workers.ai_usage_cleanup import main, run_cleanup
 
 
@@ -140,3 +142,39 @@ def test_cleanup_cli_rejects_invalid_retention() -> None:
         main(["--retention-days", "0"])
 
     assert exc_info.value.code == 2
+
+
+def test_the_worker_maintenance_cycle_enforces_retention(
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2-024: retention must be enforced by a running worker, not left inert.
+
+    Drives ``_maintenance_cycle`` (the same code path the worker loop runs) with
+    a due schedule and asserts an over-retention row is actually deleted.
+    """
+    now = datetime.now(timezone.utc)
+    _, identifiers = _seed_usage(
+        session_factory,
+        [now - timedelta(days=400), now - timedelta(hours=1)],
+    )
+
+    schedule = document_processor._MaintenanceSchedule()
+    # Only the AI-usage cleanup is due; the other reconciliations are inert here.
+    schedule.next_recovery = float("inf")
+    schedule.next_purge = float("inf")
+    schedule.next_backfill = float("inf")
+    schedule.ai_usage_cleanup_interval = 3600.0
+    schedule.next_ai_usage_cleanup = 0.0
+
+    document_processor._maintenance_cycle(
+        schedule,
+        session_factory=session_factory,
+        storage=object(),
+        stop=threading.Event(),
+    )
+
+    with session_factory() as session:
+        assert session.get(AiUsageLog, identifiers[0]) is None
+        assert session.get(AiUsageLog, identifiers[1]) is not None
+    assert schedule.next_ai_usage_cleanup > 0.0

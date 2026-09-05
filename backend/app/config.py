@@ -77,6 +77,7 @@ DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE = 64
 DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS = False
 DEFAULT_AI_USAGE_RETENTION_DAYS = 90
 DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE = 1000
+DEFAULT_AI_USAGE_CLEANUP_INTERVAL_SECONDS = 86_400.0
 
 IMAGE_PROVIDER_NONE = "none"
 # Vendors with an ImageUnderstandingProvider implementation. A catalog entry
@@ -362,6 +363,7 @@ class Settings:
     embedding_backfill_prune_orphans: bool
     ai_usage_retention_days: int
     ai_usage_cleanup_batch_size: int
+    ai_usage_cleanup_interval_seconds: float
 
     # Optional hosted advertising configuration
     enable_hosted_ads: bool
@@ -1124,6 +1126,10 @@ def load_settings() -> Settings:
         "AI_USAGE_CLEANUP_BATCH_SIZE",
         DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE,
     )
+    ai_usage_cleanup_interval_seconds = _nonnegative_float_setting(
+        "AI_USAGE_CLEANUP_INTERVAL_SECONDS",
+        DEFAULT_AI_USAGE_CLEANUP_INTERVAL_SECONDS,
+    )
 
     if mode == MODE_SELF_HOSTED:
         raw_ads = os.getenv("ENABLE_HOSTED_ADS")
@@ -1309,6 +1315,7 @@ def load_settings() -> Settings:
         embedding_backfill_prune_orphans=embedding_backfill_prune_orphans,
         ai_usage_retention_days=ai_usage_retention_days,
         ai_usage_cleanup_batch_size=ai_usage_cleanup_batch_size,
+        ai_usage_cleanup_interval_seconds=ai_usage_cleanup_interval_seconds,
         enable_hosted_ads=enable_hosted_ads,
         hosted_ads_provider=hosted_ads_provider,
         hosted_ads_publisher_id=hosted_ads_publisher_id,

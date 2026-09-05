@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.models import (
@@ -22,19 +23,21 @@ from backend.app.models import (
     JOB_TYPE_GENERATE_STUDY_GUIDE,
     JOB_TYPE_GENERATE_FLASHCARD,
     Course,
+    CreditTransaction,
     GeneratedOutput,
     GenerationJob,
     Quiz,
     Role,
     User,
 )
+from schemas.credits import CreditReason
 from schemas.generation_job import GenerationJobView
 from generation_fixtures import (
     GENERATION_FEATURES,
     RecordingProvider,
     seed_ready_material,
 )
-from services.credits import GENERATION_CREDIT_COSTS
+from services.credits import GENERATION_CREDIT_COSTS, CreditService
 from services.generation_jobs import (
     CREDIT_SOURCE_TYPES,
     GenerationJobNotDismissableError,
@@ -649,6 +652,64 @@ def test_a_terminal_failure_gives_the_credit_back(
     owner_row = db_session.get(User, owner.id)
     assert owner_row is not None
     assert owner_row.credits == pytest.approx(before)
+    assert_balance_is_derivable(db_session, owner.id)
+
+
+def test_a_refund_conflict_does_not_rollback_the_failed_job_transition(
+    db_session: Session,
+    owner: User,
+    course: Course,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queued = _enqueue(db_session, course, owner)
+    claimed = claim_next_generation_job(db_session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+    charged_balance = db_session.get(User, owner.id).credits
+    original_record = CreditService._record
+
+    def reject_refund(db: Session, **values):
+        if values.get("refunds_transaction_id") is not None:
+            raise IntegrityError("refund conflict", {}, RuntimeError("duplicate"))
+        return original_record(db, **values)
+
+    monkeypatch.setattr(CreditService, "_record", staticmethod(reject_refund))
+
+    status = fail_generation_job(
+        db_session,
+        claimed.id,
+        claimed.claim_token,
+        error_code="PROVIDER_ERROR",
+        error_message="The provider refused the prompt.",
+        retryable=False,
+    )
+
+    assert status == JOB_STATUS_FAILED
+    db_session.expire_all()
+    row = db_session.get(GenerationJob, queued.id)
+    assert row is not None
+    assert row.status == JOB_STATUS_FAILED
+    assert row.charge_refunded is False
+    assert row.claim_token is None
+    assert row.lease_expires_at is None
+    assert row.last_error_code == "PROVIDER_ERROR"
+    assert db_session.get(User, owner.id).credits == charged_balance
+    assert (
+        db_session.scalars(
+            select(CreditTransaction).where(
+                CreditTransaction.refunds_transaction_id
+                == queued.charge_transaction_id
+            )
+        ).all()
+        == []
+    )
+    assert (
+        db_session.scalars(
+            select(CreditTransaction).where(
+                CreditTransaction.reason == CreditReason.GENERATION_REFUND.value
+            )
+        ).all()
+        == []
+    )
     assert_balance_is_derivable(db_session, owner.id)
 
 

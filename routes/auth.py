@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
-from jose import JWTError
+from jwt import PyJWTError
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
@@ -206,7 +206,7 @@ def logout_user(
     """
     try:
         payload = decode_access_token(token)
-    except JWTError:
+    except PyJWTError:
         # If token is invalid or expired, we don't care during logout
         return {"message": "Logged out successfully"}
 

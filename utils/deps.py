@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError
+from jwt import PyJWTError
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
@@ -33,7 +33,7 @@ def get_current_user(
         subject = payload.get("sub")
         if not isinstance(subject, str) or not subject:
             raise credentials_exception
-    except JWTError:
+    except PyJWTError:
         raise credentials_exception
 
     user = UserService.get_user_by_email(db, subject)

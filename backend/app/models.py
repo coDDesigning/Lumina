@@ -484,7 +484,7 @@ class Course(Base):
         UTCDateTime(), server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
     )
 
     owner: Mapped["User"] = relationship(back_populates="courses")
@@ -605,7 +605,7 @@ class CourseSettings(Base):
         UTCDateTime(), server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
     )
 
     course: Mapped["Course"] = relationship(back_populates="settings")
@@ -2487,7 +2487,7 @@ class AiUsageLog(Base):
     estimated_cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     pricing_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        UTCDateTime(), server_default=func.now()
     )
 
     user: Mapped["User"] = relationship(back_populates="ai_usage_logs")

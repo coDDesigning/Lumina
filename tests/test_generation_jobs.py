@@ -747,8 +747,7 @@ def test_a_refund_conflict_does_not_rollback_the_failed_job_transition(
     assert (
         db_session.scalars(
             select(CreditTransaction).where(
-                CreditTransaction.refunds_transaction_id
-                == queued.charge_transaction_id
+                CreditTransaction.refunds_transaction_id == queued.charge_transaction_id
             )
         ).all()
         == []

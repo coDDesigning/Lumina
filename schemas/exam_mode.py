@@ -802,17 +802,32 @@ class SimilarQuestionDifficultyPolicy(str, Enum):
     HARD = "hard"
 
 
+class SourceQuestionRef(BaseModel):
+    """One extracted past question, named the way a client may name it.
+
+    The paper and the place in it, which is the pair the extraction already
+    guarantees unique. The row's own primary key is never on the wire: it is a
+    global counter, so a client that could send one could probe for the
+    existence of rows in courses it does not hold.
+    """
+
+    document_id: UUID = Field(description="The past paper the question was printed in")
+    position: int = Field(
+        ge=0, description="Where the question sits in that paper, counting from zero"
+    )
+
+
 class SimilarQuestionRequest(ExamTopicArtifactRequest):
     """What a student may ask for when requesting similar questions.
 
     Deliberately narrow. The topic is the canonical key in the route, and the
-    originals are named by the identifiers of rows this course already owns --
-    never by text, never by a document, and never by a course the caller does
-    not hold. Anything wider would let a request describe its own grounding,
-    which is the one thing the server has to decide for itself.
+    originals are named by the paper and position of rows this course already
+    owns -- never by text, and never by a course the caller does not hold.
+    Anything wider would let a request describe its own grounding, which is the
+    one thing the server has to decide for itself.
     """
 
-    source_question_ids: list[int] | None = Field(
+    source_questions: list[SourceQuestionRef] | None = Field(
         default=None,
         max_length=MAX_SIMILAR_QUESTIONS,
         description=(
@@ -844,17 +859,18 @@ class SimilarQuestionRequest(ExamTopicArtifactRequest):
         ),
     )
 
-    @field_validator("source_question_ids")
+    @field_validator("source_questions")
     @classmethod
-    def _reject_duplicate_sources(cls, value: list[int] | None) -> list[int] | None:
+    def _reject_duplicate_sources(
+        cls, value: list[SourceQuestionRef] | None
+    ) -> list[SourceQuestionRef] | None:
         if value is None:
             return None
         if not value:
-            raise ValueError("source_question_ids must not be empty when supplied")
-        if len(set(value)) != len(value):
-            raise ValueError("source_question_ids must not repeat an identifier")
-        if any(identifier < 1 for identifier in value):
-            raise ValueError("source_question_ids must be positive identifiers")
+            raise ValueError("source_questions must not be empty when supplied")
+        seen = {(ref.document_id, ref.position) for ref in value}
+        if len(seen) != len(value):
+            raise ValueError("source_questions must not repeat a question")
         return value
 
     @field_validator("requested_question_types")

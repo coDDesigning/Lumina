@@ -618,6 +618,42 @@ def test_it_costs_nothing_beyond_the_topic_s_unlock(
     )
 
 
+def test_a_similar_question_request_id_returns_the_first_result_without_regenerating(
+    authz_api, planned_course, monkeypatch
+) -> None:
+    before = balance_of(authz_api.session_factory, authz_api.user_a_id)
+    provider = CountingProvider(similar_payload())
+    monkeypatch.setattr(
+        exam_mode_route, "get_text_generation_provider", lambda *a, **k: provider
+    )
+    body = {
+        "question_count": 1,
+        "request_id": "c30c0d8d-5f62-4bb3-8490-5b754d8469e3",
+    }
+    url = (
+        f"/api/courses/{authz_api.a_course_id}"
+        "/exam-mode/topics/graph-traversal/similar-questions"
+    )
+
+    first = authz_api.client.post(url, json=body, headers=authz_api.authorization_a)
+    second = authz_api.client.post(url, json=body, headers=authz_api.authorization_a)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["data"]["quiz"] == first.json()["data"]["quiz"]
+    assert (
+        second.json()["data"]["generated_output_id"]
+        == first.json()["data"]["generated_output_id"]
+    )
+    assert second.json()["data"]["credits_charged"] == 0.0
+    assert provider.calls == 1
+    assert balance_of(authz_api.session_factory, authz_api.user_a_id) == (
+        before - UNLOCK_PRICE
+    )
+    assert len(similar_quizzes(authz_api.session_factory, authz_api.a_course_id)) == 1
+    assert len(outputs_of(authz_api.session_factory, authz_api.a_course_id)) == 1
+
+
 def test_it_is_reopened_without_reaching_a_provider(
     authz_api, planned_course, monkeypatch
 ) -> None:

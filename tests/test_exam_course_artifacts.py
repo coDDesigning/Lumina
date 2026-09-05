@@ -327,6 +327,48 @@ def test_a_second_mock_exam_is_charged_again(
     )
 
 
+def test_a_mock_exam_request_id_returns_the_first_result_without_recharging(
+    authz_api, planned_course, monkeypatch
+) -> None:
+    before = balance_of(authz_api.session_factory, authz_api.user_a_id)
+    provider = CountingProvider(mock_payload())
+    monkeypatch.setattr(
+        exam_mode_route, "get_text_generation_provider", lambda *a, **k: provider
+    )
+    body = {
+        **MOCK_REQUEST,
+        "request_id": "8f6294a6-c14d-49b4-b3e6-8f876f3df3e4",
+    }
+    url = f"/api/courses/{authz_api.a_course_id}/exam-mode/mock-exam"
+
+    first = authz_api.client.post(url, json=body, headers=authz_api.authorization_a)
+    second = authz_api.client.post(url, json=body, headers=authz_api.authorization_a)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["data"]["quiz"] == first.json()["data"]["quiz"]
+    assert (
+        second.json()["data"]["generated_output_id"]
+        == first.json()["data"]["generated_output_id"]
+    )
+    assert second.json()["data"]["credits_charged"] == 0.0
+    assert provider.calls == 1
+    assert balance_of(authz_api.session_factory, authz_api.user_a_id) == (
+        before - MOCK_PRICE
+    )
+    assert len(quizzes_of(authz_api.session_factory, authz_api.a_course_id)) == 1
+    assert (
+        len(
+            outputs_of(
+                authz_api.session_factory,
+                authz_api.a_course_id,
+                OUTPUT_TYPE_EXAM_MOCK_EXAM,
+            )
+        )
+        == 1
+    )
+
+
 def test_an_empty_balance_is_refused_before_the_provider_is_reached(
     authz_api, planned_course, monkeypatch
 ) -> None:

@@ -712,6 +712,27 @@ class QuizService:
         return quiz
 
     @staticmethod
+    def find_by_generation_request_id(
+        db: Session,
+        *,
+        course_id: int,
+        user_id: int,
+        generation_request_id: str | None,
+    ) -> Quiz | None:
+        """Return the quiz already produced for one client generation request."""
+        if generation_request_id is None:
+            return None
+        return db.scalars(
+            select(Quiz)
+            .where(
+                Quiz.course_id == course_id,
+                Quiz.user_id == user_id,
+                Quiz.generation_request_id == generation_request_id,
+            )
+            .options(selectinload(Quiz.questions))
+        ).one_or_none()
+
+    @staticmethod
     def hide_answers(view: QuizView) -> QuizView:
         """The same quiz with everything a candidate must not see removed.
 

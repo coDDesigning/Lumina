@@ -197,11 +197,16 @@ class DocumentService:
             DocumentService._rollback_and_remove(db, storage, storage_key)
             raise NotFoundException("Course not found")
 
+        # A tombstoned document is pending erasure and is hidden from every read,
+        # so it must not spend the course's document or byte allowance either.
         document_count, stored_bytes = db.execute(
             select(
                 func.count(UploadedDocument.id),
                 func.coalesce(func.sum(UploadedDocument.file_size), 0),
-            ).where(UploadedDocument.course_id == course_id)
+            ).where(
+                UploadedDocument.course_id == course_id,
+                UploadedDocument.status != "deleting",
+            )
         ).one()
         if (
             document_count >= settings.max_documents_per_course

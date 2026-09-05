@@ -2826,7 +2826,7 @@ def _chunk_pages_with_retry(
             logger.warning(
                 "Chunking attempt %d failed with unexpected error (%s); retrying chunking stage once",
                 attempt + 1,
-                exc,
+                type(exc).__name__,
             )
     return _chunk_pages(pages, options)
 

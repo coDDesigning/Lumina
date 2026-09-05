@@ -356,6 +356,7 @@ def test_worker_runs_periodic_purge_and_backfill(monkeypatch) -> None:
     monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
     monkeypatch.setattr(document_processor, "run_purge", mock_purge)
     monkeypatch.setattr(document_processor, "run_backfill", mock_backfill)
+    monkeypatch.setattr(document_processor, "run_ai_usage_cleanup", lambda **k: None)
     monkeypatch.setattr(document_processor, "process_next_job", mock_process)
 
     document_processor.run_worker(
@@ -369,6 +370,37 @@ def test_worker_runs_periodic_purge_and_backfill(monkeypatch) -> None:
     assert backfill_calls == 1
 
 
+def test_worker_runs_periodic_ai_usage_retention_cleanup(monkeypatch) -> None:
+    """P2-024: the retention job must actually be invoked by a running worker,
+    not left as an unwired module with an inert config knob."""
+    stop = threading.Event()
+    cleanup_calls: list[dict] = []
+
+    def mock_cleanup(**kwargs):
+        cleanup_calls.append(kwargs)
+
+    def mock_process(**kwargs):
+        stop.set()
+        return False
+
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **k: None)
+    monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
+    monkeypatch.setattr(document_processor, "run_purge", lambda **k: None)
+    monkeypatch.setattr(document_processor, "run_backfill", lambda **k: None)
+    monkeypatch.setattr(document_processor, "run_ai_usage_cleanup", mock_cleanup)
+    monkeypatch.setattr(document_processor, "process_next_job", mock_process)
+
+    document_processor.run_worker(
+        once=False,
+        stop_event=stop,
+        session_factory=fake_session_factory,
+        storage=ReadyStorage(),
+    )
+
+    assert len(cleanup_calls) == 1
+    assert "session_factory" in cleanup_calls[0]
+
+
 def test_worker_maintenance_failure_does_not_crash_loop(monkeypatch) -> None:
     stop = threading.Event()
 
@@ -378,6 +410,9 @@ def test_worker_maintenance_failure_does_not_crash_loop(monkeypatch) -> None:
     def fail_backfill(**kwargs):
         raise RuntimeError("backfill error")
 
+    def fail_cleanup(**kwargs):
+        raise RuntimeError("cleanup error")
+
     def mock_process(**kwargs):
         stop.set()
         return True
@@ -386,6 +421,7 @@ def test_worker_maintenance_failure_does_not_crash_loop(monkeypatch) -> None:
     monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
     monkeypatch.setattr(document_processor, "run_purge", fail_purge)
     monkeypatch.setattr(document_processor, "run_backfill", fail_backfill)
+    monkeypatch.setattr(document_processor, "run_ai_usage_cleanup", fail_cleanup)
     monkeypatch.setattr(document_processor, "process_next_job", mock_process)
 
     document_processor.run_worker(
@@ -402,6 +438,7 @@ def test_worker_skips_maintenance_when_intervals_are_zero(monkeypatch) -> None:
     stop = threading.Event()
     purge_calls = 0
     backfill_calls = 0
+    cleanup_calls = 0
 
     def mock_purge(**kwargs):
         nonlocal purge_calls
@@ -410,6 +447,10 @@ def test_worker_skips_maintenance_when_intervals_are_zero(monkeypatch) -> None:
     def mock_backfill(**kwargs):
         nonlocal backfill_calls
         backfill_calls += 1
+
+    def mock_cleanup(**kwargs):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
 
     def mock_process(**kwargs):
         stop.set()
@@ -421,12 +462,14 @@ def test_worker_skips_maintenance_when_intervals_are_zero(monkeypatch) -> None:
         document_processor.settings,
         course_purge_interval_seconds=0.0,
         embedding_backfill_interval_seconds=0.0,
+        ai_usage_cleanup_interval_seconds=0.0,
     )
     monkeypatch.setattr(document_processor, "settings", custom_settings)
     monkeypatch.setattr(document_processor, "check_worker_ready", lambda **k: None)
     monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
     monkeypatch.setattr(document_processor, "run_purge", mock_purge)
     monkeypatch.setattr(document_processor, "run_backfill", mock_backfill)
+    monkeypatch.setattr(document_processor, "run_ai_usage_cleanup", mock_cleanup)
     monkeypatch.setattr(document_processor, "process_next_job", mock_process)
 
     document_processor.run_worker(
@@ -438,6 +481,7 @@ def test_worker_skips_maintenance_when_intervals_are_zero(monkeypatch) -> None:
 
     assert purge_calls == 0
     assert backfill_calls == 0
+    assert cleanup_calls == 0
 
 
 def test_record_failure_emits_permanent_failure_alert_and_stage_metrics(
@@ -535,6 +579,7 @@ def test_worker_runs_jobs_concurrently_across_slots(monkeypatch) -> None:
     monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
     monkeypatch.setattr(document_processor, "run_purge", lambda **k: None)
     monkeypatch.setattr(document_processor, "run_backfill", lambda **k: None)
+    monkeypatch.setattr(document_processor, "run_ai_usage_cleanup", lambda **k: None)
     monkeypatch.setattr(document_processor, "process_next_job", process_job)
 
     worker = threading.Thread(
@@ -576,6 +621,7 @@ def test_worker_slots_share_one_maintenance_cycle(monkeypatch) -> None:
     monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
     monkeypatch.setattr(document_processor, "run_purge", mock_purge)
     monkeypatch.setattr(document_processor, "run_backfill", lambda **k: None)
+    monkeypatch.setattr(document_processor, "run_ai_usage_cleanup", lambda **k: None)
     monkeypatch.setattr(document_processor, "process_next_job", process_job)
 
     worker = threading.Thread(
@@ -606,6 +652,7 @@ def test_worker_slot_fatal_error_stops_every_slot_and_propagates(monkeypatch) ->
     monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
     monkeypatch.setattr(document_processor, "run_purge", lambda **k: None)
     monkeypatch.setattr(document_processor, "run_backfill", lambda **k: None)
+    monkeypatch.setattr(document_processor, "run_ai_usage_cleanup", lambda **k: None)
     monkeypatch.setattr(document_processor, "process_next_job", process_job)
 
     with pytest.raises(document_processor.WorkerProcessFatalError):
@@ -631,6 +678,7 @@ def test_once_forces_a_single_slot_and_the_bare_identity(monkeypatch) -> None:
     monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *a, **k: 0)
     monkeypatch.setattr(document_processor, "run_purge", lambda **k: None)
     monkeypatch.setattr(document_processor, "run_backfill", lambda **k: None)
+    monkeypatch.setattr(document_processor, "run_ai_usage_cleanup", lambda **k: None)
     monkeypatch.setattr(document_processor, "process_next_job", process_job)
 
     document_processor.run_worker(

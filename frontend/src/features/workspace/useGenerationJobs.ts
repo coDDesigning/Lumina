@@ -15,6 +15,7 @@ const NO_JOBS: GenerationJob[] = [];
 
 export function useGenerationJobs(courseId: number) {
   const [retryingId, setRetryingId] = useState<number | null>(null);
+  const retrying = useRef<number | null>(null);
   const completed = useRef(new Set<number>());
   const { refresh: refreshCredits } = useCredits();
   const query = useQuery<GenerationJob[]>({
@@ -50,12 +51,15 @@ export function useGenerationJobs(courseId: number) {
 
   const retry = useCallback(
     async (jobId: number) => {
+      if (retrying.current !== null) return;
+      retrying.current = jobId;
       setRetryingId(jobId);
       try {
         await generationJobsAPI.retry(courseId, jobId);
         await refreshCredits();
         await refetch();
       } finally {
+        retrying.current = null;
         setRetryingId(null);
       }
     },

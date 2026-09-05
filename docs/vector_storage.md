@@ -210,6 +210,29 @@ worker, or onto Chroma's server mode, is the way out if deletion and embedding
 ever contend in practice. The pgvector backend has no equivalent concern because
 every writer goes through PostgreSQL.
 
+## Why the embedded client is the security boundary
+
+Four advisories stand open against `chromadb` 1.5.9, and none of them is
+reachable here. Two are code injection through a `trust_remote_code` embedding
+function - CVE-2026-45829 pre-authentication and CVE-2026-45833 with
+`UPDATE_COLLECTION` - and both are reached through the server's
+`/api/v2/.../collections` endpoints. The other two, CVE-2026-45830 and
+CVE-2026-45831, are failures of tenant isolation in the server's authorization
+layer and its `SimpleRBACAuthorizationProvider`.
+
+Lumina runs none of that surface. `PersistentClient` is the only constructor used
+here and in `workers/self_hosted_backup.py`; no Chroma HTTP server, tenant or
+auth provider is ever started, and collections are opened with
+`embedding_function=None` because embeddings arrive as finished vectors on
+`VectorRecord`. There is no patched release to move to - 1.5.9 is the latest - so
+these are dismissed as inapplicable rather than fixed.
+
+That makes the escape hatch named above a security decision as well as a
+concurrency one: adopting Chroma's server mode, or an `HttpClient` against one,
+brings all four back into scope and requires re-reading them first. Passing an
+embedding function into `get_or_create_collection` reopens the injection pair on
+its own.
+
 ## Schema on both databases
 
 `chunk_embeddings` is created on SQLite as well as PostgreSQL, with a packed

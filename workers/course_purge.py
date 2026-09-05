@@ -232,8 +232,6 @@ def run_purge(
 
             tombstone_time = course.updated_at or course.created_at
             if tombstone_time is not None:
-                if tombstone_time.tzinfo is None:
-                    tombstone_time = tombstone_time.replace(tzinfo=timezone.utc)
                 age_seconds = max(0.0, (utc_now - tombstone_time).total_seconds())
             else:
                 age_seconds = 0.0
@@ -261,7 +259,13 @@ def run_purge(
                 continue
             try:
                 CourseService.hard_delete_course(
-                    session, identifier, storage, vector_store
+                    session,
+                    identifier,
+                    storage,
+                    vector_store,
+                    operation_timeout_seconds=(
+                        settings.course_purge_operation_timeout_seconds
+                    ),
                 )
             except NotFoundException:
                 continue

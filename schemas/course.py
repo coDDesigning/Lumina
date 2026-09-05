@@ -116,7 +116,7 @@ class CourseUpdate(BaseModel):
 
     @model_validator(mode="after")
     def reject_null_for_required_columns(self) -> "CourseUpdate":
-        required_columns = {"title", "education_level"}
+        required_columns = {"title", "education_level", "is_archived"}
         explicitly_null = required_columns & self.model_fields_set
         if any(getattr(self, field) is None for field in explicitly_null):
             raise ValueError("Required course fields cannot be null")

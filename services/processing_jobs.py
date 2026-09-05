@@ -181,6 +181,43 @@ def _start_transition(
     begin_serialized_write(session)
 
 
+def _operation_timeout_milliseconds(
+    operation_timeout_seconds: float | None,
+) -> int | None:
+    if operation_timeout_seconds is None:
+        return None
+    if (
+        isinstance(operation_timeout_seconds, bool)
+        or not isinstance(operation_timeout_seconds, (int, float))
+        or not isfinite(operation_timeout_seconds)
+        or operation_timeout_seconds <= 0
+    ):
+        raise ValueError("Operation timeout must be a positive finite number")
+    return max(1, ceil(operation_timeout_seconds * 1000))
+
+
+def _start_transition_with_operation_timeout(
+    session: Session,
+    operation_timeout_seconds: float | None,
+) -> None:
+    """Widen this transaction's lock/statement budget beyond the shared engine default.
+
+    The shared engine caps every PostgreSQL statement at 5s
+    (``backend/app/database_engine.py``), which is correct for request-path
+    queries but too short for a worker finalizing a large document or purging
+    a large course in one transaction. Workers pass the time remaining on
+    their claim lease here so the override tracks how much budget they
+    actually still have, instead of hard-coding a bigger constant.
+    """
+    dialect_name = session.get_bind().dialect.name
+    timeout_milliseconds = _operation_timeout_milliseconds(operation_timeout_seconds)
+    _start_transition(session, sqlite_busy_timeout_milliseconds=timeout_milliseconds)
+    if dialect_name == "postgresql" and timeout_milliseconds is not None:
+        timeout = f"{timeout_milliseconds}ms"
+        session.scalar(select(func.set_config("lock_timeout", timeout, True)))
+        session.scalar(select(func.set_config("statement_timeout", timeout, True)))
+
+
 def _clear_lease(job: ProcessingJob) -> None:
     job.lease_owner = None
     job.claim_token = None
@@ -526,28 +563,9 @@ def replace_document_pages(
         _validate_page_data(page, raw=True)
     if sum(len(page.text) for page in pages) > settings.max_extracted_characters:
         raise ValueError("Document pages exceed the configured text limit")
-    if operation_timeout_seconds is not None and (
-        isinstance(operation_timeout_seconds, bool)
-        or not isinstance(operation_timeout_seconds, (int, float))
-        or not isfinite(operation_timeout_seconds)
-        or operation_timeout_seconds <= 0
-    ):
-        raise ValueError("Operation timeout must be a positive finite number")
 
     dialect_name = session.get_bind().dialect.name
-    timeout_milliseconds = (
-        max(1, ceil(operation_timeout_seconds * 1000))
-        if operation_timeout_seconds is not None
-        else None
-    )
-    _start_transition(
-        session,
-        sqlite_busy_timeout_milliseconds=timeout_milliseconds,
-    )
-    if dialect_name == "postgresql" and timeout_milliseconds is not None:
-        timeout = f"{timeout_milliseconds}ms"
-        session.scalar(select(func.set_config("lock_timeout", timeout, True)))
-        session.scalar(select(func.set_config("statement_timeout", timeout, True)))
+    _start_transition_with_operation_timeout(session, operation_timeout_seconds)
     course_id = session.scalar(
         select(ProcessingJob.course_id).where(ProcessingJob.id == job_id)
     )
@@ -635,6 +653,7 @@ def complete_job(
     embeddings: list[list[float]],
     vector_store: VectorStore | None = None,
     now: datetime | None = None,
+    operation_timeout_seconds: float | None = None,
 ) -> bool:
     if not chunks:
         raise ValueError("A completed document must contain at least one chunk")
@@ -674,7 +693,7 @@ def complete_job(
         for page in pages:
             _validate_page_data(page, raw=False)
 
-    _start_transition(session)
+    _start_transition_with_operation_timeout(session, operation_timeout_seconds)
     course_id = session.scalar(
         select(ProcessingJob.course_id).where(ProcessingJob.id == job_id)
     )
@@ -1597,8 +1616,9 @@ def replace_profile_document_pages(
     pages: list[PageData],
     *,
     now: datetime | None = None,
+    operation_timeout_seconds: float | None = None,
 ) -> bool:
-    _start_transition(session)
+    _start_transition_with_operation_timeout(session, operation_timeout_seconds)
     job, document = _lock_profile_job_and_document(session, job_id)
     if job is None or document is None:
         session.rollback()
@@ -1657,6 +1677,7 @@ def complete_profile_job(
     pages: list[PageData] | None = None,
     vector_store: VectorStore | None = None,
     now: datetime | None = None,
+    operation_timeout_seconds: float | None = None,
 ) -> bool:
     if not chunks:
         raise ValueError("Job completion requires at least one chunk")
@@ -1673,7 +1694,7 @@ def complete_profile_job(
                 f"Embedding at position {position} contains a non-finite float"
             )
 
-    _start_transition(session)
+    _start_transition_with_operation_timeout(session, operation_timeout_seconds)
     job, document = _lock_profile_job_and_document(session, job_id)
     if job is None or document is None:
         session.rollback()

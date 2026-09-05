@@ -71,6 +71,7 @@ DEFAULT_EMBEDDING_BATCH_SIZE = 32
 DEFAULT_EMBEDDING_MODEL_CACHE_DIRECTORY = "./data/embedding-models"
 
 DEFAULT_COURSE_PURGE_INTERVAL_SECONDS = 3600.0
+DEFAULT_COURSE_PURGE_OPERATION_TIMEOUT_SECONDS = 300.0
 DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS = 3600.0
 DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE = 64
 DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS = False
@@ -355,6 +356,7 @@ class Settings:
 
     # Periodic maintenance configuration
     course_purge_interval_seconds: float
+    course_purge_operation_timeout_seconds: float
     embedding_backfill_interval_seconds: float
     embedding_backfill_batch_size: int
     embedding_backfill_prune_orphans: bool
@@ -1096,6 +1098,12 @@ def load_settings() -> Settings:
         "COURSE_PURGE_INTERVAL_SECONDS",
         DEFAULT_COURSE_PURGE_INTERVAL_SECONDS,
     )
+    course_purge_operation_timeout_seconds = _bounded_float_setting(
+        "COURSE_PURGE_OPERATION_TIMEOUT_SECONDS",
+        DEFAULT_COURSE_PURGE_OPERATION_TIMEOUT_SECONDS,
+        minimum=1.0,
+        maximum=86_400.0,
+    )
     embedding_backfill_interval_seconds = _nonnegative_float_setting(
         "EMBEDDING_BACKFILL_INTERVAL_SECONDS",
         DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS,
@@ -1295,6 +1303,7 @@ def load_settings() -> Settings:
         hsts_max_age_seconds=hsts_max_age_seconds,
         web_root=web_root,
         course_purge_interval_seconds=course_purge_interval_seconds,
+        course_purge_operation_timeout_seconds=course_purge_operation_timeout_seconds,
         embedding_backfill_interval_seconds=embedding_backfill_interval_seconds,
         embedding_backfill_batch_size=embedding_backfill_batch_size,
         embedding_backfill_prune_orphans=embedding_backfill_prune_orphans,

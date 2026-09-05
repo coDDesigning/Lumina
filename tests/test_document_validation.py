@@ -156,9 +156,15 @@ def test_message_catalog_accepts_another_error(
     }
 
 
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+JPEG_MAGIC = b"\xff\xd8\xff"
+PDF_MAGIC = b"%PDF-"
+
+
 @pytest.mark.parametrize(
     ("filename", "content", "expected_type", "expected_mime"),
     [
+        # text has no reliable signature and is never content-sniffed
         ("notes.txt", b"Course notes", "txt", "text/plain"),
         ("lesson.md", b"# Lesson\n\nContent", "md", "text/markdown"),
         (
@@ -168,15 +174,22 @@ def test_message_catalog_accepts_another_error(
             "text/markdown",
         ),
         ("NOTES.TXT", b"Uppercase extension", "txt", "text/plain"),
-        ("course.pdf", b"not actually a PDF", "pdf", "application/pdf"),
         ("binary.txt", bytes(range(256)), "txt", "text/plain"),
         ("blank.md", b" \r\n\t", "md", "text/markdown"),
-        ("diagram.png", b"not actually a PNG", "png", "image/png"),
-        ("photo.jpg", b"not actually a JPEG", "jpg", "image/jpeg"),
-        ("SCAN.JPEG", b"uppercase image extension", "jpeg", "image/jpeg"),
+        ("page.txt", b"<html><body>still text</body></html>", "txt", "text/plain"),
+        # pdf / image: leading bytes must match the declared extension
+        (
+            "course.pdf",
+            PDF_MAGIC + b"1.7\n%\xe2\xe3\xcf\xd3\n",
+            "pdf",
+            "application/pdf",
+        ),
+        ("diagram.png", PNG_MAGIC + b"\x00\x00\x00\rIHDR", "png", "image/png"),
+        ("photo.jpg", JPEG_MAGIC + b"\xe0\x00\x10JFIF", "jpg", "image/jpeg"),
+        ("SCAN.JPEG", JPEG_MAGIC + b"\xdb\x00C\x00", "jpeg", "image/jpeg"),
     ],
 )
-def test_basic_validation_returns_metadata_without_inspecting_content(
+def test_basic_validation_returns_metadata_for_consistent_or_unsniffable_content(
     filename: str,
     content: bytes,
     expected_type: str,
@@ -193,6 +206,25 @@ def test_basic_validation_returns_metadata_without_inspecting_content(
     assert metadata.file_size == len(content)
     assert upload.file.tell() == 0
     assert upload.file.read() == content
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("innocent.pdf", b"<html><body><script>alert(1)</script></body></html>"),
+        ("report.pdf", b"PK\x03\x04 this is really a zip"),
+        ("slides.pdf", PNG_MAGIC + b"a raster, not a pdf"),
+        ("diagram.png", b"not actually a PNG"),
+        ("photo.jpg", b"GIF89a wrong raster format"),
+    ],
+)
+def test_content_that_contradicts_the_declared_type_is_rejected(
+    filename: str,
+    content: bytes,
+) -> None:
+    """BUG-043: an extension/byte mismatch is a 415 at upload, not a worker
+    failure discovered minutes later."""
+    assert_validation_error(filename, content, "unsupported_file_type")
 
 
 @pytest.mark.parametrize(

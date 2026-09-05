@@ -269,10 +269,10 @@ def validate_mock_exam(
         key = canonical_topic_key(question.topic)
         if key not in expected_topics:
             # Never relabelled onto the nearest planned topic: that would give a
-            # student mastery for a topic the question did not assess.
-            _reject_mock(
-                f"question is about {key or 'nothing'}, which was not requested"
-            )
+            # student mastery for a topic the question did not assess. The label
+            # itself is model output derived from the student's uploaded course
+            # material, so it is described, never logged (P2-050).
+            _reject_mock("a question is about a topic that was not requested")
         by_topic[key] = by_topic.get(key, 0) + 1
         by_type[question.question_type.value] = (
             by_type.get(question.question_type.value, 0) + 1
@@ -285,15 +285,17 @@ def validate_mock_exam(
 
     for topic_key, expected in expected_topics.items():
         if by_topic.get(topic_key, 0) != expected:
+            # A plan topic key is derived from the student's syllabus/material,
+            # so only the integer counts are logged, never the label (P2-050).
             _reject_mock(
-                f"topic {topic_key} has {by_topic.get(topic_key, 0)} questions, "
+                f"a topic has {by_topic.get(topic_key, 0)} questions, "
                 f"not the {expected} it was allocated"
             )
 
     for quota in types:
         if by_type.get(quota.question_type, 0) != quota.count:
             _reject_mock(
-                f"type {quota.question_type} has {by_type.get(quota.question_type, 0)} "
+                f"a question type has {by_type.get(quota.question_type, 0)} "
                 f"questions, not the {quota.count} requested"
             )
 

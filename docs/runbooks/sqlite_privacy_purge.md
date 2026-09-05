@@ -12,11 +12,13 @@ backup retention policy.
 
 ## Procedure
 
-1. Preview and enforce masked AI usage retention while the stack is available:
+1. Preview and enforce masked AI usage retention while the stack is available.
+   The background worker already runs this on `AI_USAGE_CLEANUP_INTERVAL_SECONDS`;
+   run it on demand to force it before a purge:
 
 ```bash
-docker compose --profile maintenance run --rm ai-usage-cleanup --dry-run
-docker compose --profile maintenance run --rm ai-usage-cleanup
+docker compose run --rm --no-deps lumina-worker python -m workers.ai_usage_cleanup --dry-run
+docker compose run --rm --no-deps lumina-worker python -m workers.ai_usage_cleanup
 ```
 
 2. Stop every SQLite writer and verify that none remains:

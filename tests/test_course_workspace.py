@@ -14,14 +14,6 @@ MULTILINE_SYLLABUS = (
 BACKDATED = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
 
-def _as_utc(value: str) -> datetime:
-    """Normalize an API timestamp that SQLite returns naive and PostgreSQL aware."""
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
 def _create_course(authz_api, **fields) -> dict:
     response = authz_api.client.post(
         "/api/courses/",
@@ -118,7 +110,22 @@ def test_a_syllabus_can_be_cleared(authz_api):
 def test_creation_reports_updated_at(authz_api):
     created = _create_course(authz_api)
     assert "updated_at" in created
-    assert _as_utc(created["updated_at"]) == _as_utc(created["created_at"])
+    assert datetime.fromisoformat(created["updated_at"]) == datetime.fromisoformat(
+        created["created_at"]
+    )
+
+
+def test_updated_at_carries_an_explicit_utc_offset(authz_api):
+    """A timestamp with no offset is parsed as local time by ``new Date(...)``.
+
+    This asserts the same thing ``test_conversations.py`` already asserts for
+    conversations: ``updated_at`` must not regress to an offset-free string on
+    the SQLite path the way it silently did before it used ``UTCDateTime``.
+    """
+    created = _create_course(authz_api)
+
+    assert datetime.fromisoformat(created["created_at"]).tzinfo is not None
+    assert datetime.fromisoformat(created["updated_at"]).tzinfo is not None
 
 
 def test_updating_a_course_advances_updated_at_without_moving_created_at(authz_api):
@@ -139,8 +146,8 @@ def test_updating_a_course_advances_updated_at_without_moving_created_at(authz_a
     )
     assert updated.status_code == 200, updated.text
     payload = updated.json()["data"]
-    assert _as_utc(payload["created_at"]) == BACKDATED
-    assert _as_utc(payload["updated_at"]) > BACKDATED
+    assert datetime.fromisoformat(payload["created_at"]) == BACKDATED
+    assert datetime.fromisoformat(payload["updated_at"]) > BACKDATED
 
     fetched = authz_api.client.get(
         f"/api/courses/{created['id']}", headers=authz_api.authorization_a

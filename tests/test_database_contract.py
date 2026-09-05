@@ -2,10 +2,11 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import DateTime, Engine, Text, delete, inspect, select
+from sqlalchemy import CheckConstraint, DateTime, Engine, Text, delete, inspect, select
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session, sessionmaker
 
+from backend.app.base import Base
 from backend.app.models import (
     AiUsageLog,
     ChunkEmbedding,
@@ -27,6 +28,7 @@ from backend.app.models import (
     QuizAttemptAnswer,
     QuizQuestion,
     Role,
+    UTCDateTime,
     UploadedDocument,
     User,
 )
@@ -752,6 +754,64 @@ def test_migrated_schema_has_no_column_drift_from_the_models(
     migration column with no model is dead schema. Either direction fails here.
     """
     assert schema_drift == {}
+
+
+@pytest.mark.parametrize(
+    ("table_name", "constraint_names"),
+    [
+        ("quiz_questions", {"ck_quiz_questions_quiz_question_type_valid"}),
+        (
+            "quiz_attempt_answers",
+            {"ck_quiz_attempt_answers_answer_time_spent_nonnegative"},
+        ),
+        (
+            "progress",
+            {
+                "ck_progress_quizzes_completed_nonnegative",
+                "ck_progress_correct_answers_count_nonnegative",
+                "ck_progress_incorrect_answers_count_nonnegative",
+                "ck_progress_total_questions_answered_nonnegative",
+            },
+        ),
+    ],
+)
+def test_migrated_check_constraints_match_the_models(
+    database_engine: Engine, table_name: str, constraint_names: set[str]
+) -> None:
+    """These constraints were declared on the models but never emitted by any
+    migration - ``alembic check`` cannot see that gap because it structurally
+    never compares CHECK constraints.
+    """
+    modelled = {
+        constraint.name
+        for constraint in Base.metadata.tables[table_name].constraints
+        if isinstance(constraint, CheckConstraint) and constraint.name is not None
+    }
+    assert constraint_names <= modelled
+
+    reflected = {
+        constraint["name"]
+        for constraint in inspect(database_engine).get_check_constraints(table_name)
+        if constraint["name"] is not None
+    }
+    assert constraint_names <= reflected
+
+
+def test_every_datetime_column_uses_the_utc_decorator() -> None:
+    """A bare ``DateTime`` serializes offset-free on SQLite, so the browser reads
+    it as local time. ``UTCDateTime`` is what makes a timestamp identical across
+    dialects; ``courses.updated_at``, ``course_settings.updated_at`` and
+    ``ai_usage_logs.created_at`` each regressed to the bare type at some point.
+    Every timestamp column must go through the decorator.
+    """
+    bare = [
+        f"{table.name}.{column.name}"
+        for table in Base.metadata.sorted_tables
+        for column in table.columns
+        if isinstance(column.type, DateTime)
+        and not isinstance(column.type, UTCDateTime)
+    ]
+    assert bare == []
 
 
 def test_course_workspace_columns_are_migrated_as_designed(

@@ -317,6 +317,8 @@ TEMPLATE_EXTRA_VARIABLES: dict[str, dict[str, str]] = {
     "exam_style_question": {
         "TOPIC_LABEL": "Graph Traversal",
         "ORIGINAL_QUESTIONS": "1. Original question body",
+        "SOURCE_MAPPING_RULE": "Source mapping rule body",
+        "LEVEL_RULE": "Level rule body",
         "QUESTION_COUNT": "5",
         "DIFFICULTY_DIRECTIVE": "Difficulty directive body",
         "QUESTION_TYPE_DIRECTIVES": "Type directives body",

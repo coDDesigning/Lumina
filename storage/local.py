@@ -17,6 +17,7 @@ from storage.base import (
 )
 
 DEFAULT_CHUNK_SIZE = 1024 * 1024
+DIRECTORY_CREATE_ATTEMPTS = 3
 
 
 class LocalStorage(Storage):
@@ -177,26 +178,29 @@ class LocalStorage(Storage):
         self._prune_document_directory(path.parent)
 
     def _prune_document_directory(self, directory: Path) -> None:
-        """Remove the per-document directory this key owned, if it is now empty.
+        """Remove the directories this key emptied, up to but never including the root.
 
-        A key is courses/<course>/documents/<uuid>/<file>, so each document has a
-        directory of its own that nothing else writes to; leaving it behind accumulates
-        one empty directory per deleted document. Only that directory is removed. The
-        shared courses/ and documents/ levels are deliberately left alone: an upload
-        creates them one component at a time, so removing them here could make a
-        concurrent upload fail. Pruning is best effort and never fails a deletion that
-        has already happened.
+        A key is courses/<course>/documents/<uuid>/<file>, so an upload creates a
+        directory of its own per document plus the shared course levels. Pruning
+        only the per-document directory would still leave courses/<course>/documents/
+        and courses/<course>/ behind for every course whose last document is deleted,
+        so the walk continues upwards and stops at the first directory that is not
+        empty, is not below the root, or is the root itself. An upload rebuilds any
+        level it needs and retries the components a concurrent prune removed under it,
+        so pruning a shared level cannot fail a concurrent upload. Pruning is best
+        effort and never fails a deletion that has already happened.
         """
-        try:
-            if directory == self.root or not directory.is_relative_to(self.root):
+        current = directory
+        while True:
+            try:
+                if current == self.root or not current.is_relative_to(self.root):
+                    return
+                if current.is_symlink() or not current.is_dir():
+                    return
+                current.rmdir()
+            except OSError:
                 return
-            if directory.parent == self.root:
-                return
-            if directory.is_symlink() or not directory.is_dir():
-                return
-            directory.rmdir()
-        except OSError:
-            return
+            current = current.parent
 
     def exists(self, key: str) -> bool:
         """Return whether a key identifies a regular stored file."""
@@ -227,6 +231,18 @@ class LocalStorage(Storage):
         return path
 
     def _prepare_destination_parent(self, destination: Path) -> None:
+        # A concurrent delete prunes the shared levels it empties, so a component
+        # this build already created can disappear before the next one is made.
+        # The tree is rebuilt rather than reported as a failed upload.
+        for attempt in range(DIRECTORY_CREATE_ATTEMPTS):
+            try:
+                self._create_destination_parent(destination)
+                return
+            except FileNotFoundError:
+                if attempt + 1 == DIRECTORY_CREATE_ATTEMPTS:
+                    raise
+
+    def _create_destination_parent(self, destination: Path) -> None:
         if not self._require_existing_root:
             destination.parent.mkdir(parents=True, exist_ok=True)
             return

@@ -340,10 +340,8 @@ def test_a_refund_conflict_tombstones_before_course_cleanup(
         assert (
             session.scalars(
                 select(CreditTransaction).where(
-                    CreditTransaction.reason
-                    == CreditReason.GENERATION_REFUND.value,
-                    CreditTransaction.refunds_transaction_id
-                    == charge_transaction_id,
+                    CreditTransaction.reason == CreditReason.GENERATION_REFUND.value,
+                    CreditTransaction.refunds_transaction_id == charge_transaction_id,
                 )
             ).all()
             == []

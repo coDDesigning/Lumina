@@ -6,7 +6,11 @@ import { describeGenerationError, isInsufficientCredits } from '@/api/errors';
 import type { GenerationFailure } from '@/api/errors';
 import { afterExamSimilarQuestions } from '@/api/invalidations';
 import { queryKeys } from '@/api/queryKeys';
-import type { ExamQuestionPage, SimilarQuestionDifficultyPolicy } from '@/api/types';
+import type {
+  ExamQuestionPage,
+  ExamQuestionView,
+  SimilarQuestionDifficultyPolicy,
+} from '@/api/types';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { useCredits } from '@/context/CreditContext';
 import { GeneratingState, GenerationError } from '@/features/study/GenerationStates';
@@ -30,6 +34,16 @@ const POLICIES: { value: SimilarQuestionDifficultyPolicy; label: string }[] = [
 ];
 
 const PAGE_SIZE = 50;
+
+/**
+ * How one listed question is named, both in the ticked set and on the wire.
+ *
+ * Position alone is per-paper, so two papers collide on it: one tick would
+ * check a row in every paper at once and name a question the student never saw.
+ */
+function refKey(question: Pick<ExamQuestionView, 'document_id' | 'position'>): string {
+  return `${question.document_id}#${question.position}`;
+}
 
 export interface SimilarQuestionBuilderProps {
   courseId: number;
@@ -55,7 +69,7 @@ export function SimilarQuestionBuilder({
   const navigate = useNavigate();
   const { isMetered, canAfford } = useCredits();
 
-  const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [questionCount, setQuestionCount] = useState(5);
   const [policy, setPolicy] = useState<SimilarQuestionDifficultyPolicy>('match_source');
   const [busy, setBusy] = useState(false);
@@ -103,6 +117,9 @@ export function SimilarQuestionBuilder({
     );
   }
 
+  const listed = questions.data.questions;
+  const total = questions.data.total;
+
   async function generate() {
     if (isMetered && !canAfford('exam_topic_unlock')) {
       setExhausted(true);
@@ -114,7 +131,12 @@ export function SimilarQuestionBuilder({
     try {
       const result = await examModeAPI.generateSimilarQuestions(courseId, topicKey, {
         plan_output_id: planId,
-        source_question_ids: [...selected],
+        source_questions: listed
+          .filter((question) => selected.has(refKey(question)))
+          .map((question) => ({
+            document_id: question.document_id,
+            position: question.position,
+          })),
         question_count: questionCount,
         difficulty_policy: policy,
       });
@@ -154,18 +176,19 @@ export function SimilarQuestionBuilder({
       <fieldset className={styles.group}>
         <div className={styles.panel}>
           <legend className={styles.legend}>
-            Questions to work from ({questions.data.total} found for this topic)
+            Questions to work from ({total} found for this topic)
           </legend>
           <ul className={styles.list}>
-          {questions.data.questions.map((question) => (
-            <li key={question.position} className={styles.row}>
+          {listed.map((question) => (
+            <li key={refKey(question)} className={styles.row}>
               <Checkbox
-                checked={selected.has(question.position)}
+                checked={selected.has(refKey(question))}
                 onChange={() =>
                   setSelected((current) => {
                     const next = new Set(current);
-                    if (next.has(question.position)) next.delete(question.position);
-                    else next.add(question.position);
+                    const key = refKey(question);
+                    if (next.has(key)) next.delete(key);
+                    else next.add(key);
                     return next;
                   })
                 }

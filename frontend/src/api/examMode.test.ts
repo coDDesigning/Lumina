@@ -294,13 +294,17 @@ describe('examModeAPI', () => {
       );
     });
 
-    it('writes similar questions from source question identifiers', async () => {
-      // Identifiers, never pasted text: the paper was transcribed once already.
-      const fetchMock = stubFetch({ generated_output_id: 13, source_question_ids: [1] });
+    it('writes similar questions from the paper and position of each source', async () => {
+      // Named by paper and position, never pasted text nor a row identifier the
+      // listing cannot hand out: the paper was transcribed once already.
+      const fetchMock = stubFetch({ generated_output_id: 13, source_question_ids: [41] });
 
       await examModeAPI.generateSimilarQuestions(10, 'hashing', {
         plan_output_id: 9,
-        source_question_ids: [1, 2],
+        source_questions: [
+          { document_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', position: 0 },
+          { document_id: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', position: 0 },
+        ],
         question_count: 4,
         difficulty_policy: 'match_source',
       });
@@ -311,7 +315,10 @@ describe('examModeAPI', () => {
           method: 'POST',
           body: JSON.stringify({
             plan_output_id: 9,
-            source_question_ids: [1, 2],
+            source_questions: [
+              { document_id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', position: 0 },
+              { document_id: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', position: 0 },
+            ],
             question_count: 4,
             difficulty_policy: 'match_source',
           }),

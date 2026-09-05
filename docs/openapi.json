@@ -9196,7 +9196,7 @@
         "type": "string"
       },
       "SimilarQuestionRequest": {
-        "description": "What a student may ask for when requesting similar questions.\n\nDeliberately narrow. The topic is the canonical key in the route, and the\noriginals are named by the identifiers of rows this course already owns --\nnever by text, never by a document, and never by a course the caller does\nnot hold. Anything wider would let a request describe its own grounding,\nwhich is the one thing the server has to decide for itself.",
+        "description": "What a student may ask for when requesting similar questions.\n\nDeliberately narrow. The topic is the canonical key in the route, and the\noriginals are named by the paper and position of rows this course already\nowns -- never by text, and never by a course the caller does not hold.\nAnything wider would let a request describe its own grounding, which is the\none thing the server has to decide for itself.",
         "properties": {
           "difficulty_policy": {
             "$ref": "#/components/schemas/SimilarQuestionDifficultyPolicy",
@@ -9266,11 +9266,11 @@
             "description": "Restrict the set to these question types, or omit to allow all",
             "title": "Requested Question Types"
           },
-          "source_question_ids": {
+          "source_questions": {
             "anyOf": [
               {
                 "items": {
-                  "type": "integer"
+                  "$ref": "#/components/schemas/SourceQuestionRef"
                 },
                 "maxItems": 20,
                 "type": "array"
@@ -9280,10 +9280,33 @@
               }
             ],
             "description": "Which of this topic's extracted past questions to mirror, or omit to use the ones the plan already found relevant",
-            "title": "Source Question Ids"
+            "title": "Source Questions"
           }
         },
         "title": "SimilarQuestionRequest",
+        "type": "object"
+      },
+      "SourceQuestionRef": {
+        "description": "One extracted past question, named the way a client may name it.\n\nThe paper and the place in it, which is the pair the extraction already\nguarantees unique. The row's own primary key is never on the wire: it is a\nglobal counter, so a client that could send one could probe for the\nexistence of rows in courses it does not hold.",
+        "properties": {
+          "document_id": {
+            "description": "The past paper the question was printed in",
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "position": {
+            "description": "Where the question sits in that paper, counting from zero",
+            "minimum": 0.0,
+            "title": "Position",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id",
+          "position"
+        ],
+        "title": "SourceQuestionRef",
         "type": "object"
       },
       "StudyGuideGenerationResult": {

@@ -5,6 +5,7 @@ import {
   afterConversationTurn,
   afterCourseDeleted,
   afterDocumentChanged,
+  afterExamAnalysis,
   afterQuizAttempt,
   afterQuizGenerated,
 } from './invalidations';
@@ -99,6 +100,19 @@ describe('course-scoped invalidation', () => {
 
     expect(mine).toHaveBeenCalledTimes(1);
     expect(theirs).not.toHaveBeenCalled();
+  });
+
+  it('refetches a stored plan after an analysis, because its staleness moved', async () => {
+    const plans = await watch(queryKeys.examPlans(4));
+    const plan = await watch(queryKeys.examPlan(4, 601));
+    const other = await watch(queryKeys.examPlans(44));
+
+    afterExamAnalysis(4);
+    await settle();
+
+    expect(plans).toHaveBeenCalledTimes(1);
+    expect(plan).toHaveBeenCalledTimes(1);
+    expect(other).not.toHaveBeenCalled();
   });
 
   it('drops a deleted course rather than refetching it', async () => {

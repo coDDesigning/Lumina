@@ -33,6 +33,7 @@ const STALE_REASONS: Record<string, string> = {
   selection_changed: 'the topic selection changed',
   ranking_policy_updated: 'the ranking policy was updated',
   topic_keys_updated: 'topic identity was updated',
+  analysis_superseded: 'your sources have been scanned again since this ranking',
 };
 
 export function describeStaleReasons(reasons: string[]): string {

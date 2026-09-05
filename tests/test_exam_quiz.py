@@ -14,6 +14,9 @@ from backend.app.models import (
     User,
 )
 from services.credits import GENERATION_CREDIT_COSTS
+from services.exam_artifacts import PlannedTopic
+from services.exam_quiz import _matches_topic
+from services.exam_topics import build_topic_index
 from services.text_generation import TextGenerationError
 from tests.test_exam_mode import (  # noqa: F401 - fixtures
     CountingProvider,
@@ -485,3 +488,43 @@ def test_the_extracted_questions_are_read_rather_than_re_extracted(
     _, provider = ask(authz_api, "exam", monkeypatch)
 
     assert "Prove BFS finds shortest paths." in provider.prompt
+
+
+def planned_topic(topic_key: str, display_label: str) -> PlannedTopic:
+    return PlannedTopic(
+        plan_output_id=1,
+        analysis_output_id=1,
+        topic_key=topic_key,
+        display_label=display_label,
+        rank=1,
+        priority_band="high",
+        is_high_priority=False,
+        mastery_percentage=None,
+        document_ids=(),
+    )
+
+
+class _ExtractedQuestion:
+    def __init__(self, topic_key: str | None, mappings: list[dict]) -> None:
+        self.topic_key = topic_key
+        self.topic_mappings = mappings
+
+
+def test_a_merged_topic_still_owns_the_past_questions_filed_under_its_label() -> None:
+    topic = planned_topic("bfs", "Graph Traversal")
+    index = build_topic_index([topic])
+    question = _ExtractedQuestion(
+        "whatever-the-paper-called-it",
+        [{"display_label": "Graph Traversal"}],
+    )
+
+    assert index["graph-traversal"] == "bfs"
+    assert _matches_topic(question, topic.topic_key, index) is True
+
+
+def test_a_question_on_another_topic_is_still_left_out() -> None:
+    topic = planned_topic("bfs", "Graph Traversal")
+    index = build_topic_index([topic])
+    question = _ExtractedQuestion("sorting", [{"display_label": "Quicksort"}])
+
+    assert _matches_topic(question, topic.topic_key, index) is False

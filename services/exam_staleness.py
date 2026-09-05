@@ -51,10 +51,13 @@ REASON_MASTERY_CHANGED = "mastery_changed"
 REASON_SELECTION_CHANGED = "selection_changed"
 REASON_RANKING_POLICY_UPDATED = "ranking_policy_updated"
 REASON_TOPIC_KEYS_UPDATED = "topic_keys_updated"
+REASON_ANALYSIS_SUPERSEDED = "analysis_superseded"
 
 # The exam date moving changes the countdown, not the priorities. Reporting it
 # as a reason to spend another credit would be a nag, so it makes a plan stale
-# without requiring a rescan.
+# without requiring a rescan. A superseded analysis is kept out for the
+# opposite reason: the student has already paid for the newer scan, so the
+# remedy is the free re-rank against it rather than a third one.
 RESCAN_REASONS = frozenset(
     {
         REASON_SYLLABUS_CHANGED,
@@ -293,6 +296,8 @@ def compare_fingerprints(
         reasons.add(REASON_RANKING_POLICY_UPDATED)
     if moved("topic_key_version", current.topic_key_version):
         reasons.add(REASON_TOPIC_KEYS_UPDATED)
+    if moved("analysis_output_id", current.analysis_output_id):
+        reasons.add(REASON_ANALYSIS_SUPERSEDED)
 
     return tuple(sorted(reasons))
 

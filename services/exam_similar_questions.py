@@ -58,6 +58,7 @@ from schemas.exam_mode import (
     ExamSimilarQuestionsSettings,
     GeneratedSimilarQuestionResponse,
     SimilarQuestionDifficultyPolicy,
+    SourceQuestionRef,
 )
 from schemas.prompt_context import PromptContext
 from schemas.quiz import QuizGenerationResponse, QuizQuestionType, QuizView
@@ -372,7 +373,7 @@ class ExamSimilarQuestionsService:
         course_id: int,
         topic: PlannedTopic,
         *,
-        requested_ids: list[int] | None = None,
+        requested: list[SourceQuestionRef] | None = None,
     ) -> list[PastExamQuestion]:
         """The originals to work from, or a refusal that says what to do.
 
@@ -380,27 +381,30 @@ class ExamSimilarQuestionsService:
         charged, so a topic this course has never examined costs nothing to ask
         about.
 
-        An explicitly requested identifier must survive every filter the default
+        An explicitly requested question must survive every filter the default
         path applies: it has to belong to this course, to a paper the plan's
         source analysis selected, and to this topic. One that does not is
         answered as a missing resource rather than as a different error, because
         distinguishing "not yours" from "does not exist" would tell a caller
-        which identifiers exist in other courses.
+        which papers exist in other courses. The reference is resolved against
+        the paper's own unique key rather than the row's primary key, so the
+        identifier the client can read is the identifier the server reads.
         """
         questions = topic_past_questions(db, course_id, topic)
         if not questions:
             raise NoPastQuestionsError(NO_PAST_QUESTIONS_MESSAGE)
 
-        if requested_ids is None:
+        if requested is None:
             return questions[:MAX_SIMILAR_QUESTIONS]
 
-        available = {question.id: question for question in questions}
-        missing = [
-            identifier for identifier in requested_ids if identifier not in available
-        ]
-        if missing:
+        available = {
+            (question.document_id, question.position): question
+            for question in questions
+        }
+        wanted = [(ref.document_id, ref.position) for ref in requested]
+        if any(reference not in available for reference in wanted):
             raise NotFoundException(detail="Past exam question not found")
-        return [available[identifier] for identifier in requested_ids]
+        return [available[reference] for reference in wanted]
 
     @classmethod
     def generate(

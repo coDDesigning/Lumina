@@ -1284,8 +1284,19 @@ export interface ExamTopicQuizResult extends ExamArtifactResult {
 
 export type SimilarQuestionDifficultyPolicy = 'match_source' | 'easy' | 'medium' | 'hard';
 
+/**
+ * One past question, named by the paper it was printed in and its place in it.
+ *
+ * The row's own primary key never reaches a client, so this pair is the only
+ * handle a request has -- and it is the one the questions listing hands out.
+ */
+export interface SourceQuestionRef {
+  document_id: string;
+  position: number;
+}
+
 export interface SimilarQuestionRequest extends ExamTopicArtifactRequest {
-  source_question_ids?: number[] | null;
+  source_questions?: SourceQuestionRef[] | null;
   question_count?: number;
   difficulty_policy?: SimilarQuestionDifficultyPolicy;
   requested_question_types?: QuizQuestionType[] | null;

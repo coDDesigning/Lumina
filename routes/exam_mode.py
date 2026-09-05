@@ -1102,7 +1102,7 @@ def generate_similar_questions(
             db, course.id, plan_output_id=request.plan_output_id
         )
         originals = ExamSimilarQuestionsService.source_questions(
-            db, course.id, topic, requested_ids=request.source_question_ids
+            db, course.id, topic, requested=request.source_questions
         )
     except HTTPException:
         raise

@@ -56,7 +56,11 @@ from services.exam_artifacts import (
 )
 from services.exam_question_extraction import PastExamExtractionService
 from services.exam_source_analysis import ExamSourceAnalysisService
-from services.exam_topics import TOPIC_KEY_VERSION, match_topic_key
+from services.exam_topics import (
+    TOPIC_KEY_VERSION,
+    build_topic_index,
+    match_topic_key,
+)
 from services.generated_output import GeneratedOutputService
 from services.prompt_loader import PromptLoader
 from services.quiz import (
@@ -165,6 +169,8 @@ def topic_past_questions(
     provider. The extractor keyed each question by whatever the paper made it
     call the topic, which is rarely the wording the plan chose, so the plan's
     key is matched through ``match_topic_key`` rather than compared directly.
+    The index is built rather than written out, because an alias-merged topic
+    displays a label whose own key is not the key it was merged under.
     """
     papers = ExamSourceAnalysisService.past_exam_document_ids(
         db, course_id, topic.retrieval_scope
@@ -173,7 +179,7 @@ def topic_past_questions(
         return []
 
     questions, _ = PastExamExtractionService.load_questions(db, course_id, papers)
-    index = {topic.topic_key: topic.topic_key}
+    index = build_topic_index([topic])
     return [
         question
         for question in questions

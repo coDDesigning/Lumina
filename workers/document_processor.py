@@ -62,6 +62,7 @@ from services.vector_store import VectorStore, VectorStoreError
 from storage.base import Storage
 from storage.dependencies import get_storage
 from services.document_lock import release_expired_generation_locks
+from workers.ai_usage_cleanup import run_cleanup as run_ai_usage_cleanup
 from workers.course_purge import run_document_purge, run_purge
 from workers.embedding_backfill import run_backfill
 
@@ -220,6 +221,12 @@ def _extraction_process(
     job: ClaimedJob | ClaimedProfileJob,
     prompt_context: PromptContext | None = None,
 ) -> None:
+    # A "spawn" child re-imports this module as __mp_main__, so the __main__
+    # guard never runs and configure_logging was never applied here: without
+    # this call the pipeline's 19 logging sites fall back to logging.lastResort,
+    # emitting raw multi-line tracebacks and un-redacted exception text with no
+    # request_id, and dropping every INFO record (P2-025).
+    configure_logging(service="worker", environment=settings.app_env)
     if job.correlation_id is not None:
         bind_request_id(job.correlation_id)
     # The parent owns graceful shutdown and the hard timeout for this child.
@@ -767,8 +774,12 @@ class _MaintenanceSchedule:
         self.next_recovery = 0.0
         self.purge_interval = settings.course_purge_interval_seconds
         self.backfill_interval = settings.embedding_backfill_interval_seconds
+        self.ai_usage_cleanup_interval = settings.ai_usage_cleanup_interval_seconds
         self.next_purge = 0.0 if self.purge_interval > 0 else float("inf")
         self.next_backfill = 0.0 if self.backfill_interval > 0 else float("inf")
+        self.next_ai_usage_cleanup = (
+            0.0 if self.ai_usage_cleanup_interval > 0 else float("inf")
+        )
 
 
 class _CompositeStopEvent:
@@ -890,6 +901,24 @@ def _maintenance_cycle(
         except Exception:
             logger.exception("Periodic embedding backfill reconciliation failed")
         schedule.next_backfill = monotonic_now + schedule.backfill_interval
+
+    if stop.is_set():
+        return
+
+    if (
+        schedule.ai_usage_cleanup_interval > 0
+        and monotonic_now >= schedule.next_ai_usage_cleanup
+    ):
+        try:
+            # Enforces AI_USAGE_RETENTION_DAYS on every deployment that runs a
+            # worker, so per-user AI-usage telemetry does not accumulate without
+            # bound (P2-024). The job is idempotent and bounded per batch.
+            run_ai_usage_cleanup(session_factory=session_factory)
+        except Exception:
+            logger.exception("Periodic AI usage retention cleanup failed")
+        schedule.next_ai_usage_cleanup = (
+            monotonic_now + schedule.ai_usage_cleanup_interval
+        )
 
 
 def _claim_once(

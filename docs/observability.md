@@ -112,8 +112,8 @@ Correlation IDs trace execution end-to-end from the initial HTTP request through
 1. **API Ingress:** When an API request arrives, the `observe_request` middleware binds `_REQUEST_ID` (preserving a valid `X-Request-ID` header or generating a UUID4 hex string) and returns `X-Request-ID` in the response headers.
 2. **Job Enqueue:** When an extraction job is enqueued (`services.processing_jobs.enqueue_document_job`), the active `request_id` is durably stored in `processing_jobs.correlation_id`.
 3. **Worker Claim:** When a worker claims the job (`claim_next_job`), `ClaimedJob.correlation_id` is bound to the worker's logging context (`bind_request_id`).
-4. **Subprocess Isolation:** The extraction subprocess inherits `correlation_id` explicitly across the `multiprocessing` boundary, ensuring OCR, image understanding, and chunking logs preserve the triggering request ID.
-5. **Maintenance Logging:** Maintenance scripts (`workers.course_purge`, `workers.embedding_backfill`, `workers.self_hosted_backup`) format logs using `configure_logging(service="maintenance", ...)`.
+4. **Subprocess Isolation:** The `spawn` extraction subprocess re-applies `configure_logging(service="worker", ...)` as its first action and then binds the `correlation_id` passed across the `multiprocessing` boundary, so OCR, image-understanding, and chunking logs are the same one-JSON-object-per-line records — traceback-free, redacted, carrying `request_id` — as the parent. Without that call the child would fall back to `logging.lastResort` and emit raw tracebacks with no correlation.
+5. **Maintenance Logging:** In-process reconciliation (`workers.document_processor._maintenance_cycle`: course purge, embedding backfill, AI-usage retention cleanup) logs through the worker's own `configure_logging`. Standalone maintenance scripts (`workers.course_purge`, `workers.embedding_backfill`, `workers.ai_usage_cleanup`, `workers.self_hosted_backup`) format logs using `configure_logging(service="maintenance", ...)`.
 
 ### Querying an End-to-End Trace
 

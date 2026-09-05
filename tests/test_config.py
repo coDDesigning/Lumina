@@ -48,6 +48,7 @@ from backend.app.config import (
     MODE_SELF_HOSTED,
     VECTOR_BACKEND_CHROMA,
     VECTOR_BACKEND_PGVECTOR,
+    DEFAULT_AI_USAGE_CLEANUP_INTERVAL_SECONDS,
     DEFAULT_COURSE_PURGE_INTERVAL_SECONDS,
     DEFAULT_EMBEDDING_BACKFILL_INTERVAL_SECONDS,
     DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE,
@@ -1847,6 +1848,10 @@ def test_periodic_reconciliation_settings_default(
         settings.embedding_backfill_prune_orphans
         == DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS
     )
+    assert (
+        settings.ai_usage_cleanup_interval_seconds
+        == DEFAULT_AI_USAGE_CLEANUP_INTERVAL_SECONDS
+    )
 
 
 def test_periodic_reconciliation_settings_are_configurable(
@@ -1857,6 +1862,7 @@ def test_periodic_reconciliation_settings_are_configurable(
     monkeypatch.setenv("EMBEDDING_BACKFILL_INTERVAL_SECONDS", "7200")
     monkeypatch.setenv("EMBEDDING_BACKFILL_BATCH_SIZE", "128")
     monkeypatch.setenv("EMBEDDING_BACKFILL_PRUNE_ORPHANS", "true")
+    monkeypatch.setenv("AI_USAGE_CLEANUP_INTERVAL_SECONDS", "0")
 
     settings = load_settings()
 
@@ -1864,6 +1870,7 @@ def test_periodic_reconciliation_settings_are_configurable(
     assert settings.embedding_backfill_interval_seconds == 7200.0
     assert settings.embedding_backfill_batch_size == 128
     assert settings.embedding_backfill_prune_orphans is True
+    assert settings.ai_usage_cleanup_interval_seconds == 0.0
 
 
 @pytest.mark.parametrize(

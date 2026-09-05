@@ -1,5 +1,7 @@
 """Mock exams and review sheets: priced on their own, drawn from the whole plan."""
 
+import logging
+
 import pytest
 from sqlalchemy import select
 
@@ -778,6 +780,28 @@ def test_a_paper_that_is_not_the_one_requested_is_refused_whole(
         == []
     )
     assert balance_of(authz_api.session_factory, authz_api.user_a_id) == before
+
+
+def test_an_off_plan_topic_label_is_refused_without_logging_the_label(
+    authz_api, planned_course, monkeypatch, caplog
+) -> None:
+    """P2-050: the rejected label is model output derived from the student's
+    uploaded material. The refusal is logged as a stable shape, never the text.
+    """
+    canary = "Zzcanary Pharmacology Of Hiv"
+    payload = mock_payload(
+        questions=[question(1), question(2, topic=canary), question(3)]
+    )
+
+    with caplog.at_level(logging.WARNING):
+        response, _ = ask(authz_api, "mock-exam", monkeypatch, payload=payload)
+
+    assert response.status_code == 500, response.text
+    assert response.headers["X-Error-Code"] == AiErrorCode.INVALID_GENERATED_STRUCTURE
+    emitted = " ".join(record.getMessage() for record in caplog.records).lower()
+    assert "mock exam refused" in emitted
+    assert "zzcanary" not in emitted
+    assert "pharmacology" not in emitted
 
 
 def test_a_type_count_that_misses_the_quota_is_refused(

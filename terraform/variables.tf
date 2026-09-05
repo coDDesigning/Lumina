@@ -319,6 +319,18 @@ variable "embedding_backfill_interval_seconds" {
   default     = 3600
 }
 
+variable "ai_usage_retention_days" {
+  description = "Masked ai_usage_logs rows older than this are deleted by the worker's retention scan."
+  type        = number
+  default     = 90
+}
+
+variable "ai_usage_cleanup_interval_seconds" {
+  description = "Interval in seconds between background AI-usage retention cleanup scans. 0 disables the scan."
+  type        = number
+  default     = 86400
+}
+
 variable "alarm_email" {
   description = "Optional email subscribed to production alarms. Confirmation is required."
   type        = string

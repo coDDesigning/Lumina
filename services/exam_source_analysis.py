@@ -507,7 +507,7 @@ class ExamSourceAnalysisService:
 
         with (
             CreditService.refund_on_error(db, receipt),
-            acquire_generation_locks(material.document_ids),
+            acquire_generation_locks(db, material.document_ids),
         ):
             prompt_context = resolve_prompt_context(db, course=course, user_id=user_id)
             prompt = cls.build_prompt(

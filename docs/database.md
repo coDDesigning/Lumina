@@ -132,7 +132,7 @@ immutable `pgvector/pgvector` image digest; the pgvector extension is required
 because the schema declares a `vector` column and an HNSW index. The live job
 verifies the complete Alembic upgrade/downgrade/re-upgrade cycle, schema drift,
 role seeds, readiness, UUID and timezone round trips, unloaded database cascades
-across all 43 tables, pgvector provisioning and cosine ranking, and
+across all 44 tables, pgvector provisioning and cosine ranking, and
 `SKIP LOCKED` worker claims. Tests marked `database_contract` run unchanged
 against copies of an Alembic-migrated SQLite database and the disposable
 PostgreSQL `lumina_ci` database. The PostgreSQL fixture refuses any other
@@ -503,6 +503,18 @@ but it no longer spends the course's document count or byte allowance: a row the
 owner cannot see does not consume their quota. No job transition may take a
 document out of `deleting` either, so an expired lease or a late failure cannot
 resurrect a document whose deletion is under way.
+
+A document that a generation is actively reading is not deletable at all, and
+that hold is durable: `services/document_lock.py` writes one committed
+`document_generation_locks` row per generation and per document, and
+`DocumentService.delete_document` reads them back inside the transaction that
+would tombstone the document. The row is what makes the rule work across
+processes, since generation runs in the worker and deletion in the API. Holds
+are shared, so several generations may read one document at once, and each
+carries a lease of `GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS` plus five minutes:
+a worker killed mid-generation cannot release its own row, and the lease is what
+stops it from blocking that document permanently. Expired rows are dropped on
+the next acquisition and by the worker's periodic maintenance pass.
 
 Profile documents are erased the same way. `ProfileDocumentService.delete_document`
 commits `profile_documents.status = 'deleting'`, then removes the object, then the

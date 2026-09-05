@@ -1160,6 +1160,40 @@ class ProcessingJob(Base):
     )
 
 
+class DocumentGenerationLock(Base):
+    """One live hold on a document by a generation that is reading it.
+
+    A document must not be erased while a generation is still reading it, but
+    the generation runs in the worker process and the delete that would erase it
+    runs in the API process. Process memory is therefore invisible to the only
+    checker there is, so the hold lives here instead.
+
+    Holds are shared: several generations may read the same document at once, so
+    each hold is its own row and the document is locked while any unexpired row
+    names it. The lease is what stops a worker killed mid-generation from
+    blocking deletion of that document forever. No foreign key, because a hold
+    is advisory and may name a profile document just as well as a course one.
+    """
+
+    __tablename__ = "document_generation_locks"
+    __table_args__ = (
+        CheckConstraint("expires_at > acquired_at", name="lease_positive"),
+        Index(
+            "ix_document_generation_locks_document_expires",
+            "document_id",
+            "expires_at",
+        ),
+    )
+
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    holder_token: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    holder: Mapped[str] = mapped_column(String(255))
+    acquired_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
 class GeneratedOutput(Base):
     """An AI-generated artifact for a course, such as a summary.
 

@@ -146,7 +146,7 @@ Confirm the asynchronous document processing worker is running and capable of le
 * **Self-Hosted (Local / Compose)**:
   ```bash
   # Run worker readiness check
-  python -m workers.document_processor --check
+  python -m workers.worker --check
   ```
   *Expected Output*: Exit code `0` (Worker readiness check succeeded).
   If using Docker Compose:
@@ -286,11 +286,11 @@ If a live document upload remains in `processing` or fails:
 1. **Run Instant Lease Recovery**:
    ```bash
    # Self-Hosted
-   docker compose run --rm lumina-worker python -m workers.document_processor --once
+   docker compose run --rm lumina-worker python -m workers.worker --once
 
    # Hosted ECS Task
    aws ecs run-task --cluster lumina-prod-cluster --task-definition lumina-worker-task \
-     --overrides '{"containerOverrides": [{"name": "worker", "command": ["python", "-m", "workers.document_processor", "--once"]}]}'
+     --overrides '{"containerOverrides": [{"name": "worker", "command": ["python", "-m", "workers.worker", "--once"]}]}'
    ```
 2. **Operational Runbook**: Follow diagnostic steps in [Stuck Document Processing Runbook](stuck_document.md).
 

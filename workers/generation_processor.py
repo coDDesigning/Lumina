@@ -33,6 +33,7 @@ from backend.app.models import (
     JOB_TYPE_GENERATE_FLASHCARD,
     JOB_TYPE_GENERATE_QUIZ,
     JOB_TYPE_GENERATE_STUDY_GUIDE,
+    User,
 )
 from backend.app.observability import (
     bind_request_id,
@@ -181,15 +182,19 @@ def _heartbeat_loop(
 
 def _run_study_guide(session: Session, job: ClaimedGenerationJob) -> ResultPersister:
     request = StudyGuideRequest.model_validate_json(job.request_payload)
+    # The job's owner is threaded through so a personal BYOK key makes the same
+    # vendors available here as on the synchronous route (P2-003).
+    job_user = session.get(User, job.user_id)
     effective_model = resolve_effective_model(
         request.model,
         None,
         required_capability="study_guide",
+        user=job_user,
     )
-    try:
-        provider = get_text_generation_provider(effective_model=effective_model)
-    except TypeError:
-        provider = get_text_generation_provider()
+    provider = get_text_generation_provider(
+        effective_model=effective_model,
+        user=job_user,
+    )
 
     generation = StudyGuideService.generate(
         session,
@@ -229,14 +234,17 @@ def _run_study_guide(session: Session, job: ClaimedGenerationJob) -> ResultPersi
 
 def _run_quiz(session: Session, job: ClaimedGenerationJob) -> ResultPersister:
     request = QuizRequest.model_validate_json(job.request_payload)
+    job_user = session.get(User, job.user_id)
     effective_model = resolve_effective_model(
         request.model,
         None,
         required_capability="quiz",
+        user=job_user,
     )
     provider = get_text_generation_provider(
         effective_model=effective_model,
         require_json_mode=True,
+        user=job_user,
     )
 
     generation = QuizService.generate(
@@ -280,14 +288,17 @@ def _run_quiz(session: Session, job: ClaimedGenerationJob) -> ResultPersister:
 
 def _run_flashcard(session: Session, job: ClaimedGenerationJob) -> ResultPersister:
     request = FlashcardRequest.model_validate_json(job.request_payload)
+    job_user = session.get(User, job.user_id)
     effective_model = resolve_effective_model(
         request.model,
         None,
         required_capability="flashcard",
+        user=job_user,
     )
     provider = get_text_generation_provider(
         effective_model=effective_model,
         require_json_mode=True,
+        user=job_user,
     )
 
     generation = FlashcardService.generate(

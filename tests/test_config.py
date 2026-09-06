@@ -2208,4 +2208,3 @@ async def test_unprotected_admin_bootstrap_startup_warning_suppressed_when_prote
         getattr(r, "event", None) == "unprotected_admin_bootstrap_warning"
         for r in caplog.records
     )
-

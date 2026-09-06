@@ -307,9 +307,7 @@ def request_password_reset(
     """
     user = UserService.get_user_by_email(db, payload.email)
     if user is not None and not user.is_banned:
-        PasswordResetService.issue_and_send(
-            db, user, background_tasks=background_tasks
-        )
+        PasswordResetService.issue_and_send(db, user, background_tasks=background_tasks)
 
     return {"message": RESET_SENT_MESSAGE}
 

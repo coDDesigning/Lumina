@@ -45,12 +45,12 @@ x-lumina-service: &lumina-service
     - no-new-privileges:true
   extra_hosts:
     - host.docker.internal:host-gateway
-  pids_limit: 256
   deploy:
     resources:
       limits:
         cpus: "${LUMINA_CPU_LIMIT:-4}"
         memory: ${LUMINA_MEMORY_LIMIT:-4G}
+        pids: 256
   init: true
   restart: unless-stopped
 

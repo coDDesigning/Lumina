@@ -61,6 +61,11 @@ _POSTGRESQL_CONSTRAINTS = (
         "ck_progress_total_questions_answered_nonnegative",
         "total_questions_answered >= 0",
     ),
+    (
+        "past_exam_questions",
+        "ck_past_exam_questions_page_requires_document",
+        "document_id IS NOT NULL OR (page_start IS NULL AND page_end IS NULL)",
+    ),
 )
 
 
@@ -86,6 +91,11 @@ def _preflight() -> None:
         "OR correct_answers_count < 0 OR incorrect_answers_count < 0 "
         "OR total_questions_answered < 0",
         "Negative progress counters require manual correction before hardening.",
+    )
+    _require_no_rows(
+        "SELECT COUNT(*) FROM past_exam_questions "
+        "WHERE document_id IS NULL AND (page_start IS NOT NULL OR page_end IS NOT NULL)",
+        "Past exam questions with pages but no document require manual correction before hardening.",
     )
 
 
@@ -115,6 +125,16 @@ def upgrade() -> None:
             _postgresql_add_constraint_not_valid(table, name, condition)
         for table, name, _condition in _POSTGRESQL_CONSTRAINTS:
             op.execute(f"ALTER TABLE {table} VALIDATE CONSTRAINT {name}")
+
+        with op.get_context().autocommit_block():
+            op.execute(
+                "CREATE INDEX IF NOT EXISTS ix_generated_outputs_user_course_created "
+                "ON generated_outputs (user_id, course_id, created_at, id)"
+            )
+            op.execute(
+                "CREATE INDEX IF NOT EXISTS ix_ai_usage_logs_success_created "
+                "ON ai_usage_logs (success, created_at)"
+            )
         return
 
     with op.batch_alter_table("quiz_questions", schema=None) as batch_op:
@@ -146,6 +166,26 @@ def upgrade() -> None:
             batch_op.f("ck_progress_total_questions_answered_nonnegative"),
             "total_questions_answered >= 0",
         )
+    with op.batch_alter_table("past_exam_questions", schema=None) as batch_op:
+        batch_op.create_check_constraint(
+            batch_op.f("ck_past_exam_questions_page_requires_document"),
+            "document_id IS NOT NULL OR (page_start IS NULL AND page_end IS NULL)",
+        )
+
+    op.create_index(
+        "ix_generated_outputs_user_course_created",
+        "generated_outputs",
+        ["user_id", "course_id", "created_at", "id"],
+        unique=False,
+        if_not_exists=True,
+    )
+    op.create_index(
+        "ix_ai_usage_logs_success_created",
+        "ai_usage_logs",
+        ["success", "created_at"],
+        unique=False,
+        if_not_exists=True,
+    )
 
 
 def downgrade() -> None:
@@ -154,6 +194,11 @@ def downgrade() -> None:
             op.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {name}")
         return
 
+    with op.batch_alter_table("past_exam_questions", schema=None) as batch_op:
+        batch_op.drop_constraint(
+            batch_op.f("ck_past_exam_questions_page_requires_document"),
+            type_="check",
+        )
     with op.batch_alter_table("progress", schema=None) as batch_op:
         batch_op.drop_constraint(
             batch_op.f("ck_progress_total_questions_answered_nonnegative"),

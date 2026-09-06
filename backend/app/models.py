@@ -1611,6 +1611,10 @@ class PastExamQuestion(Base):
             name="page_range_valid",
         ),
         CheckConstraint(
+            "document_id IS NOT NULL OR (page_start IS NULL AND page_end IS NULL)",
+            name="page_requires_document",
+        ),
+        CheckConstraint(
             "question_number IS NULL OR question_number >= 0",
             name="question_number_nonnegative",
         ),

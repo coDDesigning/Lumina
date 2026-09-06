@@ -12,7 +12,7 @@ from services.course import CourseDeletionError, CourseService
 from storage.base import Storage
 from storage.dependencies import get_storage
 from utils.authorization import AuthorizedCourse, DeletableCourse, OwnedCourse
-from utils.deps import get_current_user
+from utils.deps import get_current_user, get_verified_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/courses", tags=["Courses"])
@@ -24,11 +24,12 @@ router = APIRouter(prefix="/api/courses", tags=["Courses"])
     status_code=status.HTTP_201_CREATED,
     responses={
         401: {"description": "Authentication required"},
+        403: {"description": "Email verification required"},
     },
 )
 def create_course(
     course: CourseCreate,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_verified_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
     """Creates a course owned by the authenticated user.

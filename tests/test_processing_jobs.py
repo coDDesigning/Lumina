@@ -3,7 +3,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -282,6 +282,69 @@ def test_enqueue_and_claim_job_preserves_correlation_id(session_factory, tmp_pat
             assert claimed.correlation_id == "ctx-trace-12345"
     finally:
         reset_request_id(token)
+
+
+@pytest.mark.database_contract
+def test_concurrent_claims_enforce_the_per_owner_processing_limit(
+    session_factory, tmp_path
+) -> None:
+    storage = LocalStorage(tmp_path / "fairness-uploads", namespace="fairness")
+    available_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        owner = User(
+            name="Fair owner",
+            email="fair-owner@example.com",
+            password_hash="hash",
+            role=role,
+        )
+        course = Course(owner=owner, title="Fair course")
+        session.add(course)
+        session.flush()
+
+        for index in range(2):
+            content = f"document-{index}".encode()
+            document_id = uuid4()
+            storage_key = storage.generate_key(course.id, document_id, "txt")
+            storage.save(storage_key, BytesIO(content))
+            document = UploadedDocument(
+                id=document_id,
+                original_file_name=f"document-{index}.txt",
+                file_type="txt",
+                mime_type="text/plain",
+                file_size=len(content),
+                file_hash=hashlib.sha256(content).hexdigest(),
+                uploader=course.owner,
+                course=course,
+                storage_provider=storage.provider,
+                storage_key=storage_key,
+                status="uploaded",
+            )
+            session.add(document)
+            session.flush()
+            enqueue_document_job(
+                session,
+                document,
+                now=available_at + timedelta(seconds=index),
+            )
+        session.commit()
+
+    def claim(worker_id: str):
+        with session_factory() as session:
+            return claim_next_job(
+                session,
+                worker_id,
+                storage.provider,
+                60,
+                max_active_per_user=1,
+                now=available_at + timedelta(seconds=10),
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        claims = list(executor.map(claim, ["fair-a", "fair-b"]))
+
+    assert len([claimed for claimed in claims if claimed is not None]) == 1
+    assert claim("fair-c") is None
 
 
 def _text_pdf(*page_texts: str) -> bytes:

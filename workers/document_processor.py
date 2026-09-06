@@ -25,6 +25,7 @@ from backend.app.observability import (
     reset_request_id,
 )
 from backend.app.readiness import ReadinessError, check_readiness
+from schemas.ai_usage import GenerationType
 from services.document_embedding import (
     EMBEDDING_STAGE,
     classify_embedding_error,
@@ -37,6 +38,8 @@ from services.document_extraction import (
     extract_document,
 )
 from services.exam_question_extraction import extract_past_exam_questions
+from services.ai_usage_logger import AiUsageLogger
+from services.image_understanding import ImageUnderstandingUsage
 from services.processing_jobs import (
     ClaimedJob,
     ClaimedProfileJob,
@@ -215,6 +218,42 @@ def _record_failure(
     return resulting_status
 
 
+def _record_image_usage(
+    session_factory: SessionFactory,
+    job: ClaimedJob | ClaimedProfileJob,
+    usage: ImageUnderstandingUsage,
+) -> None:
+    user_id = job.user_id
+    if user_id is None:
+        logger.warning(
+            "Skipping image understanding usage without an owner",
+            extra={"event": "image_understanding_usage_owner_missing"},
+        )
+        return
+    try:
+        with session_factory() as session:
+            AiUsageLogger.log_usage(
+                session,
+                user_id=user_id,
+                course_id=job.course_id if isinstance(job, ClaimedJob) else None,
+                generation_type=GenerationType.IMAGE_UNDERSTANDING,
+                provider=usage.provider,
+                model=usage.model,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                latency_ms=usage.latency_ms,
+                success=usage.success,
+                error_category=usage.error_category,
+            )
+            session.commit()
+    except Exception:
+        logger.warning(
+            "Failed to persist image understanding usage",
+            extra={"event": "image_understanding_usage_persist_failed"},
+        )
+
+
 def _extraction_process(
     connection,
     storage: Storage,
@@ -244,6 +283,9 @@ def _extraction_process(
             if connection.recv() != ("continue",):
                 raise RuntimeError("Raw extraction persistence was rejected")
 
+        def report_image_usage(usage: ImageUnderstandingUsage) -> None:
+            connection.send(("image_usage", usage))
+
         result = extract_document(
             storage,
             storage_provider=job.storage_provider,
@@ -254,6 +296,7 @@ def _extraction_process(
             stage_callback=report_stage,
             extraction_callback=report_extraction,
             prompt_context=prompt_context,
+            image_usage_callback=report_image_usage,
         )
         connection.send(("succeeded", result.pages, result.chunks))
     except DocumentProcessingError as exc:
@@ -273,6 +316,7 @@ def _extract_with_timeout(
     timeout_seconds: int,
     stage_callback: Callable[[str], None] | None = None,
     extraction_callback: Callable[[list[PageData], float], None] | None = None,
+    image_usage_callback: Callable[[ImageUnderstandingUsage], None] | None = None,
     *,
     prompt_context: PromptContext | None = None,
 ):
@@ -337,6 +381,15 @@ def _extract_with_timeout(
                             result = None
                             break
                         parent_connection.send(("continue",))
+                        result = None
+                        continue
+                    if result[0] == "image_usage":
+                        if len(result) != 2 or not isinstance(
+                            result[1], ImageUnderstandingUsage
+                        ):
+                            break
+                        if image_usage_callback is not None:
+                            image_usage_callback(result[1])
                         result = None
                         continue
                     break
@@ -484,6 +537,7 @@ def process_next_job(
             worker_id,
             storage.provider,
             lease_seconds,
+            max_active_per_user=settings.processing_job_max_active_per_user,
         )
         if job is None:
             job = claim_next_profile_job(
@@ -491,6 +545,7 @@ def process_next_job(
                 worker_id,
                 storage.provider,
                 lease_seconds,
+                max_active_per_user=settings.processing_job_max_active_per_user,
             )
         if job is not None:
             if isinstance(job, ClaimedJob):
@@ -594,6 +649,9 @@ def process_next_job(
                 settings.processing_job_attempt_timeout_seconds,
                 stage_callback=persist_stage,
                 extraction_callback=persist_extraction,
+                image_usage_callback=lambda usage: _record_image_usage(
+                    session_factory, job, usage
+                ),
                 prompt_context=prompt_context,
             )
             persist_stage(EMBEDDING_STAGE)

@@ -8,6 +8,9 @@ and searched downstream alongside extracted text.
 
 import base64
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from time import perf_counter
 
 import httpx
 from google import genai
@@ -19,6 +22,7 @@ from backend.app.config import (
     IMAGE_PROVIDER_NONE,
     settings,
 )
+from schemas.ai_usage import ErrorCategory
 from schemas.prompt_context import PromptContext
 from schemas.prompt_template import PromptTemplateError
 from services.ollama import resolve_ollama_base_url
@@ -38,6 +42,21 @@ logger = logging.getLogger(__name__)
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _shared_http_client: httpx.Client | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ImageUnderstandingUsage:
+    provider: str
+    model: str
+    success: bool
+    error_category: ErrorCategory | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+    latency_ms: int
+
+
+ImageUsageCallback = Callable[[ImageUnderstandingUsage], None]
 
 
 def _get_shared_http_client() -> httpx.Client:
@@ -68,6 +87,26 @@ def _clean_description_text(raw_text: str | None) -> str | None:
     if len(cleaned) > _MAX_VISUAL_DESCRIPTION_CHARACTERS:
         cleaned = cleaned[:_MAX_VISUAL_DESCRIPTION_CHARACTERS].rstrip()
     return cleaned or None
+
+
+def _token_count(value: object) -> int | None:
+    return value if isinstance(value, int) and value >= 0 else None
+
+
+def _latency_ms(started_at: float) -> int:
+    return max(0, round((perf_counter() - started_at) * 1000))
+
+
+def _error_category(exc: Exception) -> ErrorCategory:
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+        return ErrorCategory.TIMEOUT
+    if isinstance(exc, genai_errors.APIError):
+        code = getattr(exc, "code", None)
+        if code == 429:
+            return ErrorCategory.RATE_LIMIT
+        if code in {401, 403}:
+            return ErrorCategory.AUTHENTICATION_ERROR
+    return ErrorCategory.PROVIDER_ERROR
 
 
 _IMAGE_DESCRIPTION_TEMPLATE = "image_description"
@@ -105,6 +144,7 @@ class GeminiImageUnderstandingProvider:
         max_bytes: int | None = None,
         client: object | None = None,
         prompt_context: PromptContext | None = None,
+        usage_callback: ImageUsageCallback | None = None,
     ) -> None:
         key = api_key or settings.gemini_api_key
         if client is None and not key:
@@ -123,11 +163,45 @@ class GeminiImageUnderstandingProvider:
             else settings.image_understanding_max_bytes
         )
         self._prompt_context = prompt_context or PromptContext()
+        self._usage_callback = usage_callback
         if client is not None:
             self._client = client
         else:
             http_opts = types.HttpOptions(timeout=int(self._timeout_seconds * 1000))
             self._client = genai.Client(api_key=key, http_options=http_opts)
+
+    def _report_usage(
+        self,
+        *,
+        started_at: float,
+        success: bool,
+        response: object | None = None,
+        error_category: ErrorCategory | None = None,
+    ) -> None:
+        if self._usage_callback is None:
+            return
+        usage = getattr(response, "usage_metadata", None)
+        prompt_tokens = _token_count(getattr(usage, "prompt_token_count", None))
+        completion_tokens = _token_count(getattr(usage, "candidates_token_count", None))
+        total_tokens = _token_count(getattr(usage, "total_token_count", None))
+        try:
+            self._usage_callback(
+                ImageUnderstandingUsage(
+                    provider=self.PROVIDER_NAME,
+                    model=self._model,
+                    success=success,
+                    error_category=error_category,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    latency_ms=_latency_ms(started_at),
+                )
+            )
+        except Exception:
+            logger.warning(
+                "Failed to report image understanding usage",
+                extra={"event": "image_understanding_usage_report_failed"},
+            )
 
     def _handle_client_error(self, exc: Exception) -> None:
         if isinstance(exc, (TemporaryVisualServiceError, VisualAnalysisError)):
@@ -171,6 +245,7 @@ class GeminiImageUnderstandingProvider:
     ) -> VisualDescription | None:
         _validate_image_bytes(visual_png, self._max_bytes)
         prompt = _render_image_description_prompt(self._prompt_context, suggested_type)
+        started_at = perf_counter()
         try:
             part = types.Part.from_bytes(data=visual_png, mime_type="image/png")
             response = self._client.models.generate_content(
@@ -178,8 +253,15 @@ class GeminiImageUnderstandingProvider:
                 contents=[prompt, part],
             )
         except Exception as exc:
+            self._report_usage(
+                started_at=started_at,
+                success=False,
+                error_category=_error_category(exc),
+            )
             self._handle_client_error(exc)
             return None
+
+        self._report_usage(started_at=started_at, success=True, response=response)
 
         if not response or not getattr(response, "text", None):
             return None
@@ -210,6 +292,7 @@ class OllamaImageUnderstandingProvider:
         max_bytes: int | None = None,
         client: httpx.Client | None = None,
         prompt_context: PromptContext | None = None,
+        usage_callback: ImageUsageCallback | None = None,
     ) -> None:
         self._base_url = resolve_ollama_base_url(base_url or settings.ollama_base_url)
         self._model = model or self.MODEL
@@ -225,6 +308,47 @@ class OllamaImageUnderstandingProvider:
         )
         self._prompt_context = prompt_context or PromptContext()
         self._client = client or _get_shared_http_client()
+        self._usage_callback = usage_callback
+
+    def _report_usage(
+        self,
+        *,
+        started_at: float,
+        success: bool,
+        envelope: dict | None = None,
+        error_category: ErrorCategory | None = None,
+    ) -> None:
+        if self._usage_callback is None:
+            return
+        prompt_tokens = _token_count(
+            envelope.get("prompt_eval_count") if envelope else None
+        )
+        completion_tokens = _token_count(
+            envelope.get("eval_count") if envelope else None
+        )
+        total_tokens = (
+            prompt_tokens + completion_tokens
+            if prompt_tokens is not None and completion_tokens is not None
+            else None
+        )
+        try:
+            self._usage_callback(
+                ImageUnderstandingUsage(
+                    provider=self.PROVIDER_NAME,
+                    model=self._model,
+                    success=success,
+                    error_category=error_category,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    latency_ms=_latency_ms(started_at),
+                )
+            )
+        except Exception:
+            logger.warning(
+                "Failed to report image understanding usage",
+                extra={"event": "image_understanding_usage_report_failed"},
+            )
 
     def describe_visual(
         self,
@@ -244,6 +368,7 @@ class OllamaImageUnderstandingProvider:
             "stream": False,
         }
 
+        started_at = perf_counter()
         try:
             response = self._client.post(
                 f"{self._base_url}{self.GENERATE_PATH}",
@@ -251,35 +376,75 @@ class OllamaImageUnderstandingProvider:
                 timeout=self._timeout_seconds,
             )
         except httpx.TimeoutException as exc:
+            self._report_usage(
+                started_at=started_at,
+                success=False,
+                error_category=ErrorCategory.TIMEOUT,
+            )
             raise TemporaryVisualServiceError(
                 "Ollama image understanding timed out."
             ) from exc
         except (httpx.TransportError, httpx.NetworkError, httpx.ConnectError) as exc:
+            self._report_usage(
+                started_at=started_at,
+                success=False,
+                error_category=ErrorCategory.PROVIDER_ERROR,
+            )
             raise TemporaryVisualServiceError(
                 "Ollama visual service could not be reached."
             ) from exc
 
         if response.status_code == 429:
+            self._report_usage(
+                started_at=started_at,
+                success=False,
+                error_category=ErrorCategory.RATE_LIMIT,
+            )
             raise TemporaryVisualServiceError("Ollama rate limit exceeded.")
         if response.status_code in {500, 502, 503, 504}:
+            self._report_usage(
+                started_at=started_at,
+                success=False,
+                error_category=ErrorCategory.PROVIDER_ERROR,
+            )
             raise TemporaryVisualServiceError(
                 f"Ollama visual service returned HTTP {response.status_code}."
             )
         if not response.is_success:
+            self._report_usage(
+                started_at=started_at,
+                success=False,
+                error_category=(
+                    ErrorCategory.AUTHENTICATION_ERROR
+                    if response.status_code in {401, 403}
+                    else ErrorCategory.PROVIDER_ERROR
+                ),
+            )
             raise VisualAnalysisError(f"Ollama returned HTTP {response.status_code}.")
 
         try:
             envelope = response.json()
         except ValueError as exc:
+            self._report_usage(
+                started_at=started_at,
+                success=False,
+                error_category=ErrorCategory.INVALID_STRUCTURE,
+            )
             raise VisualAnalysisError(
                 "Ollama returned an invalid JSON response."
             ) from exc
 
         if not isinstance(envelope, dict):
+            self._report_usage(
+                started_at=started_at,
+                success=False,
+                error_category=ErrorCategory.INVALID_STRUCTURE,
+            )
             raise VisualAnalysisError(
                 "Ollama returned an unexpected response structure."
             )
 
+        self._report_usage(started_at=started_at, success=True, envelope=envelope)
         raw_response = envelope.get("response")
         description = _clean_description_text(raw_response)
         if not description:
@@ -300,7 +465,9 @@ def configured_image_understanding_identity() -> tuple[str, str | None]:
 
 
 def get_image_understanding_provider(
-    *, prompt_context: PromptContext | None = None
+    *,
+    prompt_context: PromptContext | None = None,
+    usage_callback: ImageUsageCallback | None = None,
 ) -> ImageUnderstandingProvider:
     """Construct the configured ImageUnderstandingProvider instance."""
     if not settings.ai_vision_model:
@@ -308,11 +475,15 @@ def get_image_understanding_provider(
     provider_name, model_name = settings.ai_vision_model.split(":", 1)
     if provider_name == AI_PROVIDER_GEMINI:
         return GeminiImageUnderstandingProvider(
-            model=model_name, prompt_context=prompt_context
+            model=model_name,
+            prompt_context=prompt_context,
+            usage_callback=usage_callback,
         )
     if provider_name == AI_PROVIDER_OLLAMA:
         return OllamaImageUnderstandingProvider(
-            model=model_name, prompt_context=prompt_context
+            model=model_name,
+            prompt_context=prompt_context,
+            usage_callback=usage_callback,
         )
     raise ValueError(
         f"Image understanding provider '{provider_name}' is not implemented."

@@ -199,6 +199,12 @@ source questions costs 1 credit, and evaluating an explanation costs 1 credit.
 When no source material is available, the question endpoint returns an empty set
 without calling a provider and therefore charges nothing.
 
+Document ingestion is not credit charged. Where email verification is enabled,
+only verified accounts and administrators may create courses, upload course or
+profile documents, or retry processing. Vision calls made during ingestion are
+recorded in `ai_usage_logs`, and the document worker limits concurrent course
+and profile jobs per account.
+
 Exam Mode charges only where a provider is actually reached. Analysing a
 course's chosen sources discovers its topics in one provider call, so it costs
 1. Scanning again after changing the sources costs 0.5, because a student who

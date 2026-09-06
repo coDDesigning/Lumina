@@ -14,6 +14,7 @@ class GenerationType(str, Enum):
     COURSE_QA = "course_qa"
     QUIZ_GRADING = "quiz_grading"
     REVERSE_QUIZ = "reverse_quiz"
+    IMAGE_UNDERSTANDING = "image_understanding"
     EXAM_TOPIC_ANALYSIS = "exam_topic_analysis"
     PAST_EXAM_EXTRACTION = "past_exam_extraction"
     EXAM_TOPIC_GUIDE = "exam_topic_guide"

@@ -36,7 +36,7 @@ from services.profile_document import (
 )
 from storage.base import Storage
 from storage.dependencies import get_storage
-from utils.deps import get_current_user
+from utils.deps import get_current_user, get_verified_user
 from utils.exceptions import ConflictException, NotFoundException
 
 logger = logging.getLogger(__name__)
@@ -48,13 +48,15 @@ router = APIRouter(prefix="/api/profile-documents", tags=["Profile Documents"])
     response_model=BaseResponse[ProfileDocumentUploadResponse],
     status_code=status.HTTP_201_CREATED,
     responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Email verification required"},
         413: {"description": "Document too large"},
         415: {"description": "Unsupported file type"},
     },
 )
 def upload_profile_document(
     document: Annotated[UploadFile, File(...)],
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_verified_user)],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[Storage, Depends(get_storage)],
 ) -> BaseResponse[ProfileDocumentUploadResponse] | JSONResponse:
@@ -146,7 +148,15 @@ def get_profile_document_status(
 
 
 @router.post(
-    "/{document_id}/retry", response_model=BaseResponse[ProfileDocumentStatusResponse]
+    "/{document_id}/retry",
+    response_model=BaseResponse[ProfileDocumentStatusResponse],
+    dependencies=[Depends(get_verified_user)],
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Email verification required"},
+        404: {"description": "Profile document not found"},
+        409: {"description": "Only failed document jobs can be retried"},
+    },
 )
 def retry_profile_document(
     document_id: UUID,

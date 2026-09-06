@@ -65,7 +65,7 @@ calls `validate_password` internally to ensure consistent policy enforcement.
 
 ## Email verification
 
-### Why it gates credits
+### Why it gates paid work
 
 Registration is free and the hosted deployment pays for inference, so an
 introductory balance handed to an unverified address is an invitation to create
@@ -79,8 +79,8 @@ that fact is established and nowhere else.
 1. `POST /api/auth/register` creates the account. When verification is required
    the opening balance is `0.0` and no `INITIAL_GRANT` row is written. A zero
    balance is not a null balance: null means unmetered, zero means metered and
-   empty, and the existing `insufficient_credits` path (402) already covers it,
-   so no generation route needed changing.
+   empty, and the existing `insufficient_credits` path (402) covers text
+   generation.
 2. A token is minted, its SHA-256 digest stored in `email_verification_tokens`,
    and the plaintext sent by mail. Issuing a token consumes any outstanding one
    for that account, so at most one link per account is live.
@@ -100,6 +100,13 @@ session. `UserResponse.is_email_verified` and the
 `email_verification_required` / `is_email_verified` fields on
 `GET /api/users/me/credits` are what let a client tell "spent it all" apart from
 "never got any", which is the difference between no next action and one.
+
+When verification is required, an unverified non-administrator may read that
+account state but cannot create a course, upload a course or profile document,
+or retry document processing. Document ingestion is intentionally not credit
+charged after verification, but it can invoke the configured vision provider;
+requiring a proven address prevents disposable registrations from enqueueing
+that paid work. Administrators remain exempt from this capability gate.
 
 ### Granting exactly once
 

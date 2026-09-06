@@ -91,6 +91,7 @@ export type CreditSource =
   | 'ai_tutor'
   | 'course_qa'
   | 'prompt_generator'
+  | 'reverse_quiz'
   | 'exam_topic_analysis'
   | 'exam_topic_analysis_rescan'
   | 'exam_topic_unlock'

@@ -19,8 +19,9 @@ import routes.user as user_route
 import services.credits as credits_service
 import services.email_verification as verification_service
 import services.user as user_service
+import utils.deps as deps
 from backend.app.config import settings
-from backend.app.models import CreditTransaction, EmailVerificationToken
+from backend.app.models import Course, CreditTransaction, EmailVerificationToken
 from backend.app.models import Role as RoleModel
 from backend.app.models import User
 from schemas.credits import CreditReason
@@ -43,6 +44,7 @@ POLICY_MODULES = (
     user_service,
     credits_service,
     verification_service,
+    deps,
 )
 
 
@@ -196,6 +198,54 @@ def test_an_unverified_account_can_still_sign_in(api_context, verifying) -> None
     )
     assert me.status_code == 200
     assert me.json()["is_email_verified"] is False
+
+
+def test_unverified_account_cannot_enqueue_document_work(
+    api_context, verifying
+) -> None:
+    _register(api_context.client)
+    login = api_context.client.post(
+        "/api/auth/login",
+        data={
+            "username": REGISTRATION["email"],
+            "password": REGISTRATION["password"],
+        },
+    )
+    authorization = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    with api_context.session_factory() as session:
+        user = _load_user(session)
+        course = Course(owner=user, title="Existing course")
+        session.add(course)
+        session.commit()
+        course_id = course.id
+
+    create = api_context.client.post(
+        "/api/courses/", json={"title": "Blocked course"}, headers=authorization
+    )
+    upload = api_context.client.post(
+        f"/api/courses/{course_id}/documents",
+        files={"document": ("notes.txt", b"private notes", "text/plain")},
+        headers=authorization,
+    )
+    profile_upload = api_context.client.post(
+        "/api/profile-documents",
+        files={"document": ("profile.txt", b"profile notes", "text/plain")},
+        headers=authorization,
+    )
+
+    for response in (create, upload, profile_upload):
+        assert response.status_code == 403
+        assert response.headers["X-Error-Code"] == "email_verification_required"
+
+    verified = api_context.client.post(
+        "/api/auth/verify-email", json={"token": verifying.tokens[0]}
+    )
+    assert verified.status_code == 200
+    allowed = api_context.client.post(
+        "/api/courses/", json={"title": "Verified course"}, headers=authorization
+    )
+    assert allowed.status_code == 201, allowed.text
 
 
 def test_self_hosted_registration_grants_credits_without_verification(

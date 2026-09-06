@@ -56,7 +56,8 @@ export const CreditProvider = ({ children }: { children: ReactNode }) => {
       if (status == null || status.credits === null) {
         return true;
       }
-      return status.credits >= (status.generation_costs?.[source] ?? 1);
+      const cost = status.generation_costs?.[source];
+      return cost === undefined || status.credits >= cost;
     },
     [status],
   );

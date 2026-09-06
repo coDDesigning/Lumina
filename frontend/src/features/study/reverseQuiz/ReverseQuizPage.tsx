@@ -2,9 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import type { Workspace } from '@/data/workspaces';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import { suggestReverseQuizQuestions } from '@/api/reverseQuiz';
-import { describeGenerationError, isAbortError } from '@/api/errors';
+import { describeGenerationError, isAbortError, isInsufficientCredits } from '@/api/errors';
 import type { GenerationFailure } from '@/api/errors';
 import type { ReverseQuizQuestion } from '@/api/types';
+import CreditBalance from '@/components/credits/CreditBalance';
+import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
+import { useCredits } from '@/context/CreditContext';
 import { PageHeader } from '@/ui/PageHeader';
 import { Button } from '@/ui/Button';
 import { Spinner } from '@/ui/Spinner';
@@ -30,6 +33,8 @@ export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
   const [suggested, setSuggested] = useState<ReverseQuizQuestion[] | null>(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [suggestFailure, setSuggestFailure] = useState<GenerationFailure | null>(null);
+  const { isMetered, canAfford, refresh: refreshCredits } = useCredits();
+  const exhausted = isMetered && !canAfford('reverse_quiz');
 
   const abortRef = useRef<AbortController | null>(null);
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -41,6 +46,8 @@ export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
   };
 
   const suggestQuestions = async () => {
+    if (exhausted) return;
+
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -51,11 +58,15 @@ export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
       const response = await suggestReverseQuizQuestions(courseId, controller.signal);
       if (controller.signal.aborted) return;
       setSuggested(response.questions);
+      await refreshCredits();
     } catch (e) {
       if (controller.signal.aborted || isAbortError(e)) return;
-      setSuggestFailure(
-        describeGenerationError(e, 'Questions could not be drafted from your sources.'),
+      const described = describeGenerationError(
+        e,
+        'Questions could not be drafted from your sources.',
       );
+      if (isInsufficientCredits(described)) await refreshCredits();
+      setSuggestFailure(described);
     } finally {
       if (!controller.signal.aborted) setIsSuggesting(false);
     }
@@ -129,9 +140,19 @@ export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
                 Lumina reads the material you uploaded and your chats for this course, then
                 drafts questions to explain in your own words.
               </p>
+              <CreditBalance source="reverse_quiz" />
+
+              {exhausted ? (
+                <CreditExhaustedNotice source="reverse_quiz" action="reverse quiz questions" />
+              ) : null}
 
               {suggestFailure ? (
-                <GenerationError failure={suggestFailure} onRetry={() => void suggestQuestions()} />
+                <GenerationError
+                  failure={
+                    exhausted ? { ...suggestFailure, retryable: false } : suggestFailure
+                  }
+                  onRetry={() => void suggestQuestions()}
+                />
               ) : null}
 
               {isSuggesting ? (
@@ -166,7 +187,11 @@ export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
               ) : null}
 
               {!isSuggesting ? (
-                <Button variant="secondary" onClick={() => void suggestQuestions()}>
+                <Button
+                  variant="secondary"
+                  disabled={exhausted}
+                  onClick={() => void suggestQuestions()}
+                >
                   {suggested === null ? 'Suggest questions' : 'Suggest new questions'}
                 </Button>
               ) : null}

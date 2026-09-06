@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { generateReverseQuiz } from '@/api/reverseQuiz';
 import { afterReverseQuizGenerated } from '@/api/invalidations';
-import { describeGenerationError, isAbortError } from '@/api/errors';
+import { describeGenerationError, isAbortError, isInsufficientCredits } from '@/api/errors';
 import type { GenerationFailure } from '@/api/errors';
 import type { ReverseQuizResponse } from '@/api/types';
+import CreditBalance from '@/components/credits/CreditBalance';
+import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
+import { useCredits } from '@/context/CreditContext';
 import { Button } from '@/ui/Button';
 import { Markdown } from '@/lib/markdown';
 import { GenerationError } from '@/features/study/GenerationStates';
@@ -28,12 +31,14 @@ export function ReverseQuizSession({
   const [isGenerating, setIsGenerating] = useState(false);
   const [failure, setFailure] = useState<GenerationFailure | null>(null);
   const [result, setResult] = useState<ReverseQuizResponse | null>(null);
+  const { isMetered, canAfford, refresh: refreshCredits } = useCredits();
+  const exhausted = isMetered && !canAfford('reverse_quiz');
 
   const abortRef = useRef<AbortController | null>(null);
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const handleSubmit = async () => {
-    if (!explanation.trim()) return;
+    if (!explanation.trim() || exhausted) return;
 
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -51,9 +56,15 @@ export function ReverseQuizSession({
       if (controller.signal.aborted) return;
       setResult(response);
       afterReverseQuizGenerated(courseId);
+      await refreshCredits();
     } catch (e) {
       if (controller.signal.aborted || isAbortError(e)) return;
-      setFailure(describeGenerationError(e, 'Your explanation could not be analysed.'));
+      const described = describeGenerationError(
+        e,
+        'Your explanation could not be analysed.',
+      );
+      if (isInsufficientCredits(described)) await refreshCredits();
+      setFailure(described);
     } finally {
       if (!controller.signal.aborted) setIsGenerating(false);
     }
@@ -147,7 +158,18 @@ export function ReverseQuizSession({
         )}
       </div>
 
-      {failure ? <GenerationError failure={failure} onRetry={handleSubmit} /> : null}
+      <CreditBalance source="reverse_quiz" />
+
+      {exhausted ? (
+        <CreditExhaustedNotice source="reverse_quiz" action="this explanation" />
+      ) : null}
+
+      {failure ? (
+        <GenerationError
+          failure={exhausted ? { ...failure, retryable: false } : failure}
+          onRetry={handleSubmit}
+        />
+      ) : null}
 
       <textarea
         className={styles.textarea}
@@ -161,7 +183,7 @@ export function ReverseQuizSession({
       <div className={styles.actions}>
         <Button
           onClick={handleSubmit}
-          disabled={!explanation.trim() || isGenerating}
+          disabled={!explanation.trim() || isGenerating || exhausted}
           isLoading={isGenerating}
         >
           {isGenerating ? 'Analyzing...' : 'Submit Explanation'}

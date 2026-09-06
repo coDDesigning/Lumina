@@ -54,7 +54,7 @@ from services.document_validation import (
 from storage.base import Storage
 from storage.dependencies import get_storage
 from utils.authorization import AuthorizedCourse, OwnedCourse
-from utils.deps import get_current_user
+from utils.deps import get_current_user, get_verified_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/courses", tags=["Documents"])
@@ -138,7 +138,7 @@ def upload_document(
     response: Response,
     document: Annotated[UploadFile, File()],
     course: OwnedCourse,
-    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    current_user: Annotated[UserResponse, Depends(get_verified_user)],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[Storage, Depends(get_storage)],
     material_kind: Annotated[
@@ -263,6 +263,7 @@ def get_document_status(
     "/{course_id}/documents/{document_id}/retry",
     response_model=DocumentStatusResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(get_verified_user)],
     responses={
         401: {"description": "Authentication required"},
         403: {"description": "Account is not allowed to retry documents"},

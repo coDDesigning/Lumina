@@ -6,18 +6,22 @@ import hashlib
 import io
 import json
 from types import SimpleNamespace
+from uuid import uuid4
 
 import httpx
 import pymupdf
 import pytest
 from google.genai import errors as genai_errors
+from sqlalchemy import select
 
 from backend.app.config import (
     AI_PROVIDER_GEMINI,
     AI_PROVIDER_OLLAMA,
     IMAGE_PROVIDER_NONE,
 )
+from backend.app.models import AiUsageLog
 import services.image_understanding as image_understanding
+from schemas.ai_usage import GenerationType
 from services.document_extraction import DocumentProcessingError, extract_document
 from services.document_pipeline import (
     DisabledImageUnderstandingProvider,
@@ -33,11 +37,14 @@ from schemas.prompt_context import EducationLevel, MaterialKind, PromptContext
 from schemas.prompt_template import PromptTemplateNotFoundError
 from services.image_understanding import (
     GeminiImageUnderstandingProvider,
+    ImageUnderstandingUsage,
     OllamaImageUnderstandingProvider,
     _render_image_description_prompt,
     configured_image_understanding_identity,
     get_image_understanding_provider,
 )
+from services.processing_jobs import ClaimedJob
+from workers.document_processor import _record_image_usage
 
 # Valid 1x1 minimal PNG image bytes
 VALID_PNG_BYTES = (
@@ -89,14 +96,14 @@ class _FakeGeminiClient:
         self.models = _FakeGeminiModels(responses, recorder)
 
 
-def _gemini_vision_provider(monkeypatch, responses, recorder):
+def _gemini_vision_provider(monkeypatch, responses, recorder, *, usage_callback=None):
     monkeypatch.setattr(image_understanding, "settings", GEMINI_VISION_SETTINGS)
     monkeypatch.setattr(
         image_understanding.genai,
         "Client",
         lambda **kwargs: _FakeGeminiClient(responses, recorder),
     )
-    return GeminiImageUnderstandingProvider()
+    return GeminiImageUnderstandingProvider(usage_callback=usage_callback)
 
 
 def _ollama_vision_provider(monkeypatch, handler):
@@ -161,6 +168,36 @@ def test_gemini_vision_success(monkeypatch) -> None:
     assert result.description == "A bar chart showing revenue growth."
     assert len(recorder) == 1
     assert recorder[0][0] == "gemini-2.5-flash"
+
+
+def test_gemini_vision_reports_each_provider_call_without_content(monkeypatch) -> None:
+    events: list[ImageUnderstandingUsage] = []
+    response = SimpleNamespace(
+        text="A bar chart.",
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=12,
+            candidates_token_count=4,
+            total_token_count=16,
+        ),
+    )
+    provider = _gemini_vision_provider(
+        monkeypatch, [response], [], usage_callback=events.append
+    )
+
+    provider.describe_visual(
+        VALID_PNG_BYTES,
+        page_number=1,
+        visual_index=0,
+        suggested_type=VisualType.CHART,
+    )
+
+    assert len(events) == 1
+    assert events[0].provider == "gemini"
+    assert events[0].model == "gemini-2.5-flash"
+    assert events[0].prompt_tokens == 12
+    assert events[0].completion_tokens == 4
+    assert events[0].total_tokens == 16
+    assert events[0].success is True
 
 
 def test_gemini_vision_rate_limit_is_temporary(monkeypatch) -> None:
@@ -516,6 +553,47 @@ def test_configured_identity_reports_provider_and_model(monkeypatch) -> None:
     )
 
 
+def test_worker_attributes_image_usage_to_the_document_owner(authz_api) -> None:
+    job = ClaimedJob(
+        id=123,
+        document_id=uuid4(),
+        course_id=authz_api.a_course_id,
+        claim_token="claim",
+        attempt_count=1,
+        max_attempts=3,
+        storage_provider="local",
+        storage_key="course/document.txt",
+        file_hash="a" * 64,
+        file_type="txt",
+        file_size=10,
+        user_id=authz_api.user_a_id,
+    )
+    usage = ImageUnderstandingUsage(
+        provider="gemini",
+        model="gemini-2.5-flash",
+        success=True,
+        error_category=None,
+        prompt_tokens=12,
+        completion_tokens=4,
+        total_tokens=16,
+        latency_ms=25,
+    )
+
+    _record_image_usage(authz_api.session_factory, job, usage)
+
+    with authz_api.session_factory() as session:
+        row = session.scalars(select(AiUsageLog)).one()
+    assert row.user_id == authz_api.user_a_id
+    assert row.course_id == authz_api.a_course_id
+    assert row.generation_type == GenerationType.IMAGE_UNDERSTANDING.value
+    assert row.provider == "gemini"
+    assert row.model == "gemini-2.5-flash"
+    assert row.prompt_tokens == 12
+    assert row.completion_tokens == 4
+    assert row.total_tokens == 16
+    assert row.success is True
+
+
 # ── Extraction Wiring & Worker Integration Tests ───────────────────────
 
 
@@ -555,7 +633,7 @@ def test_extract_document_uses_configured_image_provider(monkeypatch) -> None:
     )
 
     assert called_factory is True
-    assert factory_kwargs == {"prompt_context": None}
+    assert factory_kwargs == {"prompt_context": None, "usage_callback": None}
     assert len(result.pages) == 1
     assert result.pages[0].text == "Simple course text for extraction."
 

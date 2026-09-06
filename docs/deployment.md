@@ -186,7 +186,7 @@ image (`Dockerfile`) and runs the same three roles:
 | ECR | `lumina` repository (immutable tags, scan on push, keep 20 images) |
 | S3 | Separate private document and frontend buckets (versioned, encrypted, TLS-only policies) |
 | CloudFront | OAC static delivery; `/api` and `/api/*` proxy to the ALB without caching |
-| RDS | PostgreSQL 16.8+, pgvector 0.8+, storage autoscaling, Performance Insights |
+| RDS | PostgreSQL 15.16, pgvector 0.8+, storage autoscaling, Performance Insights |
 | RDS Proxy | TLS-only runtime connection pool; direct RDS access is migrator-only |
 | ECS | Fargate `api` + `worker` services, one-off `migrate` task definition |
 | ALB | HTTPS (ACM) listener, HTTP-to-HTTPS redirect, `/health/ready` target check |

@@ -18,6 +18,7 @@ import { AdSlot } from '@/features/ads/AdSlot';
 import { cx } from '@/lib/cx';
 import { formatStudyTime } from '@/lib/formatStudyTime';
 import { relativeDay } from '@/lib/relativeDay';
+import { useMutation } from '@/lib/query/useMutation';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
 import type { BadgeTone } from '@/ui/Badge';
@@ -159,16 +160,30 @@ export default function CoursesPage({
 
   const [query, setQuery] = useState('');
   const [isCreating, setIsCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'active' | 'archived'>('active');
   const [isReadingSyllabus, setIsReadingSyllabus] = useState(false);
   const [syllabusNotice, setSyllabusNotice] = useState<string | null>(null);
   const syllabusInputRef = useRef<HTMLInputElement>(null);
+
+  const createMutation = useMutation({
+    mutate: (courseDraft: WorkspaceDraft) => onCreate(courseDraft),
+    fallbackMessage: "That course couldn't be created. Try again.",
+    onSuccess: (workspace) => {
+      setDraft(emptyDraft);
+      setIsCreating(false);
+      navigate(`/courses/${workspace.id}`);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutate: (courseId: string) => onDelete(courseId),
+    fallbackMessage: "That course couldn't be deleted. Try again.",
+    onSuccess: () => {
+      setConfirmingId(null);
+    },
+  });
 
   const now = useMemo(() => Date.now(), []);
 
@@ -220,10 +235,10 @@ export default function CoursesPage({
 
   useEffect(() => {
     if (!isCreating) {
-      setCreateError(null);
+      createMutation.reset();
       setSyllabusNotice(null);
     }
-  }, [isCreating]);
+  }, [isCreating, createMutation]);
 
   function updateDraft<Field extends keyof WorkspaceDraft>(
     field: Field,
@@ -266,42 +281,26 @@ export default function CoursesPage({
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isSubmitting) {
+    if (createMutation.isPending) {
       return;
     }
-    setCreateError(null);
-    setIsSubmitting(true);
 
     try {
-      const workspace = await onCreate({ ...draft, name: draft.name.trim() });
-      setDraft(emptyDraft);
-      setIsCreating(false);
-      navigate(`/courses/${workspace.id}`);
-    } catch (caught) {
-      setCreateError(
-        describeError(caught, "That course couldn't be created. Try again.").message,
-      );
-    } finally {
-      setIsSubmitting(false);
+      await createMutation.run({ ...draft, name: draft.name.trim() });
+    } catch {
+      // Handled by useMutation state
     }
   }
 
   async function handleDelete() {
-    if (!confirming) {
+    if (!confirming || deleteMutation.isPending) {
       return;
     }
-    setDeleteError(null);
-    setDeletingId(confirming.id);
 
     try {
-      await onDelete(confirming.id);
-      setConfirmingId(null);
-    } catch (caught) {
-      setDeleteError(
-        describeError(caught, "That course couldn't be deleted. Try again.").message,
-      );
-    } finally {
-      setDeletingId(null);
+      await deleteMutation.run(confirming.id);
+    } catch {
+      // Handled by useMutation state
     }
   }
 
@@ -479,7 +478,7 @@ export default function CoursesPage({
                         size="sm"
                         icon={<Trash2 aria-hidden="true" />}
                         onClick={() => {
-                          setDeleteError(null);
+                          deleteMutation.reset();
                           setConfirmingId(workspace.id);
                         }}
                       />
@@ -541,7 +540,7 @@ export default function CoursesPage({
               variant="primary"
               type="submit"
               form="create-course-form"
-              isLoading={isSubmitting}
+              isLoading={createMutation.isPending}
               loadingLabel="Creating"
             >
               Create course
@@ -550,10 +549,10 @@ export default function CoursesPage({
         }
       >
         <form id="create-course-form" className={styles.formGrid} onSubmit={handleCreate}>
-          {createError ? (
+          {createMutation.error ? (
             <div className={styles.formSpan}>
               <Alert tone="destructive" live="alert">
-                {createError}
+                {createMutation.error.message}
               </Alert>
             </div>
           ) : null}
@@ -656,7 +655,7 @@ export default function CoursesPage({
         open={confirming !== null}
         onClose={() => {
           setConfirmingId(null);
-          setDeleteError(null);
+          deleteMutation.reset();
         }}
         onConfirm={handleDelete}
         title={confirming ? `Delete ${confirming.name}?` : 'Delete course?'}
@@ -667,13 +666,13 @@ export default function CoursesPage({
         }
         confirmLabel="Delete permanently"
         pendingLabel="Deleting"
-        isPending={deletingId !== null}
+        isPending={deleteMutation.isPending}
         confirmPhrase={confirming?.name}
         confirmPhraseLabel={confirming ? `Type ${confirming.name} to confirm` : undefined}
       >
-        {deleteError ? (
+        {deleteMutation.error ? (
           <Alert tone="destructive" live="alert" className={styles.spaced}>
-            {deleteError}
+            {deleteMutation.error.message}
           </Alert>
         ) : null}
       </ConfirmDialog>

@@ -29,18 +29,23 @@ const KNOWN_CONTRAST_GAP = {
 
 const ROUTES = [
   { name: 'the dashboard', path: '/dashboard' },
+  { name: 'recent activity', path: '/activity' },
   { name: 'a course', path: '/courses/1' },
   { name: 'course progress', path: '/courses/1/progress' },
   { name: 'course settings', path: '/courses/1/settings' },
   { name: 'the account', path: '/account' },
   { name: 'account background', path: '/account/background' },
   { name: 'account AI preferences', path: '/account/ai' },
+  { name: 'account appearance', path: '/account/appearance' },
   { name: 'account security', path: '/account/security' },
   { name: 'the admin screen', path: '/admin' },
   { name: 'Exam Mode', path: '/courses/1/exam-mode' },
   { name: 'an exam plan', path: '/courses/1/exam-mode/plans/601' },
   { name: 'an exam topic', path: '/courses/1/exam-mode/plans/601/topics/graph-traversal-algorithms' },
   { name: 'a timed sitting', path: '/courses/1/practice/9/sessions/55' },
+  { name: 'a practice quiz', path: '/courses/1/practice/9' },
+  { name: 'a quiz attempt result', path: '/courses/1/practice/9/attempts/1' },
+  { name: 'a reverse quiz', path: '/courses/1/reverse-quiz' },
 ]
 
 function isKnownGap(node: { any: { message?: string }[] }): boolean {

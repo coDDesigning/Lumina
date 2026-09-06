@@ -23,6 +23,7 @@ export function AdSlot({ placement, slotId, className }: AdSlotProps) {
   const [adStatus, setAdStatus] = useState<AdStatus | 'idle'>('idle');
   const containerRef = useRef<HTMLDivElement>(null);
   const reportedRef = useRef<boolean>(false);
+  const adSensePushedRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!config?.enabled || !isGranted) {
@@ -71,7 +72,10 @@ export function AdSlot({ placement, slotId, className }: AdSlotProps) {
       try {
         const win = window as unknown as { adsbygoogle?: Array<Record<string, unknown>> };
         win.adsbygoogle = win.adsbygoogle || [];
-        win.adsbygoogle.push({});
+        if (!adSensePushedRef.current) {
+          adSensePushedRef.current = true;
+          win.adsbygoogle.push({});
+        }
         if (isMounted) {
           reportTelemetry('rendered');
         }
@@ -88,7 +92,7 @@ export function AdSlot({ placement, slotId, className }: AdSlotProps) {
 
     const scriptSrc = 'https://media.ethicalads.io/media/client/ethicalads.min.js';
     const timeoutId = window.setTimeout(() => {
-      if (isMounted && adStatus === 'idle') {
+      if (isMounted && !reportedRef.current) {
         reportTelemetry('blocked');
       }
     }, 2500);
@@ -138,7 +142,7 @@ export function AdSlot({ placement, slotId, className }: AdSlotProps) {
         container.removeEventListener('ea-empty', onAdEmpty);
       }
     };
-  }, [config?.enabled, config?.provider, config?.publisher_id, isGranted, placement, adStatus]);
+  }, [config?.enabled, config?.provider, config?.publisher_id, isGranted, placement]);
 
   if (!config?.enabled || !isGranted) {
     return null;

@@ -1006,13 +1006,14 @@ def test_a_credential_alone_makes_exactly_its_vendor_available(
     assert loaded.ai_model_catalog.get(vendor)
 
 
-def test_no_credential_leaves_no_model_and_fails_at_startup(
+def test_no_credential_allows_startup_with_empty_available_vendors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _only(monkeypatch)
 
-    with pytest.raises(ValueError, match="No AI model is available"):
-        load_settings()
+    loaded = load_settings()
+    assert loaded.ai_available_vendors == ()
+    assert loaded.ai_default_model
 
 
 def test_local_vendor_is_preferred_when_several_are_configured(
@@ -1223,7 +1224,7 @@ def test_ollama_base_url_trailing_slash_is_normalized(
 
 @pytest.mark.parametrize(
     "value",
-    ["", "   ", "banana", "localhost:11434", "ftp://host:11434", "http://"],
+    ["banana", "localhost:11434", "ftp://host:11434", "http://"],
 )
 def test_ollama_base_url_must_be_a_valid_http_url(
     monkeypatch: pytest.MonkeyPatch,
@@ -1233,6 +1234,16 @@ def test_ollama_base_url_must_be_a_valid_http_url(
 
     with pytest.raises(ValueError, match="OLLAMA_BASE_URL"):
         load_settings()
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_ollama_base_url_empty_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("OLLAMA_BASE_URL", value)
+
+    assert load_settings().ollama_base_url is None
 
 
 @pytest.mark.parametrize("value", ["", "   ", "bad model!", "x" * 129])
@@ -2078,3 +2089,123 @@ def test_self_hosted_concurrency_is_not_gated_on_the_pool(
     monkeypatch.setenv("PROCESSING_JOB_CONCURRENCY", "6")
 
     assert load_settings().processing_job_concurrency == 6
+
+
+# --- admin bootstrap security warning (BUG-044) -----------------------------
+
+
+def test_allows_unprotected_admin_bootstrap_property(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # 1. Default self-hosted development allows unprotected bootstrap
+    loaded = load_settings()
+    assert loaded.is_self_hosted is True
+    assert loaded.requires_protected_admin_bootstrap is False
+    assert loaded.allows_unprotected_admin_bootstrap is True
+
+    # 2. Production self-hosted requires protected bootstrap
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("DEPLOYMENT_MODE", MODE_SELF_HOSTED)
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "b" * 32)
+    prod_loaded = load_settings()
+    assert prod_loaded.is_self_hosted is True
+    assert prod_loaded.requires_protected_admin_bootstrap is True
+    assert prod_loaded.allows_unprotected_admin_bootstrap is False
+
+    # 3. Hosted mode requires protected bootstrap
+    _configure_hosted_s3(monkeypatch)
+    hosted_loaded = load_settings()
+    assert hosted_loaded.is_self_hosted is False
+    assert hosted_loaded.requires_protected_admin_bootstrap is True
+    assert hosted_loaded.allows_unprotected_admin_bootstrap is False
+
+
+@pytest.mark.anyio
+async def test_unprotected_admin_bootstrap_startup_warning_emitted(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from dataclasses import replace
+    import logging
+    import main as main_module
+    from main import app, lifespan
+
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        replace(
+            main_module.settings,
+            deployment_mode=MODE_SELF_HOSTED,
+            app_env=APP_ENV_DEVELOPMENT,
+        ),
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        async with lifespan(app):
+            pass
+
+    records = [
+        r
+        for r in caplog.records
+        if getattr(r, "event", None) == "unprotected_admin_bootstrap_warning"
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert "UNPROTECTED ADMINISTRATOR BOOTSTRAP ACTIVE" in records[0].getMessage()
+
+
+@pytest.mark.anyio
+async def test_unprotected_admin_bootstrap_startup_warning_suppressed_when_protected(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from dataclasses import replace
+    import logging
+    import main as main_module
+    from main import app, lifespan
+
+    # Case A: Self-hosted in production
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        replace(
+            main_module.settings,
+            deployment_mode=MODE_SELF_HOSTED,
+            app_env=APP_ENV_PRODUCTION,
+        ),
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        async with lifespan(app):
+            pass
+
+    assert not any(
+        getattr(r, "event", None) == "unprotected_admin_bootstrap_warning"
+        for r in caplog.records
+    )
+
+    # Case B: Hosted mode
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        replace(
+            main_module.settings,
+            deployment_mode=MODE_HOSTED,
+            app_env=APP_ENV_DEVELOPMENT,
+        ),
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        async with lifespan(app):
+            pass
+
+    assert not any(
+        getattr(r, "event", None) == "unprotected_admin_bootstrap_warning"
+        for r in caplog.records
+    )
+

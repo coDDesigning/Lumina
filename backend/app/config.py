@@ -375,6 +375,11 @@ class Settings:
         return self.is_hosted or self.app_env == APP_ENV_PRODUCTION
 
     @property
+    def allows_unprotected_admin_bootstrap(self) -> bool:
+        """Whether the first registered user can become admin without token proof."""
+        return self.is_self_hosted and not self.requires_protected_admin_bootstrap
+
+    @property
     def email_delivery_configured(self) -> bool:
         """Whether outbound mail has somewhere to go and a return address."""
         return bool(
@@ -580,13 +585,6 @@ def load_settings() -> Settings:
     ai_model_catalog = _ai_model_catalog_setting(
         ai_available_vendors, ollama_model, ollama_num_ctx
     )
-    if not any(ai_model_catalog.get(vendor) for vendor in ai_available_vendors):
-        raise ValueError(
-            "No AI model is available. Configure at least one vendor: "
-            "GEMINI_API_KEY for Gemini, OPENAI_API_KEY for OpenAI, "
-            "ANTHROPIC_API_KEY for Claude, or OLLAMA_BASE_URL for a local "
-            "Ollama server."
-        )
     ai_default_model = _ai_default_model_setting(ai_model_catalog, ai_available_vendors)
     ai_vision_model = _ai_vision_model(
         ai_model_catalog,
@@ -1477,19 +1475,26 @@ def _ai_default_model_setting(
     available_vendors: tuple[str, ...],
 ) -> str:
     configured = os.getenv("AI_DEFAULT_MODEL", "").strip()
+    all_catalog_models = _catalog_model_ids(catalog, tuple(catalog.keys()))
     if configured:
-        available = _catalog_model_ids(catalog, available_vendors)
-        if configured not in available:
+        if configured not in all_catalog_models:
             raise ValueError(
                 f"AI_DEFAULT_MODEL '{configured}' is not an available model. "
-                f"Available: {', '.join(sorted(available))}."
+                f"Available: {', '.join(sorted(all_catalog_models))}."
             )
         return configured
     for vendor in available_vendors:
         entries = catalog.get(vendor) or []
         if entries:
             return f"{vendor}:{entries[0]['model']}"
-    raise ValueError("No AI model is available.")
+    for vendor in AI_VENDOR_PREFERENCE_ORDER:
+        entries = catalog.get(vendor) or []
+        if entries:
+            return f"{vendor}:{entries[0]['model']}"
+    for vendor, entries in catalog.items():
+        if entries:
+            return f"{vendor}:{entries[0]['model']}"
+    return f"{AI_PROVIDER_GEMINI}:{DEFAULT_GEMINI_MODEL}"
 
 
 def _ai_vision_model(

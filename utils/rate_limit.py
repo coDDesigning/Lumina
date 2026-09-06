@@ -239,6 +239,49 @@ def enforce(
         )
 
 
+def check_lockout(
+    db: Session,
+    key: str,
+    *,
+    error_code: str = "rate_limited",
+    control: str = "generic",
+) -> None:
+    """Raise ``TooManyRequestsException`` if ``key`` is currently locked out."""
+    now = datetime.now(timezone.utc)
+    bucket = db.scalar(select(RateLimitBucket).where(RateLimitBucket.key == key))
+    if (
+        bucket is not None
+        and bucket.locked_until is not None
+        and bucket.locked_until > now
+    ):
+        retry_after = max(1, math.ceil((bucket.locked_until - now).total_seconds()))
+        dimensions = {"Control": control, "ErrorCode": error_code}
+        logger.warning(
+            "Rate limit rejected request",
+            extra={
+                "event": "rate_limit_rejected",
+                "error_code": error_code,
+                "rate_limit_control": control,
+                "retry_after_seconds": retry_after,
+            },
+        )
+        emit_emf_metrics(
+            {"RateLimitRejections": 1},
+            dimensions=dimensions,
+            namespace="Lumina/API",
+        )
+        raise TooManyRequestsException(
+            "Too many requests. Try again later.",
+            retry_after_seconds=retry_after,
+            error_code=error_code,
+        )
+    if db.in_transaction():
+        db.commit()
+
+
+enforce_lockout = check_lockout
+
+
 def clear(db: Session, key: str) -> None:
     """Forget a failure bucket after successful authentication."""
     _begin_write(db)
@@ -329,7 +372,7 @@ def rate_limit_password_reset(
     request: Request,
     db: Annotated[Session, Depends(get_rate_limit_db)],
 ) -> None:
-    """Per-IP throttle for issuing password reset links."""
+    """Per-IP throttle for issuing and redeeming password reset links."""
     enforce(
         db,
         rate_limit_key("password_reset:ip", client_ip(request)),

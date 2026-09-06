@@ -401,7 +401,7 @@ def test_the_prompt_carries_the_material_last_and_treats_it_as_data(
     assert "{{" not in prompt
 
 
-def test_analysis_charges_once_and_a_rescan_charges_the_cheaper_price(
+def test_analysis_price_is_derived_from_persisted_course_history(
     authz_api, exam_course, monkeypatch
 ) -> None:
     before = balance_of(authz_api.session_factory, authz_api.user_a_id)
@@ -410,7 +410,7 @@ def test_analysis_charges_once_and_a_rescan_charges_the_cheaper_price(
     after_first = balance_of(authz_api.session_factory, authz_api.user_a_id)
     assert before - after_first == GENERATION_CREDIT_COSTS["exam_topic_analysis"]
 
-    run_analysis(authz_api, monkeypatch, rescan=True)
+    run_analysis(authz_api, monkeypatch)
     after_rescan = balance_of(authz_api.session_factory, authz_api.user_a_id)
     assert (
         after_first - after_rescan
@@ -419,6 +419,29 @@ def test_analysis_charges_once_and_a_rescan_charges_the_cheaper_price(
     assert (
         GENERATION_CREDIT_COSTS["exam_topic_analysis_rescan"]
         < (GENERATION_CREDIT_COSTS["exam_topic_analysis"])
+    )
+
+
+def test_rescan_requires_an_existing_analysis_without_charging_or_calling_provider(
+    authz_api, exam_course, monkeypatch
+) -> None:
+    before = balance_of(authz_api.session_factory, authz_api.user_a_id)
+
+    response, provider = run_analysis(authz_api, monkeypatch, rescan=True)
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "A source analysis is required before sources can be rescanned"
+    )
+    assert provider.calls == 0
+    assert balance_of(authz_api.session_factory, authz_api.user_a_id) == before
+    assert (
+        outputs_of(
+            authz_api.session_factory,
+            authz_api.a_course_id,
+            OUTPUT_TYPE_EXAM_TOPIC_ANALYSIS,
+        )
+        == []
     )
 
 

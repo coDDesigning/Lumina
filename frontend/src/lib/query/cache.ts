@@ -356,6 +356,9 @@ export class QueryCache {
   }
 
   private dispose(entry: Entry): void {
+    for (const listener of [...entry.subscribers]) {
+      listener();
+    }
     entry.controller?.abort();
     entry.subscribers.clear();
   }

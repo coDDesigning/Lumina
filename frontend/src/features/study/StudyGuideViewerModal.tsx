@@ -45,7 +45,7 @@ export function StudyGuideViewerModal({
       mark={<BookOpen aria-hidden="true" />}
       footer={
         <>
-          <Button onClick={onClose}>Close</Button>
+          <Button onClick={onClose}>Done</Button>
           {exportable ? (
             <div className={styles.footerRight}>
               <StudyGuideExportActions guide={exportable} courseName={courseName} />

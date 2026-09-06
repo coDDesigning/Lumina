@@ -67,6 +67,13 @@ interface ParsedApiError {
   code: string | null;
 }
 
+function cleanErrorMessage(raw: string): string {
+  return raw
+    .replace(/^Value error,\s*/i, '')
+    .replace(/^(?:body|query|path|header)\./i, '')
+    .replace(/^(?:body|query|path|header):\s*/i, '');
+}
+
 function parseApiErrorBody(data: unknown): ParsedApiError {
   const fallback: ParsedApiError = { message: 'An API error occurred', code: null };
 
@@ -82,21 +89,34 @@ function parseApiErrorBody(data: unknown): ParsedApiError {
         ? (body.data as Record<string, unknown>)
         : null;
     const code = typeof nested?.code === 'string' ? nested.code : null;
-    return { message: body.message, code };
+    return { message: cleanErrorMessage(body.message), code };
   }
 
   const detail = body.detail;
 
   if (typeof detail === 'string') {
-    return { message: detail, code: null };
+    return { message: cleanErrorMessage(detail), code: null };
   }
 
   if (Array.isArray(detail) && detail.length > 0) {
     const first = detail[0] as Record<string, unknown> | null;
     if (typeof first === 'object' && first !== null && 'msg' in first) {
-      const loc = Array.isArray(first.loc) ? first.loc.slice(1).join('.') : '';
-      const msg = String(first.msg);
-      return { message: loc ? `${loc}: ${msg}` : msg, code: null };
+      const rawLoc = Array.isArray(first.loc)
+        ? first.loc
+            .map(String)
+            .filter(
+              (part, idx) =>
+                !(idx === 0 && ['body', 'query', 'path', 'header', 'cookie'].includes(part.toLowerCase())),
+            )
+        : [];
+      const loc = rawLoc.join('.');
+      let msg = String(first.msg).replace(/^Value error,\s*/i, '');
+      if (loc && (msg.startsWith(`${loc}: `) || msg.startsWith(`${loc}:`))) {
+        msg = msg.slice(loc.length + 1).trimStart();
+      }
+      msg = cleanErrorMessage(msg);
+      const message = loc ? `${loc}: ${msg}` : msg;
+      return { message: cleanErrorMessage(message), code: null };
     }
   }
 

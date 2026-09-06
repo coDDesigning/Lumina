@@ -3,7 +3,6 @@ import type { FormEvent } from 'react';
 import {
   BarChart3,
   Calendar,
-  FileText,
   HelpCircle,
   Layers3,
   MessageSquarePlus,
@@ -39,7 +38,7 @@ import { DocumentRow } from '@/components/documents/DocumentRow';
 import { ConversationHistoryModal } from './ConversationHistoryModal';
 import { ExamRoadmapModal } from '@/features/study/ExamRoadmapModal';
 import { FlashcardModal } from '@/features/study/FlashcardModal';
-import { provenanceParts } from '@/features/study/provenanceParts';
+import { Provenance } from '@/features/study/Provenance';
 import { QuizModal } from '@/features/study/quiz/QuizModal';
 import { StudyHistoryModal } from '@/features/study/StudyHistoryModal';
 import { SavedDeckModal } from '@/features/study/SavedDeckModal';
@@ -684,12 +683,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                     text={message.content}
                     citations={message.citations}
                   />
-                  {message.context ? (
-                    <span className={styles.provenance}>
-                      <FileText className={styles.provenanceIcon} aria-hidden="true" />
-                      <span>{provenanceParts(message.context).join(' · ')}</span>
-                    </span>
-                  ) : null}
+                  {message.context ? <Provenance context={message.context} /> : null}
                   <div className={styles.turnActions}>
                     <CopyButton text={message.content} />
                   </div>

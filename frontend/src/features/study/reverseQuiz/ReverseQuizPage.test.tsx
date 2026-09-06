@@ -93,7 +93,7 @@ describe('ReverseQuizPage', () => {
     renderPage();
 
     expect(screen.getByRole('link', { name: 'Linear Algebra' })).toBeInTheDocument();
-    expect(screen.getByText('Reverse Quiz')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Reverse Quiz', level: 1 })).toBeInTheDocument();
     expect(screen.getByText('What would you like to explain today?')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Eigenvalues' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Matrix Decomposition' })).toBeInTheDocument();

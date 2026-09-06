@@ -78,8 +78,6 @@ def generate_reverse_quiz(
             request=request,
             provider=provider,
         )
-
-        db.commit()
     except HTTPException:
         raise
     except Exception as exc:
@@ -126,8 +124,6 @@ def suggest_reverse_quiz_questions(
             user=current_user,
             provider=provider,
         )
-
-        db.commit()
     except HTTPException:
         raise
     except Exception as exc:

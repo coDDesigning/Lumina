@@ -282,6 +282,29 @@ describe('ReverseQuizPage', () => {
     expect(await screen.findByText('The AI service is down')).toBeInTheDocument();
   });
 
+  it('does not offer retry when the account cannot afford the action after failure', async () => {
+    const user = userEvent.setup();
+    mockGenerateReverseQuiz.mockRejectedValueOnce(
+      new APIError(503, { detail: 'down' }, 'provider_unavailable'),
+    );
+
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Eigenvalues' }));
+    await user.type(screen.getByRole('textbox'), 'Eigenvalues scale eigenvectors.');
+    await user.click(screen.getByRole('button', { name: 'Submit Explanation' }));
+
+    expect(await screen.findByText('The AI service is down')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
+
+    credits.canAfford.mockReturnValue(false);
+    credits.status.credits = 0;
+    credits.canAfford.mockReturnValue(false);
+    await user.type(screen.getByRole('textbox'), ' more');
+
+    expect(screen.queryByRole('button', { name: /try again/i })).not.toBeInTheDocument();
+  });
+
   it('allows restarting to explain another topic', async () => {
     const user = userEvent.setup();
     mockGenerateReverseQuiz.mockResolvedValueOnce(SAMPLE_RESPONSE);

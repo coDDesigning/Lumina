@@ -38,7 +38,7 @@ export function ReverseQuizSession({
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const handleSubmit = async () => {
-    if (!explanation.trim()) return;
+    if (!explanation.trim() || exhausted) return;
 
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -164,7 +164,12 @@ export function ReverseQuizSession({
         <CreditExhaustedNotice source="reverse_quiz" action="this explanation" />
       ) : null}
 
-      {failure ? <GenerationError failure={failure} onRetry={handleSubmit} /> : null}
+      {failure ? (
+        <GenerationError
+          failure={exhausted ? { ...failure, retryable: false } : failure}
+          onRetry={handleSubmit}
+        />
+      ) : null}
 
       <textarea
         className={styles.textarea}

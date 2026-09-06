@@ -12,6 +12,7 @@ Operating instructions for coding agents in this repository.
 
 ## Current Architecture
 
+- Reverse Quiz is an eighth `CreditService` charge site in addition to the seven named in the credit rule below; both provider-backed actions use the shared `reverse_quiz` price, while an empty source-derived suggestion result with no provider call is free.
 - Python is pinned to 3.12. Backend code uses FastAPI, Pydantic 2, and SQLAlchemy 2 typed declarative models.
 - `backend/app/config.py` owns application settings. `backend/app/database_config.py` reads the database-only subset for Alembic. `.env` is not loaded automatically; launchers must inject configuration. Do not add environment reads elsewhere. Settings are frozen and import-cached.
 - `DEPLOYMENT_MODE=self_hosted` defaults to SQLite and local paths. Hosted staging requires PostgreSQL and is exercised by a pinned live CI service; hosted production is qualified only with `STORAGE_BACKEND=s3` plus PostgreSQL, and fails at startup otherwise.

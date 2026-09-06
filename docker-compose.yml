@@ -97,7 +97,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-345s}
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-645s}
 
   # Run through ops/self_hosted_backup.sh, which stops the services first.
   # See docs/self-hosted-backup.md.

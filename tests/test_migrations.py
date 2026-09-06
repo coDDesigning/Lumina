@@ -3393,3 +3393,38 @@ def test_upgrade_profile_documents_tables(tmp_path: Path) -> None:
                 "VALUES (?, 'notes2.pdf', 'pdf', 'application/pdf', 1024, ?, ?, 'local:default', 'users/1/doc2/source.pdf', 'ready')",
                 (str(uuid4()), "a" * 64, user_id),
             )
+
+
+def test_migration_check_constraint_names_use_op_f_or_unprefixed_literals() -> None:
+    """P2-049: Base.metadata applies the naming convention ck_%(table_name)s_%(constraint_name)s.
+
+    Passing an already-qualified name as a raw literal string (e.g. name="ck_foo_bar")
+    causes the convention to prefix it a second time (ck_foo_ck_foo_bar), which
+    PostgreSQL hash-truncates and SQLite stores verbatim.
+    All new migrations must either pass short unprefixed names or wrap qualified
+    names in op.f(...).
+    """
+    legacy_raw_qualified_check_revisions = {
+        "f4b18c7a2e60_add_chunk_embeddings.py",
+        "d3f8b21a6c40_add_quiz_attempt_answers.py",
+    }
+
+    raw_check_pattern = re.compile(
+        r'(?:CheckConstraint\([^)]*name\s*=\s*["\'](ck_[a-zA-Z0-9_]+)["\']|create_check_constraint\(\s*["\'](ck_[a-zA-Z0-9_]+)["\'])'
+    )
+
+    offenders: list[str] = []
+    for file_path in ALEMBIC_VERSIONS_DIRECTORY.glob("*.py"):
+        if file_path.name in legacy_raw_qualified_check_revisions:
+            continue
+        content = file_path.read_text(encoding="utf-8")
+        for lineno, line in enumerate(content.splitlines(), start=1):
+            match = raw_check_pattern.search(line)
+            if match:
+                name = match.group(1) or match.group(2)
+                offenders.append(f"{file_path.name}:{lineno}: {name}")
+
+    assert not offenders, (
+        "Found raw qualified CHECK constraint names. Use op.f(...) or an unprefixed name:\n"
+        + "\n".join(f"  - {o}" for o in offenders)
+    )

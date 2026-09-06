@@ -425,8 +425,9 @@ initializes an empty database.
 ## Deploy an update
 
 Drain the worker and stop both runtime roles before changing the schema. The
-default API and worker stop grace is 345 seconds. The worker value matches the
-default processing timeout plus 45 seconds.
+default API stop grace is 345 seconds and the worker stop grace is 645 seconds.
+The worker value matches the larger generation attempt timeout (600 seconds)
+plus 45 seconds.
 
 ```bash
 set -euo pipefail
@@ -551,10 +552,11 @@ maximum-size chunked upload. Keep `LUMINA_TMPFS_SIZE_BYTES` at least
 receipt and cannot exceed 300 seconds. Configure the reverse proxy with a
 request-body timeout no greater than this value and reject ambiguous
 `Content-Length` plus `Transfer-Encoding` framing at ingress.
-If `PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS` changes, keep
-`WORKER_STOP_GRACE_PERIOD` at least that duration plus 45 seconds. The API uses
-a fixed 330-second graceful-shutdown deadline inside Docker's 345-second stop
-grace.
+If `PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS` or
+`GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS` changes, keep
+`WORKER_STOP_GRACE_PERIOD` at least the larger duration plus 45 seconds. The
+API uses a fixed 330-second graceful-shutdown deadline inside Docker's
+345-second stop grace.
 
 For a manual non-container deployment, set all production values through the
 environment before importing the application. The SQLite parent and both
@@ -572,7 +574,7 @@ commands. Give both units at least 345 seconds to stop before forcing
 termination:
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330
+uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330 --no-access-log
 python -m workers.worker
 ```
 

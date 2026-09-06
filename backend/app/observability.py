@@ -14,7 +14,12 @@ from uuid import uuid4
 _REQUEST_ID: ContextVar[str | None] = ContextVar("request_id", default=None)
 _REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _SECRET_PATTERN = re.compile(
-    r"(?i)(authorization|api[_-]?key|password|secret|token)\s*[:=]\s*[^\s,;]+"
+    r"""(?ix)
+    (?P<key>["']?(?:authorization|api[ _-]?key|password|secret|token)(?:\s+provided)?["']?\s*[:=]\s*["']?)
+    (?:bearer\s+)?[^\s,;\"'{}()]+(?P<quote>["']?)
+    |
+    \b(?P<bearer>bearer)\s+[^\s,;\"'{}()]+
+    """
 )
 _ALLOWED_FIELDS = (
     "duration_ms",
@@ -33,7 +38,13 @@ _ALLOWED_FIELDS = (
 
 
 def _redact(value: str) -> str:
-    return _SECRET_PATTERN.sub(lambda match: f"{match.group(1)}=[REDACTED]", value)
+    def _replace(match: re.Match[str]) -> str:
+        if match.group("bearer"):
+            return f"{match.group('bearer')} [REDACTED]"
+        quote = match.group("quote") or ""
+        return f"{match.group('key')}[REDACTED]{quote}"
+
+    return _SECRET_PATTERN.sub(_replace, value)
 
 
 def _exception_type_chain(exc: BaseException | None) -> list[str]:
@@ -101,6 +112,7 @@ def configure_logging(*, service: str, environment: str) -> None:
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         for handler in logging.getLogger(name).handlers:
             handler.setFormatter(formatter)
+    logging.getLogger("uvicorn.access").disabled = True
 
 
 def normalize_request_id(value: str | None) -> str:

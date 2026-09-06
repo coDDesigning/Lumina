@@ -14,6 +14,22 @@ vi.mock('@/api/reverseQuiz', () => ({
   getReverseQuizzes: vi.fn(),
 }));
 
+const refreshCredits = vi.fn().mockResolvedValue(undefined);
+const credits = {
+  isMetered: true,
+  canAfford: vi.fn(() => true),
+  refresh: refreshCredits,
+  status: {
+    credits: 10,
+    generation_costs: { reverse_quiz: 1 },
+  },
+  isLoading: false,
+  error: null,
+  costOf: vi.fn(() => 1),
+};
+
+vi.mock('@/context/CreditContext', () => ({ useCredits: () => credits }));
+
 const mockGenerateReverseQuiz = vi.mocked(generateReverseQuiz);
 const mockSuggestQuestions = vi.mocked(suggestReverseQuizQuestions);
 
@@ -69,6 +85,8 @@ function renderPage() {
 describe('ReverseQuizPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    credits.canAfford.mockReturnValue(true);
+    credits.status.credits = 10;
   });
 
   it('renders page header and course topics', () => {
@@ -90,6 +108,24 @@ describe('ReverseQuizPage', () => {
     expect(screen.getByRole('heading', { level: 2, name: 'Explain: Eigenvalues' })).toBeInTheDocument();
     expect(screen.getByRole('textbox')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Submit Explanation' })).toBeInTheDocument();
+  });
+
+  it('blocks both paid actions when the server balance cannot cover them', async () => {
+    const user = userEvent.setup();
+    credits.canAfford.mockReturnValue(false);
+    credits.status.credits = 0;
+    renderPage();
+
+    expect(screen.getByRole('button', { name: 'Suggest questions' })).toBeDisabled();
+    expect(screen.getByText(/enough credits to generate reverse quiz questions/i)).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'Eigenvalues' }));
+    await user.type(screen.getByRole('textbox'), 'Eigenvalues scale eigenvectors.');
+
+    expect(screen.getByRole('button', { name: 'Submit Explanation' })).toBeDisabled();
+    expect(screen.getByText(/enough credits to generate this explanation/i)).toBeVisible();
+    expect(mockSuggestQuestions).not.toHaveBeenCalled();
+    expect(mockGenerateReverseQuiz).not.toHaveBeenCalled();
   });
 
   it('starts a reverse quiz session with custom topic input', async () => {

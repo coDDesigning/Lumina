@@ -20,6 +20,7 @@ from schemas.reverse_quiz import (
 )
 from services.ai_usage_logger import AiUsageLogger
 from services.citations import sanitize_citation_markers, strip_citation_markers
+from services.credits import GENERATION_CREDIT_COSTS, ChargeReceipt, CreditService
 from services.generated_output import GeneratedOutputService
 from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
@@ -33,6 +34,7 @@ from services.text_generation import (
     model_identifier,
     with_template_temperature,
 )
+from utils.ai_errors import InsufficientCreditsError
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,26 @@ _EMPTY_MATERIAL = RetrievedCourseMaterial(
 class ReverseQuizService:
     PROMPT_TEMPLATE_NAME = "reverse_quiz"
     QUESTIONS_PROMPT_TEMPLATE_NAME = "reverse_quiz_questions"
+
+    @staticmethod
+    def _charge(db: Session, *, user_id: int, course_id: int) -> ChargeReceipt:
+        receipt = CreditService.charge(
+            db,
+            user_id,
+            GENERATION_CREDIT_COSTS["reverse_quiz"],
+            source_type="reverse_quiz",
+        )
+        if receipt is None:
+            AiUsageLogger.log_failure(
+                db,
+                user_id=user_id,
+                course_id=course_id,
+                generation_type=GenerationType.REVERSE_QUIZ,
+                error_category=ErrorCategory.INSUFFICIENT_CREDITS,
+            )
+            db.commit()
+            raise InsufficientCreditsError("Insufficient credits.")
+        return receipt
 
     @classmethod
     def build_prompt(
@@ -125,104 +147,110 @@ class ReverseQuizService:
             # Fall back to grading without context if no relevant material is indexed
             material = _EMPTY_MATERIAL
 
-        prompt_context = resolve_prompt_context(db, course=course, user_id=user.id)
-        prompt = cls.build_prompt(
-            topic=request.topic,
-            explanation=request.explanation,
-            course_material=material.text,
-            context=prompt_context,
-            question=request.question or "",
-        )
-
-        metadata = None
-        try:
-            # The template's own declared temperature, applied to the call it was declared for.
-            provider = with_template_temperature(
-                provider, PromptLoader.temperature_for(cls.PROMPT_TEMPLATE_NAME)
+        receipt = cls._charge(db, user_id=user.id, course_id=course_id)
+        with CreditService.refund_on_error(db, receipt):
+            prompt_context = resolve_prompt_context(db, course=course, user_id=user.id)
+            prompt = cls.build_prompt(
+                topic=request.topic,
+                explanation=request.explanation,
+                course_material=material.text,
+                context=prompt_context,
+                question=request.question or "",
             )
-            if hasattr(provider, "generate_json_with_metadata"):
-                result, metadata = provider.generate_json_with_metadata(prompt)
-            else:
-                result = provider.generate_json(prompt)
-        except Exception as exc:
-            AiUsageLogger.log_failure(
+
+            metadata = None
+            try:
+                # The template's own declared temperature, applied to the call it was declared for.
+                provider = with_template_temperature(
+                    provider, PromptLoader.temperature_for(cls.PROMPT_TEMPLATE_NAME)
+                )
+                if hasattr(provider, "generate_json_with_metadata"):
+                    result, metadata = provider.generate_json_with_metadata(prompt)
+                else:
+                    result = provider.generate_json(prompt)
+            except Exception as exc:
+                AiUsageLogger.log_failure(
+                    db,
+                    user_id=user.id,
+                    course_id=course_id,
+                    generation_type=GenerationType.REVERSE_QUIZ,
+                    error_category=getattr(
+                        exc, "error_category", ErrorCategory.PROVIDER_ERROR
+                    ),
+                )
+                db.commit()
+                raise
+
+            try:
+                evaluation = ReverseQuizEvaluation.model_validate(result)
+            except ValidationError:
+                AiUsageLogger.log_failure(
+                    db,
+                    user_id=user.id,
+                    course_id=course_id,
+                    generation_type=GenerationType.REVERSE_QUIZ,
+                    error_category=ErrorCategory.INVALID_STRUCTURE,
+                    latency_ms=metadata.latency_ms if metadata else None,
+                )
+                db.commit()
+                raise ValueError(
+                    "Provider returned an invalid reverse quiz evaluation structure"
+                )
+
+            # 3. Apply citations to feedback and misconception details
+            feedback_cited = sanitize_citation_markers(
+                evaluation.feedback, material.citation_map
+            )
+
+            # Every marker the student can see resolves through one list, because a
+            # key is positional across the whole evaluation rather than per claim.
+            cited: dict[str, Citation] = {
+                citation.key: citation for citation in feedback_cited.citations
+            }
+
+            misconceptions = []
+            for m in evaluation.misconceptions:
+                m_cited = sanitize_citation_markers(m.detail, material.citation_map)
+                for citation in m_cited.citations:
+                    cited.setdefault(citation.key, citation)
+                misconceptions.append(
+                    Misconception(
+                        concept=m.concept, status=m.status, detail=m_cited.text
+                    )
+                )
+
+            AiUsageLogger.log_success(
                 db,
                 user_id=user.id,
                 course_id=course_id,
                 generation_type=GenerationType.REVERSE_QUIZ,
-                error_category=getattr(
-                    exc, "error_category", ErrorCategory.PROVIDER_ERROR
-                ),
+                metadata=metadata,
             )
-            raise
 
-        try:
-            evaluation = ReverseQuizEvaluation.model_validate(result)
-        except ValidationError:
-            AiUsageLogger.log_failure(
-                db,
-                user_id=user.id,
+            # 4. Save to GeneratedOutput for history and weak-topic aggregation
+            response_model = ReverseQuizResponse(
+                id=0,  # placeholder before commit
                 course_id=course_id,
-                generation_type=GenerationType.REVERSE_QUIZ,
-                error_category=ErrorCategory.INVALID_STRUCTURE,
-                latency_ms=metadata.latency_ms if metadata else None,
-            )
-            raise ValueError(
-                "Provider returned an invalid reverse quiz evaluation structure"
-            )
-
-        # 3. Apply citations to feedback and misconception details
-        feedback_cited = sanitize_citation_markers(
-            evaluation.feedback, material.citation_map
-        )
-
-        # Every marker the student can see resolves through one list, because a
-        # key is positional across the whole evaluation rather than per claim.
-        cited: dict[str, Citation] = {
-            citation.key: citation for citation in feedback_cited.citations
-        }
-
-        misconceptions = []
-        for m in evaluation.misconceptions:
-            m_cited = sanitize_citation_markers(m.detail, material.citation_map)
-            for citation in m_cited.citations:
-                cited.setdefault(citation.key, citation)
-            misconceptions.append(
-                Misconception(concept=m.concept, status=m.status, detail=m_cited.text)
+                topic=request.topic,
+                explanation=request.explanation,
+                feedback=feedback_cited.text,
+                misconceptions=misconceptions,
+                question=request.question,
+                citations=list(cited.values()),
             )
 
-        AiUsageLogger.log_success(
-            db,
-            user_id=user.id,
-            course_id=course_id,
-            generation_type=GenerationType.REVERSE_QUIZ,
-            metadata=metadata,
-        )
+            output = GeneratedOutputService.record(
+                db,
+                course_id=course_id,
+                user_id=user.id,
+                model_used=model_identifier(metadata),
+                output_type="reverse_quiz",
+                content=response_model.model_dump_json(),
+                commit=False,
+            )
 
-        # 4. Save to GeneratedOutput for history and weak-topic aggregation
-        response_model = ReverseQuizResponse(
-            id=0,  # placeholder before commit
-            course_id=course_id,
-            topic=request.topic,
-            explanation=request.explanation,
-            feedback=feedback_cited.text,
-            misconceptions=misconceptions,
-            question=request.question,
-            citations=list(cited.values()),
-        )
-
-        output = GeneratedOutputService.record(
-            db,
-            course_id=course_id,
-            user_id=user.id,
-            model_used=model_identifier(metadata),
-            output_type="reverse_quiz",
-            content=response_model.model_dump_json(),
-            commit=False,
-        )
-
-        response_model.id = output.id
-        return response_model
+            response_model.id = output.id
+            return response_model
 
     # ------------------------------------------------------------------
     # Source-derived practice questions
@@ -293,70 +321,80 @@ class ReverseQuizService:
         if not material.text.strip():
             return ReverseQuizQuestionsResponse(course_id=course_id, questions=[])
 
-        prompt_context = resolve_prompt_context(db, course=course, user_id=user.id)
-        prompt = PromptLoader.render(
-            cls.QUESTIONS_PROMPT_TEMPLATE_NAME,
-            {
-                **prompt_context.as_variables(),
-                "QUESTION_COUNT": str(count),
-                "CONVERSATION_HISTORY": cls._recent_conversation_digest(db, course_id),
-                "COURSE_MATERIAL": material.text,
-            },
-        )
-
-        metadata = None
-        try:
-            # The template's own declared temperature, applied to the call it was declared for.
-            provider = with_template_temperature(
-                provider,
-                PromptLoader.temperature_for(cls.QUESTIONS_PROMPT_TEMPLATE_NAME),
+        receipt = cls._charge(db, user_id=user.id, course_id=course_id)
+        with CreditService.refund_on_error(db, receipt):
+            prompt_context = resolve_prompt_context(db, course=course, user_id=user.id)
+            prompt = PromptLoader.render(
+                cls.QUESTIONS_PROMPT_TEMPLATE_NAME,
+                {
+                    **prompt_context.as_variables(),
+                    "QUESTION_COUNT": str(count),
+                    "CONVERSATION_HISTORY": cls._recent_conversation_digest(
+                        db, course_id
+                    ),
+                    "COURSE_MATERIAL": material.text,
+                },
             )
-            if hasattr(provider, "generate_json_with_metadata"):
-                result, metadata = provider.generate_json_with_metadata(prompt)
-            else:
-                result = provider.generate_json(prompt)
-        except Exception as exc:
-            AiUsageLogger.log_failure(
+
+            metadata = None
+            try:
+                # The template's own declared temperature, applied to the call it was declared for.
+                provider = with_template_temperature(
+                    provider,
+                    PromptLoader.temperature_for(cls.QUESTIONS_PROMPT_TEMPLATE_NAME),
+                )
+                if hasattr(provider, "generate_json_with_metadata"):
+                    result, metadata = provider.generate_json_with_metadata(prompt)
+                else:
+                    result = provider.generate_json(prompt)
+            except Exception as exc:
+                AiUsageLogger.log_failure(
+                    db,
+                    user_id=user.id,
+                    course_id=course_id,
+                    generation_type=GenerationType.REVERSE_QUIZ,
+                    error_category=getattr(
+                        exc, "error_category", ErrorCategory.PROVIDER_ERROR
+                    ),
+                )
+                db.commit()
+                raise
+
+            try:
+                generated = ReverseQuizQuestionSet.model_validate(result)
+            except ValidationError:
+                AiUsageLogger.log_failure(
+                    db,
+                    user_id=user.id,
+                    course_id=course_id,
+                    generation_type=GenerationType.REVERSE_QUIZ,
+                    error_category=ErrorCategory.INVALID_STRUCTURE,
+                    latency_ms=metadata.latency_ms if metadata else None,
+                )
+                db.commit()
+                raise ValueError(
+                    "Provider returned an invalid reverse quiz question set"
+                )
+
+            seen: set[str] = set()
+            questions: list[ReverseQuizQuestion] = []
+            for item in generated.questions:
+                key = item.question.strip().lower()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                questions.append(item)
+                if len(questions) >= count:
+                    break
+
+            AiUsageLogger.log_success(
                 db,
                 user_id=user.id,
                 course_id=course_id,
                 generation_type=GenerationType.REVERSE_QUIZ,
-                error_category=getattr(
-                    exc, "error_category", ErrorCategory.PROVIDER_ERROR
-                ),
+                metadata=metadata,
             )
-            raise
 
-        try:
-            generated = ReverseQuizQuestionSet.model_validate(result)
-        except ValidationError:
-            AiUsageLogger.log_failure(
-                db,
-                user_id=user.id,
-                course_id=course_id,
-                generation_type=GenerationType.REVERSE_QUIZ,
-                error_category=ErrorCategory.INVALID_STRUCTURE,
-                latency_ms=metadata.latency_ms if metadata else None,
+            return ReverseQuizQuestionsResponse(
+                course_id=course_id, questions=questions
             )
-            raise ValueError("Provider returned an invalid reverse quiz question set")
-
-        seen: set[str] = set()
-        questions: list[ReverseQuizQuestion] = []
-        for item in generated.questions:
-            key = item.question.strip().lower()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            questions.append(item)
-            if len(questions) >= count:
-                break
-
-        AiUsageLogger.log_success(
-            db,
-            user_id=user.id,
-            course_id=course_id,
-            generation_type=GenerationType.REVERSE_QUIZ,
-            metadata=metadata,
-        )
-
-        return ReverseQuizQuestionsResponse(course_id=course_id, questions=questions)

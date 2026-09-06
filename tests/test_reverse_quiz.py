@@ -3,9 +3,11 @@ import json
 import pytest
 from sqlalchemy import select
 
-from backend.app.models import Conversation, ConversationMessage, GeneratedOutput
+from backend.app.models import Conversation, ConversationMessage, GeneratedOutput, User
 from schemas.reverse_quiz import ConceptStatus
+from services.credits import GENERATION_CREDIT_COSTS
 from services.text_generation import GenerationMetadata
+from tests.conftest import set_balance
 from tests.generation_fixtures import seed_ready_material
 
 
@@ -89,6 +91,121 @@ def test_reverse_quiz_endpoint_returns_grounded_evaluation(
         ).all()
     assert len(stored) == 1
     assert json.loads(stored[0].content)["topic"] == "Photosynthesis"
+
+
+def test_reverse_quiz_provider_actions_each_charge_the_server_owned_price(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with authz_api.session_factory() as session:
+        seed_ready_material(
+            session,
+            authz_api.a_course_id,
+            ["Eigenvalues describe how a linear transformation scales vectors."],
+            file_hash="9" * 64,
+            retrieval_env=retrieval_env,
+        )
+
+    stub = _EvalStub(
+        {
+            "questions": [
+                {
+                    "topic": "Eigenvalues",
+                    "question": "Explain what an eigenvalue represents.",
+                }
+            ]
+        }
+    )
+    _install_provider(monkeypatch, stub)
+
+    suggested = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/reverse-quiz/questions",
+        headers=authz_api.authorization_a,
+    )
+    assert suggested.status_code == 200, suggested.text
+
+    stub._payload = {"feedback": "Correct.", "misconceptions": []}
+    evaluated = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/reverse-quiz",
+        json={"topic": "Eigenvalues", "explanation": "They are scale factors."},
+        headers=authz_api.authorization_a,
+    )
+    assert evaluated.status_code == 201, evaluated.text
+
+    with authz_api.session_factory() as session:
+        balance = session.get(User, authz_api.user_a_id).credits
+    assert balance == 50.0 - 2 * GENERATION_CREDIT_COSTS["reverse_quiz"]
+
+
+def test_zero_balance_blocks_reverse_quiz_without_provider_call_or_output(
+    authz_api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 0.0)
+    stub = _EvalStub({"feedback": "Should not run.", "misconceptions": []})
+    _install_provider(monkeypatch, stub)
+
+    response = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/reverse-quiz",
+        json={"topic": "Eigenvalues", "explanation": "They are scale factors."},
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 402
+    assert response.headers["X-Error-Code"] == "insufficient_credits"
+    assert stub.prompts == []
+    with authz_api.session_factory() as session:
+        assert (
+            session.scalars(
+                select(GeneratedOutput).where(
+                    GeneratedOutput.course_id == authz_api.a_course_id,
+                    GeneratedOutput.output_type == "reverse_quiz",
+                )
+            ).all()
+            == []
+        )
+
+
+def test_zero_balance_blocks_reverse_quiz_question_suggestions(
+    authz_api, retrieval_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with authz_api.session_factory() as session:
+        seed_ready_material(
+            session,
+            authz_api.a_course_id,
+            ["Eigenvalues describe how a linear transformation scales vectors."],
+            file_hash="8" * 64,
+            retrieval_env=retrieval_env,
+        )
+    set_balance(authz_api.session_factory, authz_api.user_a_id, 0.0)
+    stub = _EvalStub({"questions": []})
+    _install_provider(monkeypatch, stub)
+
+    response = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/reverse-quiz/questions",
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 402
+    assert response.headers["X-Error-Code"] == "insufficient_credits"
+    assert stub.prompts == []
+
+
+def test_failed_reverse_quiz_refunds_its_charge(
+    authz_api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = 2.0
+    set_balance(authz_api.session_factory, authz_api.user_a_id, before)
+    stub = _EvalStub({})
+    _install_provider(monkeypatch, stub)
+
+    response = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/reverse-quiz",
+        json={"topic": "Eigenvalues", "explanation": "They are scale factors."},
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 500
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == before
 
 
 class _MeteredEvalStub(_EvalStub):

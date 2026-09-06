@@ -106,6 +106,15 @@ describe('CreditProvider', () => {
     expect(result.current.costOf('quiz_open_ended')).toBe(2);
   });
 
+  it('does not invent a price when the server omits a generation cost', async () => {
+    mockGetCredits.mockResolvedValue(status({ credits: 0, generation_costs: {} }));
+    const { result } = renderHook(() => useCredits(), { wrapper });
+
+    await waitFor(() => expect(result.current.status?.credits).toBe(0));
+    expect(result.current.costOf('study_guide')).toBeNull();
+    expect(result.current.canAfford('study_guide')).toBe(true);
+  });
+
   it('picks up credits granted by an administrator when the tab regains focus', async () => {
     mockGetCredits.mockResolvedValueOnce(status({ credits: 0 }));
     const { result } = renderHook(() => useCredits(), { wrapper });

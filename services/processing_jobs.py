@@ -6,7 +6,7 @@ from math import ceil, isfinite
 from uuid import UUID, uuid4
 
 from sqlalchemy import case, delete, func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from backend.app.config import settings
 from backend.app.database import begin_serialized_write
@@ -30,6 +30,7 @@ from backend.app.models import (
     ProfileDocumentVisual,
     ProfileProcessingJob,
     UploadedDocument,
+    User,
 )
 from services.embeddings import configured_embedding_identity
 from services.vector_store import (
@@ -93,6 +94,7 @@ class ClaimedJob:
     file_type: str
     file_size: int
     correlation_id: str | None = None
+    user_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,6 +352,7 @@ def claim_next_job(
     storage_provider: str,
     lease_seconds: int,
     *,
+    max_active_per_user: int | None = None,
     now: datetime | None = None,
 ) -> ClaimedJob | None:
     worker_id = worker_id.strip()
@@ -359,11 +362,38 @@ def claim_next_job(
         raise ValueError("storage_provider must not be empty")
     if lease_seconds <= 0:
         raise ValueError("lease_seconds must be positive")
+    if max_active_per_user is None:
+        max_active_per_user = settings.processing_job_max_active_per_user
+    if max_active_per_user <= 0:
+        raise ValueError("max_active_per_user must be positive")
 
     _start_transition(session)
     eligibility_time = _database_now(session, now)
     dialect_name = session.get_bind().dialect.name
 
+    running_course_job = aliased(ProcessingJob)
+    running_course = aliased(Course)
+    running_course_for_owner = (
+        select(func.count())
+        .select_from(running_course_job)
+        .join(running_course, running_course.id == running_course_job.course_id)
+        .where(
+            running_course.owner_id == Course.owner_id,
+            running_course_job.status == JOB_STATUS_RUNNING,
+        )
+        .correlate(Course)
+        .scalar_subquery()
+    )
+    running_profile_for_owner = (
+        select(func.count())
+        .select_from(ProfileProcessingJob)
+        .where(
+            ProfileProcessingJob.user_id == Course.owner_id,
+            ProfileProcessingJob.status == JOB_STATUS_RUNNING,
+        )
+        .correlate(Course)
+        .scalar_subquery()
+    )
     statement = (
         select(ProcessingJob.id)
         .join(UploadedDocument, UploadedDocument.id == ProcessingJob.document_id)
@@ -376,6 +406,7 @@ def claim_next_job(
             UploadedDocument.status == "uploaded",
             UploadedDocument.storage_provider == storage_provider,
             Course.is_deleted.is_(False),
+            running_course_for_owner + running_profile_for_owner < max_active_per_user,
         )
         .order_by(ProcessingJob.available_at, ProcessingJob.id)
         .limit(1)
@@ -401,8 +432,10 @@ def claim_next_job(
             UploadedDocument.file_type,
             UploadedDocument.file_size,
             ProcessingJob.correlation_id,
+            Course.owner_id,
         )
         .join(UploadedDocument, UploadedDocument.id == ProcessingJob.document_id)
+        .join(Course, Course.id == ProcessingJob.course_id)
         .where(
             ProcessingJob.id == job_id,
             UploadedDocument.status == "uploaded",
@@ -412,6 +445,28 @@ def claim_next_job(
         detail_statement = detail_statement.with_for_update(of=UploadedDocument)
     row = session.execute(detail_statement).one_or_none()
     if row is None:
+        session.rollback()
+        return None
+
+    session.scalar(select(User.id).where(User.id == row.owner_id).with_for_update())
+    running_count = session.scalar(
+        select(func.count())
+        .select_from(ProcessingJob)
+        .join(Course, Course.id == ProcessingJob.course_id)
+        .where(
+            Course.owner_id == row.owner_id,
+            ProcessingJob.status == JOB_STATUS_RUNNING,
+        )
+    )
+    running_profile_count = session.scalar(
+        select(func.count())
+        .select_from(ProfileProcessingJob)
+        .where(
+            ProfileProcessingJob.user_id == row.owner_id,
+            ProfileProcessingJob.status == JOB_STATUS_RUNNING,
+        )
+    )
+    if int(running_count or 0) + int(running_profile_count or 0) >= max_active_per_user:
         session.rollback()
         return None
 
@@ -477,6 +532,7 @@ def claim_next_job(
         file_type=row.file_type,
         file_size=row.file_size,
         correlation_id=row.correlation_id,
+        user_id=row.owner_id,
     )
 
 
@@ -1417,6 +1473,7 @@ def claim_next_profile_job(
     storage_provider: str,
     lease_seconds: int,
     *,
+    max_active_per_user: int | None = None,
     now: datetime | None = None,
 ) -> ClaimedProfileJob | None:
     worker_id = worker_id.strip()
@@ -1426,11 +1483,39 @@ def claim_next_profile_job(
         raise ValueError("storage_provider must not be empty")
     if lease_seconds <= 0:
         raise ValueError("lease_seconds must be positive")
+    if max_active_per_user is None:
+        max_active_per_user = settings.processing_job_max_active_per_user
+    if max_active_per_user <= 0:
+        raise ValueError("max_active_per_user must be positive")
 
     _start_transition(session)
     eligibility_time = _database_now(session, now)
     dialect_name = session.get_bind().dialect.name
 
+    running_course_job = aliased(ProcessingJob)
+    running_course = aliased(Course)
+    running_course_for_owner = (
+        select(func.count())
+        .select_from(running_course_job)
+        .join(running_course, running_course.id == running_course_job.course_id)
+        .where(
+            running_course.owner_id == ProfileProcessingJob.user_id,
+            running_course_job.status == JOB_STATUS_RUNNING,
+        )
+        .correlate(ProfileProcessingJob)
+        .scalar_subquery()
+    )
+    running_profile_job = aliased(ProfileProcessingJob)
+    running_profile_for_owner = (
+        select(func.count())
+        .select_from(running_profile_job)
+        .where(
+            running_profile_job.user_id == ProfileProcessingJob.user_id,
+            running_profile_job.status == JOB_STATUS_RUNNING,
+        )
+        .correlate(ProfileProcessingJob)
+        .scalar_subquery()
+    )
     statement = (
         select(ProfileProcessingJob.id)
         .join(ProfileDocument, ProfileDocument.id == ProfileProcessingJob.document_id)
@@ -1441,6 +1526,7 @@ def claim_next_profile_job(
             ProfileProcessingJob.attempt_count < ProfileProcessingJob.max_attempts,
             ProfileDocument.status == "uploaded",
             ProfileDocument.storage_provider == storage_provider,
+            running_course_for_owner + running_profile_for_owner < max_active_per_user,
         )
         .order_by(ProfileProcessingJob.available_at, ProfileProcessingJob.id)
         .limit(1)
@@ -1477,6 +1563,28 @@ def claim_next_profile_job(
         detail_statement = detail_statement.with_for_update(of=ProfileDocument)
     row = session.execute(detail_statement).one_or_none()
     if row is None:
+        session.rollback()
+        return None
+
+    session.scalar(select(User.id).where(User.id == row.user_id).with_for_update())
+    running_count = session.scalar(
+        select(func.count())
+        .select_from(ProcessingJob)
+        .join(Course, Course.id == ProcessingJob.course_id)
+        .where(
+            Course.owner_id == row.user_id,
+            ProcessingJob.status == JOB_STATUS_RUNNING,
+        )
+    )
+    running_profile_count = session.scalar(
+        select(func.count())
+        .select_from(ProfileProcessingJob)
+        .where(
+            ProfileProcessingJob.user_id == row.user_id,
+            ProfileProcessingJob.status == JOB_STATUS_RUNNING,
+        )
+    )
+    if int(running_count or 0) + int(running_profile_count or 0) >= max_active_per_user:
         session.rollback()
         return None
 

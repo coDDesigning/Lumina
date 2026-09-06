@@ -89,7 +89,7 @@ from services.text_generation import (
 from utils.ai_errors import ERROR_CODE_HEADER, ai_generation_http_exception
 from utils.authorization import AuthorizedCourse, OwnedCourse
 from utils.deps import get_current_user
-from utils.exceptions import NotFoundException
+from utils.exceptions import ConflictException, NotFoundException
 from utils.json_documents import parse_json_object
 from utils.rate_limit import rate_limit_generation
 
@@ -319,10 +319,17 @@ def _run_analysis(
     current_user: UserResponse,
     db: Session,
     *,
-    rescan: bool,
+    require_existing_analysis: bool,
 ) -> BaseResponse[ExamAnalysisResult]:
     generation = None
     try:
+        if (
+            require_existing_analysis
+            and ExamSourceAnalysisService.latest_analysis(db, course.id) is None
+        ):
+            raise ConflictException(
+                "A source analysis is required before sources can be rescanned"
+            )
         db_user = db.get(User, current_user.id)
         effective_model = resolve_effective_model(
             request.model,
@@ -340,14 +347,12 @@ def _run_analysis(
             request,
             provider,
             user_id=current_user.id,
-            rescan=rescan,
         )
         persisted = ExamSourceAnalysisService.persist(
             db,
             course.id,
             generation,
             user_id=current_user.id,
-            rescan=rescan,
         )
     except HTTPException:
         # A rejected source selection is already a considered answer. Passing it
@@ -367,7 +372,8 @@ def _run_analysis(
             db.rollback()
             CreditService.refund(db, generation.charge_receipt)
         raise ai_generation_http_exception(
-            exc, feature=FEATURE_RESCAN if rescan else FEATURE_ANALYSIS
+            exc,
+            feature=FEATURE_RESCAN if require_existing_analysis else FEATURE_ANALYSIS,
         ) from exc
 
     return BaseResponse(
@@ -405,7 +411,9 @@ def analyse_exam_sources(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> BaseResponse[ExamAnalysisResult]:
-    return _run_analysis(course, request, current_user, db, rescan=False)
+    return _run_analysis(
+        course, request, current_user, db, require_existing_analysis=False
+    )
 
 
 @router.post(
@@ -422,12 +430,13 @@ def rescan_exam_sources(
 ) -> BaseResponse[ExamAnalysisResult]:
     """Analyse the selected sources again, leaving every existing plan alone.
 
-    A rescan is its own route rather than a flag because it is priced
-    differently, and a price a client must not hardcode has to be readable from
-    the credit policy by its own name. It also keeps its own rate-limit bucket,
-    so a cheap rescan cannot drain the expensive first analysis.
+    A rescan is its own route so the client can express intent and read its
+    price from the credit policy. The server verifies that an earlier analysis
+    exists and derives the charged price from persisted course state.
     """
-    return _run_analysis(course, request, current_user, db, rescan=True)
+    return _run_analysis(
+        course, request, current_user, db, require_existing_analysis=True
+    )
 
 
 @router.get(

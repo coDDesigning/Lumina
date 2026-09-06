@@ -143,6 +143,7 @@ class ExamAnalysisGeneration:
     course_topics_promoted: int
     effective_request: ExamAnalysisRequest
     prompt_version: str
+    is_rescan: bool
     charge_receipt: ChargeReceipt | None = None
 
 
@@ -422,7 +423,6 @@ class ExamSourceAnalysisService:
         provider: TextGenerationProvider,
         *,
         user_id: int,
-        rescan: bool = False,
     ) -> ExamAnalysisGeneration:
         """Read the selected sources once and return everything they yielded.
 
@@ -466,16 +466,16 @@ class ExamSourceAnalysisService:
             course, request.topic_focus, suffix=RETRIEVAL_QUERY_SUFFIX
         )
 
-        price = GENERATION_CREDIT_COSTS[
-            "exam_topic_analysis_rescan" if rescan else "exam_topic_analysis"
-        ]
+        is_rescan = cls.latest_analysis(db, course_id) is not None
+        source_type = (
+            "exam_topic_analysis_rescan" if is_rescan else "exam_topic_analysis"
+        )
+        price = GENERATION_CREDIT_COSTS[source_type]
         receipt = CreditService.charge(
             db,
             user_id,
             price,
-            source_type=(
-                "exam_topic_analysis_rescan" if rescan else "exam_topic_analysis"
-            ),
+            source_type=source_type,
         )
         if receipt is None:
             log_failure(ErrorCategory.INSUFFICIENT_CREDITS)
@@ -609,12 +609,13 @@ class ExamSourceAnalysisService:
                 prompt_version=PromptLoader.load_template(
                     cls.PROMPT_TEMPLATE_NAME
                 ).version,
+                is_rescan=is_rescan,
                 charge_receipt=receipt,
             )
 
     @classmethod
     def build_documents(
-        cls, generation: ExamAnalysisGeneration, *, rescan: bool
+        cls, generation: ExamAnalysisGeneration
     ) -> tuple[str, str, str]:
         """The three JSON documents one analysis row carries."""
         summary = ExamAnalysisSummaryDocument(
@@ -629,7 +630,7 @@ class ExamSourceAnalysisService:
         )
         applied = ExamAnalysisGenerationSettings(
             topic_focus=generation.effective_request.topic_focus,
-            rescan=rescan,
+            rescan=generation.is_rescan,
             document_ids_requested=list(generation.material.document_ids_requested),
             retrieval_limit=settings.retrieval_chunk_limit,
             retrieval_min_similarity=settings.retrieval_min_similarity,
@@ -662,7 +663,6 @@ class ExamSourceAnalysisService:
         generation: ExamAnalysisGeneration,
         *,
         user_id: int,
-        rescan: bool = False,
     ) -> GeneratedOutput:
         """Write the analysis row and everything it discovered, atomically.
 
@@ -673,9 +673,7 @@ class ExamSourceAnalysisService:
         without committing and this function owns the single commit, the same
         arrangement quiz generation already uses in the opposite direction.
         """
-        content, applied_settings, applied_context = cls.build_documents(
-            generation, rescan=rescan
-        )
+        content, applied_settings, applied_context = cls.build_documents(generation)
         try:
             output = GeneratedOutputService.record(
                 db,

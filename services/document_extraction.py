@@ -17,12 +17,16 @@ from services.document_pipeline import (
     PipelineStage,
     process_document,
 )
-from services.image_understanding import get_image_understanding_provider
+from services.image_understanding import (
+    ImageUnderstandingUsage,
+    get_image_understanding_provider,
+)
 from services.processing_jobs import ChunkData, PageData, VisualData
 from storage.base import Storage, StorageError
 
 StageCallback = Callable[[PipelineStage], None]
 ExtractionCallback = Callable[[list[PageData]], None]
+ImageUsageCallback = Callable[[ImageUnderstandingUsage], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +62,7 @@ def extract_document(
     extraction_callback: ExtractionCallback | None = None,
     image_provider: ImageUnderstandingProvider | None = None,
     prompt_context: PromptContext | None = None,
+    image_usage_callback: ImageUsageCallback | None = None,
 ) -> ProcessedDocumentData:
     if storage.provider != storage_provider:
         raise DocumentProcessingError(
@@ -159,7 +164,10 @@ def extract_document(
     resolved_image_provider = (
         image_provider
         if image_provider is not None
-        else get_image_understanding_provider(prompt_context=prompt_context)
+        else get_image_understanding_provider(
+            prompt_context=prompt_context,
+            usage_callback=image_usage_callback,
+        )
     )
 
     try:

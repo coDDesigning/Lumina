@@ -78,8 +78,6 @@ def generate_reverse_quiz(
             request=request,
             provider=provider,
         )
-
-        db.commit()
     except HTTPException:
         raise
     except Exception as exc:
@@ -98,7 +96,14 @@ def generate_reverse_quiz(
     response_model=BaseResponse[ReverseQuizQuestionsResponse],
     dependencies=[Depends(rate_limit_generation("reverse_quiz"))],
     responses={
+        400: {
+            "description": (
+                "Personal API key is invalid, AI model is unavailable, or no "
+                "processed course material is available"
+            )
+        },
         401: {"description": "Authentication required"},
+        402: {"description": "Insufficient credits"},
         404: {"description": "Course not found"},
         429: {"description": "AI provider or per-user generation rate limited"},
         503: {"description": "AI provider unreachable"},
@@ -119,8 +124,6 @@ def suggest_reverse_quiz_questions(
             user=current_user,
             provider=provider,
         )
-
-        db.commit()
     except HTTPException:
         raise
     except Exception as exc:

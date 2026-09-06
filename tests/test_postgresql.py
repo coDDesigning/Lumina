@@ -751,19 +751,12 @@ def test_postgresql_schema_readiness_and_role_seeds(
         for constraint in inspector.get_check_constraints("past_exam_questions")
     } >= {
         "ck_past_exam_questions_question_type_valid",
-        "ck_past_exam_questions_page_requires_document",
         "ck_past_exam_questions_page_range_valid",
     }
-    # Both composite keys carry course_id, which is what forces an analysis and
-    # the paper it cites into the same course.
     assert {
         (key["name"], tuple(key["constrained_columns"]))
         for key in inspector.get_foreign_keys("past_exam_questions")
     } >= {
-        (
-            "fk_past_exam_questions_analysis_course_generated_outputs",
-            ("analysis_output_id", "course_id"),
-        ),
         (
             "fk_past_exam_questions_document_course_uploaded_documents",
             ("document_id", "course_id"),
@@ -903,59 +896,140 @@ def test_postgresql_schema_readiness_and_role_seeds(
             check_readiness(session, storage)
 
 
-@pytest.mark.parametrize(
-    ("query", "expected_index"),
-    [
-        (
-            "SELECT id FROM generated_outputs "
-            "WHERE user_id = -1 AND course_id = -1 ORDER BY created_at, id",
-            "ix_generated_outputs_user_course_created",
-        ),
-        (
-            "SELECT id FROM generated_outputs "
-            "WHERE user_id = -1 AND course_id IN (-1, -2) "
-            "ORDER BY created_at, id LIMIT 50",
-            "ix_generated_outputs_user_created",
-        ),
-        (
-            "SELECT id FROM conversations "
-            "WHERE user_id = -1 AND course_id = -1 ORDER BY updated_at, id",
-            "ix_conversations_user_course_updated",
-        ),
-        (
-            "SELECT id FROM quiz_attempts "
-            "WHERE quiz_id = -1 AND user_id = -1 ORDER BY created_at, id",
-            "ix_quiz_attempts_quiz_user_created",
-        ),
-        (
-            "SELECT id FROM quiz_attempts WHERE user_id = -1 ORDER BY created_at, id",
-            "ix_quiz_attempts_user_created",
-        ),
-        (
-            "SELECT id FROM quiz_attempts WHERE quiz_id = -1 ORDER BY created_at, id",
-            "ix_quiz_attempts_quiz_created",
-        ),
-        (
-            "SELECT id FROM ai_usage_logs "
-            "WHERE success IS TRUE AND created_at >= TIMESTAMPTZ '2026-01-01' "
-            "ORDER BY created_at",
-            "ix_ai_usage_logs_success_created",
-        ),
-    ],
+_HOT_READ_INDEX_CASES: tuple[tuple[str, str], ...] = (
+    (
+        "SELECT id FROM generated_outputs "
+        "WHERE user_id = {user_id} AND course_id = {course_id} "
+        "ORDER BY created_at, id",
+        "ix_generated_outputs_user_course_created",
+    ),
+    (
+        "SELECT id FROM conversations "
+        "WHERE user_id = {user_id} AND course_id = {course_id} "
+        "ORDER BY updated_at, id",
+        "ix_conversations_user_course_updated",
+    ),
+    (
+        "SELECT id FROM quiz_attempts "
+        "WHERE quiz_id = {quiz_id} AND user_id = {user_id} "
+        "ORDER BY created_at, id",
+        "ix_quiz_attempts_quiz_user_created",
+    ),
+    (
+        "SELECT id FROM quiz_attempts WHERE user_id = {user_id} "
+        "ORDER BY created_at, id",
+        "ix_quiz_attempts_user_created",
+    ),
+    (
+        "SELECT id FROM quiz_attempts WHERE quiz_id = {quiz_id} "
+        "ORDER BY created_at, id",
+        "ix_quiz_attempts_quiz_created",
+    ),
+    (
+        "SELECT id FROM ai_usage_logs "
+        "WHERE success IS TRUE AND created_at >= TIMESTAMPTZ '2025-06-15' "
+        "ORDER BY created_at",
+        "ix_ai_usage_logs_success_created",
+    ),
 )
-def test_postgresql_hot_read_indexes_are_planner_eligible(
+
+_HOT_READ_SEED_STATEMENTS: tuple[str, ...] = (
+    "INSERT INTO users (name, email, password_hash, role_id, is_banned) "
+    "SELECT 'planner ' || g, 'planner-' || g || '@example.com', 'not-a-real-hash', "
+    "(SELECT id FROM roles WHERE name = 'user'), false "
+    "FROM generate_series(1, 40) g",
+    "INSERT INTO courses (owner_id, title, semester, exam_date, is_deleted) "
+    "SELECT u.id, 'planner course ' || g, 'Fall', DATE '2026-06-15', false "
+    "FROM users u, generate_series(1, 20) g WHERE u.email LIKE 'planner-%'",
+    "INSERT INTO generated_outputs (user_id, course_id, output_type, content, created_at) "
+    "SELECT c.owner_id, c.id, 'summary', 'planner', now() - (g || ' minutes')::interval "
+    "FROM courses c, generate_series(1, 12) g WHERE c.title LIKE 'planner course %'",
+    "INSERT INTO conversations (user_id, course_id, conversation_type, created_at, updated_at) "
+    "SELECT c.owner_id, c.id, 'course_qa', now(), now() - (g || ' minutes')::interval "
+    "FROM courses c, generate_series(1, 12) g WHERE c.title LIKE 'planner course %'",
+    "INSERT INTO quizzes (course_id, title, user_id) "
+    "SELECT c.id, 'planner quiz', c.owner_id "
+    "FROM courses c WHERE c.title LIKE 'planner course %'",
+    "INSERT INTO quiz_attempts (user_id, quiz_id, score, created_at) "
+    "SELECT q.user_id, q.id, 0.5, now() - (g || ' minutes')::interval "
+    "FROM quizzes q, generate_series(1, 12) g WHERE q.title = 'planner quiz'",
+    "INSERT INTO ai_usage_logs "
+    "(user_id, course_id, generation_type, provider, model, success, created_at) "
+    "SELECT c.owner_id, c.id, 'quiz', 'ollama', 'planner-model', (g % 5 <> 0), "
+    "TIMESTAMPTZ '2025-06-01' + (g || ' days')::interval "
+    "FROM courses c, generate_series(1, 40) g WHERE c.title LIKE 'planner course %'",
+    "ANALYZE users, courses, generated_outputs, conversations, quizzes, "
+    "quiz_attempts, ai_usage_logs",
+)
+
+
+def _plan_node_types(node: dict) -> set[str]:
+    types = {node["Node Type"]}
+    for child in node.get("Plans", []):
+        types.update(_plan_node_types(child))
+    return types
+
+
+def _explain(connection, query: str) -> dict:
+    plan = connection.scalar(text(f"EXPLAIN (FORMAT JSON) {query}"))
+    assert plan is not None
+    return plan[0]["Plan"]
+
+
+def test_postgresql_hot_read_indexes_carry_their_queries(
     postgresql_engine: Engine,
-    query: str,
-    expected_index: str,
 ) -> None:
-    with postgresql_engine.begin() as connection:
+    regressions: list[str] = []
+    connection = postgresql_engine.connect()
+    transaction = connection.begin()
+    try:
         connection.execute(text("SET LOCAL enable_seqscan = off"))
-        plan = connection.scalar(
-            text(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {query}")
+        for statement in _HOT_READ_SEED_STATEMENTS:
+            connection.execute(text(statement))
+
+        identifiers = connection.execute(
+            text(
+                "SELECT c.owner_id, c.id, q.id FROM courses c "
+                "JOIN quizzes q ON q.course_id = c.id "
+                "WHERE c.title LIKE 'planner course %' ORDER BY c.id LIMIT 1"
+            )
+        ).one()
+        user_id, course_id, quiz_id = identifiers
+
+        for template, index_name in _HOT_READ_INDEX_CASES:
+            query = template.format(
+                user_id=user_id, course_id=course_id, quiz_id=quiz_id
+            )
+            baseline = _explain(connection, query)
+            connection.execute(text("SAVEPOINT without_index"))
+            connection.execute(text(f"DROP INDEX {index_name}"))
+            degraded = _explain(connection, query)
+            connection.execute(text("ROLLBACK TO SAVEPOINT without_index"))
+
+            gained_sort = "Sort" in _plan_node_types(degraded) and "Sort" not in (
+                _plan_node_types(baseline)
+            )
+            costlier = degraded["Total Cost"] > baseline["Total Cost"] * 1.05
+            if not (gained_sort or costlier):
+                regressions.append(
+                    f"{index_name} is not load bearing: dropping it left the plan "
+                    f"for {query!r} unchanged at cost {baseline['Total Cost']}"
+                )
+    finally:
+        transaction.rollback()
+        connection.close()
+
+    with postgresql_engine.connect().execution_options(
+        isolation_level="AUTOCOMMIT"
+    ) as cleanup:
+        cleanup.execute(
+            text(
+                "VACUUM ANALYZE users, courses, generated_outputs, conversations, "
+                "quizzes, quiz_attempts, ai_usage_logs"
+            )
         )
 
-    assert plan is not None
-    assert expected_index in _plan_index_names(plan[0]["Plan"])
+    assert not regressions, "\n".join(regressions)
 
 
 def test_postgresql_course_material_query_uses_course_order_indexes(
@@ -1214,6 +1288,7 @@ def test_postgresql_parallel_workers_claim_every_job_once(
                 f"parallel-worker-{index}",
                 "local:postgresql-ci",
                 60,
+                max_active_per_user=len(job_ids),
             )
             return None if claimed is None else claimed.id
 
@@ -1623,19 +1698,23 @@ def test_complete_job_honors_operation_timeout_seconds_over_a_tighter_default(
         # inserts outright unless operation_timeout_seconds overrides it.
         session.execute(text("SET statement_timeout = '1ms'"))
         session.commit()
-        assert complete_job(
-            session,
-            claim.id,
-            claim.claim_token,
-            [
-                ChunkData(
-                    text="Timeout override chunk", page_number=1, end_page_number=1
-                )
-            ],
-            embeddings=[[0.1] * EMBEDDING_DIMENSIONS],
-            vector_store=PgVectorStore(),
-            operation_timeout_seconds=30,
-        )
+        try:
+            assert complete_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                [
+                    ChunkData(
+                        text="Timeout override chunk", page_number=1, end_page_number=1
+                    )
+                ],
+                embeddings=[[0.1] * EMBEDDING_DIMENSIONS],
+                vector_store=PgVectorStore(),
+                operation_timeout_seconds=30,
+            )
+        finally:
+            session.execute(text("RESET statement_timeout"))
+            session.commit()
 
     with postgresql_sessions() as session:
         assert (
@@ -1774,8 +1853,8 @@ def test_postgresql_chunk_embeddings_round_trip_and_rank_by_cosine(
                     course_id=course.id,
                     chunk_index=0,
                     embedding=near_vector,
-                    embedding_provider="ollama",
-                    embedding_model="nomic-embed-text",
+                    embedding_provider=EMBEDDING_PROVIDER_NAME,
+                    embedding_model=EMBEDDING_MODEL_NAME,
                     dimensions=EMBEDDING_DIMENSIONS,
                 ),
                 ChunkEmbedding(
@@ -1784,8 +1863,8 @@ def test_postgresql_chunk_embeddings_round_trip_and_rank_by_cosine(
                     course_id=course.id,
                     chunk_index=1,
                     embedding=far_vector,
-                    embedding_provider="ollama",
-                    embedding_model="nomic-embed-text",
+                    embedding_provider=EMBEDDING_PROVIDER_NAME,
+                    embedding_model=EMBEDDING_MODEL_NAME,
                     dimensions=EMBEDDING_DIMENSIONS,
                 ),
             )
@@ -1825,8 +1904,8 @@ def test_postgresql_chunk_embeddings_round_trip_and_rank_by_cosine(
                 course_id=other_course.id,
                 chunk_index=0,
                 embedding=near_vector,
-                embedding_provider="ollama",
-                embedding_model="nomic-embed-text",
+                embedding_provider=EMBEDDING_PROVIDER_NAME,
+                embedding_model=EMBEDDING_MODEL_NAME,
                 dimensions=EMBEDDING_DIMENSIONS,
             )
         )

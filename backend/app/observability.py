@@ -22,17 +22,23 @@ _SECRET_PATTERN = re.compile(
     """
 )
 _ALLOWED_FIELDS = (
+    "course_id",
+    "document_id",
     "duration_ms",
     "error_code",
     "exception_chain",
     "exception_type",
+    "failed_stage",
     "http_method",
     "http_path",
     "http_status",
     "job_id",
+    "owner_id",
     "rate_limit_control",
     "rate_limit_feature",
     "retry_after_seconds",
+    "runbook",
+    "user_id",
     "worker_id",
 )
 

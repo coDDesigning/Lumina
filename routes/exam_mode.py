@@ -60,7 +60,7 @@ from schemas.quiz import QuizView
 from schemas.response import BaseResponse
 from schemas.user import UserResponse
 from services.credits import CreditService
-from services.exam_artifacts import ExamArtifactError, ExamArtifactService
+from services.exam_artifacts import ExamArtifactService
 from services.exam_entitlements import ExamEntitlementService
 from services.exam_course_artifacts import (
     PersistedMockExam,
@@ -78,11 +78,9 @@ from services.exam_similar_questions import (
     ExamSimilarQuestionsService,
     PersistedSimilarQuestions,
 )
-from services.exam_source_analysis import ExamModeError, ExamSourceAnalysisService
+from services.exam_source_analysis import ExamSourceAnalysisService
 from services.exam_topic_study import ExamTopicStudyService
-from services.retrieval_material import RetrievalMaterialError
 from services.text_generation import (
-    TextGenerationError,
     get_text_generation_provider,
     resolve_effective_model,
 )
@@ -362,12 +360,7 @@ def _run_analysis(
             db.rollback()
             CreditService.refund(db, generation.charge_receipt)
         raise
-    except (
-        TextGenerationError,
-        ExamModeError,
-        RetrievalMaterialError,
-        Exception,
-    ) as exc:
+    except Exception as exc:
         if generation is not None:
             db.rollback()
             CreditService.refund(db, generation.charge_receipt)
@@ -711,13 +704,7 @@ def _topic_artifact(
     except HTTPException:
         _release(db, generation)
         raise
-    except (
-        TextGenerationError,
-        ExamArtifactError,
-        ExamModeError,
-        RetrievalMaterialError,
-        Exception,
-    ) as exc:
+    except Exception as exc:
         _release(db, generation)
         raise ai_generation_http_exception(exc, feature=feature) from exc
 
@@ -960,13 +947,7 @@ def _topic_quiz(
     except HTTPException:
         _release(db, generation)
         raise
-    except (
-        TextGenerationError,
-        ExamArtifactError,
-        ExamModeError,
-        RetrievalMaterialError,
-        Exception,
-    ) as exc:
+    except Exception as exc:
         _release(db, generation)
         raise ai_generation_http_exception(exc, feature=feature) from exc
 
@@ -1170,13 +1151,7 @@ def generate_similar_questions(
     except HTTPException:
         _release(db, generation)
         raise
-    except (
-        TextGenerationError,
-        ExamArtifactError,
-        ExamModeError,
-        RetrievalMaterialError,
-        Exception,
-    ) as exc:
+    except Exception as exc:
         _release(db, generation)
         raise ai_generation_http_exception(
             exc, feature=FEATURE_SIMILAR_QUESTIONS
@@ -1353,13 +1328,7 @@ def generate_mock_exam(
     except HTTPException:
         _release(db, generation)
         raise
-    except (
-        TextGenerationError,
-        ExamArtifactError,
-        ExamModeError,
-        RetrievalMaterialError,
-        Exception,
-    ) as exc:
+    except Exception as exc:
         _release(db, generation)
         raise ai_generation_http_exception(exc, feature=FEATURE_MOCK_EXAM) from exc
 
@@ -1429,13 +1398,7 @@ def generate_review_sheet(
     except HTTPException:
         _release(db, generation)
         raise
-    except (
-        TextGenerationError,
-        ExamArtifactError,
-        ExamModeError,
-        RetrievalMaterialError,
-        Exception,
-    ) as exc:
+    except Exception as exc:
         _release(db, generation)
         raise ai_generation_http_exception(exc, feature=FEATURE_REVIEW_SHEET) from exc
 

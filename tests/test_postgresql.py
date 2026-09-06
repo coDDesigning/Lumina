@@ -927,7 +927,7 @@ _HOT_READ_INDEX_CASES: tuple[tuple[str, str], ...] = (
     ),
     (
         "SELECT id FROM ai_usage_logs "
-        "WHERE success IS TRUE AND created_at >= TIMESTAMPTZ '2025-06-15' "
+        "WHERE success = TRUE AND created_at >= TIMESTAMPTZ '2025-06-15' "
         "ORDER BY created_at",
         "ix_ai_usage_logs_success_created",
     ),

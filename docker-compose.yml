@@ -10,7 +10,7 @@
 # lumina-data volume with it.
 name: lumina
 
-x-lumina: &lumina
+x-lumina-service: &lumina-service
   image: lumina
   build: .
   env_file: .env
@@ -45,9 +45,24 @@ x-lumina: &lumina
     - no-new-privileges:true
   extra_hosts:
     - host.docker.internal:host-gateway
-  pids_limit: 256
+  deploy:
+    resources:
+      limits:
+        cpus: "${LUMINA_CPU_LIMIT:-4}"
+        memory: ${LUMINA_MEMORY_LIMIT:-4G}
+        pids: 256
   init: true
   restart: unless-stopped
+
+x-lumina: &lumina
+  <<: *lumina-service
+
+x-frontend: &frontend
+  deploy:
+    resources:
+      limits:
+        cpus: "${LUMINA_FRONTEND_CPU_LIMIT:-1}"
+        memory: ${LUMINA_FRONTEND_MEMORY_LIMIT:-512M}
 
 services:
   # Runs to completion before anything serves. Migrations are deliberately not
@@ -122,6 +137,19 @@ services:
     command:
       ["python", "-m", "workers.self_hosted_backup", "restore", "/backup/${BACKUP_ARCHIVE_NAME:-lumina-backup.tar.gz}", "--archive-root", "/backup"]
     restart: "no"
+
+  # Note: The web interface is compiled into the main Lumina image and served
+  # directly by the `lumina` service above (which inherits resource limits from
+  # the shared *lumina-service anchor). This legacy block is retained with
+  # matching resource limits for configurations referencing a standalone frontend.
+  frontend:
+    <<: *lumina
+    profiles: ["legacy-frontend"]
+    deploy:
+      resources:
+        limits:
+          cpus: "${LUMINA_FRONTEND_CPU_LIMIT:-1}"
+          memory: ${LUMINA_FRONTEND_MEMORY_LIMIT:-512M}
 
 volumes:
   lumina-data:

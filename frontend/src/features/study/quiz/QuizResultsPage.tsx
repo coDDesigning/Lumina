@@ -123,6 +123,7 @@ export default function QuizResultsPage({ workspace }: QuizResultsPageProps) {
       />
 
       <div className={styles.body}>
+        <h1 className="visually-hidden">Quiz results</h1>
         {error ? (
           <ErrorState
             title="These results are not here"

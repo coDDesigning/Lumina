@@ -21,13 +21,19 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
+from fastapi import BackgroundTasks
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.models import EmailVerificationToken, User
 from services.credits import CreditService
-from services.email_delivery import EmailMessage, EmailSender, get_email_sender
+from services.email_delivery import (
+    EmailDeliveryError,
+    EmailMessage,
+    EmailSender,
+    get_email_sender,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +119,10 @@ class EmailVerificationService:
 
     @staticmethod
     def issue_and_send(
-        db: Session, user: User, sender: EmailSender | None = None
+        db: Session,
+        user: User,
+        sender: EmailSender | None = None,
+        background_tasks: BackgroundTasks | None = None,
     ) -> None:
         """Mint a token, commit it, then try to deliver it.
 
@@ -121,12 +130,39 @@ class EmailVerificationService:
         message can never race a link the database has not stored yet. A send
         that fails leaves a usable token behind, which is what makes the resend
         endpoint a real remedy rather than a second chance at the same failure.
+        When ``background_tasks`` is provided, mail delivery is handed off so
+        the HTTP response is not blocked by SMTP delivery latency.
         """
         token = EmailVerificationService.issue_token(db, user)
         db.commit()
-        EmailVerificationService.send_verification_email(
-            user, token, sender or get_email_sender()
-        )
+        if background_tasks is not None:
+            background_tasks.add_task(
+                EmailVerificationService._safe_send_verification_email,
+                user,
+                token,
+                sender,
+            )
+        else:
+            EmailVerificationService.send_verification_email(
+                user, token, sender or get_email_sender()
+            )
+
+    @staticmethod
+    def _safe_send_verification_email(
+        user: User, token: str, sender: EmailSender | None = None
+    ) -> None:
+        try:
+            EmailVerificationService.send_verification_email(
+                user, token, sender or get_email_sender()
+            )
+        except EmailDeliveryError:
+            logger.warning(
+                "Verification email could not be delivered",
+                extra={
+                    "event": "verification_email_undelivered",
+                    "user_id": user.id,
+                },
+            )
 
     @staticmethod
     def redeem(db: Session, token: str) -> tuple[User, float | None]:

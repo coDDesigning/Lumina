@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
-from backend.app.config import settings
+from backend.app.config import Settings, settings
 from backend.app.database import get_db
 from backend.app.observability import (
     bind_request_id,
@@ -58,9 +58,34 @@ from storage.dependencies import get_storage
 logger = logging.getLogger(__name__)
 
 
+def check_admin_bootstrap_security(app_settings: Settings | None = None) -> None:
+    """Warn operators loudly if first-user-becomes-admin is enabled without token proof."""
+    current = app_settings if app_settings is not None else settings
+    if current.is_self_hosted and not current.requires_protected_admin_bootstrap:
+        banner = (
+            "===============================================================================\n"
+            "SECURITY WARNING: UNPROTECTED ADMINISTRATOR BOOTSTRAP ACTIVE\n"
+            "Self-hosted instance is running without protected administrator bootstrap.\n"
+            "The first account to register will automatically become an administrator without\n"
+            "token verification. To secure bootstrap, configure BOOTSTRAP_ADMIN_EMAIL and\n"
+            "BOOTSTRAP_ADMIN_TOKEN, or set APP_ENV=production.\n"
+            "==============================================================================="
+        )
+        logger.warning(
+            "Unprotected administrator bootstrap is active: first registered user will "
+            "automatically become an administrator without token verification. To secure bootstrap, "
+            "configure BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_TOKEN or set APP_ENV=production.\n%s",
+            banner,
+            extra={
+                "event": "unprotected_admin_bootstrap_warning",
+            },
+        )
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     configure_logging(service="api", environment=settings.app_env)
+    check_admin_bootstrap_security(settings)
     # Every configured vendor joins the fallback chain, so an operator must be
     # able to see which ones an outage would bill without guessing.
     logger.info(

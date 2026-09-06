@@ -1,5 +1,6 @@
 import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useCredits } from '../../context/CreditContext';
 import type { CreditSource } from '../../api/types';
 import { cx } from '@/lib/cx';
@@ -45,6 +46,7 @@ function CreditExhaustedNotice({
 
   const balance = status?.credits ?? 0;
   const cost = costOf(source);
+  const isUnverified = Boolean(status?.email_verification_required && !status?.is_email_verified);
   const grantDate = formatGrantDate(status?.next_grant_at ?? null);
   const monthlyGrant = status?.monthly_grant ?? null;
 
@@ -59,17 +61,30 @@ function CreditExhaustedNotice({
           : `You have ${balance} credits left.`}
       </p>
       <ul className={styles.routes}>
-        <li>
-          {grantDate
-            ? `Your credits refresh on ${grantDate}${
-                monthlyGrant !== null ? ` (up to ${monthlyGrant} more)` : ''
-              }.`
-            : 'Your credits refresh at the start of next month.'}
-        </li>
-        <li>
-          Need them sooner? Contact an administrator, who can add credits to your
-          account straight away.
-        </li>
+        {isUnverified ? (
+          <>
+            <li>
+              Confirm your email address to receive your starting credits. We sent a verification link to your inbox.
+            </li>
+            <li>
+              Need a new link? <Link to="/verify-email">Resend verification email</Link>.
+            </li>
+          </>
+        ) : (
+          <>
+            {grantDate ? (
+              <li>
+                {`Your credits refresh on ${grantDate}${
+                  monthlyGrant !== null ? ` (up to ${monthlyGrant} more)` : ''
+                }.`}
+              </li>
+            ) : null}
+            <li>
+              Need them sooner? Contact an administrator, who can add credits to your
+              account straight away.
+            </li>
+          </>
+        )}
       </ul>
       <div className={styles.actions}>
         <Button

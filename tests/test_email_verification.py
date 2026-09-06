@@ -503,6 +503,8 @@ def test_credit_status_distinguishes_spent_from_never_granted(
     assert before.json()["data"]["email_verification_required"] is True
     assert before.json()["data"]["is_email_verified"] is False
     assert before.json()["data"]["credits"] == 0.0
+    assert before.json()["data"]["monthly_grant"] is None
+    assert before.json()["data"]["next_grant_at"] is None
 
     api_context.client.post(
         "/api/auth/verify-email", json={"token": verifying.tokens[0]}
@@ -511,6 +513,8 @@ def test_credit_status_distinguishes_spent_from_never_granted(
     after = api_context.client.get("/api/users/me/credits", headers=authorization)
     assert after.json()["data"]["is_email_verified"] is True
     assert after.json()["data"]["credits"] == settings.credit_initial_grant
+    assert after.json()["data"]["monthly_grant"] == settings.credit_periodic_grant
+    assert after.json()["data"]["next_grant_at"] is not None
 
 
 # --- throttling --------------------------------------------------------------

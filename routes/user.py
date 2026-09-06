@@ -107,14 +107,19 @@ def get_my_credits(
     user = db.get(User, current_user.id)
     balance = CreditService.reported_balance(user) if user is not None else None
     metered = balance is not None
+    may_receive_grants = (
+        user is not None and CreditService.may_receive_automatic_grants(db, user.id)
+    )
     status = CreditStatusResponse(
         credits=balance,
         metering_enabled=CreditService.metering_enabled(),
         email_verification_required=settings.email_verification_required,
         is_email_verified=user is not None and user.email_verified_at is not None,
-        monthly_grant=settings.credit_periodic_grant if metered else None,
+        monthly_grant=settings.credit_periodic_grant
+        if (metered and may_receive_grants)
+        else None,
         balance_cap=settings.credit_max_balance if metered else None,
-        next_grant_at=next_grant_at() if metered else None,
+        next_grant_at=next_grant_at() if (metered and may_receive_grants) else None,
         generation_costs=dict(GENERATION_CREDIT_COSTS) if metered else {},
     )
     return BaseResponse(

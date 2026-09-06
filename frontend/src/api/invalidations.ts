@@ -141,3 +141,8 @@ export function afterTimedSessionSubmitted(
   void queryCache.invalidate(queryKeys.courseQuizAttempts(courseId, quizId));
   afterQuizAttempt(courseId);
 }
+
+export function afterCreditMutated(userId: number): void {
+  void queryCache.invalidate(queryKeys.credits(userId));
+  void queryCache.invalidate(['user', userId, 'creditTransactions']);
+}

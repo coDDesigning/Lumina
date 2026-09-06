@@ -1,5 +1,6 @@
 import { render, renderHook, screen, waitFor, act } from '@testing-library/react';
 import { StrictMode, type ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CreditProvider, useCredits } from './CreditContext';
 import CreditBalance from '../components/credits/CreditBalance';
@@ -50,7 +51,9 @@ function status(overrides: Partial<CreditStatus> = {}): CreditStatus {
 }
 
 const wrapper = ({ children }: { children: ReactNode }) => (
-  <CreditProvider>{children}</CreditProvider>
+  <MemoryRouter>
+    <CreditProvider>{children}</CreditProvider>
+  </MemoryRouter>
 );
 
 beforeEach(() => {
@@ -311,5 +314,63 @@ describe('CreditExhaustedNotice', () => {
     });
 
     await waitFor(() => expect(mockGetCredits).toHaveBeenCalledTimes(2));
+  });
+
+  it('renders email verification guidance when the account is unverified', async () => {
+    mockGetCredits.mockResolvedValue(
+      status({
+        credits: 0,
+        email_verification_required: true,
+        is_email_verified: false,
+        next_grant_at: null,
+        monthly_grant: null,
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <CreditProvider>
+          <CreditExhaustedNotice source="study_guide" action="a study guide" />
+        </CreditProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/confirm your email address to receive your starting credits/i),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('link', { name: /resend verification email/i })).toHaveAttribute(
+      'href',
+      '/verify-email',
+    );
+    expect(screen.queryByText(/credits refresh on/i)).toBeNull();
+    expect(screen.queryByText(/refresh at the start of next month/i)).toBeNull();
+  });
+
+  it('does not state a false refresh date when next_grant_at is null', async () => {
+    mockGetCredits.mockResolvedValue(
+      status({
+        credits: 0,
+        email_verification_required: false,
+        is_email_verified: true,
+        next_grant_at: null,
+        monthly_grant: null,
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <CreditProvider>
+          <CreditExhaustedNotice source="study_guide" action="a study guide" />
+        </CreditProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/contact an administrator/i)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/credits refresh on/i)).toBeNull();
+    expect(screen.queryByText(/refresh at the start of next month/i)).toBeNull();
   });
 });

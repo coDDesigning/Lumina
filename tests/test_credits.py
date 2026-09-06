@@ -750,3 +750,31 @@ def test_an_unmetered_account_reports_no_balance_and_no_policy(authz_api):
     assert data["balance_cap"] is None
     assert data["next_grant_at"] is None
     assert data["generation_costs"] == {}
+
+
+def test_an_unverified_metered_account_reports_no_grant_date_or_monthly_grant(
+    authz_api, monkeypatch: pytest.MonkeyPatch
+):
+    from dataclasses import replace
+    from routes import user as user_route
+    from services import credits as credits_module
+
+    patched = replace(settings, email_verification_required=True)
+    monkeypatch.setattr(user_route, "settings", patched)
+    monkeypatch.setattr(credits_module, "settings", patched)
+
+    with authz_api.session_factory() as session:
+        user = session.get(User, authz_api.user_a_id)
+        user.email_verified_at = None
+        session.commit()
+
+    response = authz_api.client.get(
+        "/api/users/me/credits", headers=authz_api.authorization_a
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["email_verification_required"] is True
+    assert data["is_email_verified"] is False
+    assert data["monthly_grant"] is None
+    assert data["next_grant_at"] is None

@@ -39,20 +39,64 @@ from tests.test_credits import _add_material
 from utils.ai_errors import ERROR_CODE_HEADER, PUBLIC_MESSAGES, AiErrorCode
 
 ROUTES_DIR = Path(__file__).resolve().parents[1] / "routes"
-AI_ROUTE_FILES = [
-    "exam_roadmap.py",
-    "study_guide.py",
-    "flashcard.py",
-    "quiz.py",
-    "course_qa.py",
-    "ai_tutor.py",
-    "prompt_generator.py",
-]
+
+AI_ERROR_MAPPER = "ai_generation_http_exception"
+
+HISTORICAL_AI_ROUTE_FILES = frozenset(
+    {
+        "exam_roadmap.py",
+        "study_guide.py",
+        "flashcard.py",
+        "quiz.py",
+        "course_qa.py",
+        "ai_tutor.py",
+        "prompt_generator.py",
+    }
+)
+
+
+def _discover_ai_route_files() -> list[str]:
+    """Every route module that maps an error through the AI generation mapper.
+
+    Derived rather than hardcoded: a hand-maintained list silently excluded
+    routes/exam_mode.py, the one module that broke the dead-handler rule, so the
+    guard passed by never reading the file. Any new AI route joins the guard the
+    moment it imports the mapper.
+    """
+    discovered: list[str] = []
+    for path in sorted(ROUTES_DIR.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and any(
+                alias.name == AI_ERROR_MAPPER for alias in node.names
+            ):
+                discovered.append(path.name)
+                break
+    return discovered
+
+
+AI_ROUTE_FILES = _discover_ai_route_files()
 
 
 # ---------------------------------------------------------------------------
 # 1. AST & Route Boundary Invariants
 # ---------------------------------------------------------------------------
+
+
+def test_ai_route_discovery_covers_every_known_generation_route() -> None:
+    """The derived guard list may grow, never silently shrink.
+
+    P2-055 shipped because AI_ROUTE_FILES was a hardcoded list that nobody
+    updated when Exam Mode landed. Pinning the historical seven against the
+    derived set means a refactor that stops discovering a route fails here
+    instead of quietly narrowing every guard below.
+    """
+    discovered = set(AI_ROUTE_FILES)
+
+    assert discovered, "no route module imports the AI error mapper"
+    assert "exam_mode.py" in discovered
+    missing = HISTORICAL_AI_ROUTE_FILES - discovered
+    assert not missing, f"discovery lost previously guarded routes: {sorted(missing)}"
 
 
 def test_no_ai_route_catches_subclasses_beside_exception() -> None:
@@ -186,6 +230,12 @@ AI_ENDPOINT_CONFIGS = [
         {"description": "A quiz about sorting algorithms"},
         False,  # global / non-course-scoped
     ),
+    (
+        "exam-mode/analysis",
+        "services.exam_source_analysis.ExamSourceAnalysisService.analyse",
+        {"topic_focus": "Sorting"},
+        True,
+    ),
 ]
 
 
@@ -219,7 +269,10 @@ def test_unexpected_failure_returns_500_with_error_code_and_refunds(
 
     set_balance(authz_api.session_factory, authz_api.user_a_id, 20.0)
 
+    raised: list[str] = []
+
     def raise_synthetic_error(*args, **kwargs):
+        raised.append(service_target)
         raise RuntimeError(f"Database crash: {SYNTHETIC_LEAK}")
 
     monkeypatch.setattr(service_target, raise_synthetic_error)
@@ -228,6 +281,13 @@ def test_unexpected_failure_returns_500_with_error_code_and_refunds(
         url,
         json=payload,
         headers=authz_api.authorization_a,
+    )
+
+    # 0. The injected failure is the one under test
+    assert raised == [service_target], (
+        f"{endpoint} never reached {service_target}, so the assertions below "
+        "would pass on any other 500. The autouse inert provider raises its own "
+        "AssertionError, which maps to the same generation_failed contract."
     )
 
     # 1. Status and header contract

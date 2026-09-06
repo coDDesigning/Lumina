@@ -1,3 +1,4 @@
+import json
 import logging
 import multiprocessing
 import os
@@ -484,10 +485,31 @@ def test_worker_skips_maintenance_when_intervals_are_zero(monkeypatch) -> None:
     assert cleanup_calls == 0
 
 
-def test_record_failure_emits_permanent_failure_alert_and_stage_metrics(
-    monkeypatch,
-) -> None:
-    from services.processing_jobs import ClaimedJob
+LEAK_STORAGE_KEY = "courses/42/uploads/2f9c-lecture-08-final.pdf"
+
+
+def _format_record(record: logging.LogRecord) -> dict:
+    """Render a record the way the deployed formatter does.
+
+    Asserting on raw LogRecord attributes proves nothing about what an operator
+    can see: JsonFormatter drops every ``extra`` key outside its allowlist, so a
+    field can be set on the record and still never reach CloudWatch.
+    """
+    from backend.app.observability import JsonFormatter
+
+    formatter = JsonFormatter(service="worker", environment="test")
+    return json.loads(formatter.format(record))
+
+
+def test_record_failure_emits_permanent_failure_alert(monkeypatch) -> None:
+    """The alert an operator actually receives carries its scope and runbook.
+
+    The leak guard names a value the job genuinely holds. An earlier version
+    asserted a filename was absent, but ClaimedJob has no filename field, so the
+    assertion could never fail no matter what the worker logged. The storage key
+    is the real canary: it is a path into object storage. The document id is not
+    a leak, it is the identifier the runbook is followed with.
+    """
     from workers.document_processor import DocumentProcessingError
 
     records: list[logging.LogRecord] = []
@@ -500,33 +522,23 @@ def test_record_failure_emits_permanent_failure_alert_and_stage_metrics(
     handler = CapturingHandler()
     logger.addHandler(handler)
 
-    emf_records: list[logging.LogRecord] = []
-
-    class MetricsHandler(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            emf_records.append(record)
-
-    metrics_logger = logging.getLogger("lumina.metrics")
-    metrics_handler = MetricsHandler()
-    metrics_logger.addHandler(metrics_handler)
-
     try:
-        # Mock fail_job to simulate terminal failure
         monkeypatch.setattr(
             document_processor,
             "fail_job",
             lambda *a, **k: "failed",
         )
 
+        document_id = uuid4()
         job = ClaimedJob(
             id=101,
-            document_id=uuid4(),
+            document_id=document_id,
             course_id=42,
             claim_token="claim-tok-123",
             attempt_count=3,
             max_attempts=3,
             storage_provider="local:test",
-            storage_key="test/key",
+            storage_key=LEAK_STORAGE_KEY,
             file_hash="a" * 64,
             file_type="pdf",
             file_size=1024,
@@ -549,16 +561,102 @@ def test_record_failure_emits_permanent_failure_alert_and_stage_metrics(
             if getattr(r, "event", None) == "permanent_document_failure"
         ]
         assert len(alert_logs) == 1
-        alert = alert_logs[0]
-        assert alert.job_id == 101
-        assert alert.course_id == 42
-        assert alert.failed_stage == "extracting_text"
-        assert alert.error_code == "CORRUPT_PDF"
-        assert alert.runbook == "docs/runbooks/stuck_document.md"
-        assert "lecture.pdf" not in alert.getMessage()
+        emitted = _format_record(alert_logs[0])
+
+        assert emitted["event"] == "permanent_document_failure"
+        assert emitted["job_id"] == 101
+        assert emitted["course_id"] == 42
+        assert emitted["failed_stage"] == "extracting_text"
+        assert emitted["error_code"] == "CORRUPT_PDF"
+        assert emitted["runbook"] == "docs/runbooks/stuck_document.md"
+
+        assert emitted["document_id"] == str(document_id)
+
+        assert LEAK_STORAGE_KEY not in json.dumps(emitted)
     finally:
         logger.removeHandler(handler)
+
+
+def test_process_next_job_emits_stage_failure_metrics(monkeypatch) -> None:
+    """StageFailed is emitted where it is produced, not where the alert is.
+
+    _record_failure emits no EMF at all; the stage counters come from
+    process_next_job, so a test that only calls _record_failure can never
+    observe them.
+    """
+    from workers.document_processor import DocumentProcessingError
+
+    emf_records: list[logging.LogRecord] = []
+
+    class MetricsHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            emf_records.append(record)
+
+    class GettableSession(FakeSession):
+        def get(self, *_args, **_kwargs):
+            return None
+
+    def session_factory() -> GettableSession:
+        return GettableSession()
+
+    job = ClaimedJob(
+        id=202,
+        document_id=uuid4(),
+        course_id=42,
+        claim_token="claim-tok-202",
+        attempt_count=3,
+        max_attempts=3,
+        storage_provider="ready-test",
+        storage_key=LEAK_STORAGE_KEY,
+        file_hash="b" * 64,
+        file_type="pdf",
+        file_size=2048,
+        correlation_id="corr-test-202",
+    )
+
+    metrics_logger = logging.getLogger("lumina.metrics")
+    metrics_handler = MetricsHandler()
+    previous_level = metrics_logger.level
+    metrics_logger.addHandler(metrics_handler)
+    metrics_logger.setLevel(logging.INFO)
+
+    try:
+        monkeypatch.setattr(document_processor, "claim_next_job", lambda *a, **k: job)
+        monkeypatch.setattr(
+            document_processor, "resolve_prompt_context", lambda *a, **k: None
+        )
+        monkeypatch.setattr(document_processor, "_heartbeat_loop", lambda *a, **k: None)
+        monkeypatch.setattr(document_processor, "fail_job", lambda *a, **k: "failed")
+
+        def raise_corrupt(*_args, **_kwargs):
+            raise DocumentProcessingError(
+                "CORRUPT_PDF",
+                "PDF content is unreadable.",
+                retryable=False,
+                failed_stage="extracting_text",
+            )
+
+        monkeypatch.setattr(document_processor, "_extract_with_timeout", raise_corrupt)
+
+        handled = document_processor.process_next_job(
+            session_factory=session_factory,
+            storage=ReadyStorage(),
+            worker_id="worker-test",
+            lease_seconds=60,
+        )
+        assert handled is True
+    finally:
         metrics_logger.removeHandler(metrics_handler)
+        metrics_logger.setLevel(previous_level)
+
+    emitted = [getattr(r, "emf", {}) for r in emf_records]
+    assert any("StageFailed" in payload for payload in emitted), emitted
+    assert any("JobsFailed" in payload for payload in emitted), emitted
+
+    stage_payload = next(p for p in emitted if "StageFailed" in p)
+    assert stage_payload["StageFailed"] == 1
+    assert stage_payload["Stage"] == "extracting_text"
+    assert not any("StageRetried" in payload for payload in emitted)
 
 
 def test_worker_runs_jobs_concurrently_across_slots(monkeypatch) -> None:

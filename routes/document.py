@@ -1,7 +1,6 @@
 """HTTP routes for course-scoped document uploads."""
 
 import logging
-import math
 from typing import Annotated
 from uuid import UUID
 
@@ -102,9 +101,8 @@ async def upload_request_validation_error(
         return _error_response("document_required")
     errors = exception.errors()
     for error in errors:
-        invalid_input = error.get("input")
-        if isinstance(invalid_input, float) and not math.isfinite(invalid_input):
-            error["input"] = str(invalid_input)
+        error.pop("input", None)
+        error.pop("ctx", None)
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 

@@ -1,7 +1,15 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    status,
+)
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
@@ -28,6 +36,7 @@ from services.token_revocation import TokenRevocationService
 from utils.deps import get_current_user, oauth2_scheme
 from utils.exceptions import ConflictException
 from utils.rate_limit import (
+    check_lockout,
     clear,
     client_ip,
     enforce,
@@ -137,12 +146,18 @@ def login_user(
         UserService.canonicalize_email(form_data.username)
         or form_data.username.strip().lower()
     )
+    account_bucket_key = rate_limit_key("login:account", account_key)
+    check_lockout(
+        rate_limit_db,
+        account_bucket_key,
+        error_code="login_rate_limited",
+        control="login_account",
+    )
     user = UserService.get_user_by_email(db, form_data.username)
     password_matches = verify_password(
         form_data.password,
         user.password_hash if user is not None else DUMMY_PASSWORD_HASH,
     )
-    account_bucket_key = rate_limit_key("login:account", account_key)
     if user is None or not password_matches:
         enforce(
             rate_limit_db,
@@ -241,6 +256,7 @@ def verify_email(
 )
 def resend_verification_email(
     payload: EmailVerificationResendRequest,
+    background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
 ):
     """Issue a fresh verification link, replacing any outstanding one.
@@ -256,16 +272,9 @@ def resend_verification_email(
 
     user = UserService.get_user_by_email(db, payload.email)
     if user is not None and user.email_verified_at is None and not user.is_banned:
-        try:
-            EmailVerificationService.issue_and_send(db, user)
-        except EmailDeliveryError:
-            logger.warning(
-                "Verification email could not be delivered",
-                extra={
-                    "event": "verification_email_undelivered",
-                    "user_id": user.id,
-                },
-            )
+        EmailVerificationService.issue_and_send(
+            db, user, background_tasks=background_tasks
+        )
 
     return EmailVerificationResponse(
         message=RESEND_ACCEPTED_MESSAGE,
@@ -290,6 +299,7 @@ def read_users_me(
 )
 def request_password_reset(
     payload: PasswordResetRequest,
+    background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
 ):
     """
@@ -297,21 +307,17 @@ def request_password_reset(
     """
     user = UserService.get_user_by_email(db, payload.email)
     if user is not None and not user.is_banned:
-        try:
-            PasswordResetService.issue_and_send(db, user)
-        except EmailDeliveryError:
-            logger.warning(
-                "Password reset email could not be delivered",
-                extra={
-                    "event": "password_reset_email_undelivered",
-                    "user_id": user.id,
-                },
-            )
+        PasswordResetService.issue_and_send(
+            db, user, background_tasks=background_tasks
+        )
 
     return {"message": RESET_SENT_MESSAGE}
 
 
-@router.post("/reset-password/confirm")
+@router.post(
+    "/reset-password/confirm",
+    dependencies=[Depends(rate_limit_password_reset)],
+)
 def confirm_password_reset(
     payload: PasswordResetConfirm,
     db: Annotated[Session, Depends(get_db)],

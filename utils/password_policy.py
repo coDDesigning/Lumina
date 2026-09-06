@@ -17,6 +17,7 @@ rendered from the configured minimum so the message can never describe a rule
 the server does not enforce. See docs/authentication.md.
 """
 
+from pathlib import Path
 import re
 import unicodedata
 from collections.abc import Iterable
@@ -28,10 +29,8 @@ from backend.app.config import settings
 # mean storing a claim we cannot check.
 MAX_PASSWORD_BYTES = 72
 
-# The passwords credential-stuffing lists open with. This is deliberately a
-# short, embedded set rather than a corpus: it costs nothing, stops the guesses
-# that actually get tried first, and does not pretend to be a breach database.
-COMMON_PASSWORDS = frozenset(
+_COMMON_PASSWORDS_FILE = Path(__file__).resolve().parent / "common_passwords.txt"
+_BASE_COMMON_PASSWORDS = frozenset(
     {
         "123123123123",
         "123456789012",
@@ -62,8 +61,29 @@ COMMON_PASSWORDS = frozenset(
         "zaq12wsxcde3",
         "p@ssw0rdp@ssw0rd",
         "correcthorsebatterystaple",
+        "password123",
+        "qwerty123",
+        "admin1234",
+        "welcome123",
     }
 )
+
+
+def _load_common_passwords() -> frozenset[str]:
+    """Load commonly breached passwords from wordlist file, with embedded fallback."""
+    if _COMMON_PASSWORDS_FILE.is_file():
+        with _COMMON_PASSWORDS_FILE.open("r", encoding="utf-8") as f:
+            file_passwords = {
+                line.strip().casefold()
+                for line in f
+                if line.strip() and not line.startswith("#")
+            }
+            return frozenset(file_passwords | _BASE_COMMON_PASSWORDS)
+    return _BASE_COMMON_PASSWORDS
+
+
+# Commonly breached passwords from wordlists (e.g. SecLists) to prevent credential stuffing.
+COMMON_PASSWORDS: frozenset[str] = _load_common_passwords()
 
 _SEQUENCES = ("abcdefghijklmnopqrstuvwxyz", "0123456789", "qwertyuiop", "asdfghjkl")
 

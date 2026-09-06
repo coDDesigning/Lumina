@@ -155,14 +155,18 @@ def test_compose_services_define_resource_limits() -> None:
         assert anchor is not None, f"missing lumina anchor in {filename}"
         anchor_limits = anchor.get("deploy", {}).get("resources", {}).get("limits", {})
         assert "cpus" in anchor_limits, f"missing cpus limit on anchor in {filename}"
-        assert "memory" in anchor_limits, f"missing memory limit on anchor in {filename}"
+        assert "memory" in anchor_limits, (
+            f"missing memory limit on anchor in {filename}"
+        )
 
         services = data.get("services", {})
         assert services, f"no services declared in {filename}"
         for name, conf in services.items():
             limits = conf.get("deploy", {}).get("resources", {}).get("limits", {})
             assert "cpus" in limits, f"service {name} in {filename} missing cpus limit"
-            assert "memory" in limits, f"service {name} in {filename} missing memory limit"
+            assert "memory" in limits, (
+                f"service {name} in {filename} missing memory limit"
+            )
 
     # Verify frontend in docker-compose.yml specifically
     compose_content = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
@@ -171,4 +175,3 @@ def test_compose_services_define_resource_limits() -> None:
     frontend_limits = frontend["deploy"]["resources"]["limits"]
     assert "cpus" in frontend_limits
     assert "memory" in frontend_limits
-

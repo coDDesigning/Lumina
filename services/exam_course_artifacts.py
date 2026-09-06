@@ -74,9 +74,9 @@ from services.exam_mock_allocation import (
 )
 from services.prompt_loader import PromptLoader
 from services.quiz import (
-    QUESTION_TYPE_DIRECTIVES,
-    QUESTION_TYPE_SCHEMAS,
     QuizService,
+    render_type_directives,
+    render_type_schemas,
 )
 from services.text_generation import TextGenerationProvider
 
@@ -335,13 +335,9 @@ def _mock_prompt(
         {
             **context.as_variables(),
             "QUESTION_COUNT": str(question_count),
-            "QUESTION_TYPE_DIRECTIVES": "\n".join(
-                f"- {QUESTION_TYPE_DIRECTIVES[kind]}" for kind in MOCK_QUESTION_TYPES
-            ),
+            "QUESTION_TYPE_DIRECTIVES": render_type_directives(MOCK_QUESTION_TYPES),
             "QUESTION_TYPE_QUOTAS": render_type_quotas(types),
-            "QUESTION_TYPE_SCHEMAS": "\n\n".join(
-                QUESTION_TYPE_SCHEMAS[kind] for kind in MOCK_QUESTION_TYPES
-            ),
+            "QUESTION_TYPE_SCHEMAS": render_type_schemas(MOCK_QUESTION_TYPES),
             "PAST_QUESTION_STYLE": style,
             "PLAN_TOPICS": render_topic_quotas(quotas),
             "TEXT": material,

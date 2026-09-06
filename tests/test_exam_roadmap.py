@@ -10,11 +10,13 @@ version rather than editing the one the student already read.
 
 import json
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select
 
 import routes.study_guide as study_guide_route
+import services.exam_roadmap as exam_roadmap_service
 import services.study_guide as study_guide_service
 from backend.app.models import (
     Course,
@@ -50,6 +52,7 @@ from services.exam_schedule import (
 )
 from services.exam_topic_ranking import rank_topics
 from services.study_guide import StudyGuideService
+from utils.clock import utc_today
 from tests.conftest import directional_vector
 from tests.generation_fixtures import (
     RecordingProvider,
@@ -113,7 +116,7 @@ def _plan_course(session_factory, course_id: int, *, exam_in_days, topics) -> No
         course = session.get(Course, course_id)
         assert course is not None
         course.exam_date = (
-            date.today() + timedelta(days=exam_in_days)
+            utc_today() + timedelta(days=exam_in_days)
             if exam_in_days is not None
             else None
         )
@@ -588,7 +591,7 @@ def test_a_roadmap_plans_every_day_and_stores_itself(upload_api, retrieval_env) 
 
     roadmap = _roadmap_of(_generate(upload_api, upload_api.course_id))
 
-    today = date.today()
+    today = utc_today()
     assert roadmap["generated_on"] == today.isoformat()
     assert roadmap["days_until_exam"] == 5
     assert len(roadmap["days"]) == 6
@@ -974,6 +977,51 @@ def test_an_exam_date_that_has_passed_says_so(upload_api) -> None:
     assert response.status_code == 409, response.text
     assert response.headers[ERROR_CODE_HEADER] == AiErrorCode.EXAM_DATE_PASSED.value
     assert _stored_roadmaps(upload_api.session_factory, upload_api.course_id) == []
+
+
+def test_the_roadmap_reads_utc_rather_than_the_hosts_local_calendar(
+    upload_api, monkeypatch
+) -> None:
+    """A roadmap's first day is today in UTC, wherever the process runs.
+
+    Pinned through the shared helper rather than through TZ, because tzset is
+    unavailable on Windows and the roadmap must agree with the exam plan gate
+    on every host either way.
+    """
+    pinned = date(2026, 5, 1)
+    with upload_api.session_factory() as session:
+        course = session.get(Course, upload_api.course_id)
+        assert course is not None
+        course.exam_date = pinned + timedelta(days=2)
+        course.topic_rows = [
+            CourseTopic(course_id=upload_api.course_id, position=0, name="Graphs")
+        ]
+        session.commit()
+    monkeypatch.setattr(exam_roadmap_service, "utc_today", lambda: pinned)
+
+    roadmap = _roadmap_of(_generate(upload_api, upload_api.course_id))
+
+    assert roadmap["generated_on"] == pinned.isoformat()
+    assert roadmap["days"][0]["date"] == pinned.isoformat()
+    assert roadmap["days_until_exam"] == 2
+
+
+def test_no_dated_exam_decision_reads_the_hosts_local_calendar() -> None:
+    """One clock for every courses.exam_date decision.
+
+    A source scan rather than a mock, because the guarantee is structural: a
+    module that never calls date.today() cannot drift from UTC by a day
+    depending on where it happens to run.
+    """
+    services = Path(__file__).resolve().parents[1] / "services"
+
+    offenders = [
+        module.name
+        for module in sorted(services.glob("exam_*.py"))
+        if "date.today()" in module.read_text(encoding="utf-8")
+    ]
+
+    assert offenders == []
 
 
 def test_a_course_with_nothing_to_plan_says_so(upload_api) -> None:

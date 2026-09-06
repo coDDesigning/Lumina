@@ -162,6 +162,38 @@ QUESTION_TYPE_SCHEMAS: dict[QuizQuestionType, str] = {
     ),
 }
 
+QUESTION_TYPE_SELECTION_NOTES: dict[QuizQuestionType, str] = {
+    QuizQuestionType.OPEN_ENDED: (
+        "Exam work that is structured, an essay, a problem, or a proof is "
+        'written work: use "open_ended" for it, and put what a strong response '
+        'must contain in "reference_answer".'
+    ),
+}
+
+
+def render_type_directives(types: Sequence[QuizQuestionType]) -> str:
+    """The type vocabulary one generation is allowed, and nothing wider.
+
+    A note is rendered only for a type actually on offer, because a template
+    that names a type it never describes asks the model to guess a shape it was
+    never shown -- and every generated question member forbids extra fields, so
+    the guess is refused and the whole paid generation with it.
+    """
+    bullets = "\n".join(f"- {QUESTION_TYPE_DIRECTIVES[kind]}" for kind in types)
+    notes = [
+        QUESTION_TYPE_SELECTION_NOTES[kind]
+        for kind in types
+        if kind in QUESTION_TYPE_SELECTION_NOTES
+    ]
+    if not notes:
+        return bullets
+    return "\n\n".join([bullets, *notes])
+
+
+def render_type_schemas(types: Sequence[QuizQuestionType]) -> str:
+    return "\n\n".join(QUESTION_TYPE_SCHEMAS[kind] for kind in types)
+
+
 DIFFICULTY_DIRECTIVES: dict[QuizDifficulty, str] = {
     QuizDifficulty.EASY: (
         "Every question must be easy: direct recall or straightforward comprehension "

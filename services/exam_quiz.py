@@ -52,6 +52,7 @@ from services.exam_artifacts import (
     ExamArtifactGeneration,
     ExamArtifactService,
     ExamArtifactSpec,
+    InvalidExamArtifactStructureError,
     PlannedTopic,
 )
 from services.exam_question_extraction import PastExamExtractionService
@@ -64,9 +65,9 @@ from services.exam_topics import (
 from services.generated_output import GeneratedOutputService
 from services.prompt_loader import PromptLoader
 from services.quiz import (
-    QUESTION_TYPE_DIRECTIVES,
-    QUESTION_TYPE_SCHEMAS,
     QuizService,
+    render_type_directives,
+    render_type_schemas,
 )
 from services.text_generation import TextGenerationProvider
 
@@ -152,14 +153,6 @@ class PersistedExamQuiz:
     credits_charged: float
 
 
-def _type_block(types: tuple[QuizQuestionType, ...]) -> str:
-    return "\n".join(f"- {QUESTION_TYPE_DIRECTIVES[kind]}" for kind in types)
-
-
-def _schema_block(types: tuple[QuizQuestionType, ...]) -> str:
-    return "\n\n".join(QUESTION_TYPE_SCHEMAS[kind] for kind in types)
-
-
 def topic_past_questions(
     db: Session, course_id: int, topic: PlannedTopic
 ) -> list[PastExamQuestion]:
@@ -233,8 +226,8 @@ def _build_prompt(
         **context.as_variables(),
         "QUESTION_COUNT": str(question_count),
         "DIFFICULTY_DIRECTIVE": MIXED_DIFFICULTY_DIRECTIVE,
-        "QUESTION_TYPE_DIRECTIVES": _type_block(kind.question_types),
-        "QUESTION_TYPE_SCHEMAS": _schema_block(kind.question_types),
+        "QUESTION_TYPE_DIRECTIVES": render_type_directives(kind.question_types),
+        "QUESTION_TYPE_SCHEMAS": render_type_schemas(kind.question_types),
     }
     if style is not None:
         variables["PAST_QUESTION_STYLE"] = style
@@ -275,6 +268,30 @@ def _spec(
             PRACTICE_INVALID_MESSAGE if kind is PRACTICE else EXAM_INVALID_MESSAGE
         ),
     )
+
+
+def _assert_types_allowed(
+    kind: ExamQuizKind, quiz_data: QuizGenerationResponse
+) -> None:
+    """Hold the response to the vocabulary this flow can store.
+
+    The prompt names the allowed types, but prompt compliance is not a
+    guarantee, and ``QuizGenerationResponse`` accepts every storable type
+    rather than the subset one kind offers. Ordinary quizzes, mock exams and
+    similar questions all check this after validation; without it a practice
+    set could be stored holding a type its own settings document says was
+    never requested.
+    """
+    allowed = set(kind.question_types)
+    for question in quiz_data.questions:
+        if question.question_type not in allowed:
+            logger.warning(
+                "Exam quiz refused: question type %s was not requested",
+                question.question_type.value,
+            )
+            raise InvalidExamArtifactStructureError(
+                PRACTICE_INVALID_MESSAGE if kind is PRACTICE else EXAM_INVALID_MESSAGE
+            )
 
 
 class ExamQuizService:
@@ -328,6 +345,7 @@ class ExamQuizService:
         kind = KINDS[output_type]
         topic = generation.topic
         quiz_data: QuizGenerationResponse = generation.validated
+        _assert_types_allowed(kind, quiz_data)
 
         applied = ExamQuizGenerationSettings(
             output_type=output_type,

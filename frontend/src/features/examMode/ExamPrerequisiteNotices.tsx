@@ -31,6 +31,12 @@ const COPY: Record<PrerequisiteKind, Copy> = {
       'Everything you already have stays readable. Set the next date to build a new plan.',
     action: { label: 'Update the exam date', to: (id) => `/courses/${id}/settings` },
   },
+  exam_date_not_future: {
+    title: 'Your exam is today',
+    body: () =>
+      'A first plan needs an exam still to come. Your day-by-day roadmap still plans an exam today, and everything you already have stays readable.',
+    action: { label: 'Open the course', to: (id) => `/courses/${id}` },
+  },
   no_sources: {
     title: 'No source is ready to read',
     body: () => 'Exam Mode reads the material you have already uploaded to this course.',

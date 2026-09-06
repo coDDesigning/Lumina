@@ -96,6 +96,40 @@ describe('SimilarQuestionBuilder', () => {
     });
   });
 
+  it('refuses a count the server would reject, before spending a request', async () => {
+    // The server answers an out-of-range count with a raw validation string.
+    // Blocking it here is what keeps that string off the student's screen.
+    const generate = vi.mocked(examModeAPI.generateSimilarQuestions);
+    const user = userEvent.setup();
+
+    renderBuilder();
+    await waitFor(() => expect(screen.getAllByRole('checkbox')).toHaveLength(2));
+    await user.click(screen.getAllByRole('checkbox')[1]);
+
+    await user.clear(screen.getByLabelText(/how many to write/i));
+
+    expect(screen.getByText('Enter how many questions you want.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /write similar questions/i })).toBeDisabled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a count above the bound the backend enforces', async () => {
+    const generate = vi.mocked(examModeAPI.generateSimilarQuestions);
+    const user = userEvent.setup();
+
+    renderBuilder();
+    await waitFor(() => expect(screen.getAllByRole('checkbox')).toHaveLength(2));
+    await user.click(screen.getAllByRole('checkbox')[1]);
+
+    const field = screen.getByLabelText(/how many to write/i);
+    await user.clear(field);
+    await user.type(field, '21');
+
+    expect(screen.getByText('Choose between 1 and 20 questions.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /write similar questions/i })).toBeDisabled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
   it('ticks one paper without ticking the same position in the other', async () => {
     const user = userEvent.setup();
 

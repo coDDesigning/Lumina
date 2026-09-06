@@ -73,6 +73,31 @@ run "read_only_restore_verifier" {
     ]) == toset(["DATABASE_URL"])
     error_message = "The hosted restore container must receive no application secrets."
   }
+
+  assert {
+    condition = one([
+      for secret in jsondecode(aws_ecs_task_definition.api.container_definitions)[0].secrets : secret.valueFrom
+      if secret.name == "DATABASE_URL"
+      ]) == var.runtime_database_url_secret_arn && one([
+      for secret in jsondecode(aws_ecs_task_definition.worker.container_definitions)[0].secrets : secret.valueFrom
+      if secret.name == "DATABASE_URL"
+      ]) == var.runtime_database_url_secret_arn && one([
+      for secret in jsondecode(aws_ecs_task_definition.migrate.container_definitions)[0].secrets : secret.valueFrom
+      if secret.name == "DATABASE_URL"
+    ]) == var.migration_database_url_secret_arn
+    error_message = "API and worker tasks must receive the runtime database URL secret while migration tasks receive the migration secret."
+  }
+
+  assert {
+    condition = one([
+      for secret in jsondecode(aws_ecs_task_definition.api.container_definitions)[0].secrets : secret.valueFrom
+      if secret.name == "DATABASE_URL"
+      ]) != one([
+      for secret in jsondecode(aws_ecs_task_definition.migrate.container_definitions)[0].secrets : secret.valueFrom
+      if secret.name == "DATABASE_URL"
+    ])
+    error_message = "API database URL secret ARN must strictly differ from migration database URL secret ARN."
+  }
 }
 
 run "hosted_tasks_can_deliver_verification_links" {

@@ -937,7 +937,7 @@ def test_postgresql_schema_readiness_and_role_seeds(
         ),
         (
             "SELECT id FROM ai_usage_logs "
-            "WHERE success IS TRUE AND created_at >= TIMESTAMPTZ '2026-01-01' "
+            "WHERE success = TRUE AND created_at >= TIMESTAMPTZ '2026-01-01' "
             "ORDER BY created_at",
             "ix_ai_usage_logs_success_created",
         ),
@@ -1214,6 +1214,7 @@ def test_postgresql_parallel_workers_claim_every_job_once(
                 f"parallel-worker-{index}",
                 "local:postgresql-ci",
                 60,
+                max_active_per_user=len(job_ids),
             )
             return None if claimed is None else claimed.id
 
@@ -1623,19 +1624,23 @@ def test_complete_job_honors_operation_timeout_seconds_over_a_tighter_default(
         # inserts outright unless operation_timeout_seconds overrides it.
         session.execute(text("SET statement_timeout = '1ms'"))
         session.commit()
-        assert complete_job(
-            session,
-            claim.id,
-            claim.claim_token,
-            [
-                ChunkData(
-                    text="Timeout override chunk", page_number=1, end_page_number=1
-                )
-            ],
-            embeddings=[[0.1] * EMBEDDING_DIMENSIONS],
-            vector_store=PgVectorStore(),
-            operation_timeout_seconds=30,
-        )
+        try:
+            assert complete_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                [
+                    ChunkData(
+                        text="Timeout override chunk", page_number=1, end_page_number=1
+                    )
+                ],
+                embeddings=[[0.1] * EMBEDDING_DIMENSIONS],
+                vector_store=PgVectorStore(),
+                operation_timeout_seconds=30,
+            )
+        finally:
+            session.execute(text("RESET statement_timeout"))
+            session.commit()
 
     with postgresql_sessions() as session:
         assert (
@@ -1774,8 +1779,8 @@ def test_postgresql_chunk_embeddings_round_trip_and_rank_by_cosine(
                     course_id=course.id,
                     chunk_index=0,
                     embedding=near_vector,
-                    embedding_provider="ollama",
-                    embedding_model="nomic-embed-text",
+                    embedding_provider=EMBEDDING_PROVIDER_NAME,
+                    embedding_model=EMBEDDING_MODEL_NAME,
                     dimensions=EMBEDDING_DIMENSIONS,
                 ),
                 ChunkEmbedding(
@@ -1784,8 +1789,8 @@ def test_postgresql_chunk_embeddings_round_trip_and_rank_by_cosine(
                     course_id=course.id,
                     chunk_index=1,
                     embedding=far_vector,
-                    embedding_provider="ollama",
-                    embedding_model="nomic-embed-text",
+                    embedding_provider=EMBEDDING_PROVIDER_NAME,
+                    embedding_model=EMBEDDING_MODEL_NAME,
                     dimensions=EMBEDDING_DIMENSIONS,
                 ),
             )
@@ -1825,8 +1830,8 @@ def test_postgresql_chunk_embeddings_round_trip_and_rank_by_cosine(
                 course_id=other_course.id,
                 chunk_index=0,
                 embedding=near_vector,
-                embedding_provider="ollama",
-                embedding_model="nomic-embed-text",
+                embedding_provider=EMBEDDING_PROVIDER_NAME,
+                embedding_model=EMBEDDING_MODEL_NAME,
                 dimensions=EMBEDDING_DIMENSIONS,
             )
         )

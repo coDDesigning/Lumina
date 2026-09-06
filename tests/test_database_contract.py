@@ -773,6 +773,10 @@ def test_migrated_schema_has_no_column_drift_from_the_models(
                 "ck_progress_total_questions_answered_nonnegative",
             },
         ),
+        (
+            "past_exam_questions",
+            {"ck_past_exam_questions_page_requires_document"},
+        ),
     ],
 )
 def test_migrated_check_constraints_match_the_models(

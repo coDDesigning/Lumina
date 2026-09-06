@@ -11911,7 +11911,7 @@
     },
     "/api/courses/{course_id}/exam-mode/analysis/rescan": {
       "post": {
-        "description": "Analyse the selected sources again, leaving every existing plan alone.\n\nA rescan is its own route rather than a flag because it is priced\ndifferently, and a price a client must not hardcode has to be readable from\nthe credit policy by its own name. It also keeps its own rate-limit bucket,\nso a cheap rescan cannot drain the expensive first analysis.",
+        "description": "Analyse the selected sources again, leaving every existing plan alone.\n\nA rescan is its own route so the client can express intent and read its\nprice from the credit policy. The server verifies that an earlier analysis\nexists and derives the charged price from persisted course state.",
         "operationId": "rescan_exam_sources_api_courses__course_id__exam_mode_analysis_rescan_post",
         "parameters": [
           {
@@ -14837,8 +14837,14 @@
             },
             "description": "Successful Response"
           },
+          "400": {
+            "description": "Personal API key is invalid, AI model is unavailable, or no processed course material is available"
+          },
           "401": {
             "description": "Authentication required"
+          },
+          "402": {
+            "description": "Insufficient credits"
           },
           "404": {
             "description": "Course not found"

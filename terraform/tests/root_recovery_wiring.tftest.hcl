@@ -52,6 +52,15 @@ run "root_recovery_outputs_and_wiring" {
   }
 
   override_module {
+    target = module.rds_proxy
+    outputs = {
+      endpoint                        = "lumina-production-proxy.proxy-xxxx.us-east-1.rds.amazonaws.com"
+      name                            = "lumina-production-proxy"
+      runtime_database_url_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:lumina-production/runtime-database-url"
+    }
+  }
+
+  override_module {
     target = module.secrets
     outputs = {
       parameter_names = []
@@ -95,5 +104,25 @@ run "root_recovery_outputs_and_wiring" {
   assert {
     condition     = output.rds_option_group_name == module.rds.option_group_name && output.rds_option_group_name == "default:postgres-16"
     error_message = "The root RDS option group output must come directly from the RDS module."
+  }
+
+  assert {
+    condition     = output.database_url_secret_arn == module.rds_proxy.runtime_database_url_secret_arn
+    error_message = "The root database URL secret ARN output must come from RDS Proxy."
+  }
+
+  assert {
+    condition     = output.migration_database_url_secret_arn == module.rds.database_url_secret_arn
+    error_message = "The root migration database URL secret ARN output must come directly from the RDS module."
+  }
+
+  assert {
+    condition     = output.database_url_secret_arn != output.migration_database_url_secret_arn
+    error_message = "The API and worker runtime database URL secret ARN must strictly differ from the migration database URL secret ARN."
+  }
+
+  assert {
+    condition     = output.rds_proxy_endpoint == module.rds_proxy.endpoint
+    error_message = "The root RDS Proxy endpoint output must come directly from the RDS Proxy module."
   }
 }

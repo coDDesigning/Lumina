@@ -7,7 +7,7 @@
 # .env as the only place configuration lives. See docs/deployment.md.
 name: lumina-hosted
 
-x-lumina: &lumina
+x-lumina-service: &lumina-service
   image: lumina
   build: .
   env_file: .env
@@ -38,9 +38,17 @@ x-lumina: &lumina
     - ALL
   security_opt:
     - no-new-privileges:true
-  pids_limit: 256
+  deploy:
+    resources:
+      limits:
+        cpus: "${LUMINA_CPU_LIMIT:-4}"
+        memory: ${LUMINA_MEMORY_LIMIT:-4G}
+        pids: 256
   init: true
   restart: unless-stopped
+
+x-lumina: &lumina
+  <<: *lumina-service
 
 services:
   db:
@@ -51,6 +59,11 @@ services:
       - POSTGRES_DB=lumina
     volumes:
       - pgdata:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: "${POSTGRES_CPU_LIMIT:-2}"
+          memory: ${POSTGRES_MEMORY_LIMIT:-2G}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d lumina"]
       interval: 5s
@@ -70,6 +83,11 @@ services:
       MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
     volumes:
       - minio-data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "${MINIO_CPU_LIMIT:-1}"
+          memory: ${MINIO_MEMORY_LIMIT:-1G}
     restart: unless-stopped
 
   minio-init:
@@ -93,6 +111,11 @@ services:
         done
         mc alias set lumina http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
         mc mb --ignore-existing "lumina/$$S3_BUCKET"
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256M
     restart: "no"
 
   migrate:

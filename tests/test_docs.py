@@ -114,3 +114,29 @@ def test_readme_local_model_profile_uses_the_single_material_ceiling() -> None:
     assert "MATERIAL_MAX_CHARS_CEILING=" in block
     # The old per-feature lines must be gone from the profile so it cannot drift.
     assert "STUDY_GUIDE_MATERIAL_MAX_CHARS=" not in block
+
+
+def test_compose_worker_stop_grace_period_covers_generation_timeout() -> None:
+    """P2-048: worker stop_grace_period in compose files must cover the 600s
+    generation job attempt timeout plus 45s margin (645s)."""
+    for filename in ("docker-compose.yml", "docker-compose.hosted.yml"):
+        content = (PROJECT_ROOT / filename).read_text(encoding="utf-8")
+        assert "stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-645s}" in content
+
+
+def test_docs_uvicorn_commands_include_no_access_log() -> None:
+    """P2-051: manual uvicorn main:app run commands in docs must include --no-access-log."""
+    uvicorn_invocation = re.compile(r"\buvicorn\s+main:app\b")
+    offenders: list[str] = []
+    for md_file in (PROJECT_ROOT / "docs").rglob("*.md"):
+        for lineno, line in enumerate(
+            md_file.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if uvicorn_invocation.search(line) and "--no-access-log" not in line:
+                rel = md_file.relative_to(PROJECT_ROOT).as_posix()
+                offenders.append(f"{rel}:{lineno}: {line.strip()}")
+
+    assert not offenders, (
+        "docs uvicorn run commands must include --no-access-log:\n"
+        + "\n".join(f"  - {o}" for o in offenders)
+    )

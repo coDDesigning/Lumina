@@ -130,10 +130,10 @@ run "frontend_delivery_contract" {
   }
 
   assert {
-    condition = strcontains(
-      aws_cloudfront_response_headers_policy.security.security_headers_config[0].content_security_policy[0].content_security_policy,
-      "connect-src 'self';"
-    )
+    condition = can(regex(
+      "(^|[ ;])connect-src [^;]*'self'([ ;]|$)",
+      aws_cloudfront_response_headers_policy.security.security_headers_config[0].content_security_policy[0].content_security_policy
+    ))
     error_message = "The SPA must be permitted to call its own origin."
   }
 

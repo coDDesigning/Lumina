@@ -85,7 +85,9 @@ def test_git_head_invalid_sha_rejected() -> None:
         raise AssertionError(f"unexpected command: {args}")
 
     with patch("subprocess.run", side_effect=fake_run):
-        with pytest.raises(DeployError, match="could not resolve a 40-character commit SHA"):
+        with pytest.raises(
+            DeployError, match="could not resolve a 40-character commit SHA"
+        ):
             git_head()
 
 
@@ -142,7 +144,9 @@ def test_check_branch_missing_origin_main_allowed_with_flag(capsys) -> None:
     with patch("subprocess.run", side_effect=fake_run):
         check_branch(VALID_SHA, allow_branch=True)
     captured = capsys.readouterr()
-    assert "could not read origin/main; continuing due to --allow-branch" in captured.out
+    assert (
+        "could not read origin/main; continuing due to --allow-branch" in captured.out
+    )
 
 
 def test_warn_if_not_main_alias() -> None:
@@ -168,10 +172,16 @@ def test_roll_services_registers_hosted_restore() -> None:
     def fake_current_service(service: str) -> str:
         return f"arn:aws:ecs:eu-central-1:123456789012:task-definition/{service}:1"
 
-    with patch("deploy_local.get_ecs_client", return_value=mock_ecs), patch(
-        "deploy_local.register_with_image", side_effect=fake_register
-    ), patch("deploy_local.current_service_task_def", side_effect=fake_current_service):
-        result = roll_services("123456789012.dkr.ecr.eu-central-1.amazonaws.com/lumina:tag", dry_run=False)
+    with (
+        patch("deploy_local.get_ecs_client", return_value=mock_ecs),
+        patch("deploy_local.register_with_image", side_effect=fake_register),
+        patch(
+            "deploy_local.current_service_task_def", side_effect=fake_current_service
+        ),
+    ):
+        result = roll_services(
+            "123456789012.dkr.ecr.eu-central-1.amazonaws.com/lumina:tag", dry_run=False
+        )
 
     # 1. Verify register_with_image was invoked for API, Worker, AND hosted-restore families
     families_registered = [fam for fam, _ in registered]
@@ -185,7 +195,10 @@ def test_roll_services_registers_hosted_restore() -> None:
     assert WORKER_SERVICE in result
 
     # 3. Verify ecs.update_service was ONLY called for API and Worker services, NOT hosted-restore
-    updated_services = [call_args.kwargs["service"] for call_args in mock_ecs.update_service.call_args_list]
+    updated_services = [
+        call_args.kwargs["service"]
+        for call_args in mock_ecs.update_service.call_args_list
+    ]
     assert API_SERVICE in updated_services
     assert WORKER_SERVICE in updated_services
     assert len(updated_services) == 2
@@ -229,7 +242,9 @@ def test_write_state_format(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert "snap-predeploy-123" in data["rollback"]["database"]
 
 
-def test_write_state_none_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_write_state_none_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     state_file = tmp_path / "deploy_state.json"
     monkeypatch.setattr(deploy_local, "STATE_FILE", state_file)
 
@@ -241,7 +256,9 @@ def test_write_state_none_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert data["rollback"]["database"] == "no predeployment snapshot taken"
 
 
-def test_main_failure_persists_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_failure_persists_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     state_file = tmp_path / "deploy_state.json"
     monkeypatch.setattr(deploy_local, "STATE_FILE", state_file)
 
@@ -284,8 +301,12 @@ def test_package_frontend_archive_deterministic(tmp_path: Path) -> None:
     (dist / "index.html").write_text("<!doctype html><html></html>", encoding="utf-8")
     assets_dir = dist / "assets"
     assets_dir.mkdir()
-    (assets_dir / "index-abc12345.js").write_text("console.log('test');", encoding="utf-8")
-    (assets_dir / "index-def67890.css").write_text("body { margin: 0; }", encoding="utf-8")
+    (assets_dir / "index-abc12345.js").write_text(
+        "console.log('test');", encoding="utf-8"
+    )
+    (assets_dir / "index-def67890.css").write_text(
+        "body { margin: 0; }", encoding="utf-8"
+    )
 
     data1, sha1 = package_frontend_archive(dist)
     data2, sha2 = package_frontend_archive(dist)
@@ -298,7 +319,11 @@ def test_package_frontend_archive_deterministic(tmp_path: Path) -> None:
     with tarfile.open(fileobj=io.BytesIO(data1), mode="r:gz") as tar:
         members = tar.getmembers()
         names = sorted(m.name for m in members)
-        assert names == ["assets/index-abc12345.js", "assets/index-def67890.css", "index.html"]
+        assert names == [
+            "assets/index-abc12345.js",
+            "assets/index-def67890.css",
+            "index.html",
+        ]
         for m in members:
             assert m.uid == 0
             assert m.gid == 0
@@ -310,7 +335,9 @@ def test_package_frontend_archive_deterministic(tmp_path: Path) -> None:
 def test_publish_frontend_uploads_archive(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir()
-    (dist / "index.html").write_text("<!doctype html><script src=\"/assets/app.js\"></script>", encoding="utf-8")
+    (dist / "index.html").write_text(
+        '<!doctype html><script src="/assets/app.js"></script>', encoding="utf-8"
+    )
     assets_dir = dist / "assets"
     assets_dir.mkdir()
     (assets_dir / "app.js").write_text("console.log('app');", encoding="utf-8")
@@ -328,15 +355,18 @@ def test_publish_frontend_uploads_archive(tmp_path: Path) -> None:
     )
     mock_s3.get_paginator.return_value.paginate.return_value = []
 
-    with patch("deploy_local.get_s3_client", return_value=mock_s3), patch(
-        "deploy_local.get_cf_client", return_value=mock_cf
+    with (
+        patch("deploy_local.get_s3_client", return_value=mock_s3),
+        patch("deploy_local.get_cf_client", return_value=mock_cf),
     ):
         publish_frontend(dist, release=VALID_SHA, dry_run=False)
 
     # Verify release archive put_object was executed with exact key, content-type, and sha metadata
     expected_key = f"releases/{VALID_SHA}/frontend.tar.gz"
     put_calls = [
-        c for c in mock_s3.put_object.call_args_list if c.kwargs.get("Key") == expected_key
+        c
+        for c in mock_s3.put_object.call_args_list
+        if c.kwargs.get("Key") == expected_key
     ]
     assert len(put_calls) == 1
     call_kwargs = put_calls[0].kwargs
@@ -362,8 +392,9 @@ def test_publish_frontend_archive_already_exists_matching_sha(tmp_path: Path) ->
     # Object already exists with matching sha256
     mock_s3.head_object.return_value = {"Metadata": {"sha256": expected_sha}}
 
-    with patch("deploy_local.get_s3_client", return_value=mock_s3), patch(
-        "deploy_local.get_cf_client", return_value=mock_cf
+    with (
+        patch("deploy_local.get_s3_client", return_value=mock_s3),
+        patch("deploy_local.get_cf_client", return_value=mock_cf),
     ):
         publish_frontend(dist, release=VALID_SHA, dry_run=False)
 
@@ -382,12 +413,17 @@ def test_publish_frontend_archive_conflict_sha_rejected(tmp_path: Path) -> None:
     mock_cf = MagicMock()
 
     # Object exists with a conflicting sha256
-    mock_s3.head_object.return_value = {"Metadata": {"sha256": "different_sha_from_earlier_run"}}
+    mock_s3.head_object.return_value = {
+        "Metadata": {"sha256": "different_sha_from_earlier_run"}
+    }
 
-    with patch("deploy_local.get_s3_client", return_value=mock_s3), patch(
-        "deploy_local.get_cf_client", return_value=mock_cf
+    with (
+        patch("deploy_local.get_s3_client", return_value=mock_s3),
+        patch("deploy_local.get_cf_client", return_value=mock_cf),
     ):
-        with pytest.raises(DeployError, match="already has a different frontend archive"):
+        with pytest.raises(
+            DeployError, match="already has a different frontend archive"
+        ):
             publish_frontend(dist, release=VALID_SHA, dry_run=False)
 
 

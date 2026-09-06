@@ -578,7 +578,9 @@ def publish_frontend(dist: Path, release: str = "", *, dry_run: bool = False) ->
                             f"failed to upload release archive: {put_exc}"
                         ) from put_exc
             else:
-                raise DeployError(f"failed to check/upload release archive: {exc}") from exc
+                raise DeployError(
+                    f"failed to check/upload release archive: {exc}"
+                ) from exc
 
     all_files = [p for p in dist.rglob("*") if p.is_file()]
     non_index_files = [p for p in all_files if p.name != "index.html"]

@@ -22,6 +22,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    is_postgresql = bind.dialect.name == "postgresql"
+
     op.add_column(
         "conversations",
         sa.Column("conversation_type", sa.String(length=20), nullable=True),
@@ -33,22 +36,46 @@ def upgrade() -> None:
         )
     )
 
-    with op.batch_alter_table("conversations", schema=None) as batch_op:
-        batch_op.alter_column(
+    if is_postgresql:
+        op.create_check_constraint(
+            "ck_conversations_conversation_type_valid",
+            "conversations",
+            "conversation_type IN ('course_qa', 'ai_tutor')",
+        )
+        op.alter_column(
+            "conversations",
             "conversation_type",
             existing_type=sa.String(length=20),
             nullable=False,
         )
-        batch_op.create_check_constraint(
-            batch_op.f("ck_conversations_conversation_type_valid"),
-            "conversation_type IN ('course_qa', 'ai_tutor')",
-        )
+    else:
+        with op.batch_alter_table("conversations", schema=None) as batch_op:
+            batch_op.create_check_constraint(
+                batch_op.f("ck_conversations_conversation_type_valid"),
+                "conversation_type IN ('course_qa', 'ai_tutor')",
+            )
+            batch_op.alter_column(
+                "conversation_type",
+                existing_type=sa.String(length=20),
+                nullable=False,
+            )
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("conversations", schema=None) as batch_op:
-        batch_op.drop_constraint(
-            batch_op.f("ck_conversations_conversation_type_valid"),
+    bind = op.get_bind()
+    is_postgresql = bind.dialect.name == "postgresql"
+
+    if is_postgresql:
+        op.drop_constraint(
+            "ck_conversations_conversation_type_valid",
+            "conversations",
             type_="check",
         )
-        batch_op.drop_column("conversation_type")
+        op.drop_column("conversations", "conversation_type")
+    else:
+        with op.batch_alter_table("conversations", schema=None) as batch_op:
+            batch_op.drop_constraint(
+                batch_op.f("ck_conversations_conversation_type_valid"),
+                type_="check",
+            )
+            batch_op.drop_column("conversation_type")

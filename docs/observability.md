@@ -124,6 +124,21 @@ fields @timestamp, service, event, message, http_status, duration_ms, error_code
 | sort @timestamp asc
 ```
 
+#### Pivoting from an operator alert to its runbook:
+Alerts carry the scope and the remediation pointer as structured fields, so an
+alert can be taken straight to the procedure that resolves it:
+```sql
+fields @timestamp, event, error_code, failed_stage, course_id, document_id, runbook
+| filter event = "permanent_document_failure" or event = "aged_tombstone_detected"
+| sort @timestamp desc
+```
+`course_id`, `document_id`, `owner_id`, `user_id`, `failed_stage` and `runbook` are
+part of the emitted JSON because they are on the `_ALLOWED_FIELDS` allowlist in
+`backend/app/observability.py`. A field set through `extra=` but absent from that
+tuple is dropped by `JsonFormatter` and never reaches CloudWatch, so adding a new
+structured field means adding it there and to the allowlist pin in
+`tests/test_privacy_telemetry.py`.
+
 #### Local / Self-Hosted (Docker Compose):
 ```bash
 docker compose logs lumina lumina-worker | grep '<CORRELATION_ID>' | jq .

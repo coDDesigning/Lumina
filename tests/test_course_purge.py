@@ -650,8 +650,11 @@ def test_purge_worker_cli_with_interval(monkeypatch) -> None:
 def test_aged_tombstone_triggers_alert_and_metrics(
     session_factory, storage, store
 ) -> None:
+    import json
     import logging
     from datetime import datetime, timedelta, timezone
+
+    from backend.app.observability import JsonFormatter
 
     records: list[logging.LogRecord] = []
 
@@ -672,6 +675,7 @@ def test_aged_tombstone_triggers_alert_and_metrics(
                 tombstoned=True,
             )
             course = session.get(Course, course_id)
+            owner_id = course.owner_id
             course.updated_at = datetime.now(timezone.utc) - timedelta(hours=3)
             session.commit()
 
@@ -693,7 +697,14 @@ def test_aged_tombstone_triggers_alert_and_metrics(
         r for r in records if getattr(r, "event", None) == "aged_tombstone_detected"
     ]
     assert len(alert_logs) == 1
-    alert = alert_logs[0]
-    assert alert.course_id == course_id
-    assert alert.runbook == "docs/runbooks/stranded_tombstone.md"
-    assert "aged-tombstone@example.com" not in alert.getMessage()
+
+    formatter = JsonFormatter(service="course_purge", environment="test")
+    emitted = json.loads(formatter.format(alert_logs[0]))
+
+    assert emitted["event"] == "aged_tombstone_detected"
+    assert emitted["course_id"] == course_id
+    assert emitted["runbook"] == "docs/runbooks/stranded_tombstone.md"
+    assert emitted["owner_id"] == owner_id
+
+    assert "aged-tombstone@example.com" not in json.dumps(emitted)
+    assert "@" not in emitted["message"]

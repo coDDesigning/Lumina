@@ -30,8 +30,12 @@ def test_common_passwords_corpus_is_comprehensive() -> None:
         assert weak.lower() in COMMON_PASSWORDS
 
 
-@pytest.mark.parametrize("weak_password", ["password123", "qwerty123", "admin1234", "welcome123"])
-def test_registration_rejects_commonly_used_passwords(api_context, weak_password: str) -> None:
+@pytest.mark.parametrize(
+    "weak_password", ["password123", "qwerty123", "admin1234", "welcome123"]
+)
+def test_registration_rejects_commonly_used_passwords(
+    api_context, weak_password: str
+) -> None:
     """Assert registering with a commonly used password returns 422."""
     response = api_context.client.post(
         "/api/auth/register",

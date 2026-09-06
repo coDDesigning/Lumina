@@ -831,7 +831,8 @@ def test_password_reset_endpoints_carry_rate_limit_dependency() -> None:
         route.path: route
         for route in all_routes
         if isinstance(route, APIRoute)
-        and route.path in {"/api/auth/reset-password", "/api/auth/reset-password/confirm"}
+        and route.path
+        in {"/api/auth/reset-password", "/api/auth/reset-password/confirm"}
     }
 
     assert "/api/auth/reset-password" in password_reset_routes

@@ -115,10 +115,7 @@ class UserService:
             raise BadRequestException("Invalid bootstrap administrator credentials")
 
         claims_initial_admin = initial_admin_exists is None and (
-            (
-                settings.allows_unprotected_admin_bootstrap
-                and user_count == 0
-            )
+            (settings.allows_unprotected_admin_bootstrap and user_count == 0)
             or is_protected_bootstrap_email
         )
         if claims_initial_admin and not is_protected_bootstrap_email:

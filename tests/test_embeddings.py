@@ -199,7 +199,9 @@ def test_factory_returns_the_local_provider() -> None:
     assert isinstance(get_embedding_provider(), LocalEmbeddingProvider)
 
 
-def test_ollama_provider_embeds_and_adjusts_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ollama_provider_embeds_and_adjusts_dimensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FakeTransport(httpx.BaseTransport):
         def handle_request(self, request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/embed":
@@ -221,7 +223,9 @@ def test_ollama_provider_embeds_and_adjusts_dimensions(monkeypatch: pytest.Monke
     assert res == [0.1, 0.2, 0.0, 0.0]
 
 
-def test_ollama_provider_factory_and_identity_when_env_set(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ollama_provider_factory_and_identity_when_env_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("EMBEDDING_PROVIDER", "ollama")
     monkeypatch.setenv("EMBEDDING_MODEL", "nomic-embed-text")
 

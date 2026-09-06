@@ -445,7 +445,9 @@ def test_resending_latency_not_distinguishable_by_address_existence(
             start = time.perf_counter()
 
             async def tracking_send(message):
-                if message["type"] == "http.response.body" and not message.get("more_body", False):
+                if message["type"] == "http.response.body" and not message.get(
+                    "more_body", False
+                ):
                     self.last_latency = time.perf_counter() - start
                 await send(message)
 

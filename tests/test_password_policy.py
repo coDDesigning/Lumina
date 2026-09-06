@@ -281,5 +281,3 @@ def test_commonly_used_weak_passwords_rejected(weak_password: str) -> None:
 
     with pytest.raises(PasswordPolicyError):
         validate_password(weak_password)
-
-

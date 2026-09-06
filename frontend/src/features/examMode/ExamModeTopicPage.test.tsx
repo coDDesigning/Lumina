@@ -283,4 +283,18 @@ describe('ExamModeTopicPage', () => {
 
     await waitFor(() => expect(generateTopicGuide).toHaveBeenCalledTimes(1));
   });
+
+  it('refreshes credit balance after successful topic guide generation', async () => {
+    generateTopicGuide.mockResolvedValue(topicGuideResultFixture());
+    credits.refresh.mockReset();
+    const user = userEvent.setup();
+
+    renderPage();
+    const button = await screen.findByRole('button', { name: /write the guide/i });
+
+    await user.click(button);
+
+    await waitFor(() => expect(generateTopicGuide).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(credits.refresh).toHaveBeenCalledTimes(1));
+  });
 });

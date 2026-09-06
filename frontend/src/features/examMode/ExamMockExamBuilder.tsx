@@ -45,7 +45,7 @@ export interface ExamMockExamBuilderProps {
  */
 export function ExamMockExamBuilder({ courseId, plan }: ExamMockExamBuilderProps) {
   const navigate = useNavigate();
-  const { isMetered, canAfford } = useCredits();
+  const { isMetered, canAfford, refresh: refreshCredits } = useCredits();
 
   const [questionCount, setQuestionCount] = useState('6');
   const [durationMinutes, setDurationMinutes] = useState(60);
@@ -124,6 +124,7 @@ export function ExamMockExamBuilder({ courseId, plan }: ExamMockExamBuilderProps
         topic_keys: [...topicKeys],
       });
       afterExamMockExam(courseId);
+      void refreshCredits();
       navigate(`/courses/${courseId}/practice/${result.quiz.quiz_id}`);
     } catch (error) {
       const described = describeGenerationError(error, 'That paper could not be written.');

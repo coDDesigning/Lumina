@@ -72,7 +72,7 @@ export function SimilarQuestionBuilder({
   topicKey,
 }: SimilarQuestionBuilderProps) {
   const navigate = useNavigate();
-  const { isMetered, canAfford } = useCredits();
+  const { isMetered, canAfford, refresh: refreshCredits } = useCredits();
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [questionCount, setQuestionCount] = useState('5');
@@ -148,6 +148,7 @@ export function SimilarQuestionBuilder({
         difficulty_policy: policy,
       });
       afterExamSimilarQuestions(courseId, topicKey);
+      void refreshCredits();
       navigate(`/courses/${courseId}/practice/${result.quiz.quiz_id}`);
     } catch (error) {
       const described = describeGenerationError(error, 'Those questions could not be written.');

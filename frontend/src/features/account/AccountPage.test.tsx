@@ -400,6 +400,49 @@ describe('AccountPage credits', () => {
     expect(screen.getByText('2')).toBeInTheDocument()
   })
 
+  it('renders all server-provided generation costs including exam mode and unknown keys', async () => {
+    creditState.status = {
+      credits: 10,
+      metering_enabled: true,
+      email_verification_required: false,
+      is_email_verified: true,
+      monthly_grant: 20,
+      balance_cap: 40,
+      next_grant_at: '2026-12-01T00:00:00Z',
+      generation_costs: {
+        study_guide: 1,
+        exam_topic_unlock: 2,
+        exam_mock_exam: 2,
+        custom_future_action: 3,
+      },
+    }
+
+    renderAccountPage('/account/ai')
+
+    expect(await screen.findByText('Study guide')).toBeInTheDocument()
+    expect(screen.getByText('Exam topic')).toBeInTheDocument()
+    expect(screen.getByText('Mock exam')).toBeInTheDocument()
+    expect(screen.getByText('Custom Future Action')).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
+  })
+
+  it('informs an unverified account that email verification is needed for starting credits', async () => {
+    creditState.status = {
+      credits: 0,
+      metering_enabled: true,
+      email_verification_required: true,
+      is_email_verified: false,
+      monthly_grant: null,
+      balance_cap: 40,
+      next_grant_at: null,
+      generation_costs: { study_guide: 1 },
+    }
+
+    renderAccountPage('/account/ai')
+
+    expect(await screen.findByText('Verify your email to unlock starting credits')).toBeInTheDocument()
+  })
+
   it('renders no credit UI whatsoever for an unmetered account', async () => {
     creditState.status = null
 

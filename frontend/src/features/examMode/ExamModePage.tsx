@@ -37,7 +37,7 @@ export default function ExamModePage({ workspace }: ExamModePageProps) {
   const courseId = Number(workspace.id);
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { isMetered, canAfford } = useCredits();
+  const { isMetered, canAfford, refresh: refreshCredits } = useCredits();
   useDocumentTitle(`${workspace.name} · Exam Mode`);
 
   const isSupportView = Boolean(user && workspace.ownerId != null && workspace.ownerId !== user.id);
@@ -103,6 +103,7 @@ export default function ExamModePage({ workspace }: ExamModePageProps) {
           : await examModeAPI.rescan(courseId, request);
       if (kind === 'analysis') afterExamAnalysis(courseId);
       else afterExamRescan(courseId);
+      void refreshCredits();
       void exam.analysisQuery.refetch();
       setSelectedTopics(new Set(result.analysis.selection_carry_over.preselected_topic_keys));
       setHighPriority(new Set(result.analysis.selection_carry_over.high_priority_topic_keys));

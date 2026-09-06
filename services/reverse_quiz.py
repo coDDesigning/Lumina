@@ -250,6 +250,7 @@ class ReverseQuizService:
             )
 
             response_model.id = output.id
+            db.commit()
             return response_model
 
     # ------------------------------------------------------------------
@@ -395,6 +396,7 @@ class ReverseQuizService:
                 metadata=metadata,
             )
 
+            db.commit()
             return ReverseQuizQuestionsResponse(
                 course_id=course_id, questions=questions
             )

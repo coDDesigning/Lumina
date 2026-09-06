@@ -2,6 +2,7 @@ import json
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from backend.app.models import Conversation, ConversationMessage, GeneratedOutput, User
 from schemas.reverse_quiz import ConceptStatus
@@ -206,6 +207,80 @@ def test_failed_reverse_quiz_refunds_its_charge(
     assert response.status_code == 500
     with authz_api.session_factory() as session:
         assert session.get(User, authz_api.user_a_id).credits == before
+
+
+@pytest.mark.parametrize(
+    ("path", "request_body", "provider_payload"),
+    [
+        (
+            "reverse-quiz",
+            {"topic": "Eigenvalues", "explanation": "They are scale factors."},
+            {"feedback": "Correct.", "misconceptions": []},
+        ),
+        (
+            "reverse-quiz/questions",
+            None,
+            {
+                "questions": [
+                    {
+                        "topic": "Eigenvalues",
+                        "question": "Explain what an eigenvalue represents.",
+                    }
+                ]
+            },
+        ),
+    ],
+)
+def test_reverse_quiz_persistence_failure_refunds_its_charge(
+    authz_api,
+    retrieval_env,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    request_body: dict | None,
+    provider_payload: dict,
+) -> None:
+    with authz_api.session_factory() as session:
+        seed_ready_material(
+            session,
+            authz_api.a_course_id,
+            ["Eigenvalues describe how a linear transformation scales vectors."],
+            file_hash="7" * 64,
+            retrieval_env=retrieval_env,
+        )
+    before = 2.0
+    set_balance(authz_api.session_factory, authz_api.user_a_id, before)
+    _install_provider(monkeypatch, _EvalStub(provider_payload))
+
+    original_commit = Session.commit
+    commit_count = 0
+
+    def fail_persistence_commit(session: Session) -> None:
+        nonlocal commit_count
+        commit_count += 1
+        if commit_count == 2:
+            raise RuntimeError("Reverse quiz persistence failed")
+        original_commit(session)
+
+    monkeypatch.setattr(Session, "commit", fail_persistence_commit)
+    request_args = {"json": request_body} if request_body is not None else {}
+    response = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/{path}",
+        headers=authz_api.authorization_a,
+        **request_args,
+    )
+
+    assert response.status_code == 500
+    with authz_api.session_factory() as session:
+        assert session.get(User, authz_api.user_a_id).credits == before
+        assert (
+            session.scalars(
+                select(GeneratedOutput).where(
+                    GeneratedOutput.course_id == authz_api.a_course_id,
+                    GeneratedOutput.output_type == "reverse_quiz",
+                )
+            ).all()
+            == []
+        )
 
 
 class _MeteredEvalStub(_EvalStub):

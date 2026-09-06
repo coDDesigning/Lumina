@@ -46,6 +46,8 @@ export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
   };
 
   const suggestQuestions = async () => {
+    if (exhausted) return;
+
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -145,7 +147,12 @@ export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
               ) : null}
 
               {suggestFailure ? (
-                <GenerationError failure={suggestFailure} onRetry={() => void suggestQuestions()} />
+                <GenerationError
+                  failure={
+                    exhausted ? { ...suggestFailure, retryable: false } : suggestFailure
+                  }
+                  onRetry={() => void suggestQuestions()}
+                />
               ) : null}
 
               {isSuggesting ? (

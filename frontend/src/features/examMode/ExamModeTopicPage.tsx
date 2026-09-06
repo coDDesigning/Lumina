@@ -43,7 +43,7 @@ export default function ExamModeTopicPage({ workspace }: ExamModeTopicPageProps)
   const topicKey = decodeURIComponent(topicParam ?? '');
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { isMetered, canAfford } = useCredits();
+  const { isMetered, canAfford, refresh: refreshCredits } = useCredits();
 
   const isSupportView = Boolean(user && workspace.ownerId != null && workspace.ownerId !== user.id);
   const validId = Number.isInteger(planId) && planId > 0 && topicKey.length > 0;
@@ -160,6 +160,7 @@ export default function ExamModeTopicPage({ workspace }: ExamModeTopicPageProps)
       if (kind === 'guide') {
         await examModeAPI.generateTopicGuide(courseId, topicKey, { plan_output_id: planId });
         afterExamTopicArtifact(courseId, topicKey);
+        void refreshCredits();
         void guide.refetch();
       } else {
         const result =
@@ -171,6 +172,7 @@ export default function ExamModeTopicPage({ workspace }: ExamModeTopicPageProps)
                 plan_output_id: planId,
               });
         afterExamTopicQuiz(courseId, topicKey);
+        void refreshCredits();
         navigate(`/courses/${courseId}/practice/${result.quiz.quiz_id}`);
       }
     } catch (error) {

@@ -14,6 +14,7 @@ import { queryKeys } from '@/api/queryKeys';
 import type { ExamPlanView, ExamReviewSheetDocument } from '@/api/types';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { useAuth } from '@/context/AuthContext';
+import { useCredits } from '@/context/CreditContext';
 import type { Workspace } from '@/data/workspaces';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import { ExamRoadmapView } from '@/features/study/ExamRoadmapView';
@@ -52,6 +53,7 @@ export default function ExamModePlanPage({ workspace }: ExamModePlanPageProps) {
   const planId = Number(planParam);
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { refresh: refreshCredits } = useCredits();
   useDocumentTitle(`${workspace.name} · Exam plan`);
 
   const isSupportView = Boolean(user && workspace.ownerId != null && workspace.ownerId !== user.id);
@@ -203,6 +205,7 @@ export default function ExamModePlanPage({ workspace }: ExamModePlanPageProps) {
         plan_output_id: current.generated_output_id,
       });
       afterExamReviewSheet(courseId);
+      void refreshCredits();
       void reviewSheet.refetch();
     } catch (error) {
       const described = describeGenerationError(error, 'That review sheet could not be written.');

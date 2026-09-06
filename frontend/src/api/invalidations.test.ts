@@ -4,6 +4,7 @@ import type { QueryKey } from '@/lib/query/key';
 import {
   afterConversationTurn,
   afterCourseDeleted,
+  afterCreditMutated,
   afterDocumentChanged,
   afterExamAnalysis,
   afterQuizAttempt,
@@ -124,5 +125,18 @@ describe('course-scoped invalidation', () => {
 
     expect(queryCache.getState(queryKeys.courseDocuments(9)).status).toBe('idle');
     expect(queryCache.getState(queryKeys.courseProgress(9)).status).toBe('idle');
+  });
+
+  it('refreshes credit balance and ledger for the target user only', async () => {
+    const myCredits = await watch(queryKeys.credits(5));
+    const myLedger = await watch(queryKeys.creditTransactions(5, 20));
+    const otherCredits = await watch(queryKeys.credits(55));
+
+    afterCreditMutated(5);
+    await settle();
+
+    expect(myCredits).toHaveBeenCalledTimes(1);
+    expect(myLedger).toHaveBeenCalledTimes(1);
+    expect(otherCredits).not.toHaveBeenCalled();
   });
 });

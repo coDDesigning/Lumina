@@ -5,7 +5,12 @@ import { queryKeys } from '@/api/queryKeys';
 import { useQuery } from '@/lib/query/useQuery';
 import { userAPI } from '@/api/user';
 import type { AiModelInfo, CreditTransaction } from '@/api/types';
-import { formatDelta, transactionLabel } from '@/api/creditLabels';
+import {
+  CANONICAL_COST_ORDER,
+  formatDelta,
+  generationCostLabel,
+  transactionLabel,
+} from '@/api/creditLabels';
 import { useAuth } from '@/context/AuthContext';
 import { useCredits } from '@/context/CreditContext';
 import { Alert } from '@/ui/Alert';
@@ -14,16 +19,6 @@ import { Card } from '@/ui/Card';
 import { Select } from '@/ui/Input';
 import { Skeleton } from '@/ui/Skeleton';
 import styles from './AccountPage.module.css';
-
-const COST_ROWS: { source: string; label: string }[] = [
-  { source: 'study_guide', label: 'Study guide' },
-  { source: 'quiz', label: 'Quiz' },
-  { source: 'quiz_open_ended', label: 'Quiz including written questions' },
-  { source: 'flashcard', label: 'Flashcards' },
-  { source: 'course_qa', label: 'A question' },
-  { source: 'ai_tutor', label: 'A tutoring turn' },
-  { source: 'prompt_generator', label: 'A written prompt' },
-];
 
 function formatDate(value: string | null): string | null {
   if (!value) {
@@ -67,6 +62,17 @@ export function AiPreferencesSection() {
   const selectedId = user?.preferred_model ?? '';
   const selected = models.find((model) => model.id === selectedId) ?? null;
 
+  const costEntries = useMemo(() => {
+    if (!status?.generation_costs) return [];
+    return Object.entries(status.generation_costs).sort(([a], [b]) => {
+      const indexA = CANONICAL_COST_ORDER.indexOf(a);
+      const indexB = CANONICAL_COST_ORDER.indexOf(b);
+      if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+      if (indexA !== -1) return -1;
+      if (indexB !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [status?.generation_costs]);
 
   async function handleModelChange(modelId: string) {
     setModelActionError(null);
@@ -81,6 +87,7 @@ export function AiPreferencesSection() {
   }
 
   const nextGrant = formatDate(status?.next_grant_at ?? null);
+  const isUnverified = Boolean(status?.email_verification_required && !status?.is_email_verified);
 
   return (
     <section className={styles.section}>
@@ -142,7 +149,9 @@ export function AiPreferencesSection() {
                 <p className={styles.balanceValue}>{status.credits}</p>
               </div>
               <div className={styles.balanceMeta}>
-                {status.monthly_grant != null && nextGrant ? (
+                {isUnverified ? (
+                  <p>Verify your email to unlock starting credits</p>
+                ) : status.monthly_grant != null && nextGrant ? (
                   <p>
                     {status.monthly_grant} more on {nextGrant}
                   </p>
@@ -153,14 +162,12 @@ export function AiPreferencesSection() {
 
             <div className={styles.costs}>
               <span className={styles.sectionLabel}>What things cost</span>
-              {COST_ROWS.filter((row) => status.generation_costs?.[row.source] != null).map(
-                (row) => (
-                  <p key={row.source} className={styles.costRow}>
-                    <span>{row.label}</span>
-                    <strong>{status.generation_costs?.[row.source]}</strong>
-                  </p>
-                ),
-              )}
+              {costEntries.map(([source, price]) => (
+                <p key={source} className={styles.costRow}>
+                  <span>{generationCostLabel(source)}</span>
+                  <strong>{price}</strong>
+                </p>
+              ))}
               <p className={styles.rowBody}>
                 There is nothing to buy. If you run out, you can wait for the monthly credits, ask
                 an administrator, or self-host — which is not metered at all.

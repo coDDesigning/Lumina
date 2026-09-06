@@ -1,6 +1,7 @@
 import sys
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from backend.app.config import EMBEDDING_PROVIDER_LOCAL
@@ -13,6 +14,7 @@ from services.embeddings import (
     EmbeddingInvalidResponseError,
     EmbeddingProviderError,
     LocalEmbeddingProvider,
+    OllamaEmbeddingProvider,
     configured_embedding_identity,
     get_embedding_provider,
     is_transient_embedding_error,
@@ -195,3 +197,37 @@ def test_identity_reports_the_local_provider_and_pinned_model() -> None:
 
 def test_factory_returns_the_local_provider() -> None:
     assert isinstance(get_embedding_provider(), LocalEmbeddingProvider)
+
+
+def test_ollama_provider_embeds_and_adjusts_dimensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTransport(httpx.BaseTransport):
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/embed":
+                return httpx.Response(
+                    200,
+                    json={"embeddings": [[0.1, 0.2]]},
+                )
+            return httpx.Response(404)
+
+    client = httpx.Client(transport=FakeTransport())
+    provider = OllamaEmbeddingProvider(
+        base_url="http://127.0.0.1:11434",
+        model="nomic-embed-text",
+        client=client,
+    )
+    res = provider.embed_query("hello")
+    # Expected ASYMMETRIC.dimensions is 4, so [0.1, 0.2] is padded to [0.1, 0.2, 0.0, 0.0]
+    assert len(res) == ASYMMETRIC.dimensions
+    assert res == [0.1, 0.2, 0.0, 0.0]
+
+
+def test_ollama_provider_factory_and_identity_when_env_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "ollama")
+    monkeypatch.setenv("EMBEDDING_MODEL", "nomic-embed-text")
+
+    assert isinstance(get_embedding_provider(), OllamaEmbeddingProvider)
+    assert configured_embedding_identity() == ("ollama", "nomic-embed-text")

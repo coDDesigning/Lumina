@@ -243,6 +243,78 @@ def test_check_and_increment_prunes_stale_buckets(db_session: Session) -> None:
     assert db_session.get(RateLimitBucket, "test:unit:active") is not None
 
 
+def test_check_lockout_allows_unlocked_and_nonexistent_buckets(
+    db_session: Session,
+) -> None:
+    # Nonexistent bucket
+    rate_limit_module.check_lockout(db_session, "test:unit:notlocked")
+
+    # Bucket with count but no lockout
+    check_and_increment(db_session, "test:unit:notlocked", window_seconds=60, limit=5)
+    rate_limit_module.check_lockout(db_session, "test:unit:notlocked")
+
+
+def test_check_lockout_raises_too_many_requests_when_locked(
+    db_session: Session,
+) -> None:
+    key = "test:unit:islocked"
+    check_and_increment(
+        db_session,
+        key,
+        window_seconds=60,
+        limit=1,
+        lockout_base_seconds=30,
+        lockout_max_seconds=60,
+    )
+    # Trip lockout
+    check_and_increment(
+        db_session,
+        key,
+        window_seconds=60,
+        limit=1,
+        lockout_base_seconds=30,
+        lockout_max_seconds=60,
+    )
+
+    with pytest.raises(rate_limit_module.TooManyRequestsException) as exc_info:
+        rate_limit_module.check_lockout(
+            db_session,
+            key,
+            error_code="login_rate_limited",
+            control="login_account",
+        )
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.headers["X-Error-Code"] == "login_rate_limited"
+    assert "Retry-After" in exc_info.value.headers
+
+
+def test_check_lockout_allows_expired_lockout(db_session: Session) -> None:
+    key = "test:unit:expired-lockout"
+    check_and_increment(
+        db_session,
+        key,
+        window_seconds=60,
+        limit=1,
+        lockout_base_seconds=30,
+        lockout_max_seconds=60,
+    )
+    check_and_increment(
+        db_session,
+        key,
+        window_seconds=60,
+        limit=1,
+        lockout_base_seconds=30,
+        lockout_max_seconds=60,
+    )
+    bucket = db_session.get(RateLimitBucket, key)
+    assert bucket is not None
+    bucket.locked_until = datetime.now(timezone.utc) - timedelta(seconds=1)
+    db_session.commit()
+
+    # Expired lockout should not raise
+    rate_limit_module.check_lockout(db_session, key)
+
+
 # --- /api/auth/login and /api/auth/register: integration tests --------------
 
 
@@ -305,6 +377,86 @@ def test_login_account_lockout_blocks_failed_attempts_and_allows_correct_passwor
     assert locked.status_code == 429
     assert locked.headers["X-Error-Code"] == "login_rate_limited"
     assert "Retry-After" in locked.headers
+
+
+def test_login_account_lockout_blocks_correct_password(
+    api_context, monkeypatch
+) -> None:
+    ip_counter = 0
+
+    def mock_client_ip(req):
+        nonlocal ip_counter
+        ip_counter += 1
+        return f"192.168.1.{ip_counter}"
+
+    monkeypatch.setattr(auth_route, "client_ip", mock_client_ip)
+    _set_auth_rate_limit_policy(
+        monkeypatch,
+        rate_limit_login_max_attempts=2,
+        rate_limit_login_window_seconds=300,
+        rate_limit_lockout_base_seconds=30,
+        rate_limit_lockout_max_seconds=1800,
+    )
+
+    api_context.client.post(
+        "/api/auth/register",
+        json={
+            "name": "Lockout Victim",
+            "email": "victim@example.com",
+            "password": "Correct-password!",
+        },
+    )
+
+    for _ in range(2):
+        response = api_context.client.post(
+            "/api/auth/login",
+            data={"username": "victim@example.com", "password": "wrong-password"},
+        )
+        assert response.status_code == 401
+
+    # Third failed attempt trips account lockout with 429
+    locked = api_context.client.post(
+        "/api/auth/login",
+        data={"username": "victim@example.com", "password": "wrong-password"},
+    )
+    assert locked.status_code == 429
+    assert locked.headers["X-Error-Code"] == "login_rate_limited"
+    assert "Retry-After" in locked.headers
+
+    # Submitting the actual correct password while still inside the lockout window
+    # MUST return 429 and not bypass lockout
+    correct_while_locked = api_context.client.post(
+        "/api/auth/login",
+        data={"username": "victim@example.com", "password": "Correct-password!"},
+    )
+    assert correct_while_locked.status_code == 429
+    assert correct_while_locked.headers["X-Error-Code"] == "login_rate_limited"
+    assert "Retry-After" in correct_while_locked.headers
+
+    # Confirm the bucket is still locked and was NOT cleared
+    account_key = rate_limit_module.rate_limit_key(
+        "login:account", "victim@example.com"
+    )
+    with api_context.session_factory() as session:
+        bucket = session.get(RateLimitBucket, account_key)
+        assert bucket is not None
+        assert bucket.locked_until is not None
+        assert bucket.locked_until > datetime.now(timezone.utc)
+
+        # Expire the lockout and verify login succeeds once lockout lapses
+        bucket.locked_until = datetime.now(timezone.utc) - timedelta(seconds=1)
+        session.commit()
+
+    allowed = api_context.client.post(
+        "/api/auth/login",
+        data={"username": "victim@example.com", "password": "Correct-password!"},
+    )
+    assert allowed.status_code == 200
+    assert "access_token" in allowed.json()
+
+    with api_context.session_factory() as session:
+        bucket = session.get(RateLimitBucket, account_key)
+        assert bucket is None
 
 
 def test_login_successful_clears_account_failure_bucket(
@@ -661,3 +813,61 @@ def test_route_inventory_generation_rate_limiting() -> None:
         == "generation"
         for dep in getattr(plan_route, "dependencies", [])
     )
+
+
+def test_password_reset_endpoints_carry_rate_limit_dependency() -> None:
+    from fastapi.routing import APIRoute
+    from main import app
+    from utils.rate_limit import rate_limit_password_reset
+
+    all_routes = []
+    for r in app.routes:
+        if type(r).__name__ == "_IncludedRouter":
+            all_routes.extend(getattr(r, "original_router").routes)
+        else:
+            all_routes.append(r)
+
+    password_reset_routes = {
+        route.path: route
+        for route in all_routes
+        if isinstance(route, APIRoute)
+        and route.path
+        in {"/api/auth/reset-password", "/api/auth/reset-password/confirm"}
+    }
+
+    assert "/api/auth/reset-password" in password_reset_routes
+    assert "/api/auth/reset-password/confirm" in password_reset_routes
+
+    for path, route in password_reset_routes.items():
+        dependencies = [
+            getattr(dep, "dependency", None)
+            for dep in getattr(route, "dependencies", [])
+        ]
+        assert rate_limit_password_reset in dependencies, (
+            f"Expected {path} to have rate_limit_password_reset dependency, found: {dependencies}"
+        )
+
+
+def test_confirm_password_reset_rate_limited_returns_429(
+    api_context, monkeypatch
+) -> None:
+    _set_generation_rate_limit_policy(
+        monkeypatch,
+        rate_limit_password_reset_max_attempts=2,
+        rate_limit_password_reset_window_seconds=3600,
+    )
+
+    for _ in range(2):
+        response = api_context.client.post(
+            "/api/auth/reset-password/confirm",
+            json={"token": "invalid-token", "new_password": "NewStrongPassword123!"},
+        )
+        assert response.status_code == 400
+
+    limited = api_context.client.post(
+        "/api/auth/reset-password/confirm",
+        json={"token": "invalid-token", "new_password": "NewStrongPassword123!"},
+    )
+    assert limited.status_code == 429
+    assert limited.headers["X-Error-Code"] == "password_reset_rate_limited"
+    assert "Retry-After" in limited.headers

@@ -293,3 +293,33 @@ def test_a_password_change_requires_a_session(api_context) -> None:
     )
 
     assert response.status_code == 401
+
+
+def test_validation_error_does_not_echo_plaintext_password(api_context) -> None:
+    plaintext_password = "secret1"
+    response = api_context.client.post(
+        "/api/auth/register",
+        json={
+            "name": "Password Echo Target",
+            "email": "password-echo-target@example.com",
+            "password": plaintext_password,
+        },
+    )
+    assert response.status_code == 422
+    assert plaintext_password not in response.text
+    errors = response.json().get("detail", [])
+    assert len(errors) > 0
+    for error in errors:
+        assert "input" not in error
+        assert "ctx" not in error
+
+
+@pytest.mark.parametrize(
+    "weak_password",
+    ["password123", "qwerty123", "admin1234", "welcome123"],
+)
+def test_commonly_used_weak_passwords_rejected(weak_password: str) -> None:
+    from utils.password_policy import PasswordPolicyError, validate_password
+
+    with pytest.raises(PasswordPolicyError):
+        validate_password(weak_password)

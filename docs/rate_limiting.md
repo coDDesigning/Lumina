@@ -75,7 +75,9 @@ purpose — the address in a resend request is unauthenticated and an attacker
 picks it freely, so an account key would let them lock a victim out of verifying
 their own address. See [authentication hardening](authentication.md).
 
-`password_reset:ip:<digest>` throttles `POST /api/auth/reset-password` per IP.
+`password_reset:ip:<digest>` covers both `POST /api/auth/reset-password` and
+`POST /api/auth/reset-password/confirm` with one key per IP, throttling both
+issuance and token redemption guesses.
 
 ## Generation policy
 

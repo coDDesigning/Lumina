@@ -1,3 +1,4 @@
+import logging
 import secrets
 
 from email_validator import EmailNotValidError, validate_email
@@ -24,6 +25,8 @@ from services.text_generation import get_available_models
 from utils.exceptions import BadRequestException, NotFoundException
 from utils.password_policy import PasswordPolicyError, validate_password
 from utils.security import get_password_hash, verify_password
+
+logger = logging.getLogger(__name__)
 
 
 class UserService:
@@ -112,13 +115,17 @@ class UserService:
             raise BadRequestException("Invalid bootstrap administrator credentials")
 
         claims_initial_admin = initial_admin_exists is None and (
-            (
-                settings.is_self_hosted
-                and not settings.requires_protected_admin_bootstrap
-                and user_count == 0
-            )
+            (settings.allows_unprotected_admin_bootstrap and user_count == 0)
             or is_protected_bootstrap_email
         )
+        if claims_initial_admin and not is_protected_bootstrap_email:
+            logger.warning(
+                "First registered user '%s' automatically granted administrator role via self-hosted convenience bootstrap.",
+                canonical_email,
+                extra={
+                    "event": "unprotected_admin_bootstrap_granted",
+                },
+            )
         new_user = UserService._new_user(
             db,
             user_data,

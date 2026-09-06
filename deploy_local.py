@@ -15,6 +15,8 @@ on PATH. AWS credentials configured in environment or ``~/.aws/credentials``.
     python deploy_local.py --yes           # skip the confirmation prompt
     python deploy_local.py --skip-frontend # backend + migration only
     python deploy_local.py --skip-smoke    # do not curl the site afterwards
+    python deploy_local.py --allow-dirty   # allow building/deploying from dirty tree
+    python deploy_local.py --allow-branch  # allow deploying from non-main branch
 
 On success and on a handled failure the previous service task-definition ARNs and
 the snapshot id are written to ``deploy_state.json`` with ready-to-paste rollback
@@ -25,12 +27,16 @@ from __future__ import annotations
 
 import argparse
 import base64
+import gzip
+import hashlib
+import io
 import json
 import mimetypes
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -64,6 +70,12 @@ WORKER_FAMILY = os.environ.get(
 )
 MIGRATE_FAMILY = os.environ.get(
     "LUMINA_MIGRATE_TASK_DEFINITION", "lumina-production-migrate"
+)
+HOSTED_RESTORE_FAMILY = os.environ.get(
+    "LUMINA_HOSTED_RESTORE_TASK_DEFINITION",
+    os.environ.get(
+        "HOSTED_RESTORE_TASK_DEFINITION", "lumina-production-hosted-restore"
+    ),
 )
 FRONTEND_BUCKET = os.environ.get(
     "LUMINA_FRONTEND_BUCKET", f"lumina-production-frontend-{ACCOUNT}"
@@ -129,7 +141,20 @@ def require_tools() -> None:
         raise DeployError(f"missing required tools on PATH: {', '.join(missing)}")
 
 
-def git_head() -> str:
+def git_head(*, allow_dirty: bool = False) -> str:
+    if not allow_dirty:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if proc.stdout.strip():
+            raise DeployError(
+                "working tree is dirty; commit or stash changes before deploying "
+                "(use --allow-dirty to override)"
+            )
     sha = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=ROOT,
@@ -142,7 +167,7 @@ def git_head() -> str:
     return sha.lower()
 
 
-def warn_if_not_main(release: str) -> None:
+def check_branch(release: str, *, allow_branch: bool = False) -> None:
     try:
         main_sha = subprocess.run(
             ["git", "rev-parse", "origin/main"],
@@ -151,15 +176,32 @@ def warn_if_not_main(release: str) -> None:
             capture_output=True,
             text=True,
         ).stdout.strip()
-    except subprocess.CalledProcessError:
-        print("  ! could not read origin/main to compare the release", flush=True)
-        return
+    except subprocess.CalledProcessError as exc:
+        if allow_branch:
+            print(
+                "  ! could not read origin/main; continuing due to --allow-branch",
+                flush=True,
+            )
+            return
+        raise DeployError(
+            "could not read origin/main to compare the release; "
+            "production must be deployed from main (use --allow-branch to override)"
+        ) from exc
     if main_sha != release:
-        print(
-            f"  ! HEAD {release[:12]} is not origin/main {main_sha[:12]}; "
-            "production is normally deployed from main",
-            flush=True,
+        if allow_branch:
+            print(
+                f"  ! HEAD {release[:12]} is not origin/main {main_sha[:12]}; "
+                "continuing due to --allow-branch",
+                flush=True,
+            )
+            return
+        raise DeployError(
+            f"HEAD {release[:12]} is not origin/main {main_sha[:12]}; "
+            "production must be deployed from main (use --allow-branch to override)"
         )
+
+
+warn_if_not_main = check_branch
 
 
 def confirm(release: str, *, assume_yes: bool) -> None:
@@ -401,6 +443,9 @@ def roll_services(image: str, *, dry_run: bool) -> dict[str, str]:
         )
         print(f"  updated service {service} to {arn}", flush=True)
 
+    restore_arn = register_with_image(HOSTED_RESTORE_FAMILY, image, dry_run=dry_run)
+    new_arns[HOSTED_RESTORE_FAMILY] = restore_arn
+
     if dry_run:
         return new_arns
 
@@ -415,7 +460,8 @@ def roll_services(image: str, *, dry_run: bool) -> dict[str, str]:
         WaiterConfig={"Delay": 15, "MaxAttempts": 60},
     )
 
-    for service, arn in new_arns.items():
+    for service in (API_SERVICE, WORKER_SERVICE):
+        arn = new_arns[service]
         current = current_service_task_def(service)
         if current != arn:
             raise DeployError(
@@ -449,22 +495,96 @@ def _content_type_for(path: Path) -> str:
     return guessed or "application/octet-stream"
 
 
-def publish_frontend(dist: Path, *, dry_run: bool) -> None:
+def package_frontend_archive(dist: Path) -> tuple[bytes, str]:
+    if not dist.is_dir():
+        raise DeployError(f"frontend distribution directory does not exist: {dist}")
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0.0) as gz:
+        with tarfile.open(fileobj=gz, mode="w:") as tar:
+            for file_path in sorted(dist.rglob("*")):
+                if file_path.is_file():
+                    arcname = file_path.relative_to(dist).as_posix()
+                    tarinfo = tar.gettarinfo(str(file_path), arcname=arcname)
+                    tarinfo.uid = 0
+                    tarinfo.gid = 0
+                    tarinfo.uname = ""
+                    tarinfo.gname = ""
+                    tarinfo.mtime = 0
+                    with file_path.open("rb") as f:
+                        tar.addfile(tarinfo, f)
+    data = buf.getvalue()
+    sha256 = hashlib.sha256(data).hexdigest()
+    return data, sha256
+
+
+def publish_frontend(dist: Path, release: str = "", *, dry_run: bool = False) -> None:
     log("Publishing frontend and invalidating CloudFront")
     if dry_run:
         print(
             "  [dry-run] frontend publish + CloudFront invalidation skipped", flush=True
         )
+        if release:
+            print(
+                f"  [dry-run] upload s3://{FRONTEND_BUCKET}/releases/{release}/frontend.tar.gz",
+                flush=True,
+            )
         return
 
     s3 = get_s3_client()
     cf = get_cf_client()
 
+    # 1. Upload release archive to releases/<release>/frontend.tar.gz if release is specified
+    if release:
+        archive_data, archive_sha256 = package_frontend_archive(dist)
+        archive_key = f"releases/{release}/frontend.tar.gz"
+        try:
+            head = s3.head_object(Bucket=FRONTEND_BUCKET, Key=archive_key)
+            stored_sha256 = head.get("Metadata", {}).get("sha256")
+            if stored_sha256 and stored_sha256 != archive_sha256:
+                raise DeployError(
+                    f"Release {release} already has a different frontend archive ({stored_sha256} != {archive_sha256})"
+                )
+            print(
+                f"  frontend release archive already present with matching sha256 ({archive_sha256[:12]})",
+                flush=True,
+            )
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                try:
+                    s3.put_object(
+                        Bucket=FRONTEND_BUCKET,
+                        Key=archive_key,
+                        Body=archive_data,
+                        ContentType="application/gzip",
+                        Metadata={"sha256": archive_sha256},
+                        IfNoneMatch="*",
+                    )
+                    print(
+                        f"  uploaded frontend release archive to s3://{FRONTEND_BUCKET}/{archive_key}",
+                        flush=True,
+                    )
+                except ClientError as put_exc:
+                    put_code = put_exc.response.get("Error", {}).get("Code")
+                    if put_code in ("PreconditionFailed", "412"):
+                        head = s3.head_object(Bucket=FRONTEND_BUCKET, Key=archive_key)
+                        stored_sha256 = head.get("Metadata", {}).get("sha256")
+                        if stored_sha256 and stored_sha256 != archive_sha256:
+                            raise DeployError(
+                                f"Release {release} already has a different frontend archive ({stored_sha256} != {archive_sha256})"
+                            ) from put_exc
+                    else:
+                        raise DeployError(
+                            f"failed to upload release archive: {put_exc}"
+                        ) from put_exc
+            else:
+                raise DeployError(f"failed to check/upload release archive: {exc}") from exc
+
     all_files = [p for p in dist.rglob("*") if p.is_file()]
     non_index_files = [p for p in all_files if p.name != "index.html"]
     index_file = dist / "index.html"
 
-    # 1. Upload non-index files
+    # 2. Upload non-index files
     uploaded_keys: set[str] = set()
     for file_path in non_index_files:
         rel_str = str(file_path.relative_to(dist)).replace("\\", "/")
@@ -487,7 +607,7 @@ def publish_frontend(dist: Path, *, dry_run: bool) -> None:
         flush=True,
     )
 
-    # 2. Upload index.html last
+    # 3. Upload index.html last
     if index_file.is_file():
         index_key = "current/index.html"
         uploaded_keys.add(index_key)
@@ -502,7 +622,7 @@ def publish_frontend(dist: Path, *, dry_run: bool) -> None:
         )
         print("  uploaded current/index.html (no-cache)", flush=True)
 
-    # 3. Create CloudFront invalidation
+    # 4. Create CloudFront invalidation
     print(f"  invalidating CloudFront distribution {CF_DIST_ID}...", flush=True)
     inval_res = cf.create_invalidation(
         DistributionId=CF_DIST_ID,
@@ -521,7 +641,7 @@ def publish_frontend(dist: Path, *, dry_run: bool) -> None:
     )
     print("  CloudFront invalidation completed", flush=True)
 
-    # 4. Prune removed files in current/
+    # 5. Prune removed files in current/
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=FRONTEND_BUCKET, Prefix="current/"):
         for obj in page.get("Contents", []):
@@ -574,7 +694,13 @@ def smoke_test() -> None:
     print("  smoke test passed", flush=True)
 
 
-def write_state(release: str, snapshot_id: str, previous: dict, new: dict) -> None:
+def write_state(
+    release: str,
+    snapshot_id: str | None,
+    previous: dict[str, str],
+    new: dict[str, str] | None = None,
+) -> None:
+    new = new or {}
     state = {
         "release": release,
         "snapshot_id": snapshot_id,
@@ -585,11 +711,14 @@ def write_state(release: str, snapshot_id: str, previous: dict, new: dict) -> No
                 f"aws ecs update-service --cluster {CLUSTER} --service {s} "
                 f"--task-definition {a} --force-new-deployment"
                 for s, a in previous.items()
+                if not a.startswith("arn:dry-run:")
             ],
             "database": (
                 f"python ops/aws_rds_recovery.py restore --source {RDS_ID} "
                 f"--snapshot {snapshot_id} ...  # see docs/runbooks/hosted-backup-restore.md"
-            ),
+            )
+            if snapshot_id
+            else "no predeployment snapshot taken",
         },
     }
     STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -604,12 +733,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--skip-frontend", action="store_true")
     parser.add_argument("--skip-smoke", action="store_true")
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="allow building/deploying from a dirty git working tree",
+    )
+    parser.add_argument(
+        "--allow-branch",
+        "--allow-non-main",
+        dest="allow_branch",
+        action="store_true",
+        help="allow deploying from a branch other than origin/main",
+    )
     args = parser.parse_args(argv)
 
+    release: str | None = None
+    snapshot_id: str | None = None
+    previous: dict[str, str] = {}
+    new: dict[str, str] = {}
     try:
         require_tools()
-        release = git_head()
-        warn_if_not_main(release)
+        release = git_head(allow_dirty=args.allow_dirty)
+        check_branch(release, allow_branch=args.allow_branch)
         confirm(release, assume_yes=args.yes or args.dry_run)
 
         image = f"{ECR_REPO}:{release}"
@@ -634,12 +779,10 @@ def main(argv: list[str] | None = None) -> int:
         new = roll_services(image, dry_run=args.dry_run)
 
         if dist is not None:
-            publish_frontend(dist, dry_run=args.dry_run)
+            publish_frontend(dist, release=release, dry_run=args.dry_run)
         if not args.skip_smoke and not args.dry_run:
             smoke_test()
 
-        if not args.dry_run:
-            write_state(release, snapshot_id, previous, new)
         log("Deployment complete" if not args.dry_run else "Dry run complete")
         return 0
     except NoCredentialsError:
@@ -670,6 +813,16 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
         return 1
+    finally:
+        if not args.dry_run and release and (previous or snapshot_id):
+            try:
+                write_state(release, snapshot_id, previous, new)
+            except Exception as write_err:
+                print(
+                    f"  ! warning: could not write {STATE_FILE.name}: {write_err}",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
 
 if __name__ == "__main__":

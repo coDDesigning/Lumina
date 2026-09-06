@@ -13,7 +13,7 @@ Lumina routes text generation to whichever vendors are configured:
 
 ### Symptoms
 * AI Generation routes (`/api/courses/{id}/quiz`, `/study-guide`, `/ai-tutor`, `/course-qa`, `/flashcards`, `/prompt-generator`) return `503 Service Unavailable` or `504 Gateway Timeout` with `X-Error-Code: provider_unavailable` or `provider_timeout`.
-* Document processor OCR / image understanding or embedding generation fails during extraction with `AI_SERVICE_UNAVAILABLE`.
+* Document processor OCR / image understanding fails during extraction with `image_understanding_failed`.
 * CloudWatch ALB Target 5xx alarms trigger.
 
 ### Diagnostic Queries
@@ -21,7 +21,7 @@ Lumina routes text generation to whichever vendors are configured:
 #### CloudWatch Logs Insights:
 ```sql
 fields @timestamp, request_id, http_path, http_status, error_code, exception_type, message
-| filter error_code in ["provider_unavailable", "provider_timeout", "AI_SERVICE_UNAVAILABLE"]
+| filter error_code in ["provider_unavailable", "provider_timeout", "image_understanding_failed"]
 | sort @timestamp desc
 | limit 50
 ```

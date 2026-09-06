@@ -350,3 +350,62 @@ def test_course_purge_aged_tombstone_emf_metrics_schema() -> None:
     assert emf["Service"] == "course_purge"
     assert emf["AgedTombstones"] == 1
     assert emf["OldestTombstoneAgeSeconds"] == 7200.0
+
+
+def test_configure_logging_disables_uvicorn_access_logger() -> None:
+    from backend.app.observability import configure_logging
+
+    configure_logging(service="api", environment="production")
+    assert logging.getLogger("uvicorn.access").disabled is True
+
+
+@pytest.mark.parametrize(
+    ("message", "sensitive_snippets", "preserved_snippets"),
+    [
+        (
+            '{"Authorization": "Bearer eyJsecret123"}',
+            ["eyJsecret123"],
+            ['{"Authorization": "[REDACTED]"}'],
+        ),
+        (
+            "headers={'authorization': 'Bearer sk-live-123'}",
+            ["sk-live-123"],
+            ["headers={'authorization': '[REDACTED]'}"],
+        ),
+        (
+            "a bare Bearer eyJsecretToken",
+            ["eyJsecretToken"],
+            ["a bare Bearer [REDACTED]"],
+        ),
+        (
+            "Invalid API key provided: sk-ant-secret",
+            ["sk-ant-secret"],
+            ["[REDACTED]"],
+        ),
+        (
+            "status: ok, count: 5, user_id: 42",
+            [],
+            ["status: ok, count: 5, user_id: 42"],
+        ),
+    ],
+)
+def test_json_formatter_redacts_various_secret_shapes_and_preserves_plain_text(
+    message: str, sensitive_snippets: list[str], preserved_snippets: list[str]
+) -> None:
+    formatter = JsonFormatter(service="api", environment="production")
+    record = logging.LogRecord(
+        "lumina.test",
+        logging.INFO,
+        __file__,
+        1,
+        message,
+        (),
+        None,
+    )
+    rendered = formatter.format(record)
+    payload = json.loads(rendered)
+    for sensitive in sensitive_snippets:
+        assert sensitive not in payload["message"]
+        assert sensitive not in rendered
+    for preserved in preserved_snippets:
+        assert preserved in payload["message"]

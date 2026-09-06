@@ -42,6 +42,7 @@ variables {
   frontend_domain_name              = "app.example.com"
   email_from_address                = "no-reply@example.com"
   smtp_host                         = "smtp.example.com"
+  vpc_cidr_block                    = "10.0.0.0/16"
   tags                              = { Environment = "production" }
 }
 

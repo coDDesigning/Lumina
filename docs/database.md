@@ -63,7 +63,7 @@ starts only `workers.document_processor` would leave every queued generation
 unclaimed with its credit already spent.
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330
+uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330 --no-access-log
 python -m workers.worker
 ```
 

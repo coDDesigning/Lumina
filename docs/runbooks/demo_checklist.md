@@ -18,7 +18,7 @@ Ensure the target deployment mode is explicitly configured:
   * Verify `VECTOR_BACKEND=chroma`.
   * Confirm database is SQLite (`DATABASE_URL=sqlite:////data/lumina.db` or local path).
 * **Hosted Mode (`DEPLOYMENT_MODE=hosted`)**:
-  * Verify `STORAGE_BACKEND=s3` with `S3_BUCKET_NAME` and AWS credentials.
+  * Verify `STORAGE_BACKEND=s3` with `S3_BUCKET` and AWS credentials.
   * Verify `VECTOR_BACKEND=pgvector`.
   * Confirm database is PostgreSQL (`DATABASE_URL=postgresql+psycopg://...`).
 

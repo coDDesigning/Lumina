@@ -14,6 +14,46 @@ const envelope = (data: unknown) => ({ success: true, message: 'ok', data })
 
 let quizJobQueued = false
 
+/**
+ * What the writes change.
+ *
+ * A read that always answers the same thing cannot show that a write landed, so
+ * a spec driving a mutating flow could only ever assert the request. These are
+ * seeded fresh by `stubApi`, which every spec calls before navigating, because
+ * the suite runs fully parallel and workers share this module.
+ */
+interface Store {
+  courses: Record<string, unknown>[]
+  documents: Record<string, unknown>[]
+  settings: Record<string, unknown>
+  knowledge: Record<string, unknown>[]
+  profileDocuments: Record<string, unknown>[]
+  adminUsers: Record<string, unknown>[]
+  creditTransactions: Record<string, unknown>[]
+}
+
+let state: Store
+
+function seed(): Store {
+  return structuredClone({
+    courses: COURSES,
+    documents: DOCUMENTS,
+    settings: SETTINGS,
+    knowledge: KNOWLEDGE,
+    profileDocuments: PROFILE_DOCUMENTS,
+    adminUsers: ADMIN_USERS,
+    creditTransactions: [],
+  }) as Store
+}
+
+function adminUser(email: string): Record<string, unknown> {
+  const account = state.adminUsers.find((user) => user.email === decodeURIComponent(email))
+  if (!account) {
+    throw new Error(`No fixture account for ${email}`)
+  }
+  return account
+}
+
 export const USER = {
   id: 1,
   name: 'Bora Kafadar',
@@ -117,13 +157,33 @@ const CREDITS = {
   },
 }
 
+/**
+ * The values the settings selects actually render as `<option value>`. An
+ * earlier fixture used the backend's lowercase spellings, so four of the five
+ * selects opened with nothing selected and no spec could read them back.
+ */
 const SETTINGS = {
-  study_mode: 'exam_focused',
-  difficulty: 'medium',
+  study_mode: 'Exam',
+  difficulty: 'Medium',
   question_count: 10,
-  summary_length: 'medium',
-  detail_level: 'standard',
+  summary_length: 'Medium',
+  detail_level: 'Balanced',
 }
+
+const PROFILE_DOCUMENTS = [
+  {
+    id: '33333333-3333-3333-3333-333333333333',
+    original_file_name: 'transcript.pdf',
+    file_type: 'pdf',
+    mime_type: 'application/pdf',
+    file_size: 184_000,
+    user_id: 1,
+    status: 'ready',
+    processing_error: null,
+    created_at: '2026-08-02T09:00:00Z',
+    updated_at: '2026-08-02T09:02:00Z',
+  },
+]
 
 const MODELS = [
   {
@@ -604,6 +664,226 @@ const QUIZ_SESSION = {
 
 type Answer = [RegExp, (match: RegExpMatchArray) => unknown]
 
+interface Sent {
+  json: Record<string, unknown>
+  query: URLSearchParams
+  raw: string
+}
+
+/**
+ * Read one field out of a multipart body. An upload carries no JSON, so a
+ * fixture that wants to answer with the file it was actually given — rather
+ * than with a name baked in here — has to look at the raw body.
+ */
+function multipartField(raw: string, name: string): string | null {
+  const filename = raw.match(new RegExp(`name="${name}"[^\\r\\n]*filename="([^"]*)"`))
+  if (filename) {
+    return filename[1]
+  }
+
+  const value = raw.match(new RegExp(`name="${name}"\\r?\\n\\r?\\n([^\\r\\n]*)`))
+  return value ? value[1] : null
+}
+
+type Write = [string, RegExp, (match: RegExpMatchArray, sent: Sent) => unknown]
+
+let nextKnowledgeId = 100
+let nextDocumentId = 100
+
+/**
+ * Routes that answer by method, and that change what the reads below return.
+ *
+ * These are matched before `ROUTES`, which is method-blind: several of the
+ * paths here also serve a GET, and the loose prefix patterns in `ROUTES` would
+ * otherwise answer a POST with the list it returns for a GET. That is what a
+ * mutating spec used to run into — an upload was answered with the document
+ * array, so the screen read `response.document` as undefined and reported an
+ * upload failure.
+ */
+const WRITES: Write[] = [
+  [
+    'POST',
+    /^\/api\/courses\/(\d+)\/documents$/,
+    (match, sent) => {
+      const name = multipartField(sent.raw, 'document') ?? 'uploaded.pdf'
+      const document = {
+        id: `22222222-2222-2222-2222-${String(nextDocumentId++).padStart(12, '0')}`,
+        original_file_name: name,
+        file_type: name.split('.').pop() ?? 'pdf',
+        mime_type: 'application/pdf',
+        material_kind: multipartField(sent.raw, 'material_kind') ?? 'unspecified',
+        file_size: 1_204_000,
+        course_id: Number(match[1]),
+        status: 'ready',
+        created_at: '2026-08-30T10:00:00Z',
+        updated_at: '2026-08-30T10:00:00Z',
+      }
+      state.documents = [...state.documents, document]
+      return { document, duplicate: false }
+    },
+  ],
+  [
+    'DELETE',
+    /^\/api\/courses\/(\d+)\/documents\/([^/]+)$/,
+    (match) => {
+      state.documents = state.documents.filter((document) => document.id !== match[2])
+      return envelope(null)
+    },
+  ],
+  [
+    'PATCH',
+    /^\/api\/courses\/(\d+)\/settings$/,
+    (_match, sent) => {
+      state.settings = { ...state.settings, ...sent.json }
+      return envelope(state.settings)
+    },
+  ],
+  [
+    'PUT',
+    /^\/api\/courses\/(\d+)$/,
+    (match, sent) => {
+      const course = state.courses.find((entry) => entry.id === Number(match[1]))
+      if (!course) {
+        throw new Error(`No fixture course ${match[1]}`)
+      }
+      Object.assign(course, sent.json)
+      return envelope(course)
+    },
+  ],
+  [
+    'POST',
+    /^\/api\/courses\/syllabus\/extract$/,
+    () => envelope({ text: 'Week 1 Graph traversals. Week 2 Shortest paths.', truncated: false }),
+  ],
+  [
+    'POST',
+    /^\/api\/admin\/users\/([^/]+)\/credits$/,
+    (match, sent) => {
+      const user = adminUser(match[1])
+      const delta = Number(sent.json.delta ?? 0)
+      user.credits = Number(user.credits ?? 0) + delta
+      const transaction = {
+        id: state.creditTransactions.length + 1,
+        delta,
+        balance_after: user.credits,
+        reason: sent.json.reason,
+        actor_type: 'admin',
+        actor_user_id: USER.id,
+        actor_label: USER.name,
+        source_type: null,
+        source_id: null,
+        refunds_transaction_id: null,
+        grant_period: null,
+        note: sent.json.note ?? null,
+        created_at: '2026-08-30T10:00:00Z',
+      }
+      state.creditTransactions = [transaction, ...state.creditTransactions]
+      return envelope({ user, transaction })
+    },
+  ],
+  [
+    'PUT',
+    /^\/api\/admin\/users\/([^/]+)\/ban$/,
+    (match, sent) => {
+      const user = adminUser(match[1])
+      user.is_banned = sent.query.get('is_banned') === 'true'
+      return envelope(user)
+    },
+  ],
+  [
+    'PUT',
+    /^\/api\/admin\/users\/([^/]+)\/role$/,
+    (match, sent) => {
+      const user = adminUser(match[1])
+      user.role = sent.query.get('role')
+      return envelope(user)
+    },
+  ],
+  [
+    'POST',
+    /^\/api\/profile-knowledge\/import$/,
+    (_match, sent) => {
+      const incoming = (sent.json.items ?? []) as Record<string, unknown>[]
+      const created = incoming.map((item) => ({
+        id: nextKnowledgeId++,
+        user_id: 1,
+        topic: item.topic,
+        detail: item.detail,
+        created_at: '2026-08-30T10:00:00Z',
+        updated_at: '2026-08-30T10:00:00Z',
+      }))
+      state.knowledge = [...state.knowledge, ...created]
+      return envelope(created)
+    },
+  ],
+  [
+    'POST',
+    /^\/api\/profile-knowledge\/?$/,
+    (_match, sent) => {
+      const item = {
+        id: nextKnowledgeId++,
+        user_id: 1,
+        topic: sent.json.topic,
+        detail: sent.json.detail,
+        created_at: '2026-08-30T10:00:00Z',
+        updated_at: '2026-08-30T10:00:00Z',
+      }
+      state.knowledge = [...state.knowledge, item]
+      return envelope(item)
+    },
+  ],
+  [
+    'PUT',
+    /^\/api\/profile-knowledge\/(\d+)$/,
+    (match, sent) => {
+      const item = state.knowledge.find((entry) => entry.id === Number(match[1]))
+      if (!item) {
+        throw new Error(`No fixture knowledge item ${match[1]}`)
+      }
+      Object.assign(item, sent.json)
+      return envelope(item)
+    },
+  ],
+  [
+    'DELETE',
+    /^\/api\/profile-knowledge\/(\d+)$/,
+    (match) => {
+      state.knowledge = state.knowledge.filter((entry) => entry.id !== Number(match[1]))
+      return envelope(null)
+    },
+  ],
+  [
+    'POST',
+    /^\/api\/profile-documents\/?$/,
+    (_match, sent) => {
+      const document = {
+        id: `44444444-4444-4444-4444-${String(nextDocumentId++).padStart(12, '0')}`,
+        original_file_name: multipartField(sent.raw, 'document') ?? 'uploaded.pdf',
+        file_type: 'pdf',
+        mime_type: 'application/pdf',
+        file_size: 96_000,
+        user_id: 1,
+        status: 'ready',
+        processing_error: null,
+        created_at: '2026-08-30T10:00:00Z',
+        updated_at: '2026-08-30T10:00:00Z',
+      }
+      state.profileDocuments = [...state.profileDocuments, document]
+      return envelope({ document, duplicate: false })
+    },
+  ],
+  [
+    'DELETE',
+    /^\/api\/profile-documents\/([^/]+)$/,
+    (match) => {
+      state.profileDocuments = state.profileDocuments.filter(
+        (document) => document.id !== match[1],
+      )
+      return envelope(null)
+    },
+  ],
+]
+
 const ROUTES: Answer[] = [
   [/^\/api\/auth\/me$/, () => USER],
   [/^\/api\/auth\/login$/, () => ({ access_token: 'stub', token_type: 'bearer', user: USER })],
@@ -612,10 +892,14 @@ const ROUTES: Answer[] = [
   [/^\/api\/users\/me\/credits$/, () => envelope(CREDITS)],
   [/^\/api\/users\/me\/credit-transactions/, () => envelope([])],
   [/^\/api\/models/, () => envelope(MODELS)],
-  [/^\/api\/profile-knowledge/, () => envelope(KNOWLEDGE)],
+  [/^\/api\/profile-knowledge/, () => envelope(state.knowledge)],
+  [/^\/api\/profile-documents\/([^/]+)$/, (match) => envelope({ document: state.profileDocuments.find((entry) => entry.id === match[1]) ?? state.profileDocuments[0] })],
+  [/^\/api\/profile-documents/, () => envelope(state.profileDocuments)],
   [/^\/api\/activity/, () => envelope([])],
   [/^\/api\/progress\/?$/, () => envelope(PROGRESS_SUMMARIES)],
-  [/^\/api\/admin\/users/, () => envelope(ADMIN_USERS)],
+  [/^\/api\/admin\/users\/([^/]+)\/credit-transactions/, () => envelope(state.creditTransactions)],
+  [/^\/api\/admin\/users\/([^/]+)\/courses/, () => envelope([])],
+  [/^\/api\/admin\/users/, () => envelope(state.adminUsers)],
   [/^\/api\/admin\/ai-costs/, () => envelope(AI_COSTS)],
   [
     /^\/api\/courses\/(\d+)\/exam-mode\/topics\/([^/]+)\/guide$/,
@@ -636,9 +920,9 @@ const ROUTES: Answer[] = [
   [/^\/api\/courses\/(\d+)\/exam-mode\/plans$/, () => envelope(EXAM_PLAN_LIST)],
   [/^\/api\/courses\/(\d+)\/exam-mode\/review-sheet$/, () => envelope(EXAM_REVIEW_SHEET)],
   [/^\/api\/courses\/(\d+)\/exam-roadmap$/, () => envelope({ roadmap: EXAM_ROADMAP, generated_output_id: 701 })],
-  [/^\/api\/courses\/(\d+)\/documents/, () => envelope(DOCUMENTS)],
+  [/^\/api\/courses\/(\d+)\/documents/, () => envelope(state.documents)],
   [/^\/api\/courses\/(\d+)\/progress/, () => envelope(PROGRESS)],
-  [/^\/api\/courses\/(\d+)\/settings/, () => envelope(SETTINGS)],
+  [/^\/api\/courses\/(\d+)\/settings/, () => envelope(state.settings)],
   [/^\/api\/courses\/(\d+)\/generation-jobs\/(\d+)\/retry$/, () => envelope({ job_id: GENERATION_JOB.id, status: 'queued' })],
   [
     /^\/api\/courses\/(\d+)\/generation-jobs\/(\d+)\/dismiss$/,
@@ -702,9 +986,9 @@ const ROUTES: Answer[] = [
   ],
   [
     /^\/api\/courses\/(\d+)$/,
-    (match) => envelope(COURSES.find((course) => course.id === Number(match[1])) ?? COURSES[0]),
+    (match) => envelope(state.courses.find((course) => course.id === Number(match[1])) ?? state.courses[0]),
   ],
-  [/^\/api\/courses\/?$/, () => envelope(COURSES)],
+  [/^\/api\/courses\/?$/, () => envelope(state.courses)],
 ]
 
 /**
@@ -714,8 +998,51 @@ const ROUTES: Answer[] = [
  */
 export async function stubApi(page: Page) {
   quizJobQueued = false
+  nextKnowledgeId = 100
+  nextDocumentId = 100
+  state = seed()
+
   await page.route('**/api/**', async (route: Route) => {
-    const path = new URL(route.request().url()).pathname
+    const url = new URL(route.request().url())
+    const path = url.pathname
+    const method = route.request().method()
+
+    if (method !== 'GET') {
+      for (const [verb, pattern, build] of WRITES) {
+        const match = path.match(pattern)
+        if (!match || verb !== method) {
+          continue
+        }
+
+        let json: Record<string, unknown> = {}
+        try {
+          json = (route.request().postDataJSON() ?? {}) as Record<string, unknown>
+        } catch {
+          json = {}
+        }
+
+        let body: string
+        try {
+          body = JSON.stringify(
+            build(match, {
+              json,
+              query: url.searchParams,
+              raw: route.request().postData() ?? '',
+            }),
+          )
+        } catch (error) {
+          await route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: `Fixture for ${method} ${path} failed: ${error}` }),
+          })
+          return
+        }
+
+        await route.fulfill({ status: 200, contentType: 'application/json', body })
+        return
+      }
+    }
 
     for (const [pattern, build] of ROUTES) {
       const match = path.match(pattern)

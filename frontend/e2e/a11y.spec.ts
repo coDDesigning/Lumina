@@ -125,12 +125,79 @@ const MODAL_FLOWS = [
       await expect(page.getByRole('dialog')).toBeVisible()
     },
   },
+  {
+    name: 'the credit adjustment dialog',
+    path: '/admin',
+    openModal: async (page: Page) => {
+      await page
+        .getByRole('row', { name: /ada@example\.com/ })
+        .getByRole('button', { name: 'Credits' })
+        .click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+  {
+    name: 'the ban confirmation dialog',
+    path: '/admin',
+    openModal: async (page: Page) => {
+      await page
+        .getByRole('row', { name: /ada@example\.com/ })
+        .getByRole('button', { name: 'Ban' })
+        .click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+  {
+    name: 'the knowledge topic dialog',
+    path: '/account/background',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: 'Add a note' }).click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+  {
+    name: 'the bulk note import dialog',
+    path: '/account/background',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: 'Paste several' }).click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+  {
+    name: 'the remove source confirmation dialog',
+    path: '/courses/1',
+    openModal: async (page: Page) => {
+      await page
+        .getByRole('region', { name: 'Sources' })
+        .getByRole('button', { name: /^Remove / })
+        .click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
 ]
+
+/**
+ * Let every running animation finish before measuring.
+ *
+ * A dialog panel rises from `opacity: 0`, and it is visible to the role query
+ * the instant that animation starts. Measuring then reads the panel part-faded
+ * into the scrim behind it, which turns a passing colour pair into a contrast
+ * violation — and the destructive pair clears 4.5:1 by 0.03, so it is the one
+ * that trips first. What a reader actually sees is the settled dialog.
+ */
+async function settleAnimations(page: Page) {
+  await page.evaluate(() =>
+    Promise.all(
+      document.getAnimations().map((animation) => animation.finished.catch(() => undefined)),
+    ),
+  )
+}
 
 for (const modal of MODAL_FLOWS) {
   test(`${modal.name} has no serious accessibility violation when opened`, async ({ page }) => {
     await open(page, modal.path)
     await modal.openModal(page)
+    await settleAnimations(page)
     await assertNoBlockingViolations(page, modal.name)
   })
 }

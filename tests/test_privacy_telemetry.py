@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import String, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.models import (
@@ -241,14 +241,16 @@ def test_privacy_regression_asserts_raw_prompts_and_chunks_are_never_persisted(
         ).all()
         assert len(logs) == 5
 
+        string_columns = [
+            column.name
+            for column in AiUsageLog.__table__.columns
+            if isinstance(column.type, String)
+        ]
+        assert "pricing_version" in string_columns
+
         for log in logs:
-            # Check all string columns of the telemetry row
-            for col_val in (
-                log.generation_type,
-                log.provider,
-                log.model,
-                log.error_category,
-            ):
+            for column_name in string_columns:
+                col_val = getattr(log, column_name)
                 if col_val is not None:
                     assert secret_marker_student_prompt not in col_val
                     assert secret_marker_course_chunk not in col_val
@@ -292,19 +294,29 @@ def test_the_observability_field_allowlist_did_not_grow() -> None:
     from backend.app.observability import _ALLOWED_FIELDS
 
     assert _ALLOWED_FIELDS == (
+        "course_id",
+        "document_id",
         "duration_ms",
         "error_code",
         "exception_chain",
         "exception_type",
+        "failed_stage",
         "http_method",
         "http_path",
         "http_status",
         "job_id",
+        "owner_id",
         "rate_limit_control",
         "rate_limit_feature",
         "retry_after_seconds",
+        "runbook",
+        "user_id",
         "worker_id",
     )
+    assert all(
+        field in _ALLOWED_FIELDS
+        for field in ("course_id", "failed_stage", "runbook", "document_id")
+    ), "operator alerts name a runbook and a scope; both must survive the formatter"
 
 
 def test_ai_usage_logger_emits_emf_metrics_without_leaking_content(

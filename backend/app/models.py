@@ -1611,6 +1611,10 @@ class PastExamQuestion(Base):
             name="page_range_valid",
         ),
         CheckConstraint(
+            "document_id IS NOT NULL OR (page_start IS NULL AND page_end IS NULL)",
+            name="page_requires_document",
+        ),
+        CheckConstraint(
             "question_number IS NULL OR question_number >= 0",
             name="question_number_nonnegative",
         ),
@@ -2465,7 +2469,6 @@ class AiUsageLog(Base):
         Index("ix_ai_usage_logs_course_created", "course_id", "created_at"),
         Index("ix_ai_usage_logs_type_created", "generation_type", "created_at"),
         Index("ix_ai_usage_logs_success_created", "success", "created_at"),
-        Index("ix_ai_usage_logs_created_id", "created_at", "id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

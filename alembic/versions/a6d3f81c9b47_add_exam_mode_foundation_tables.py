@@ -271,6 +271,10 @@ def upgrade() -> None:
             name=op.f("ck_past_exam_questions_page_range_valid"),
         ),
         sa.CheckConstraint(
+            "document_id IS NOT NULL OR (page_start IS NULL AND page_end IS NULL)",
+            name=op.f("ck_past_exam_questions_page_requires_document"),
+        ),
+        sa.CheckConstraint(
             "question_number IS NULL OR question_number >= 0",
             name=op.f("ck_past_exam_questions_question_number_nonnegative"),
         ),

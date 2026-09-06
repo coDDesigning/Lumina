@@ -38,7 +38,7 @@ def upgrade() -> None:
 
     if is_postgresql:
         op.create_check_constraint(
-            "ck_conversations_conversation_type_valid",
+            op.f("ck_conversations_conversation_type_valid"),
             "conversations",
             "conversation_type IN ('course_qa', 'ai_tutor')",
         )
@@ -67,7 +67,7 @@ def downgrade() -> None:
 
     if is_postgresql:
         op.drop_constraint(
-            "ck_conversations_conversation_type_valid",
+            op.f("ck_conversations_conversation_type_valid"),
             "conversations",
             type_="check",
         )

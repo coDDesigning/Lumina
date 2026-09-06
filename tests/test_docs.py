@@ -140,3 +140,35 @@ def test_docs_uvicorn_commands_include_no_access_log() -> None:
         "docs uvicorn run commands must include --no-access-log:\n"
         + "\n".join(f"  - {o}" for o in offenders)
     )
+
+
+def test_compose_services_define_resource_limits() -> None:
+    """BUG-027: Self-hosted Docker Compose services define deploy.resources.limits
+    (cpus and memory ceilings) on the shared anchor and services."""
+    import yaml
+
+    for filename in ("docker-compose.yml", "docker-compose.hosted.yml"):
+        content = (PROJECT_ROOT / filename).read_text(encoding="utf-8")
+        data = yaml.safe_load(content)
+
+        anchor = data.get("x-lumina-service") or data.get("x-lumina")
+        assert anchor is not None, f"missing lumina anchor in {filename}"
+        anchor_limits = anchor.get("deploy", {}).get("resources", {}).get("limits", {})
+        assert "cpus" in anchor_limits, f"missing cpus limit on anchor in {filename}"
+        assert "memory" in anchor_limits, f"missing memory limit on anchor in {filename}"
+
+        services = data.get("services", {})
+        assert services, f"no services declared in {filename}"
+        for name, conf in services.items():
+            limits = conf.get("deploy", {}).get("resources", {}).get("limits", {})
+            assert "cpus" in limits, f"service {name} in {filename} missing cpus limit"
+            assert "memory" in limits, f"service {name} in {filename} missing memory limit"
+
+    # Verify frontend in docker-compose.yml specifically
+    compose_content = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    compose_data = yaml.safe_load(compose_content)
+    frontend = compose_data["services"]["frontend"]
+    frontend_limits = frontend["deploy"]["resources"]["limits"]
+    assert "cpus" in frontend_limits
+    assert "memory" in frontend_limits
+

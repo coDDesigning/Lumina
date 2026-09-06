@@ -108,6 +108,10 @@ DEFAULT_PROCESSING_JOB_POLL_SECONDS = 1.0
 DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS = 300
 DEFAULT_PROCESSING_JOB_CONCURRENCY = 2
 MAX_PROCESSING_JOB_CONCURRENCY = 6
+# Course and profile jobs share this account-level ceiling so one student cannot
+# occupy the whole processing pool through either upload surface.
+DEFAULT_PROCESSING_JOB_MAX_ACTIVE_PER_USER = 1
+MAX_PROCESSING_JOB_MAX_ACTIVE_PER_USER = 10
 DEFAULT_PDF_PAGE_WORKERS = 4
 MAX_PDF_PAGE_WORKERS = 8
 # A generation is one provider call, not a pipeline, so its lease only has to
@@ -282,6 +286,7 @@ class Settings:
     processing_job_poll_seconds: float
     processing_job_attempt_timeout_seconds: int
     processing_job_concurrency: int
+    processing_job_max_active_per_user: int
     generation_job_lease_seconds: int
     generation_job_max_attempts: int
     generation_job_poll_seconds: float
@@ -684,6 +689,12 @@ def load_settings() -> Settings:
         DEFAULT_PROCESSING_JOB_CONCURRENCY,
         minimum=1,
         maximum=MAX_PROCESSING_JOB_CONCURRENCY,
+    )
+    processing_job_max_active_per_user = _bounded_positive_integer_setting(
+        "PROCESSING_JOB_MAX_ACTIVE_PER_USER",
+        DEFAULT_PROCESSING_JOB_MAX_ACTIVE_PER_USER,
+        minimum=1,
+        maximum=MAX_PROCESSING_JOB_MAX_ACTIVE_PER_USER,
     )
     generation_job_lease_seconds = _bounded_positive_integer_setting(
         "GENERATION_JOB_LEASE_SECONDS",
@@ -1249,6 +1260,7 @@ def load_settings() -> Settings:
         processing_job_poll_seconds=processing_job_poll_seconds,
         processing_job_attempt_timeout_seconds=processing_job_attempt_timeout_seconds,
         processing_job_concurrency=processing_job_concurrency,
+        processing_job_max_active_per_user=processing_job_max_active_per_user,
         generation_job_lease_seconds=generation_job_lease_seconds,
         generation_job_max_attempts=generation_job_max_attempts,
         generation_job_poll_seconds=generation_job_poll_seconds,

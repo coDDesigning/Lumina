@@ -10857,6 +10857,9 @@
           "401": {
             "description": "Authentication required"
           },
+          "403": {
+            "description": "Email verification required"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -15263,6 +15266,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Email verification required"
+          },
           "413": {
             "description": "Document too large"
           },
@@ -15413,6 +15422,18 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Email verification required"
+          },
+          "404": {
+            "description": "Profile document not found"
+          },
+          "409": {
+            "description": "Only failed document jobs can be retried"
           },
           "422": {
             "content": {

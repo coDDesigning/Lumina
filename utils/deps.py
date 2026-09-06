@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
@@ -5,8 +6,8 @@ from fastapi.security import OAuth2PasswordBearer
 from jwt import PyJWTError
 from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.database import get_db
-from datetime import datetime, timezone
 from schemas.user import Role, UserResponse
 from services.user import UserService
 from services.token_revocation import TokenRevocationService
@@ -73,5 +74,22 @@ def get_current_admin(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough privileges. Admin access required.",
+        )
+    return current_user
+
+
+def get_verified_user(
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+) -> UserResponse:
+    """Require a proven address before an account can enqueue provider-backed work."""
+    if (
+        settings.email_verification_required
+        and current_user.role != Role.ADMIN
+        and not current_user.is_email_verified
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Verify your email address before creating or processing documents.",
+            headers={"X-Error-Code": "email_verification_required"},
         )
     return current_user

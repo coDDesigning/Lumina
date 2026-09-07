@@ -55,16 +55,6 @@ x-lumina: &lumina
   restart: unless-stopped
 
 services:
-  # Runs to completion before anything serves. Migrations are deliberately not
-  # applied on startup: /health/ready refuses to report ready while the schema
-  # is behind, so a failed migration blocks the deployment here instead of
-  # producing a crash-looping application.
-  migrate:
-    <<: *lumina
-    command:
-      ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check"]
-    restart: "no"
-
   lumina:
     <<: *lumina
     # Rebuild before starting, so `docker compose up -d` after a `git pull`
@@ -77,16 +67,15 @@ services:
     # origin served it. 8000 is inside the container and is not configurable.
     ports:
       - "${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-10312}:8000"
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
+    command:
+      ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check && exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330 --no-access-log $${FORWARDED_ALLOW_IPS:+--proxy-headers --forwarded-allow-ips \"$$FORWARDED_ALLOW_IPS\"}"]
     healthcheck:
       test:
         ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()"]
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 10s
+      start_period: 90s
     stop_grace_period: 345s
 
   lumina-worker:
@@ -94,8 +83,8 @@ services:
     pull_policy: build
     command: ["python", "-m", "workers.worker"]
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      lumina:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-m", "workers.worker", "--check"]
       interval: 30s

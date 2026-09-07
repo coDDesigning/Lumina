@@ -119,8 +119,9 @@ COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" \
 BACKUP_ARCHIVE_NAME="lumina-20260820T120000Z.tar.gz" \
 docker compose --profile maintenance run --rm restore
 
-COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose run --rm migrate
-COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose run --rm lumina-worker \
+COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose run --rm --no-deps lumina \
+  sh -c 'python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check'
+COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" docker compose run --rm --no-deps lumina-worker \
   python -m workers.embedding_backfill --prune-orphans
 COMPOSE_PROJECT_NAME="${RESTORE_PROJECT_NAME}" LUMINA_PORT=10313 docker compose up -d \
   --no-build --wait --wait-timeout 180 lumina lumina-worker

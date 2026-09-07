@@ -64,7 +64,8 @@ ATTEMPT_SCORE_NULLABLE_REVISION = "c3b8e07a1d95"
 GENERATION_JOB_DISMISSAL_REVISION = "f2d90b4c7168"
 DOCUMENT_GENERATION_LOCKS_REVISION = "b6d21f4c8a37"
 MISSING_CHECK_CONSTRAINTS_REVISION = "3317a08487dd"
-HEAD_REVISION = MISSING_CHECK_CONSTRAINTS_REVISION
+PROFILE_PROCESSING_JOB_INDEXES_REVISION = "d8a2b4c6e901"
+HEAD_REVISION = PROFILE_PROCESSING_JOB_INDEXES_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -112,6 +113,7 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        PROFILE_PROCESSING_JOB_INDEXES_REVISION: MISSING_CHECK_CONSTRAINTS_REVISION,
         MISSING_CHECK_CONSTRAINTS_REVISION: DOCUMENT_GENERATION_LOCKS_REVISION,
         DOCUMENT_GENERATION_LOCKS_REVISION: GENERATION_JOB_DISMISSAL_REVISION,
         GENERATION_JOB_DISMISSAL_REVISION: ATTEMPT_SCORE_NULLABLE_REVISION,
@@ -3428,3 +3430,44 @@ def test_migration_check_constraint_names_use_op_f_or_unprefixed_literals() -> N
         "Found raw qualified CHECK constraint names. Use op.f(...) or an unprefixed name:\n"
         + "\n".join(f"  - {o}" for o in offenders)
     )
+
+
+def test_profile_processing_jobs_queue_composite_indexes(tmp_path: Path) -> None:
+    """P2-023: d8a2b4c6e901 adds claimable and recoverable composite indexes to profile_processing_jobs."""
+    database_path = tmp_path / "profile-queue-indexes.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        index_list = connection.execute(
+            "PRAGMA index_list(profile_processing_jobs)"
+        ).fetchall()
+        index_names = {row[1] for row in index_list}
+        assert "ix_profile_processing_jobs_claimable" in index_names
+        assert "ix_profile_processing_jobs_recoverable" in index_names
+
+        claimable_info = connection.execute(
+            "PRAGMA index_info(ix_profile_processing_jobs_claimable)"
+        ).fetchall()
+        assert [row[2] for row in claimable_info] == ["status", "available_at", "id"]
+
+        recoverable_info = connection.execute(
+            "PRAGMA index_info(ix_profile_processing_jobs_recoverable)"
+        ).fetchall()
+        assert [row[2] for row in recoverable_info] == [
+            "status",
+            "lease_expires_at",
+            "id",
+        ]
+
+    # Downgrading removes the indexes
+    run_alembic(
+        database_path, tmp_path, "downgrade", MISSING_CHECK_CONSTRAINTS_REVISION
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        index_list = connection.execute(
+            "PRAGMA index_list(profile_processing_jobs)"
+        ).fetchall()
+        index_names = {row[1] for row in index_list}
+        assert "ix_profile_processing_jobs_claimable" not in index_names
+        assert "ix_profile_processing_jobs_recoverable" not in index_names

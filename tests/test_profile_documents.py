@@ -1,6 +1,7 @@
 """Tests for user-scoped profile-knowledge document uploads, processing, isolation, and lifecycle."""
 
 import io
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -17,7 +18,7 @@ import services.profile_document as profile_document_service
 from services.profile_knowledge import (
     load_profile_knowledge_for_generation,
 )
-from services.vector_store import PgVectorStore
+from services.vector_store import PgVectorStore, VectorStoreError
 from storage.base import StorageError
 from workers.course_purge import run_document_purge
 
@@ -349,6 +350,45 @@ def test_profile_delete_reports_a_storage_failure_and_survives_as_a_tombstone(
     with authz_api.session_factory() as session:
         assert session.get(ProfileDocument, doc_uuid) is None
     assert authz_api.storage.exists(storage_key) is False
+
+
+def test_profile_delete_leaves_a_tombstone_when_vector_store_fails(
+    authz_api,
+    monkeypatch,
+):
+    """P2-034: a vector store failure during delete must leave a tombstone and not remove the row."""
+    client = authz_api.client
+    headers = authz_api.authorization_a
+
+    res = client.post(
+        "/api/profile-documents",
+        headers=headers,
+        files={
+            "document": (
+                "vector-failure.txt",
+                io.BytesIO(b"Vector failure test content."),
+                "text/plain",
+            )
+        },
+    )
+    doc_id = res.json()["data"]["document"]["id"]
+    doc_uuid = UUID(doc_id)
+
+    def failing_vector_delete(*args, **kwargs) -> None:
+        raise VectorStoreError("simulated vector store outage")
+
+    monkeypatch.setattr(
+        "services.profile_document.get_vector_store",
+        lambda: SimpleNamespace(delete_profile_document_vectors=failing_vector_delete),
+    )
+    failed = client.delete(f"/api/profile-documents/{doc_id}", headers=headers)
+    monkeypatch.undo()
+
+    assert failed.status_code == 500
+    with authz_api.session_factory() as session:
+        document = session.get(ProfileDocument, doc_uuid)
+        assert document is not None
+        assert document.status == "deleting"
 
 
 def test_profile_delete_leaves_a_tombstone_when_the_final_commit_fails(

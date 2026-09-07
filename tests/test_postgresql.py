@@ -1099,16 +1099,21 @@ def test_postgresql_profile_processing_job_queries_use_queue_indexes(
         claim_plan = connection.scalar(
             text(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {claim_query}")
         )
-        recover_plan = connection.scalar(
-            text(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {recover_query}")
-        )
+        assert claim_plan is not None
+        claim_indexes = _plan_index_names(claim_plan[0]["Plan"])
+        assert "ix_profile_processing_jobs_claimable" in claim_indexes
 
-    assert claim_plan is not None
-    assert recover_plan is not None
-    claim_indexes = _plan_index_names(claim_plan[0]["Plan"])
-    recover_indexes = _plan_index_names(recover_plan[0]["Plan"])
-    assert "ix_profile_processing_jobs_claimable" in claim_indexes
-    assert "ix_profile_processing_jobs_recoverable" in recover_indexes
+        connection.execute(text("SAVEPOINT without_claimable"))
+        try:
+            connection.execute(text("DROP INDEX ix_profile_processing_jobs_claimable"))
+            recover_plan = connection.scalar(
+                text(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {recover_query}")
+            )
+            assert recover_plan is not None
+            recover_indexes = _plan_index_names(recover_plan[0]["Plan"])
+            assert "ix_profile_processing_jobs_recoverable" in recover_indexes
+        finally:
+            connection.execute(text("ROLLBACK TO SAVEPOINT without_claimable"))
 
 
 def test_postgresql_cost_migration_resumes_after_partial_commit(

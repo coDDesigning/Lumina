@@ -70,7 +70,7 @@ CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
 # When updating alembic versions, update this constant to the new head revision.
-HEAD_REVISION = "3317a08487dd"
+HEAD_REVISION = "d8a2b4c6e901"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,
@@ -885,6 +885,17 @@ def test_postgresql_schema_readiness_and_role_seeds(
     assert {index["name"] for index in inspector.get_indexes("document_visuals")} >= {
         "ix_document_visuals_page_id"
     }
+    profile_job_indexes = _index_columns(postgresql_engine, "profile_processing_jobs")
+    assert profile_job_indexes["ix_profile_processing_jobs_claimable"] == [
+        "status",
+        "available_at",
+        "id",
+    ]
+    assert profile_job_indexes["ix_profile_processing_jobs_recoverable"] == [
+        "status",
+        "lease_expires_at",
+        "id",
+    ]
 
     storage = LocalStorage(tmp_path_factory.mktemp("postgresql-readiness"))
     with postgresql_sessions() as session:
@@ -1054,6 +1065,50 @@ def test_postgresql_course_material_query_uses_course_order_indexes(
     indexes = _plan_index_names(plan[0]["Plan"])
     assert "ix_uploaded_documents_course_status_created" in indexes
     assert "ix_document_chunks_course_document_index" in indexes
+
+
+def test_postgresql_profile_processing_job_queries_use_queue_indexes(
+    postgresql_engine: Engine,
+) -> None:
+    claim_query = """
+        SELECT ppj.id
+        FROM profile_processing_jobs AS ppj
+        JOIN profile_documents AS pd ON pd.id = ppj.document_id
+        WHERE ppj.job_type = 'extract_document'
+          AND ppj.status = 'queued'
+          AND ppj.available_at <= now()
+          AND ppj.attempt_count < ppj.max_attempts
+          AND pd.status = 'uploaded'
+          AND pd.storage_provider = 'local:default'
+        ORDER BY ppj.available_at, ppj.id
+        LIMIT 1
+        FOR UPDATE OF ppj SKIP LOCKED
+    """
+    recover_query = """
+        SELECT ppj.id
+        FROM profile_processing_jobs AS ppj
+        JOIN profile_documents AS pd ON pd.id = ppj.document_id
+        WHERE ppj.status = 'running'
+          AND ppj.lease_expires_at <= now()
+        ORDER BY ppj.id
+        LIMIT 100
+        FOR UPDATE OF ppj SKIP LOCKED
+    """
+    with postgresql_engine.begin() as connection:
+        connection.execute(text("SET LOCAL enable_seqscan = off"))
+        claim_plan = connection.scalar(
+            text(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {claim_query}")
+        )
+        recover_plan = connection.scalar(
+            text(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {recover_query}")
+        )
+
+    assert claim_plan is not None
+    assert recover_plan is not None
+    claim_indexes = _plan_index_names(claim_plan[0]["Plan"])
+    recover_indexes = _plan_index_names(recover_plan[0]["Plan"])
+    assert "ix_profile_processing_jobs_claimable" in claim_indexes
+    assert "ix_profile_processing_jobs_recoverable" in recover_indexes
 
 
 def test_postgresql_cost_migration_resumes_after_partial_commit(

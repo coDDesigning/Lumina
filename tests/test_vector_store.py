@@ -755,3 +755,142 @@ def test_chroma_wraps_search_failures_as_vector_store_errors(
                 limit=3,
                 embedding_model=MODEL,
             )
+
+
+def test_chroma_reopens_a_profile_handle_another_process_invalidated(
+    tmp_path, session_factory: sessionmaker[Session]
+) -> None:
+    """BUG-030: A worker writing to the profile store must not break reads until restart."""
+
+    class StaleCollection:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def query(self, **kwargs):
+            self.calls += 1
+            raise RuntimeError("Error executing plan: Internal error: Error finding id")
+
+    with session_factory() as session:
+        user_id = 42
+        doc_id = uuid4()
+        store = ChromaVectorStore(persist_directory=str(tmp_path / "chroma"))
+        records = [
+            VectorRecord(
+                chunk_id=101,
+                document_id=doc_id,
+                course_id=user_id,
+                chunk_index=0,
+                embedding=_vector(0.5),
+            )
+        ]
+        store.replace_profile_document_vectors(
+            session,
+            document_id=doc_id,
+            user_id=user_id,
+            records=records,
+            embedding_provider=PROVIDER,
+            embedding_model=MODEL,
+        )
+
+        stale = StaleCollection()
+        store._profile_collection = stale
+
+        results = store.search_profile(
+            session,
+            user_id=user_id,
+            query_embedding=_vector(0.5),
+            limit=5,
+            embedding_model=MODEL,
+        )
+        assert len(results) == 1
+        assert results[0].chunk_id == 101
+        assert stale.calls == 1
+
+
+def test_chroma_profile_retry_failure_raises_vector_store_error(
+    tmp_path, session_factory: sessionmaker[Session]
+) -> None:
+    """BUG-030: When retry on a reopened profile collection fails, raise VectorStoreError."""
+
+    class PersistentBrokenCollection:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def query(self, **kwargs):
+            self.calls += 1
+            raise RuntimeError("Permanent failure")
+
+    with session_factory() as session:
+        user_id = 42
+        store = ChromaVectorStore(persist_directory=str(tmp_path / "chroma"))
+        broken = PersistentBrokenCollection()
+        store._get_profile_collection = lambda: broken
+
+        with pytest.raises(
+            VectorStoreError, match="The vector store could not be searched"
+        ):
+            store.search_profile(
+                session,
+                user_id=user_id,
+                query_embedding=_vector(0.5),
+                limit=5,
+                embedding_model=MODEL,
+            )
+        assert broken.calls == 2
+
+
+def test_replace_profile_document_vectors_upserts_colliding_chunk_ids(
+    tmp_path, session_factory: sessionmaker[Session]
+) -> None:
+    """P2-034: Profile vector replacement must overwrite colliding chunk IDs."""
+    with session_factory() as session:
+        user_id = 42
+        doc_old = uuid4()
+        doc_new = uuid4()
+        store = ChromaVectorStore(persist_directory=str(tmp_path / "chroma"))
+
+        # Seed profile collection with chunk id 1 under OLD document
+        old_records = [
+            VectorRecord(
+                chunk_id=1,
+                document_id=doc_old,
+                course_id=user_id,
+                chunk_index=0,
+                embedding=_vector(0.1),
+            )
+        ]
+        store.replace_profile_document_vectors(
+            session,
+            document_id=doc_old,
+            user_id=user_id,
+            records=old_records,
+            embedding_provider=PROVIDER,
+            embedding_model="old-model",
+        )
+
+        # Replace for NEW document reusing chunk id 1
+        new_records = [
+            VectorRecord(
+                chunk_id=1,
+                document_id=doc_new,
+                course_id=user_id,
+                chunk_index=0,
+                embedding=_vector(0.9),
+            )
+        ]
+        store.replace_profile_document_vectors(
+            session,
+            document_id=doc_new,
+            user_id=user_id,
+            records=new_records,
+            embedding_provider=PROVIDER,
+            embedding_model="new-model",
+        )
+
+        # Query Chroma directly for chunk id 1 to verify metadata and embedding were updated
+        collection = store._get_profile_collection()
+        stored = collection.get(ids=["1"], include=["embeddings", "metadatas"])
+        assert len(stored["ids"]) == 1
+        assert stored["metadatas"][0]["document_id"] == str(doc_new)
+        assert stored["metadatas"][0]["embedding_model"] == "new-model"
+        assert pytest.approx(stored["embeddings"][0][0]) == 0.9

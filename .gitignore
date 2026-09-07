@@ -60,3 +60,11 @@ crash.log
 override.tf
 override.tf.json
 .terraform.tfstate.lock.info
+
+# ── Local ops scratch scripts (not part of the app) ──────
+/roll.py
+/roll_services.py
+/status.py
+/fix_worker_command.py
+/set_env_and_roll.py
+.claude/

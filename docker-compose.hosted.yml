@@ -7,7 +7,7 @@
 # .env as the only place configuration lives. See docs/deployment.md.
 name: lumina-hosted
 
-x-lumina-service: &lumina-service
+x-lumina: &lumina
   image: lumina
   build: .
   env_file: .env
@@ -46,9 +46,6 @@ x-lumina-service: &lumina-service
         pids: 256
   init: true
   restart: unless-stopped
-
-x-lumina: &lumina
-  <<: *lumina-service
 
 services:
   db:

@@ -1,4 +1,4 @@
-"""add AI usage retention index
+"""retire the AI usage created_at index superseded by the success index
 
 Revision ID: a6e2c8f41b90
 Revises: 15bb8ad6d0f1
@@ -15,36 +15,33 @@ down_revision: str | Sequence[str] | None = "15bb8ad6d0f1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-_INDEX_NAME = "ix_ai_usage_logs_success_created"
-_LEGACY_INDEX_NAME = "ix_ai_usage_logs_created_id"
+_INDEX_NAME = "ix_ai_usage_logs_created_id"
 
 
 def upgrade() -> None:
     if op.get_bind().dialect.name == "postgresql":
         with op.get_context().autocommit_block():
-            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {_LEGACY_INDEX_NAME}")
             op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {_INDEX_NAME}")
-            op.create_index(
-                _INDEX_NAME,
-                "ai_usage_logs",
-                ["success", "created_at"],
-                unique=False,
-                postgresql_concurrently=True,
-            )
     else:
-        op.drop_index(_LEGACY_INDEX_NAME, table_name="ai_usage_logs", if_exists=True)
-        op.create_index(
-            _INDEX_NAME,
-            "ai_usage_logs",
-            ["success", "created_at"],
-            unique=False,
-            if_not_exists=True,
-        )
+        op.drop_index(_INDEX_NAME, table_name="ai_usage_logs", if_exists=True)
 
 
 def downgrade() -> None:
     if op.get_bind().dialect.name == "postgresql":
         with op.get_context().autocommit_block():
-            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {_INDEX_NAME}")
+            op.create_index(
+                _INDEX_NAME,
+                "ai_usage_logs",
+                ["created_at", "id"],
+                unique=False,
+                postgresql_concurrently=True,
+                if_not_exists=True,
+            )
     else:
-        op.drop_index(_INDEX_NAME, table_name="ai_usage_logs", if_exists=True)
+        op.create_index(
+            _INDEX_NAME,
+            "ai_usage_logs",
+            ["created_at", "id"],
+            unique=False,
+            if_not_exists=True,
+        )

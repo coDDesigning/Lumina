@@ -168,10 +168,10 @@ def test_compose_services_define_resource_limits() -> None:
                 f"service {name} in {filename} missing memory limit"
             )
 
-    # Verify frontend in docker-compose.yml specifically
-    compose_content = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    compose_data = yaml.safe_load(compose_content)
-    frontend = compose_data["services"]["frontend"]
-    frontend_limits = frontend["deploy"]["resources"]["limits"]
-    assert "cpus" in frontend_limits
-    assert "memory" in frontend_limits
+    # Deliberately no separate frontend service to check: the interface is
+    # compiled into the lumina image and served by the API. See
+    # backend/app/spa.py and docs/deployment.md.
+    self_hosted = yaml.safe_load(
+        (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    assert "frontend" not in self_hosted["services"]

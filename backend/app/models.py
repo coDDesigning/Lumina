@@ -3069,6 +3069,13 @@ class ProfileProcessingJob(Base):
             f"length(trim(last_error_code, '{_ASCII_WHITESPACE}')) > 0)",
             name="profile_failed_last_error_code_present",
         ),
+        Index("ix_profile_processing_jobs_claimable", "status", "available_at", "id"),
+        Index(
+            "ix_profile_processing_jobs_recoverable",
+            "status",
+            "lease_expires_at",
+            "id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

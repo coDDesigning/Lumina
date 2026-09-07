@@ -670,8 +670,15 @@ class ChromaVectorStore:
             raise VectorStoreError(message) from exc
 
     def _run_profile(self, operation, error_message: str):
-        collection = self._get_profile_collection()
         try:
+            collection = self._get_profile_collection()
+            return operation(collection)
+        except VectorStoreError:
+            raise
+        except Exception:
+            self._discard_client()
+        try:
+            collection = self._get_profile_collection()
             return operation(collection)
         except Exception as exc:
             raise VectorStoreError(error_message) from exc
@@ -900,7 +907,7 @@ class ChromaVectorStore:
         if not validated:
             return
         self._run_profile(
-            lambda collection: collection.add(
+            lambda collection: collection.upsert(
                 ids=[str(record.chunk_id) for record in validated],
                 embeddings=[record.embedding for record in validated],
                 metadatas=[

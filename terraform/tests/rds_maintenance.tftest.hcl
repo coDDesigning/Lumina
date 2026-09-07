@@ -17,7 +17,7 @@ run "postgresql_maintenance_contract" {
     allocated_storage_gb     = 20
     max_allocated_storage_gb = 100
     multi_az                 = false
-    engine_version           = "16.8"
+    engine_version           = "15.16"
     database_name            = "lumina"
     username                 = "lumina"
     tags                     = { Environment = "test" }

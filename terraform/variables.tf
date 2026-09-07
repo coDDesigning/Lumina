@@ -136,9 +136,9 @@ variable "rds_multi_az" {
 }
 
 variable "rds_engine_version" {
-  description = "PostgreSQL engine version qualified with pgvector 0.8 or newer."
+  description = "PostgreSQL engine version qualified with pgvector 0.8 or newer. Must stay on the major version the parameter group family in modules/rds targets."
   type        = string
-  default     = "16.8"
+  default     = "15.16"
 }
 
 variable "rds_proxy_max_connections_percent" {

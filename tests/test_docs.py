@@ -175,3 +175,58 @@ def test_compose_services_define_resource_limits() -> None:
         (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     )
     assert "frontend" not in self_hosted["services"]
+
+
+def test_self_hosted_lumina_command_migrates_before_it_serves() -> None:
+    """The lumina service applies migrations before it serves, and the uvicorn tail
+    it execs stays identical to the Dockerfile CMD it duplicates."""
+    import yaml
+
+    compose = yaml.safe_load(
+        (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+    assert "migrate" not in services
+    assert services["lumina-worker"]["depends_on"] == {
+        "lumina": {"condition": "service_healthy"}
+    }
+
+    command = services["lumina"]["command"]
+    assert command[:2] == ["sh", "-c"]
+    migrations, _, serve = command[2].partition(" && exec ")
+    assert migrations == (
+        "python -m alembic upgrade head "
+        "&& python -m alembic current --check-heads "
+        "&& python -m alembic check"
+    )
+
+    dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    cmd = re.search(r'^CMD \["sh", "-c", "(.+)"\]$', dockerfile, re.MULTILINE)
+    assert cmd is not None, "Dockerfile no longer ends in a shell-form CMD"
+    image_serve = cmd.group(1).replace('\\"', '"').removeprefix("exec ")
+    assert "$$" not in image_serve, "Dockerfile CMD now needs its own $ escaping"
+    assert serve == image_serve.replace("$", "$$")
+
+
+def test_compose_worker_one_offs_do_not_drag_the_api_up() -> None:
+    """`lumina-worker` depends on `lumina` being healthy, so a `docker compose run`
+    without --no-deps starts a second published API alongside the one-off."""
+    offenders: list[str] = []
+    sources = _get_tracked_markdown_files() + [
+        PROJECT_ROOT / "ops" / "self_hosted_backup.sh",
+        PROJECT_ROOT / ".github" / "workflows" / "ci.yml",
+    ]
+    for source in sources:
+        for lineno, line in enumerate(
+            source.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if "docker compose run" not in line or "lumina-worker" not in line:
+                continue
+            if "--no-deps" not in line:
+                rel = source.relative_to(PROJECT_ROOT).as_posix()
+                offenders.append(f"{rel}:{lineno}: {line.strip()}")
+
+    assert not offenders, (
+        "`docker compose run` on lumina-worker must pass --no-deps:\n"
+        + "\n".join(f"  - {o}" for o in offenders)
+    )

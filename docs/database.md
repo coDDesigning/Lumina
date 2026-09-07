@@ -29,10 +29,11 @@ re-upgrade, full downgrade to base, and final re-upgrade. Production migrator
 containers run `upgrade head`, `current --check-heads`, and `check`; a service
 never starts after a partial migration or schema drift.
 
-Exactly one deployment-owned process may apply migrations. API and worker
-entrypoints must never migrate or stamp the database. In the supported
-self-hosted container topology, the one-shot `migrate` service completes before
-Compose starts either runtime role; see [`deployment.md`](deployment.md).
+Exactly one deployment-owned process may apply migrations. The worker entrypoint
+must never migrate or stamp the database. In the supported self-hosted container
+topology the `lumina` service runs them before uvicorn starts and
+`lumina-worker` waits for it to become healthy; the hosted topology keeps a
+separate one-shot `migrate` service. See [`deployment.md`](deployment.md).
 
 The processing-job and processing-stage revisions are additive children of the
 canonical SCRUM-30 revision. During upgrade they create one extraction job for

@@ -647,9 +647,9 @@ jobs:
           curl --fail --silent --show-error "$edge/health/ready" > /dev/null
 
 
-          migrate_id="$(docker compose ps --all --quiet migrate)"
-          test "$(docker inspect --format '{{.State.Status}}' "$migrate_id")" = "exited"
-          test "$(docker inspect --format '{{.State.ExitCode}}' "$migrate_id")" = "0"
+          lumina_id="$(docker compose ps --quiet lumina)"
+          docker inspect --format '{{join .Config.Cmd " "}}' "$lumina_id" | grep -q 'alembic upgrade head'
+          docker compose exec -T lumina python -m alembic current --check-heads
           docker compose exec -T lumina sh -c 'test ! -w /app && test ! -w /opt/lumina/web && test -w /data && test -w /tmp && test -f /data/lumina.db'
           # env_file hands .env to the container verbatim, so a data path left
           # in it would override the image's. The weights are baked in and read
@@ -681,7 +681,7 @@ jobs:
           sudo install -d -o 10001 -g 10001 -m 0700 "$LUMINA_BACKUP_DIRECTORY"
           export BACKUP_ARCHIVE_NAME=lumina-ci-backup.tar.gz
           docker compose run --rm --no-deps \
-            --env LUMINA_RESTART_SERVICES="lumina lumina-worker" migrate sh -c '
+            --env LUMINA_RESTART_SERVICES="lumina lumina-worker" lumina sh -c '
               umask 077
               printf "%s\n" "$LUMINA_RESTART_SERVICES" > /data/.lumina-backup-restart-services
             '
@@ -696,12 +696,12 @@ jobs:
             container_id="$(docker compose ps --quiet "$service")"
             test "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = "healthy"
           done
-          docker compose run --rm --no-deps migrate \
+          docker compose run --rm --no-deps lumina \
             test ! -f /data/.lumina-backup-restart-services
           sudo mv "${LUMINA_BACKUP_DIRECTORY}.offline" "$LUMINA_BACKUP_DIRECTORY"
 
           sh ops/self_hosted_backup.sh
-          docker compose run --rm --no-deps migrate \
+          docker compose run --rm --no-deps lumina \
             test ! -f /data/.lumina-backup-restart-services
           sudo test -s "$LUMINA_BACKUP_DIRECTORY/$BACKUP_ARCHIVE_NAME"
           test "$(sudo stat -c '%a' "$LUMINA_BACKUP_DIRECTORY/$BACKUP_ARCHIVE_NAME")" = "600"
@@ -713,7 +713,8 @@ jobs:
           # filter is load-bearing: an unfiltered up would start a second lumina
           # and collide with this project on the published host port.
           COMPOSE_PROJECT_NAME="$restore_project" docker compose --profile maintenance run --rm restore
-          COMPOSE_PROJECT_NAME="$restore_project" docker compose run --rm migrate
+          COMPOSE_PROJECT_NAME="$restore_project" docker compose run --rm --no-deps lumina \
+            sh -c 'python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check'
           COMPOSE_PROJECT_NAME="$restore_project" docker compose run --rm --no-deps lumina-worker \
             python -m workers.embedding_backfill --prune-orphans
           COMPOSE_PROJECT_NAME="$restore_project" docker compose up --detach --no-build --wait --wait-timeout 180 lumina lumina-worker

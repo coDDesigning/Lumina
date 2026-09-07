@@ -214,7 +214,9 @@ export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onC
     >
       {listState.phase === 'loading' ? <DetailLoading label="Loading your history" /> : null}
 
-      {listState.phase === 'error' ? <DetailError message={listState.message} /> : null}
+      {listState.phase === 'error' ? (
+        <DetailError message={listState.message} onRetry={() => void listQuery.refetch()} />
+      ) : null}
 
       {listState.phase === 'ready' ? (
         <MasterDetail
@@ -259,7 +261,12 @@ export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onC
                 />
               ) : null}
               {detailState.phase === 'loading' ? <DetailLoading label="Opening" /> : null}
-              {detailState.phase === 'error' ? <DetailError message={detailState.message} /> : null}
+              {detailState.phase === 'error' ? (
+                <DetailError
+                  message={detailState.message}
+                  onRetry={() => void detailQuery.refetch()}
+                />
+              ) : null}
               {detailState.phase === 'ready' ? <StoredOutput output={detailState.output} /> : null}
             </>
           }

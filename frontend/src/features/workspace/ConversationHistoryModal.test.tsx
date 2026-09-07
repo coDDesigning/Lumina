@@ -265,4 +265,59 @@ describe('sources in a past thread', () => {
     );
     expect(await screen.findByRole('button', { name: 'Copied to clipboard' })).toBeInTheDocument();
   });
+
+  it('renders ErrorState with retry when conversation list fails to load (BUG-015)', async () => {
+    const user = userEvent.setup();
+    mockList.mockRejectedValueOnce(new Error('Network error'));
+
+    render(
+      <ConversationHistoryModal
+        courseId={7}
+        courseName="Algorithms"
+        onClose={vi.fn()}
+        onResume={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText('Your past threads could not be loaded.'),
+    ).toBeInTheDocument();
+    const retryBtn = screen.getByRole('button', { name: 'Try again' });
+    expect(retryBtn).toBeInTheDocument();
+
+    mockList.mockResolvedValueOnce([QA_SUMMARY]);
+    await user.click(retryBtn);
+
+    expect(await screen.findByText('Question')).toBeInTheDocument();
+  });
+
+  it('renders ErrorState with retry when conversation detail fails to load (BUG-015)', async () => {
+    const user = userEvent.setup();
+    mockList.mockResolvedValue([TUTOR_SUMMARY]);
+    mockGet.mockRejectedValueOnce(new Error('Network error'));
+
+    render(
+      <ConversationHistoryModal
+        courseId={7}
+        courseName="Algorithms"
+        onClose={vi.fn()}
+        onResume={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: /Tutoring 18/ }));
+
+    expect(
+      await screen.findByText('This thread could not be opened.'),
+    ).toBeInTheDocument();
+    const retryBtn = screen.getByRole('button', { name: 'Try again' });
+    expect(retryBtn).toBeInTheDocument();
+
+    mockGet.mockResolvedValueOnce(TUTOR_DETAIL);
+    await user.click(retryBtn);
+
+    expect(
+      await screen.findByText('Start with breadth-first and depth-first search.'),
+    ).toBeInTheDocument();
+  });
 });

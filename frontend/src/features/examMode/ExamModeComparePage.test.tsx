@@ -198,4 +198,34 @@ describe('ExamModeComparePage', () => {
     );
     expect(document.body.textContent).not.toMatch(/\b0%\b/);
   });
+
+  it('renders plan warnings using describePlanWarning instead of raw warning codes (BUG-016)', async () => {
+    getPlan.mockImplementation((_courseId: number, planId: number) =>
+      Promise.resolve(
+        planFixture({
+          generated_output_id: planId,
+          plan_version: planId === 7 ? 1 : 2,
+          warnings: ['no_syllabus_evidence', 'no_past_exam_evidence'],
+        }),
+      ),
+    );
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          'No syllabus evidence was available, so syllabus emphasis counted for nothing and its weight went to the signals that were.',
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'No past-paper questions were available, so how often a topic has been examined could not be counted.',
+        ),
+      ).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('no_syllabus_evidence')).toBeNull();
+    expect(screen.queryByText('no_past_exam_evidence')).toBeNull();
+  });
 });

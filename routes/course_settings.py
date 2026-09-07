@@ -25,7 +25,7 @@ def get_course_settings(
     db: Annotated[Session, Depends(get_db)],
 ):
     """Retrieves the settings for the specified course."""
-    settings = CourseSettingsService.get_or_create(db, course.id)
+    settings = CourseSettingsService.get_settings(db, course.id)
     return BaseResponse(
         success=True,
         message="Course settings retrieved successfully",

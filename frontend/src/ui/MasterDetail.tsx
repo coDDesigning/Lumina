@@ -74,6 +74,12 @@ export function DetailLoading({ label }: { label: string }) {
   );
 }
 
-export function DetailError({ message }: { message: string }) {
-  return <ErrorState>{message}</ErrorState>;
+export function DetailError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry?: () => void;
+}) {
+  return <ErrorState onRetry={onRetry}>{message}</ErrorState>;
 }

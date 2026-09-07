@@ -16,7 +16,7 @@ import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
 import { comparePlans } from './comparePlans';
 import type { TopicChange } from './comparePlans';
-import { formatExamDate } from './examModeFormatters';
+import { describePlanWarning, formatExamDate } from './examModeFormatters';
 import styles from './ExamModeComparePage.module.css';
 
 export interface ExamModeComparePageProps {
@@ -264,7 +264,7 @@ export default function ExamModeComparePage({ workspace }: ExamModeComparePagePr
           <div className={styles.notices}>
             {after.warnings.map((warning) => (
               <Alert key={warning} tone="warning">
-                {warning}
+                {describePlanWarning(warning)}
               </Alert>
             ))}
           </div>

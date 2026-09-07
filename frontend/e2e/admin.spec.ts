@@ -88,18 +88,34 @@ test.describe('banning an account', () => {
 
 test.describe('changing a role', () => {
   test('promotes the account and shows the new role', async ({ page }) => {
+    let roleMutationRequested = false
+    page.on('request', (request) => {
+      if (request.method() === 'PUT' && request.url().includes('/role')) {
+        roleMutationRequested = true
+      }
+    })
+
     await open(page, '/admin')
 
     await expect(adaRow(page)).toContainText('Student')
+
+    await adaRow(page).getByRole('button', { name: 'Promote' }).click()
+
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText(ADA)
+
+    expect(roleMutationRequested).toBe(false)
 
     const promoted = page.waitForRequest(
       (request) => request.method() === 'PUT' && request.url().includes('/role'),
     )
 
-    await adaRow(page).getByRole('button', { name: 'Promote' }).click()
+    await dialog.getByRole('button', { name: 'Promote', exact: true }).click()
 
     expect(new URL((await promoted).url()).searchParams.get('role')).toBe('admin')
     await expect(notifications(page)).toContainText('Role set to admin')
+    await expect(adaRow(page)).toContainText('Admin')
     await expect(adaRow(page).getByRole('button', { name: 'Demote' })).toBeVisible()
   })
 })

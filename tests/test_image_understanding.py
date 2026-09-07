@@ -5,6 +5,7 @@ import base64
 import hashlib
 import io
 import json
+import logging
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -905,3 +906,64 @@ def test_vision_prompt_failure_is_a_per_visual_error(monkeypatch) -> None:
 
     with pytest.raises(VisualAnalysisError):
         _render_image_description_prompt(PromptContext(), VisualType.DIAGRAM)
+
+
+def test_an_unusable_ollama_response_is_logged_with_diagnostics(
+    monkeypatch, caplog
+) -> None:
+    """SCRUM-206: this provider has no session and no user, so the log is the trace."""
+    canary = "CONFIDENTIAL_SLIDE_TEXT_445566"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=f"Sorry, I cannot read that. {canary}")
+
+    provider = _ollama_vision_provider(monkeypatch, handler)
+
+    with caplog.at_level(logging.WARNING, logger="services.image_understanding"):
+        with pytest.raises(VisualAnalysisError, match="invalid JSON"):
+            provider.describe_visual(
+                VALID_PNG_BYTES,
+                page_number=1,
+                visual_index=0,
+                suggested_type=VisualType.DIAGRAM,
+            )
+
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].generation_type == "image_understanding"
+    assert failures[0].error_category == "invalid_structure"
+    assert failures[0].ai_response_type == "str"
+    assert failures[0].ai_response_bytes > 0
+    assert canary not in json.dumps(
+        {key: str(value) for key, value in vars(failures[0]).items()}, default=str
+    )
+
+
+def test_an_unexpected_ollama_envelope_shape_is_logged(monkeypatch, caplog) -> None:
+    """SCRUM-206: valid JSON of the wrong shape has no keys to report, only a type."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["not", "an", "object"])
+
+    provider = _ollama_vision_provider(monkeypatch, handler)
+
+    with caplog.at_level(logging.WARNING, logger="services.image_understanding"):
+        with pytest.raises(VisualAnalysisError, match="unexpected response structure"):
+            provider.describe_visual(
+                VALID_PNG_BYTES,
+                page_number=1,
+                visual_index=0,
+                suggested_type=VisualType.DIAGRAM,
+            )
+
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].ai_response_type == "str"

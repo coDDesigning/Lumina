@@ -177,6 +177,7 @@ async def observe_request(request: Request, call_next):
                 "http_status": 500,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 3),
             },
+            exc_info=exc,
         )
         raise
     else:

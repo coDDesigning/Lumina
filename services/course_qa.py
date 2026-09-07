@@ -130,15 +130,16 @@ class CourseQAService:
         if resolved_user_id is None and course is not None:
             resolved_user_id = course.owner_id
 
-        def log_failure(category: ErrorCategory) -> None:
+        def log_failure(category: ErrorCategory, **extra) -> None:
+            AiUsageLogger.log_failure(
+                db,
+                user_id=resolved_user_id,
+                course_id=course_id,
+                generation_type=GenerationType.COURSE_QA,
+                error_category=category,
+                **extra,
+            )
             if resolved_user_id:
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.COURSE_QA,
-                    error_category=category,
-                )
                 try:
                     db.commit()
                 except Exception:
@@ -232,9 +233,10 @@ class CourseQAService:
             except TextGenerationError as exc:
                 if resolved_user_id:
                     CreditService.refund(db, receipt)
-                    log_failure(
-                        getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
-                    )
+                log_failure(
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR),
+                    exc=exc,
+                )
                 raise CourseQAError("Text generation provider failed.") from exc
             except Exception:
                 if resolved_user_id:

@@ -267,6 +267,7 @@ class TextGenerationError(RuntimeError):
         message: str,
         *,
         error_category: str | ErrorCategory = ErrorCategory.PROVIDER_ERROR,
+        raw_response: str | None = None,
     ) -> None:
         super().__init__(message)
         self.error_category = (
@@ -274,6 +275,7 @@ class TextGenerationError(RuntimeError):
             if isinstance(error_category, ErrorCategory)
             else str(error_category)
         )
+        self.raw_response = raw_response
 
 
 class TextGenerationTimeoutError(TextGenerationError):
@@ -476,18 +478,21 @@ def _strip_markdown_fence(text: str) -> str:
 
 
 def _parse_json_object(text: str, provider_label: str) -> dict[str, object]:
+    stripped = _strip_markdown_fence(text)
     try:
-        result = json.loads(_strip_markdown_fence(text))
+        result = json.loads(stripped)
     except json.JSONDecodeError as exc:
         raise TextGenerationError(
             f"{provider_label} returned invalid JSON.",
             error_category=ErrorCategory.INVALID_STRUCTURE,
+            raw_response=stripped,
         ) from exc
 
     if not isinstance(result, dict):
         raise TextGenerationError(
             f"{provider_label} response must be a JSON object.",
             error_category=ErrorCategory.INVALID_STRUCTURE,
+            raw_response=stripped,
         )
 
     return result
@@ -1422,6 +1427,7 @@ class ReliableTextGenerationProvider:
         raise TextGenerationError(
             "Expected dict response from JSON generation.",
             error_category=ErrorCategory.INVALID_STRUCTURE,
+            raw_response=repr(result)[:2000],
         )
 
     def generate_json(self, prompt: str) -> dict[str, object]:

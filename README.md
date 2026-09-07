@@ -155,8 +155,7 @@ The first run builds the image and takes around ten minutes, most of it
 downloading the embedding model that is baked in so the running container never
 needs the network for it. Later runs reuse the cache and take seconds.
 
-`migrate` should be exited with code 0, and `lumina` and `lumina-worker`
-should both be healthy. Confirm the stack is serving:
+`lumina` and `lumina-worker` should both be healthy. Confirm the stack is serving:
 
 ```bash
 curl --fail http://127.0.0.1:10312/health/ready
@@ -237,7 +236,7 @@ normally through the sign-up form.
 | A source reaches failed | The PDF is encrypted, corrupt, or beyond the configured page and size limits. |
 | Generation says the provider is unreachable | Ollama is not running, or `OLLAMA_BASE_URL` is wrong for your platform. Check from inside the stack with `docker compose exec lumina python -c "import os, urllib.request; print(urllib.request.urlopen(os.environ['OLLAMA_BASE_URL'] + '/api/tags', timeout=5).status)"`. |
 | Generation says the model is missing | Run the `ollama pull` command from step 2, then `ollama list` to confirm. |
-| Material is not indexed | Chunks exist but their vectors do not. Run `docker compose run --rm lumina-worker python -m workers.embedding_backfill`. |
+| Material is not indexed | Chunks exist but their vectors do not. Run `docker compose run --rm --no-deps lumina-worker python -m workers.embedding_backfill`. |
 | No relevant material | Retrieval found nothing above the similarity floor. Widen the topic, or add a source that covers it. |
 | Generation times out | Raise `AI_GENERATION_TIMEOUT_SECONDS` and `AI_GENERATION_OVERALL_TIMEOUT_SECONDS`, or ask for fewer questions. A model that does not fit entirely in VRAM runs roughly five times slower. |
 

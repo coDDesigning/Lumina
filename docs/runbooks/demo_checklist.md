@@ -286,7 +286,7 @@ If a live document upload remains in `processing` or fails:
 1. **Run Instant Lease Recovery**:
    ```bash
    # Self-Hosted
-   docker compose run --rm lumina-worker python -m workers.worker --once
+   docker compose run --rm --no-deps lumina-worker python -m workers.worker --once
 
    # Hosted ECS Task
    aws ecs run-task --cluster lumina-prod-cluster --task-definition lumina-worker-task \

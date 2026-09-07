@@ -31,11 +31,14 @@ Its first build stage compiles the interface with Vite and the second copies
 the result to `/opt/lumina/web`, outside `/app`, so one image carries both
 halves and there is no second image to keep in step.
 
-Compose runs three roles from that image in both topologies:
+Compose runs two runtime roles from that image. The self-hosted `lumina`
+service applies `alembic upgrade head`, `current --check-heads`, and `check`
+before it starts uvicorn, so there is no separate migrator service to wait on;
+the hosted topology keeps one, because several application containers share one
+PostgreSQL instance there.
 
 | Service | Responsibility | Expected state |
 | --- | --- | --- |
-| `migrate` | Apply `alembic upgrade head` once before runtime roles start | Exited with code 0 |
 | `lumina` | Serve the interface, the API, and the readiness probes | Running and healthy |
 | `lumina-worker` | Claim and process durable document jobs | Running and healthy |
 
@@ -132,11 +135,14 @@ curl --fail "http://127.0.0.1:${LUMINA_PORT:-10312}/health/ready"
 running; `--no-build` opts out. An operator deploying a prebuilt image tags it
 `lumina` and starts with `docker compose up --detach --no-build`.
 
-Migration failure prevents dependent runtime roles from starting. A readiness
-failure makes `docker compose up --wait` return nonzero, but leaves containers
-available for inspection. Keep ingress closed until the command succeeds and
-`migrate` is exited with code 0 while both `lumina` and `lumina-worker` are
-healthy.
+Migration failure stops `lumina` before it serves, and `lumina-worker` waits on
+`lumina` being healthy, so it never starts against a schema that is behind. The
+service restart policy retries the whole startup, so a migration that cannot
+succeed leaves `lumina` restarting rather than exiting once; read
+`docker compose logs lumina` before retrying. A readiness failure makes
+`docker compose up --wait` return nonzero, but leaves containers available for
+inspection. Keep ingress closed until the command succeeds and both `lumina`
+and `lumina-worker` are healthy.
 Register `BOOTSTRAP_ADMIN_EMAIL` with the configured token in the
 `X-Bootstrap-Token` header over a trusted route before opening public ingress.
 
@@ -432,14 +438,14 @@ plus 45 seconds.
 ```bash
 set -euo pipefail
 docker compose stop lumina lumina-worker
-docker compose run --rm --no-deps --entrypoint sh migrate -c 'test -s /data/lumina.db'
-docker compose run --rm --no-deps migrate
-docker compose up --detach --no-deps --wait --wait-timeout 600 lumina lumina-worker
+docker compose run --rm --no-deps --entrypoint sh lumina -c 'test -s /data/lumina.db'
+docker compose up --detach --wait --wait-timeout 600 lumina lumina-worker
 curl --fail "http://127.0.0.1:${LUMINA_PORT:-10312}/health/ready"
 ```
 
-Do not place migration commands in the API or worker startup path and do not run
-multiple migrators concurrently. If migration fails, keep the runtime roles
+`lumina` migrates on the way up and `lumina-worker` waits for it, so exactly one
+process applies the schema; do not add migration commands to the worker path or
+start a second migrator alongside. If migration fails, keep the runtime roles
 stopped and investigate before starting either role.
 
 ## Persistent state

@@ -65,7 +65,8 @@ GENERATION_JOB_DISMISSAL_REVISION = "f2d90b4c7168"
 DOCUMENT_GENERATION_LOCKS_REVISION = "b6d21f4c8a37"
 MISSING_CHECK_CONSTRAINTS_REVISION = "3317a08487dd"
 PROFILE_PROCESSING_JOB_INDEXES_REVISION = "d8a2b4c6e901"
-HEAD_REVISION = PROFILE_PROCESSING_JOB_INDEXES_REVISION
+LEGACY_AI_USAGE_INDEX_REVISION = "c1e8b47d2a06"
+HEAD_REVISION = LEGACY_AI_USAGE_INDEX_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -113,6 +114,7 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        LEGACY_AI_USAGE_INDEX_REVISION: PROFILE_PROCESSING_JOB_INDEXES_REVISION,
         PROFILE_PROCESSING_JOB_INDEXES_REVISION: MISSING_CHECK_CONSTRAINTS_REVISION,
         MISSING_CHECK_CONSTRAINTS_REVISION: DOCUMENT_GENERATION_LOCKS_REVISION,
         DOCUMENT_GENERATION_LOCKS_REVISION: GENERATION_JOB_DISMISSAL_REVISION,
@@ -3471,3 +3473,40 @@ def test_profile_processing_jobs_queue_composite_indexes(tmp_path: Path) -> None
         index_names = {row[1] for row in index_list}
         assert "ix_profile_processing_jobs_claimable" not in index_names
         assert "ix_profile_processing_jobs_recoverable" not in index_names
+
+
+def test_legacy_ai_usage_created_index_is_dropped_on_databases_that_kept_it(
+    tmp_path: Path,
+) -> None:
+    """A database stamped before a6e2c8f41b90 was rewritten still carries the index.
+
+    That revision first created ``ix_ai_usage_logs_created_id`` and was later
+    edited in place to drop it, so it never runs again on databases that already
+    applied it and ``alembic check`` reports the index as drift forever.
+    """
+    database_path = tmp_path / "legacy-ai-usage-index.sqlite3"
+    run_alembic(
+        database_path, tmp_path, "upgrade", PROFILE_PROCESSING_JOB_INDEXES_REVISION
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS ix_ai_usage_logs_created_id "
+            "ON ai_usage_logs (created_at, id)"
+        )
+        index_names = {
+            row[1] for row in connection.execute("PRAGMA index_list(ai_usage_logs)")
+        }
+        assert "ix_ai_usage_logs_created_id" in index_names
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        index_names = {
+            row[1] for row in connection.execute("PRAGMA index_list(ai_usage_logs)")
+        }
+        assert "ix_ai_usage_logs_created_id" not in index_names
+        assert "ix_ai_usage_logs_success_created" in index_names
+
+    check = run_alembic(database_path, tmp_path, "check")
+    assert "No new upgrade operations detected" in check.stdout + check.stderr

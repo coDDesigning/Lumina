@@ -337,9 +337,20 @@ def ai_generation_http_exception(exc: BaseException, *, feature: str) -> HTTPExc
     status_code = STATUS_CODES[code]
 
     if status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
-        logger.error("%s generation failed with %s", feature, code.value, exc_info=exc)
+        logger.error(
+            "%s generation failed with %s",
+            feature,
+            code.value,
+            exc_info=exc,
+            extra={"error_code": code.value},
+        )
     else:
-        logger.warning("%s generation rejected with %s", feature, code.value)
+        logger.warning(
+            "%s generation rejected with %s",
+            feature,
+            code.value,
+            extra={"error_code": code.value},
+        )
 
     detail = PUBLIC_MESSAGES[code]
     for error in _exception_chain(exc):

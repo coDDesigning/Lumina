@@ -418,15 +418,15 @@ class QuizService:
             resolved_user_id = course.owner_id
 
         def log_failure(category: ErrorCategory, **extra) -> None:
+            AiUsageLogger.log_failure(
+                db,
+                user_id=resolved_user_id,
+                course_id=course_id,
+                generation_type=GenerationType.QUIZ,
+                error_category=category,
+                **extra,
+            )
             if resolved_user_id:
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.QUIZ,
-                    error_category=category,
-                    **extra,
-                )
                 try:
                     db.commit()
                 except Exception:
@@ -503,7 +503,9 @@ class QuizService:
         except TextGenerationError as exc:
             db.rollback()
             CreditService.refund(db, refundable)
-            log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
+            log_failure(
+                getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR), exc=exc
+            )
             raise QuizGenerationError("Text generation provider failed.") from exc
         except Exception:
             db.rollback()
@@ -518,7 +520,9 @@ class QuizService:
             CreditService.refund(db, refundable)
             log_failure(
                 ErrorCategory.INVALID_STRUCTURE,
-                latency_ms=metadata.latency_ms if metadata else None,
+                metadata=metadata,
+                response=result,
+                exc=exc,
             )
             raise InvalidQuizStructureError(
                 "Generated quiz has an invalid structure."

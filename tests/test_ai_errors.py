@@ -4,6 +4,9 @@ Classification walks ``__cause__`` only, so these tests wrap deliberately with
 ``raise ... from exc`` exactly the way the feature services do.
 """
 
+import json
+import logging
+
 import pytest
 from fastapi import status
 
@@ -193,3 +196,42 @@ def test_personal_key_failure_is_not_an_application_authentication_failure() -> 
 def test_new_error_categories_are_recordable() -> None:
     assert ErrorCategory.NO_RELEVANT_MATERIAL.value == "no_relevant_material"
     assert ErrorCategory.RETRIEVAL_ERROR.value == "retrieval_error"
+
+
+def test_the_error_code_is_a_structured_field_on_both_branches(caplog) -> None:
+    """SCRUM-206: error_code is allowlisted, so it belongs in extra, not only prose."""
+    with caplog.at_level(logging.WARNING, logger="utils.ai_errors"):
+        ai_generation_http_exception(
+            InvalidGeneratedStructureError("unusable"), feature="quiz"
+        )
+        ai_generation_http_exception(
+            NoRelevantCourseMaterialError("nothing matched"), feature="quiz"
+        )
+
+    codes = [getattr(record, "error_code", None) for record in caplog.records]
+    assert "invalid_generated_structure" in codes
+    assert "no_relevant_material" in codes
+
+
+def test_a_server_side_failure_carries_frames_through_the_formatter(caplog) -> None:
+    """SCRUM-206: the 500 branch already passes exc_info; the frames must render."""
+    from backend.app.observability import JsonFormatter
+
+    def failing_call() -> None:
+        raise RuntimeError("provider exploded")
+
+    try:
+        failing_call()
+    except RuntimeError as exc:
+        wrapped = InvalidGeneratedStructureError("unusable")
+        wrapped.__cause__ = exc
+        with caplog.at_level(logging.ERROR, logger="utils.ai_errors"):
+            ai_generation_http_exception(wrapped, feature="quiz")
+
+    formatter = JsonFormatter(service="api", environment="production")
+    payloads = [json.loads(formatter.format(record)) for record in caplog.records]
+    with_frames = [payload for payload in payloads if "stack" in payload]
+
+    assert with_frames
+    assert any("in failing_call" in frame for frame in with_frames[0]["stack"])
+    assert "provider exploded" not in json.dumps(payloads)

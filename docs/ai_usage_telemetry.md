@@ -8,7 +8,7 @@ Lumina records structured, operational telemetry for AI generation activities (S
 
 Lumina implements strict privacy-safe logging controls:
 
-1. **No Raw Content**: Under no circumstances does Lumina store raw prompts, extracted document chunks, student-submitted text, or raw model output responses in the `ai_usage_logs` telemetry table.
+1. **No Raw Content**: Under no circumstances does Lumina store raw prompts, extracted document chunks, student-submitted text, or raw model output responses in the `ai_usage_logs` telemetry table. These three guarantees describe the table. The application log stream has its own, narrower policy: a failed generation is described there by size, digest, sanitised key names and validation locations, and the response text appears only behind `AI_LOG_RAW_RESPONSE_ON_FAILURE`, which is off by default. See [`observability.md`](observability.md).
 2. **No Secrets or Credentials**: API keys, auth headers, and session tokens are never persisted or logged.
 3. **Categorical Error Reporting**: Exception traces and error strings that could potentially contain fragments of student prompts or internal content are **not** stored. Errors are mapped strictly to fixed, enumerated error categories:
    - `provider_error`

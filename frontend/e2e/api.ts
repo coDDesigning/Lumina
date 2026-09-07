@@ -154,6 +154,7 @@ const CREDITS = {
     course_qa: 1,
     ai_tutor: 1,
     prompt_generator: 1,
+    reverse_quiz: 1,
   },
 }
 

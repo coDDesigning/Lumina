@@ -170,20 +170,24 @@ export default function QuizAttemptPage({ workspace, onAttemptRecorded }: QuizAt
 
       <div className={styles.body}>
         {loadError ? (
-          <ErrorState
-            title="This quiz is not here"
-            actions={
-              <Button size="sm" onClick={() => navigate(`/courses/${workspace.id}`)}>
-                Back to the course
-              </Button>
-            }
-          >
-            {loadError}
-          </ErrorState>
+          <>
+            <h1 className="visually-hidden">Quiz</h1>
+            <ErrorState
+              title="This quiz is not here"
+              actions={
+                <Button size="sm" onClick={() => navigate(`/courses/${workspace.id}`)}>
+                  Back to the course
+                </Button>
+              }
+            >
+              {loadError}
+            </ErrorState>
+          </>
         ) : null}
 
         {!quiz && !loadError ? (
           <div className={styles.pending}>
+            <h1 className="visually-hidden">Quiz</h1>
             <Skeleton variant="heading" />
             <Skeleton variant="block" />
           </div>

@@ -81,6 +81,10 @@ export default function AdminPage() {
   const [isApplying, setIsApplying] = useState(false);
 
   const [banTarget, setBanTarget] = useState<User | null>(null);
+  const [roleTarget, setRoleTarget] = useState<{
+    account: User;
+    newRole: 'admin' | 'user';
+  } | null>(null);
 
   const usersQuery = useQuery<User[]>({
     key: queryKeys.adminUsers(),
@@ -156,6 +160,7 @@ export default function AdminPage() {
       setActionError(describeError(caught, "That role couldn't be changed.").message);
     } finally {
       setBusyEmail(null);
+      setRoleTarget(null);
     }
   }
 
@@ -503,7 +508,10 @@ export default function AdminPage() {
                             variant="ghost"
                             disabled={isSelf || busy}
                             onClick={() =>
-                              void changeRole(account, account.role === 'admin' ? 'user' : 'admin')
+                              setRoleTarget({
+                                account,
+                                newRole: account.role === 'admin' ? 'user' : 'admin',
+                              })
                             }
                           >
                             {account.role === 'admin' ? 'Demote' : 'Promote'}
@@ -679,6 +687,25 @@ export default function AdminPage() {
         confirmLabel={banTarget?.is_banned ? 'Unban' : 'Ban'}
         destructive={!banTarget?.is_banned}
         isPending={busyEmail === banTarget?.email}
+      />
+
+      <ConfirmDialog
+        open={roleTarget !== null}
+        onClose={() => setRoleTarget(null)}
+        onConfirm={() => roleTarget && void changeRole(roleTarget.account, roleTarget.newRole)}
+        title={
+          roleTarget?.newRole === 'admin'
+            ? 'Promote this account to administrator?'
+            : 'Demote this account to student?'
+        }
+        description={
+          roleTarget?.newRole === 'admin'
+            ? `${roleTarget.account.email} will have full administrator permissions, including viewing any course and managing other accounts.`
+            : `${roleTarget?.account.email} will lose administrator permissions and only have access to their own courses.`
+        }
+        confirmLabel={roleTarget?.newRole === 'admin' ? 'Promote' : 'Demote'}
+        destructive={roleTarget?.newRole !== 'admin'}
+        isPending={busyEmail === roleTarget?.account.email}
       />
     </div>
   );

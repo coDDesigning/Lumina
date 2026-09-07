@@ -16,6 +16,7 @@ import { useCredits } from '@/context/CreditContext';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
 import { Card } from '@/ui/Card';
+import { ErrorState } from '@/ui/ErrorState';
 import { Select } from '@/ui/Input';
 import { Skeleton } from '@/ui/Skeleton';
 import styles from './AccountPage.module.css';
@@ -55,7 +56,7 @@ export function AiPreferencesSection() {
 
   const models = useMemo(() => modelsQuery.data ?? [], [modelsQuery.data]);
   const areModelsLoading = modelsQuery.status === 'pending' || modelsQuery.status === 'idle';
-  const modelError = modelActionError ?? modelsQuery.error?.message ?? null;
+  const queryError = modelsQuery.error?.message ?? null;
   const transactions = useMemo(() => transactionsQuery.data ?? [], [transactionsQuery.data]);
   const transactionError = transactionsQuery.error?.message ?? null;
 
@@ -96,9 +97,14 @@ export function AiPreferencesSection() {
         Which model writes your study guides, quizzes, flashcards and answers.
       </p>
 
-      {modelError ? (
+      {queryError ? (
+        <ErrorState onRetry={() => void modelsQuery.refetch()}>
+          {queryError}
+        </ErrorState>
+      ) : null}
+      {modelActionError ? (
         <Alert tone="destructive" live="alert">
-          {modelError}
+          {modelActionError}
         </Alert>
       ) : null}
       {modelNotice ? (
@@ -175,7 +181,11 @@ export function AiPreferencesSection() {
             </div>
           </Card>
 
-          {transactionError ? <Alert tone="destructive">{transactionError}</Alert> : null}
+          {transactionError ? (
+            <ErrorState onRetry={() => void transactionsQuery.refetch()}>
+              {transactionError}
+            </ErrorState>
+          ) : null}
 
           {transactions.length > 0 ? (
             <Card padding="none" className={styles.section}>

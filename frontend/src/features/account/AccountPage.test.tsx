@@ -629,11 +629,31 @@ describe('when the account cannot be saved', () => {
     expect(mockRefreshUser).toHaveBeenCalled()
   })
 
-  it('reports a model list that could not be loaded rather than an empty one', async () => {
-    mockModelsList.mockRejectedValue(new APIError(503, { detail: 'Models are unavailable.' }))
+  it('reports a model list that could not be loaded rather than an empty one (BUG-015)', async () => {
+    const person = userEvent.setup()
+    mockModelsList.mockRejectedValueOnce(new APIError(503, { detail: 'Models are unavailable.' }))
     renderAccountPage('/account/ai')
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Models are unavailable.')
+    const retryBtn = screen.getByRole('button', { name: 'Try again' })
+    expect(retryBtn).toBeInTheDocument()
+
+    mockModelsList.mockResolvedValueOnce([
+      {
+        id: 'gemini-1.5-flash',
+        model: 'gemini-1.5-flash',
+        display_name: 'Gemini 1.5 Flash',
+        provider: 'gemini',
+        is_default: true,
+        cost_hint: 'Metered (1-2 credits)',
+        capabilities: ['study_guide'],
+        description: 'Fast Google Gemini model',
+        is_local: false,
+        supports_json: true,
+      },
+    ])
+    await person.click(retryBtn)
+    expect(await screen.findByLabelText('Preferred AI Model')).toBeInTheDocument()
   })
 
   it('keeps a topic on screen when adding it was refused', async () => {

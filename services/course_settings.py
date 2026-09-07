@@ -17,6 +17,22 @@ class CourseSettingsService:
         )
 
     @classmethod
+    def get_settings(cls, db: Session, course_id: int) -> CourseSettings:
+        settings = db.scalar(
+            select(CourseSettings).where(CourseSettings.course_id == course_id)
+        )
+        if settings is None:
+            return CourseSettings(
+                course_id=course_id,
+                study_mode="Exam",
+                difficulty="Adaptive",
+                question_count=10,
+                summary_length="Medium",
+                detail_level="Balanced",
+            )
+        return settings
+
+    @classmethod
     def get_or_create(cls, db: Session, course_id: int) -> CourseSettings:
         settings = db.scalar(
             select(CourseSettings).where(CourseSettings.course_id == course_id)

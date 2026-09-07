@@ -91,6 +91,7 @@ export default function CourseSettingsPage({
   const [archiveError, setArchiveError] = useState<string | null>(null);
 
   const courseId = Number(workspace.id);
+  const seededCourseIdRef = useRef<number | null>(null);
 
   const settings = useCourseSettings(courseId);
   const storedSettings = settings.status === 'success' ? settings.data : undefined;
@@ -106,9 +107,12 @@ export default function CourseSettingsPage({
       summaryLength: storedSettings.summary_length,
       detailLevel: storedSettings.detail_level,
     };
-    setPreferences(stored);
     setLoadedPreferences(stored);
-  }, [storedSettings]);
+    if (seededCourseIdRef.current !== courseId) {
+      seededCourseIdRef.current = courseId;
+      setPreferences(stored);
+    }
+  }, [storedSettings, courseId]);
 
   function updateCourse<Field extends keyof typeof course>(
     field: Field,

@@ -13,6 +13,7 @@ import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
 import { Card } from '@/ui/Card';
+import { ErrorState } from '@/ui/ErrorState';
 import { IconButton } from '@/ui/IconButton';
 import { Input } from '@/ui/Input';
 import { Skeleton } from '@/ui/Skeleton';
@@ -197,9 +198,9 @@ export default function AccountApiKeysPage() {
       </p>
 
       {queryError ? (
-        <Alert tone="destructive" live="alert">
+        <ErrorState onRetry={() => void apiKeysQuery.refetch()}>
           {queryError}
-        </Alert>
+        </ErrorState>
       ) : null}
 
       {error ? (

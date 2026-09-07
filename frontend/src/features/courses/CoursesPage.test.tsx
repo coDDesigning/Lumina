@@ -739,4 +739,141 @@ describe('CoursesPage archive filtering', () => {
     expect(slot).toBeInTheDocument();
     expect(document.getElementById('lumina-ad-slot-dashboard')).toBeInTheDocument();
   });
+
+  it('shows truthful empty state and switches filter when all courses are archived (BUG-040)', async () => {
+    const user = userEvent.setup();
+    const archivedOnly: Workspace[] = [
+      {
+        id: '1',
+        name: 'Archived CS101',
+        subjectArea: '',
+        educationLevel: 'unspecified',
+        semester: 'Fall 2025',
+        examDate: '',
+        topics: [],
+        syllabus: '',
+        progress: null,
+        updatedAt: 'Last year',
+        accent: 'blue',
+        isArchived: true,
+      },
+    ];
+
+    render(
+      <MemoryRouter>
+        <CoursesPage
+          workspaces={archivedOnly}
+          onCreate={vi.fn()}
+          onSelect={vi.fn()}
+          onDelete={vi.fn().mockResolvedValue(undefined)}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('No active courses')).toBeInTheDocument();
+    expect(screen.getByText('All your courses are archived.')).toBeInTheDocument();
+
+    const switchBtn = screen.getByRole('button', { name: /View archived courses \(1\)/i });
+    await user.click(switchBtn);
+
+    expect(screen.getByText('Archived CS101')).toBeInTheDocument();
+  });
+
+  it('shows truthful empty state and switches filter when no courses are archived (BUG-040)', async () => {
+    const user = userEvent.setup();
+    const mixedWorkspaces: Workspace[] = [
+      {
+        id: '1',
+        name: 'Active CS101',
+        subjectArea: '',
+        educationLevel: 'unspecified',
+        semester: 'Fall 2026',
+        examDate: '',
+        topics: [],
+        syllabus: '',
+        progress: null,
+        updatedAt: 'Today',
+        accent: 'blue',
+        isArchived: false,
+      },
+      {
+        id: '2',
+        name: 'Archived CS102',
+        subjectArea: '',
+        educationLevel: 'unspecified',
+        semester: 'Fall 2025',
+        examDate: '',
+        topics: [],
+        syllabus: '',
+        progress: null,
+        updatedAt: 'Last year',
+        accent: 'violet',
+        isArchived: true,
+      },
+    ];
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <CoursesPage
+          workspaces={mixedWorkspaces}
+          onCreate={vi.fn()}
+          onSelect={vi.fn()}
+          onDelete={vi.fn().mockResolvedValue(undefined)}
+        />
+      </MemoryRouter>,
+    );
+
+    // Switch to archived while dropdown is present
+    await user.selectOptions(screen.getByLabelText('Status filter'), 'archived');
+    expect(screen.getByText('Archived CS102')).toBeInTheDocument();
+
+    // Now CS102 is restored, so only active courses remain in workspaces
+    rerender(
+      <MemoryRouter>
+        <CoursesPage
+          workspaces={[{ ...mixedWorkspaces[0] }, { ...mixedWorkspaces[1], isArchived: false }]}
+          onCreate={vi.fn()}
+          onSelect={vi.fn()}
+          onDelete={vi.fn().mockResolvedValue(undefined)}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('No archived courses')).toBeInTheDocument();
+    expect(
+      screen.getByText('You do not have any archived courses.'),
+    ).toBeInTheDocument();
+
+    const switchBtn = screen.getByRole('button', { name: /View active courses \(2\)/i });
+    await user.click(switchBtn);
+
+    expect(screen.getByText('Active CS101')).toBeInTheDocument();
+  });
+
+  it('shows search empty state and clear search action when query matches nothing (BUG-040)', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <CoursesPage
+          workspaces={mockWorkspaces}
+          onCreate={vi.fn()}
+          onSelect={vi.fn()}
+          onDelete={vi.fn().mockResolvedValue(undefined)}
+        />
+      </MemoryRouter>,
+    );
+
+    const searchInput = screen.getByPlaceholderText(/Search courses/i);
+    await user.type(searchInput, 'Nonexistent Query');
+
+    expect(screen.getByText('No courses found')).toBeInTheDocument();
+    expect(
+      screen.getByText('Try a different course name, term, or topic.'),
+    ).toBeInTheDocument();
+
+    const clearBtn = screen.getByRole('button', { name: 'Clear search' });
+    await user.click(clearBtn);
+
+    expect(screen.getByText('Operating Systems')).toBeInTheDocument();
+  });
 });

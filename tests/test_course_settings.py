@@ -124,3 +124,58 @@ def test_course_settings_update_rejects_out_of_vocabulary_string(
         headers=headers,
     )
     assert patch_res.status_code == 422, patch_res.text
+
+
+def test_admin_support_view_get_settings_does_not_persist_row(authz_api) -> None:
+    from sqlalchemy import func, select
+    from backend.app.models import CourseSettings
+
+    # 1. Course A has zero CourseSettings rows before any settings request
+    with authz_api.session_factory() as session:
+        initial_count = session.scalar(
+            select(func.count(CourseSettings.id)).where(
+                CourseSettings.course_id == authz_api.a_course_id
+            )
+        )
+        assert initial_count == 0
+
+    # 2. Non-owner administrator opens support view and reads settings
+    admin_get_res = authz_api.client.get(
+        f"/api/courses/{authz_api.a_course_id}/settings",
+        headers=authz_api.authorization_admin,
+    )
+    assert admin_get_res.status_code == 200, admin_get_res.text
+    data = admin_get_res.json()["data"]
+    assert data["study_mode"] == "Exam"
+    assert data["difficulty"] == "Adaptive"
+    assert data["question_count"] == 10
+    assert data["summary_length"] == "Medium"
+    assert data["detail_level"] == "Balanced"
+
+    # 3. Reading settings as admin must NOT insert or commit any row
+    with authz_api.session_factory() as session:
+        post_read_count = session.scalar(
+            select(func.count(CourseSettings.id)).where(
+                CourseSettings.course_id == authz_api.a_course_id
+            )
+        )
+        assert post_read_count == 0
+
+    # 4. Course owner write/PATCH can still persist settings on demand
+    owner_patch_res = authz_api.client.patch(
+        f"/api/courses/{authz_api.a_course_id}/settings",
+        json={"question_count": 25},
+        headers=authz_api.authorization_a,
+    )
+    assert owner_patch_res.status_code == 200, owner_patch_res.text
+    updated = owner_patch_res.json()["data"]
+    assert updated["question_count"] == 25
+
+    with authz_api.session_factory() as session:
+        persisted = session.scalar(
+            select(CourseSettings).where(
+                CourseSettings.course_id == authz_api.a_course_id
+            )
+        )
+        assert persisted is not None
+        assert persisted.question_count == 25

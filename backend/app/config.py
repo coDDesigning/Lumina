@@ -150,6 +150,7 @@ DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS = 10.0
 DEFAULT_AI_GENERATION_MAX_CONCURRENCY = 10
 DEFAULT_AI_GENERATION_OVERALL_TIMEOUT_SECONDS = 110
 DEFAULT_AI_GRADING_OVERALL_TIMEOUT_SECONDS = 45
+DEFAULT_AI_LOG_RAW_RESPONSE_ON_FAILURE = False
 MAX_AI_MODEL_COST_RATE_USD_PER_MILLION = 1_000_000.0
 MAX_AI_EVENT_ESTIMATED_COST_USD = 1_000_000.0
 DEFAULT_DATABASE_POOL_SIZE = 5
@@ -258,6 +259,7 @@ class Settings:
     ai_generation_max_concurrency: int
     ai_generation_overall_timeout_seconds: int
     ai_grading_overall_timeout_seconds: int
+    ai_log_raw_response_on_failure: bool
 
     # Embeddings are computed in-process; only where the weights live varies
     embedding_model_cache_directory: str
@@ -896,6 +898,10 @@ def load_settings() -> Settings:
         minimum=1,
         maximum=55,
     )
+    ai_log_raw_response_on_failure = _boolean_setting(
+        "AI_LOG_RAW_RESPONSE_ON_FAILURE",
+        default=DEFAULT_AI_LOG_RAW_RESPONSE_ON_FAILURE,
+    )
 
     embedding_model_cache_directory = os.getenv(
         "EMBEDDING_MODEL_CACHE_DIRECTORY",
@@ -1238,6 +1244,7 @@ def load_settings() -> Settings:
         ai_generation_max_concurrency=ai_generation_max_concurrency,
         ai_generation_overall_timeout_seconds=ai_generation_overall_timeout_seconds,
         ai_grading_overall_timeout_seconds=ai_grading_overall_timeout_seconds,
+        ai_log_raw_response_on_failure=ai_log_raw_response_on_failure,
         embedding_model_cache_directory=embedding_model_cache_directory,
         embedding_batch_size=embedding_batch_size,
         vector_backend=vector_backend,

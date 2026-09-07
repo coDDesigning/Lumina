@@ -588,7 +588,12 @@ persisted.
 
 `services/ai_usage_logger.py` records provider, model, token counts, latency,
 success, and a stable error category. It never persists prompts, course
-material, or generated text. Successful resilient-provider calls carry the
+material, or generated text in `ai_usage_logs`. Every failure also emits one
+`ai_generation_failed` application log line describing the response it could not
+use -- size, digest, sanitised top-level key names, and the fields validation
+rejected. Setting `AI_LOG_RAW_RESPONSE_ON_FAILURE=true` adds a truncated,
+redacted copy of the response text itself; it is study content, so it is off by
+default. See [`observability.md`](observability.md). Successful resilient-provider calls carry the
 provider and model that actually ran. Prompt generation also supplies its
 resolved model identity when a failed call has no provider metadata.
 

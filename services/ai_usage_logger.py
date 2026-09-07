@@ -11,6 +11,7 @@ from services.text_generation import (
     GenerationMetadata,
     configured_provider_identity,
 )
+from utils.ai_diagnostics import ai_failure_fields
 
 logger = logging.getLogger(__name__)
 
@@ -249,17 +250,65 @@ class AiUsageLogger:
     @classmethod
     def log_failure(
         cls,
-        db: Session,
+        db: Session | None,
         *,
-        user_id: int,
+        user_id: int | None,
         generation_type: str | GenerationType,
         error_category: str | ErrorCategory,
+        metadata: GenerationMetadata | None = None,
         course_id: int | None = None,
         provider: str | None = None,
         model: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
         latency_ms: int | None = None,
+        response: object = None,
+        exc: BaseException | None = None,
     ) -> AiUsageLog | None:
-        """Helper to record a failed AI generation event with a stable error category."""
+        """Record a failed AI generation, in the logs always and in the table when it can.
+
+        The log line is emitted before the telemetry row, and without either a
+        session or a user, so an anonymous or database-less failure is still
+        diagnosable. Only the row needs both.
+        """
+        if metadata is not None:
+            provider = metadata.provider or provider
+            model = metadata.model or model
+            prompt_tokens = (
+                metadata.prompt_tokens
+                if metadata.prompt_tokens is not None
+                else prompt_tokens
+            )
+            completion_tokens = (
+                metadata.completion_tokens
+                if metadata.completion_tokens is not None
+                else completion_tokens
+            )
+            total_tokens = (
+                metadata.total_tokens
+                if metadata.total_tokens is not None
+                else total_tokens
+            )
+            latency_ms = (
+                metadata.latency_ms if metadata.latency_ms is not None else latency_ms
+            )
+
+        logger.warning(
+            "AI generation failed",
+            extra=ai_failure_fields(
+                generation_type=generation_type,
+                provider=provider,
+                model=model,
+                error_category=error_category,
+                response=response,
+                exc=exc,
+            ),
+        )
+
+        if db is None or not user_id:
+            return None
+
         return cls.log_usage(
             db,
             user_id=user_id,
@@ -267,9 +316,9 @@ class AiUsageLogger:
             provider=provider,
             model=model,
             course_id=course_id,
-            prompt_tokens=None,
-            completion_tokens=None,
-            total_tokens=None,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
             latency_ms=latency_ms,
             success=False,
             error_category=error_category,

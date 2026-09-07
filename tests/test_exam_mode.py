@@ -2,6 +2,7 @@
 
 from datetime import UTC, date, datetime, timedelta
 
+import logging
 import pytest
 from sqlalchemy import select
 
@@ -737,18 +738,28 @@ def test_an_unconfigured_provider_is_reported_rather_than_retried_forever(
 
 
 def test_a_structurally_invalid_response_is_refused_without_writing_rows(
-    authz_api, exam_course
+    authz_api, exam_course, caplog
 ) -> None:
     before = len(questions_of(authz_api.session_factory, exam_course["paper_id"]))
 
-    outcome, _ = extract_questions(
-        authz_api.session_factory,
-        exam_course["paper_id"],
-        {"questions": [{"question_text": ""}]},
-    )
+    with caplog.at_level(logging.WARNING, logger="services.ai_usage_logger"):
+        outcome, _ = extract_questions(
+            authz_api.session_factory,
+            exam_course["paper_id"],
+            {"questions": [{"question_text": ""}]},
+        )
 
     assert outcome.status == "failed"
     assert outcome.error_code == "invalid_structure"
+    # SCRUM-206
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].generation_type == "past_exam_extraction"
+    assert failures[0].ai_response_keys == ["questions"]
     assert (
         len(questions_of(authz_api.session_factory, exam_course["paper_id"])) == before
     )

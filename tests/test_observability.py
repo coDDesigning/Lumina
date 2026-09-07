@@ -2,6 +2,7 @@ import json
 import logging
 import multiprocessing
 import os
+import re
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -260,6 +261,8 @@ def test_spawn_child_logs_are_json_redacted_and_correlated(tmp_path: Path) -> No
     # The INFO breadcrumb survives because the child's root level is INFO.
     assert any(json.loads(line)["level"] == "INFO" for line in lines)
     assert any(json.loads(line).get("exception_type") == "ValueError" for line in lines)
+    # SCRUM-206: the child emits frames, and they are still canary-free.
+    assert any("stack" in json.loads(line) for line in lines)
 
 
 def test_extraction_process_configures_logging_before_binding_the_request_id(
@@ -409,3 +412,112 @@ def test_json_formatter_redacts_various_secret_shapes_and_preserves_plain_text(
         assert sensitive not in rendered
     for preserved in preserved_snippets:
         assert preserved in payload["message"]
+
+
+def _record_with_exception(exc: BaseException, level: int = logging.ERROR, **extra):
+    record = logging.LogRecord(
+        "lumina.test",
+        level,
+        __file__,
+        1,
+        "generation failed",
+        (),
+        (type(exc), exc, exc.__traceback__),
+    )
+    for key, value in extra.items():
+        setattr(record, key, value)
+    return record
+
+
+def _raise_here(canary: str) -> None:
+    raise ValueError(canary)
+
+
+def _formatted(record) -> dict:
+    formatter = JsonFormatter(service="api", environment="production")
+    return json.loads(formatter.format(record))
+
+
+def test_stack_frames_are_project_relative_and_carry_no_message() -> None:
+    """SCRUM-206: an ERROR names where it came from without quoting the failure."""
+    try:
+        _raise_here("SECRET-CANARY")
+    except ValueError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    frames = payload["stack"]
+    assert frames
+    assert all(re.fullmatch(r"[\w./<>-]+:\d+ in \S+", frame) for frame in frames)
+    assert any(frame.startswith("tests/test_observability.py:") for frame in frames)
+    assert "SECRET-CANARY" not in json.dumps(payload)
+    assert "Traceback" not in json.dumps(payload)
+
+
+def test_stack_frames_never_carry_an_absolute_path() -> None:
+    """SCRUM-206: a home directory or image layout must not reach a log line."""
+    try:
+        json.loads("{definitely not json")
+    except ValueError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    for frame in payload["stack"]:
+        assert not frame.startswith("/")
+        assert ":\\" not in frame
+        assert "Users" not in frame
+
+
+def test_a_warning_with_an_exception_carries_no_stack() -> None:
+    """SCRUM-206: frames are for ERROR and above, not for expected refusals."""
+    try:
+        _raise_here("nope")
+    except ValueError as exc:
+        payload = _formatted(_record_with_exception(exc, level=logging.WARNING))
+
+    assert "stack" not in payload
+    assert payload["exception_type"] == "ValueError"
+
+
+def test_the_stack_survives_an_explicit_exception_type_extra() -> None:
+    """SCRUM-206: main.py sets exception_type itself; the frames must still appear.
+
+    Computing the stack inside the ``exception_type not in payload`` branch
+    would drop it for the one middleware that catches every unhandled 5xx.
+    """
+    try:
+        _raise_here("boom")
+    except ValueError as exc:
+        payload = _formatted(
+            _record_with_exception(exc, exception_type="ValueError", http_status=500)
+        )
+
+    assert payload["exception_type"] == "ValueError"
+    assert payload["stack"]
+
+
+def test_the_stack_is_taken_from_the_innermost_cause() -> None:
+    """SCRUM-206: a wrapper raised `from` its cause explains nothing on its own."""
+    try:
+        try:
+            _raise_here("inner")
+        except ValueError as inner:
+            raise RuntimeError("wrapped") from inner
+    except RuntimeError as outer:
+        payload = _formatted(_record_with_exception(outer))
+
+    assert any("in _raise_here" in frame for frame in payload["stack"])
+
+
+def test_the_stack_is_capped() -> None:
+    """SCRUM-206: a deep recursion must not turn one log line into a kilobyte."""
+
+    def recurse(depth: int) -> None:
+        if depth == 0:
+            raise ValueError("deep")
+        recurse(depth - 1)
+
+    try:
+        recurse(40)
+    except ValueError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    assert len(payload["stack"]) == 12

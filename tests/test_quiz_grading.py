@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from sqlalchemy import select
 
@@ -359,24 +361,37 @@ def test_unanswered_open_ended_scores_zero_without_calling_the_provider(
     ],
 )
 def test_a_grading_failure_leaves_the_answer_ungraded_but_persisted(
-    upload_api, monkeypatch, provider
+    upload_api, monkeypatch, provider, caplog
 ):
-    """A grading outage must never lose the student's written work."""
+    """A grading outage must never lose the student's written work.
+
+    SCRUM-206: grading swallows the failure and returns, so the log line is the
+    only trace it leaves. The swallowing itself is deliberate and unchanged.
+    """
     quiz_id, question_ids = _quiz(
         upload_api, upload_api.course_id, ["multiple_choice", "open_ended"]
     )
     _install_provider(monkeypatch, provider)
 
-    response = _submit(
-        upload_api,
-        upload_api.course_id,
-        quiz_id,
-        [
-            {"question_id": question_ids[0], "selected_option_index": 0},
-            {"question_id": question_ids[1], "text_response": "A written answer."},
-        ],
-        upload_api.authorization,
-    )
+    with caplog.at_level(logging.WARNING, logger="services.ai_usage_logger"):
+        response = _submit(
+            upload_api,
+            upload_api.course_id,
+            quiz_id,
+            [
+                {"question_id": question_ids[0], "selected_option_index": 0},
+                {"question_id": question_ids[1], "text_response": "A written answer."},
+            ],
+            upload_api.authorization,
+        )
+
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].generation_type == "quiz_grading"
 
     assert response.status_code == 201, response.text
     data = response.json()["data"]

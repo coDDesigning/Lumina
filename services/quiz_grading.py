@@ -208,15 +208,14 @@ class QuizGradingService:
         course_id: int | None,
     ) -> list[GradedAnswer]:
         def log_failure(category: ErrorCategory, **extra) -> None:
-            if user_id:
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.QUIZ_GRADING,
-                    error_category=category,
-                    **extra,
-                )
+            AiUsageLogger.log_failure(
+                db,
+                user_id=user_id,
+                course_id=course_id,
+                generation_type=GenerationType.QUIZ_GRADING,
+                error_category=category,
+                **extra,
+            )
 
         if provider_factory is None:
             log_failure(ErrorCategory.PROVIDER_ERROR)
@@ -246,15 +245,19 @@ class QuizGradingService:
             else:
                 result = provider.generate_json(prompt)
         except Exception as exc:
-            log_failure(getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR))
+            log_failure(
+                getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR), exc=exc
+            )
             return graded
 
         try:
             verdicts = OpenEndedGradingResponse.model_validate(result)
-        except ValidationError:
+        except ValidationError as exc:
             log_failure(
                 ErrorCategory.INVALID_STRUCTURE,
-                latency_ms=metadata.latency_ms if metadata else None,
+                metadata=metadata,
+                response=result,
+                exc=exc,
             )
             return graded
 

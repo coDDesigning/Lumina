@@ -1462,3 +1462,47 @@ def test_reliable_provider_binds_the_temperature_to_every_fallback() -> None:
     assert result == {"temperature": 0.0}
     assert [provider._temperature for provider in reliable.providers] == [None, None]
     assert bound._semaphore is reliable._semaphore
+
+
+def test_invalid_json_carries_the_fence_stripped_text() -> None:
+    """SCRUM-206: the prose a model answered with must reach the failure log."""
+    with pytest.raises(TextGenerationError) as exc_info:
+        text_generation._parse_json_object(
+            "```json\nSure! Here is your quiz:\n```", "Ollama"
+        )
+
+    assert exc_info.value.error_category == ErrorCategory.INVALID_STRUCTURE.value
+    assert exc_info.value.raw_response == "Sure! Here is your quiz:"
+
+
+def test_a_non_object_json_response_carries_what_it_returned() -> None:
+    """SCRUM-206: valid JSON of the wrong shape is still worth naming."""
+    with pytest.raises(TextGenerationError) as exc_info:
+        text_generation._parse_json_object("[1, 2, 3]", "Ollama")
+
+    assert exc_info.value.raw_response == "[1, 2, 3]"
+
+
+def test_an_off_protocol_provider_result_is_recorded_by_repr() -> None:
+    """SCRUM-206: here the rejected value is an object, not a wire response."""
+
+    class ListReturningProvider:
+        PROVIDER_NAME = "listy"
+        MODEL = "listy-model"
+
+        def generate_json_with_metadata(self, prompt: str):
+            return ["not", "a", "dict"], GenerationMetadata(
+                provider="listy", model="listy-model"
+            )
+
+    reliable = ReliableTextGenerationProvider(
+        [ListReturningProvider()],
+        max_attempts=1,
+        backoff_base_seconds=0.001,
+        backoff_max_seconds=0.01,
+    )
+
+    with pytest.raises(TextGenerationError) as exc_info:
+        reliable.generate_json_with_metadata("Generate JSON")
+
+    assert exc_info.value.raw_response == "['not', 'a', 'dict']"

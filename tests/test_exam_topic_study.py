@@ -1,5 +1,6 @@
 """Per-topic study guides and summaries: what they cost, and what they may read."""
 
+import logging
 import pytest
 from sqlalchemy import select
 
@@ -307,14 +308,24 @@ def test_a_provider_failure_releases_the_unlock_it_paid_for(
 
 
 def test_an_invalid_structure_releases_the_unlock_too(
-    authz_api, planned_course, monkeypatch
+    authz_api, planned_course, monkeypatch, caplog
 ) -> None:
     before = balance_of(authz_api.session_factory, authz_api.user_a_id)
 
-    response, _ = ask(authz_api, "guide", monkeypatch, payload={"title": "x"})
+    with caplog.at_level(logging.WARNING, logger="services.ai_usage_logger"):
+        response, _ = ask(authz_api, "guide", monkeypatch, payload={"title": "x"})
 
     assert response.status_code == 500
     assert response.headers["X-Error-Code"] == AiErrorCode.INVALID_GENERATED_STRUCTURE
+    # SCRUM-206
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert failures
+    assert failures[-1].error_category == "invalid_structure"
+    assert failures[-1].ai_response_keys == ["title"]
     assert balance_of(authz_api.session_factory, authz_api.user_a_id) == before
     assert unlocks(authz_api.session_factory, authz_api.a_course_id) == []
 

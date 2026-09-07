@@ -1,3 +1,5 @@
+import json
+import logging
 from uuid import uuid4
 
 from sqlalchemy import String, select
@@ -289,27 +291,45 @@ def test_dropping_a_citation_key_logs_a_count_and_never_the_key_or_label(
     assert "2" in emitted
 
 
-def test_the_observability_field_allowlist_did_not_grow() -> None:
-    """Citations must never reach a log record through a new structured field."""
+def test_the_observability_field_allowlist_matches_its_reviewed_pin() -> None:
+    """SCRUM-206: growing this tuple is a privacy decision, never a side effect.
+
+    Citations and student content must never reach a log record through a new
+    structured field. The AI diagnostic fields added here carry a response's
+    size, digest, sanitised key names and pydantic loc/type pairs -- never a
+    value -- and `ai_response_excerpt` is empty unless an operator turns
+    `AI_LOG_RAW_RESPONSE_ON_FAILURE` on.
+    """
     from backend.app.observability import _ALLOWED_FIELDS
 
     assert _ALLOWED_FIELDS == (
+        "ai_response_bytes",
+        "ai_response_excerpt",
+        "ai_response_keys",
+        "ai_response_sha256",
+        "ai_response_type",
+        "ai_validation_errors",
         "course_id",
         "document_id",
         "duration_ms",
+        "error_category",
         "error_code",
         "exception_chain",
         "exception_type",
         "failed_stage",
+        "generation_type",
         "http_method",
         "http_path",
         "http_status",
         "job_id",
+        "model",
         "owner_id",
+        "provider",
         "rate_limit_control",
         "rate_limit_feature",
         "retry_after_seconds",
         "runbook",
+        "stack",
         "user_id",
         "worker_id",
     )
@@ -317,6 +337,10 @@ def test_the_observability_field_allowlist_did_not_grow() -> None:
         field in _ALLOWED_FIELDS
         for field in ("course_id", "failed_stage", "runbook", "document_id")
     ), "operator alerts name a runbook and a scope; both must survive the formatter"
+    assert not any(
+        field.endswith(("_values", "_text", "_body", "_content"))
+        for field in _ALLOWED_FIELDS
+    ), "a field carrying model or student content must not be added here"
 
 
 def test_ai_usage_logger_emits_emf_metrics_without_leaking_content(
@@ -379,3 +403,142 @@ def test_ai_usage_logger_emits_emf_metrics_without_leaking_content(
     assert "Model" not in dims
     assert "user_id" not in dims
     assert "course_id" not in dims
+
+
+class StructurallyInvalidMockProvider:
+    """Returns a well-formed JSON object that no response model accepts."""
+
+    def __init__(self, canary: str) -> None:
+        self.canary = canary
+        self.metadata = GenerationMetadata(
+            provider="mock-gemini",
+            model="gemini-2.5-flash",
+            prompt_tokens=42,
+            completion_tokens=84,
+            total_tokens=126,
+            latency_ms=250,
+        )
+
+    def generate_json_with_metadata(
+        self, prompt: str
+    ) -> tuple[dict[str, object], GenerationMetadata]:
+        return {"questions": self.canary, "notes": self.canary}, self.metadata
+
+    def generate_json(self, prompt: str) -> dict[str, object]:
+        data, _ = self.generate_json_with_metadata(prompt)
+        return data
+
+    def generate_text_with_metadata(
+        self, prompt: str
+    ) -> tuple[str, GenerationMetadata]:
+        return self.canary, self.metadata
+
+    def generate_text(self, prompt: str) -> str:
+        text, _ = self.generate_text_with_metadata(prompt)
+        return text
+
+
+def test_a_failed_generation_is_diagnosable_without_leaking_the_response(
+    session_factory: sessionmaker[Session],
+    retrieval_env,
+    caplog,
+) -> None:
+    """SCRUM-206: the failure line describes the response, never quotes it."""
+    canary = "HIGHLY_CONFIDENTIAL_LECTURE_CHUNK_990011"
+
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        if not role:
+            role = Role(name="user")
+            session.add(role)
+            session.flush()
+
+        user = User(
+            name="Diagnostics User",
+            email="diagnostics-user@example.com",
+            password_hash="hash",
+            role=role,
+        )
+        course = Course(owner=user, title="Course", semester="Fall 2026")
+        doc = UploadedDocument(
+            id=uuid4(),
+            original_file_name="notes.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=100,
+            file_hash="b" * 64,
+            uploader=user,
+            course=course,
+            status="ready",
+            storage_provider="local:diagnostics",
+            storage_key="diagnostics/test.txt",
+        )
+        chunk = DocumentChunk(
+            document=doc,
+            course=course,
+            chunk_index=0,
+            page_number=1,
+            end_page_number=1,
+            text=f"Course material containing {canary}.",
+        )
+        session.add_all((user, course, doc, chunk))
+        session.flush()
+        retrieval_env.index(session, doc, [chunk])
+        session.commit()
+        user_id = user.id
+        course_id = course.id
+
+    provider = StructurallyInvalidMockProvider(canary)
+
+    with caplog.at_level(logging.WARNING, logger="services.ai_usage_logger"):
+        with session_factory() as session:
+            try:
+                QuizService.generate(
+                    session,
+                    course_id,
+                    QuizRequest(
+                        question_count=5,
+                        question_types=[QuizQuestionType.MULTIPLE_CHOICE],
+                        difficulty=QuizDifficulty.MEDIUM,
+                        topic_focus="All Topics",
+                    ),
+                    provider,
+                    user_id=user_id,
+                )
+            except Exception:
+                pass
+
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    failure = failures[0]
+
+    assert failure.generation_type == "quiz"
+    assert failure.error_category == "invalid_structure"
+    assert failure.ai_response_keys == ["questions", "notes"]
+    assert failure.ai_validation_errors
+    assert not hasattr(failure, "ai_response_excerpt")
+
+    rendered = json.dumps(
+        {key: str(value) for key, value in vars(failure).items()}, default=str
+    )
+    assert canary not in rendered
+
+    with session_factory() as session:
+        logs = session.scalars(
+            select(AiUsageLog).where(AiUsageLog.user_id == user_id)
+        ).all()
+        assert logs
+        string_columns = [
+            column.name
+            for column in AiUsageLog.__table__.columns
+            if isinstance(column.type, String)
+        ]
+        for log in logs:
+            for column_name in string_columns:
+                value = getattr(log, column_name)
+                if value is not None:
+                    assert canary not in value

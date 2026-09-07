@@ -15,13 +15,20 @@ Every line contains:
 - `request_id` when processing HTTP work; and
 - bounded operational fields such as `http_method`, `http_path`,
   `http_status`, `duration_ms`, `job_id`, `worker_id`, `error_code`, and
-  `exception_type`.
+  `exception_type`; and
+- `stack` on records logged at ERROR with an exception: project-relative frames
+  (`services/quiz.py:524 in generate`) taken from the innermost cause, capped at
+  twelve. Never a rendered traceback, a source line, or an exception message.
 
 The API accepts a safe `X-Request-ID` (1-64 letters, digits, dots, dashes, or
 underscores), generates one otherwise, and returns it on the response. Query
-strings, request bodies, uploaded content, prompts, model output, credentials,
-and raw exception text are not structured fields. Known token/password/API-key
-forms are redacted from messages. Uvicorn access logging is disabled because
+strings, request bodies, uploaded content, prompts, credentials, and raw
+exception text are not structured fields. Model output is described but never
+quoted: a failed generation reports its size, digest, sanitised top-level key
+names and the fields validation rejected, and the response text itself appears
+only when an operator turns on `AI_LOG_RAW_RESPONSE_ON_FAILURE`. See
+[Diagnosing an unusable AI response](#diagnosing-an-unusable-ai-response). Known
+token/password/API-key forms are redacted from messages. Uvicorn access logging is disabled because
 the middleware already records one correlated request event.
 
 AI usage rows remain privacy-safe product telemetry in PostgreSQL/SQLite; they
@@ -137,7 +144,34 @@ part of the emitted JSON because they are on the `_ALLOWED_FIELDS` allowlist in
 `backend/app/observability.py`. A field set through `extra=` but absent from that
 tuple is dropped by `JsonFormatter` and never reaches CloudWatch, so adding a new
 structured field means adding it there and to the allowlist pin in
-`tests/test_privacy_telemetry.py`.
+`tests/test_privacy_telemetry.py`. The pin asserts the whole tuple, so growing it
+is a reviewed privacy decision rather than a side effect.
+
+#### Diagnosing an unusable AI response:
+A generation that the provider answered but the schema rejected emits one
+`ai_generation_failed` line from `services/ai_usage_logger.py`:
+```sql
+fields @timestamp, generation_type, provider, model, error_category,
+       ai_response_type, ai_response_bytes, ai_response_keys, ai_validation_errors
+| filter event = "ai_generation_failed"
+| sort @timestamp desc
+```
+`ai_response_keys` is usually the fastest read: `["error","message"]` means the
+provider reported a fault in a 200, `["data"]` means it wrapped the payload, and
+a schema-shaped key list means the model drifted inside a field --
+`ai_validation_errors` then names which one. `ai_response_sha256` distinguishes
+one repeated broken response, which is a prompt bug, from a different one each
+time, which is model instability. Key names and pydantic locations are model
+output, so `utils/ai_diagnostics.py` emits them only when they look like schema
+field names and masks anything else as `*`.
+
+One failure can produce three correlated lines: this one, an `ERROR` from
+`utils/ai_errors.py` carrying `stack`, and the middleware's request line. Join
+them on `request_id`.
+
+`AI_LOG_RAW_RESPONSE_ON_FAILURE=true` adds `ai_response_excerpt`, a truncated and
+redacted copy of the response itself. It is study content: turn it on to
+diagnose, and off again afterwards.
 
 #### Local / Self-Hosted (Docker Compose):
 ```bash

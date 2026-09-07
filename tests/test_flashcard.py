@@ -1,4 +1,5 @@
 import json
+import logging
 
 import pytest
 from sqlalchemy import select
@@ -364,6 +365,7 @@ def test_generate_rejects_invalid_flashcard_structure(
     db_session,
     model_graph,
     retrieval_env,
+    caplog,
 ) -> None:
     _add_ready_material(
         db_session,
@@ -381,12 +383,24 @@ def test_generate_rejects_invalid_flashcard_structure(
         }
     )
 
-    with pytest.raises(InvalidFlashcardStructureError):
-        FlashcardService.generate(
-            db_session,
-            model_graph.course.id,
-            provider,
-        )
+    with caplog.at_level(logging.WARNING, logger="services.ai_usage_logger"):
+        with pytest.raises(InvalidFlashcardStructureError):
+            FlashcardService.generate(
+                db_session,
+                model_graph.course.id,
+                provider,
+            )
+
+    # SCRUM-206
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].generation_type == "flashcard"
+    assert failures[0].ai_response_keys == ["deck_title", "card_count", "flashcards"]
+    assert failures[0].ai_validation_errors
 
 
 # ---------------------------------------------------------------------------

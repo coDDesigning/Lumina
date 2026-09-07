@@ -177,25 +177,28 @@ class ReverseQuizService:
                     error_category=getattr(
                         exc, "error_category", ErrorCategory.PROVIDER_ERROR
                     ),
+                    exc=exc,
                 )
                 db.commit()
                 raise
 
             try:
                 evaluation = ReverseQuizEvaluation.model_validate(result)
-            except ValidationError:
+            except ValidationError as exc:
                 AiUsageLogger.log_failure(
                     db,
                     user_id=user.id,
                     course_id=course_id,
                     generation_type=GenerationType.REVERSE_QUIZ,
                     error_category=ErrorCategory.INVALID_STRUCTURE,
-                    latency_ms=metadata.latency_ms if metadata else None,
+                    metadata=metadata,
+                    response=result,
+                    exc=exc,
                 )
                 db.commit()
                 raise ValueError(
                     "Provider returned an invalid reverse quiz evaluation structure"
-                )
+                ) from exc
 
             # 3. Apply citations to feedback and misconception details
             feedback_cited = sanitize_citation_markers(
@@ -357,25 +360,28 @@ class ReverseQuizService:
                     error_category=getattr(
                         exc, "error_category", ErrorCategory.PROVIDER_ERROR
                     ),
+                    exc=exc,
                 )
                 db.commit()
                 raise
 
             try:
                 generated = ReverseQuizQuestionSet.model_validate(result)
-            except ValidationError:
+            except ValidationError as exc:
                 AiUsageLogger.log_failure(
                     db,
                     user_id=user.id,
                     course_id=course_id,
                     generation_type=GenerationType.REVERSE_QUIZ,
                     error_category=ErrorCategory.INVALID_STRUCTURE,
-                    latency_ms=metadata.latency_ms if metadata else None,
+                    metadata=metadata,
+                    response=result,
+                    exc=exc,
                 )
                 db.commit()
                 raise ValueError(
                     "Provider returned an invalid reverse quiz question set"
-                )
+                ) from exc
 
             seen: set[str] = set()
             questions: list[ReverseQuizQuestion] = []

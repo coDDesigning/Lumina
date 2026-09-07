@@ -22,9 +22,10 @@ from backend.app.config import (
     IMAGE_PROVIDER_NONE,
     settings,
 )
-from schemas.ai_usage import ErrorCategory
+from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.prompt_context import PromptContext
 from schemas.prompt_template import PromptTemplateError
+from utils.ai_diagnostics import ai_failure_fields
 from services.ollama import resolve_ollama_base_url
 from services.document_pipeline import (
     DisabledImageUnderstandingProvider,
@@ -350,6 +351,19 @@ class OllamaImageUnderstandingProvider:
                 extra={"event": "image_understanding_usage_report_failed"},
             )
 
+    def _log_unusable_response(self, raw_text: str, exc: BaseException | None) -> None:
+        logger.warning(
+            "AI generation failed",
+            extra=ai_failure_fields(
+                generation_type=GenerationType.IMAGE_UNDERSTANDING,
+                provider=self.PROVIDER_NAME,
+                model=self._model,
+                error_category=ErrorCategory.INVALID_STRUCTURE,
+                raw_text=raw_text,
+                exc=exc,
+            ),
+        )
+
     def describe_visual(
         self,
         visual_png: bytes,
@@ -430,6 +444,7 @@ class OllamaImageUnderstandingProvider:
                 success=False,
                 error_category=ErrorCategory.INVALID_STRUCTURE,
             )
+            self._log_unusable_response(response.text, exc)
             raise VisualAnalysisError(
                 "Ollama returned an invalid JSON response."
             ) from exc
@@ -440,6 +455,7 @@ class OllamaImageUnderstandingProvider:
                 success=False,
                 error_category=ErrorCategory.INVALID_STRUCTURE,
             )
+            self._log_unusable_response(response.text, None)
             raise VisualAnalysisError(
                 "Ollama returned an unexpected response structure."
             )

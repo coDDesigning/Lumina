@@ -1,4 +1,5 @@
 import json
+import logging
 from types import SimpleNamespace
 
 import httpx
@@ -575,7 +576,7 @@ def test_generate_wraps_text_generation_error(
 
 
 def test_generate_rejects_invalid_study_guide_structure(
-    db_session, model_graph, retrieval_env
+    db_session, model_graph, retrieval_env, caplog
 ) -> None:
     _seed_model_graph_material(
         db_session,
@@ -589,12 +590,23 @@ def test_generate_rejects_invalid_study_guide_structure(
         def generate_json(self, prompt: str) -> dict[str, object]:
             return {"title": "Incomplete guide"}
 
-    with pytest.raises(StudyGuideGenerationError) as raised:
-        StudyGuideService.generate(
-            db_session, model_graph.course.id, _request(), FakeProvider()
-        )
+    with caplog.at_level(logging.WARNING, logger="services.ai_usage_logger"):
+        with pytest.raises(StudyGuideGenerationError) as raised:
+            StudyGuideService.generate(
+                db_session, model_graph.course.id, _request(), FakeProvider()
+            )
 
     assert "invalid structure" in str(raised.value)
+    # SCRUM-206
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].generation_type == "study_guide"
+    assert failures[0].ai_response_keys == ["title"]
+    assert failures[0].ai_validation_errors
 
 
 def test_save_generated_output_persists_study_guide(

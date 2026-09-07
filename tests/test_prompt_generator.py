@@ -1,3 +1,4 @@
+import logging
 import routes.prompt_generator as prompt_generator_route
 from sqlalchemy import select
 
@@ -57,20 +58,32 @@ def test_generate_wraps_text_generation_error() -> None:
         raise AssertionError("Expected PromptGenerationError")
 
 
-def test_generate_rejects_invalid_prompt_structure() -> None:
+def test_generate_rejects_invalid_prompt_structure(caplog) -> None:
     class FakeProvider:
         def generate_json(self, prompt: str) -> dict[str, object]:
             return {}
 
-    try:
-        PromptGeneratorService.generate(
-            "Generate a summary prompt.",
-            FakeProvider(),
-        )
-    except PromptGenerationError as exc:
-        assert "invalid structure" in str(exc)
-    else:
-        raise AssertionError("Expected PromptGenerationError")
+    with caplog.at_level(logging.WARNING, logger="services.ai_usage_logger"):
+        try:
+            PromptGeneratorService.generate(
+                "Generate a summary prompt.",
+                FakeProvider(),
+            )
+        except PromptGenerationError as exc:
+            assert "invalid structure" in str(exc)
+        else:
+            raise AssertionError("Expected PromptGenerationError")
+
+    # SCRUM-206: this path runs with db=None, and used to leave no trace at all.
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].generation_type == "prompt_generator"
+    assert failures[0].error_category == "invalid_structure"
+    assert failures[0].ai_validation_errors == ["generated_prompt: missing"]
 
 
 def test_prompt_generator_endpoint_returns_generated_prompt(

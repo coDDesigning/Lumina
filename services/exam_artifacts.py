@@ -418,7 +418,8 @@ class ExamArtifactService:
             except TextGenerationError as exc:
                 ExamEntitlementService.release(db, unlock)
                 log_failure(
-                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR),
+                    exc=exc,
                 )
                 raise ExamArtifactError(spec.provider_failed_message) from exc
             except Exception:
@@ -431,7 +432,9 @@ class ExamArtifactService:
                 ExamEntitlementService.release(db, unlock)
                 log_failure(
                     ErrorCategory.INVALID_STRUCTURE,
-                    latency_ms=metadata.latency_ms if metadata else None,
+                    metadata=metadata,
+                    response=result,
+                    exc=exc,
                 )
                 raise InvalidExamArtifactStructureError(
                     spec.invalid_structure_message
@@ -550,7 +553,8 @@ class ExamArtifactService:
             except TextGenerationError as exc:
                 CreditService.refund(db, receipt)
                 log_failure(
-                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR),
+                    exc=exc,
                 )
                 raise ExamArtifactError(spec.provider_failed_message) from exc
             except Exception:
@@ -563,7 +567,9 @@ class ExamArtifactService:
                 CreditService.refund(db, receipt)
                 log_failure(
                     ErrorCategory.INVALID_STRUCTURE,
-                    latency_ms=metadata.latency_ms if metadata else None,
+                    metadata=metadata,
+                    response=result,
+                    exc=exc,
                 )
                 raise InvalidExamArtifactStructureError(
                     spec.invalid_structure_message

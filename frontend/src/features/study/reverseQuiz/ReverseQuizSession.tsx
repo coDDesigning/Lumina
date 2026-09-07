@@ -8,6 +8,7 @@ import CreditBalance from '@/components/credits/CreditBalance';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { useCredits } from '@/context/CreditContext';
 import { Button } from '@/ui/Button';
+import { Textarea } from '@/ui/Input';
 import { Markdown } from '@/lib/markdown';
 import { GenerationError } from '@/features/study/GenerationStates';
 
@@ -171,7 +172,9 @@ export function ReverseQuizSession({
         />
       ) : null}
 
-      <textarea
+      <Textarea
+        label="Explanation"
+        hideLabel
         className={styles.textarea}
         placeholder="Type your explanation here..."
         value={explanation}

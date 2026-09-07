@@ -937,7 +937,18 @@ class OpenAITextGenerationProvider(TemperatureBindingMixin):
         return result
 
 
-class ClaudeTextGenerationProvider(TemperatureBindingMixin):
+class ClaudeTextGenerationProvider:
+    """Claude text generation over the Anthropic Messages API.
+
+    Deliberately not a :class:`TemperatureBindingMixin`. The Anthropic Messages
+    API dropped ``temperature`` along with the rest of the sampling knobs for the
+    current model family, and ``anthropic>=1`` removed it from the
+    ``messages.create`` signature, so forwarding a template's declared
+    temperature raises ``TypeError`` before the request is ever sent.
+    ``with_template_temperature`` leaves a provider that has no
+    ``with_temperature`` untouched, which is exactly what this provider needs.
+    """
+
     MODEL = DEFAULT_CLAUDE_MODEL
     PROVIDER_NAME = "claude"
 
@@ -1059,7 +1070,6 @@ class ClaudeTextGenerationProvider(TemperatureBindingMixin):
                 model=self._model,
                 max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
-                **self._sampling_kwargs(),
             )
         except Exception as exc:
             self._handle_client_error(exc)
@@ -1102,7 +1112,6 @@ class ClaudeTextGenerationProvider(TemperatureBindingMixin):
                         "schema": schema,
                     }
                 },
-                **self._sampling_kwargs(),
             )
         except Exception as exc:
             self._handle_client_error(exc)

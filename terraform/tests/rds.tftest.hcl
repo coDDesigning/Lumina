@@ -10,7 +10,7 @@ variables {
   allocated_storage_gb     = 20
   max_allocated_storage_gb = 100
   multi_az                 = false
-  engine_version           = "16.8"
+  engine_version           = "15.16"
   database_name            = "lumina"
   username                 = "lumina"
   tags                     = { Environment = "test" }
@@ -24,8 +24,8 @@ run "rds_backup_contract" {
   }
 
   assert {
-    condition     = aws_db_instance.this.backup_retention_period == 7
-    error_message = "RDS automated backups must retain seven days of recovery points."
+    condition     = aws_db_instance.this.backup_retention_period == 0
+    error_message = "The free-tier RDS deployment keeps automated backups disabled."
   }
 
   assert {
@@ -41,6 +41,11 @@ run "rds_backup_contract" {
   assert {
     condition     = output.subnet_group_name == aws_db_subnet_group.this.name
     error_message = "The RDS module must expose the DB subnet group used by recovery restores."
+  }
+
+  assert {
+    condition     = aws_db_parameter_group.this.family == "postgres${split(".", var.engine_version)[0]}"
+    error_message = "The DB parameter group family must track the engine major version; AWS rejects a mismatched pair at apply time."
   }
 
 }

@@ -10,6 +10,7 @@ import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { useCredits } from '@/context/CreditContext';
 import { PageHeader } from '@/ui/PageHeader';
 import { Button } from '@/ui/Button';
+import { Input } from '@/ui/Input';
 import { Spinner } from '@/ui/Spinner';
 import { GenerationError } from '@/features/study/GenerationStates';
 import { ReverseQuizSession } from './ReverseQuizSession';
@@ -81,6 +82,7 @@ export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
           { label: 'Reverse Quiz' },
         ]}
       />
+      <h1 className="visually-hidden">Reverse Quiz</h1>
       <p className={styles.description}>
         Explain concepts in your own words to check your understanding.
       </p>
@@ -119,13 +121,15 @@ export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
               <div className={styles.customTopic}>
                 <h3>Or enter a specific topic</h3>
                 <div className={styles.customTopicInput}>
-                  <input
+                  <Input
+                    label="Enter a specific topic"
+                    hideLabel
                     type="text"
                     placeholder="e.g. Photosynthesis, Newton's Laws"
                     value={customTopic}
                     onChange={(e) => setCustomTopic(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && startTopic(customTopic)}
-                    className={styles.input}
+                    fieldClassName={styles.input}
                   />
                   <Button disabled={!customTopic.trim()} onClick={() => startTopic(customTopic)}>
                     Start

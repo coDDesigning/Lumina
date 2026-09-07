@@ -4,8 +4,10 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '@/api/client';
 import { coursesAPI } from '@/api/courses';
+import { queryKeys } from '@/api/queryKeys';
 import { settingsAPI } from '@/api/settings';
 import type { Workspace } from '@/data/workspaces';
+import { queryCache } from '@/lib/query/cache';
 import { ToastProvider } from '@/ui/ToastProvider';
 import CourseSettingsPage from './CourseSettingsPage';
 
@@ -251,6 +253,118 @@ describe('CourseSettingsPage — generation defaults', () => {
     renderPage();
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Settings unavailable');
+  });
+
+  it('preserves unsaved preferences changes across course details save (P2-038)', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockImplementation(async () => {
+      // Simulating course query invalidation and refetch
+      mockGet.mockResolvedValueOnce(settingsPayload);
+      queryCache.invalidate(queryKeys.courseSettings(1));
+    });
+
+    renderPage({ onSave });
+
+    const questionCount = await screen.findByLabelText('Questions per quiz');
+    expect(questionCount).toHaveValue('12');
+
+    // Change preferences (unsaved)
+    await user.selectOptions(questionCount, '20');
+    expect(questionCount).toHaveValue('20');
+
+    // Edit course details and save
+    const nameInput = screen.getByLabelText('Course name');
+    await user.type(nameInput, ' - Advanced');
+    await user.click(screen.getByRole('button', { name: 'Save details' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+
+    // Verify unsaved questionCount 20 was NOT wiped or reset to 12
+    expect(questionCount).toHaveValue('20');
+  });
+
+  it('updates baseline after saving defaults so reset restores the new baseline (P2-038)', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const questionCount = await screen.findByLabelText('Questions per quiz');
+    expect(questionCount).toHaveValue('12');
+
+    // Change to 20 and save
+    await user.selectOptions(questionCount, '20');
+    await user.click(screen.getByRole('button', { name: 'Save defaults' }));
+
+    await waitFor(() => {
+      expect(mockUpdate).toHaveBeenCalledWith(1, expect.objectContaining({ question_count: 20 }));
+    });
+
+    // Change to 5 without saving
+    await user.selectOptions(questionCount, '5');
+    expect(questionCount).toHaveValue('5');
+
+    // Click Reset defaults
+    await user.click(screen.getByRole('button', { name: 'Reset defaults' }));
+
+    // Should reset to 20, not the original 12
+    expect(questionCount).toHaveValue('20');
+  });
+
+  it('loads new settings when courseId changes (P2-038)', async () => {
+    mockGet.mockImplementation(async (id: number) => {
+      if (id === 2) {
+        return {
+          ...settingsPayload,
+          question_count: 5,
+          study_mode: 'General',
+        };
+      }
+      return settingsPayload;
+    });
+
+    const { rerender } = render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/courses/1/settings']}>
+          <Routes>
+            <Route
+              path="/courses/:courseId/settings"
+              element={
+                <CourseSettingsPage
+                  workspace={workspace}
+                  onSave={vi.fn()}
+                  onDelete={vi.fn()}
+                />
+              }
+            />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    expect(await screen.findByLabelText('Questions per quiz')).toHaveValue('12');
+
+    // Rerender with workspace 2
+    rerender(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/courses/2/settings']}>
+          <Routes>
+            <Route
+              path="/courses/:courseId/settings"
+              element={
+                <CourseSettingsPage
+                  workspace={{ ...workspace, id: '2' }}
+                  onSave={vi.fn()}
+                  onDelete={vi.fn()}
+                />
+              }
+            />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Questions per quiz')).toHaveValue('5');
+    });
   });
 });
 

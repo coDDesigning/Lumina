@@ -330,7 +330,7 @@ export default function CoursesPage({
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search courses"
             />
-            {archivedWorkspaces.length > 0 ? (
+            {archivedWorkspaces.length > 0 || statusFilter === 'archived' ? (
               <Select
                 label="Status filter"
                 hideLabel
@@ -489,16 +489,51 @@ export default function CoursesPage({
             </ul>
           </>
         ) : workspaces.length > 0 ? (
-          <EmptyState
-            icon={<FolderOpen aria-hidden="true" />}
-            title="No courses found"
-            description="Try a different course name, term, or topic."
-            actions={
-              <Button variant="secondary" onClick={() => setQuery('')}>
-                Clear search
-              </Button>
-            }
-          />
+          query.trim() !== '' ? (
+            <EmptyState
+              icon={<FolderOpen aria-hidden="true" />}
+              title="No courses found"
+              description="Try a different course name, term, or topic."
+              actions={
+                <Button variant="secondary" onClick={() => setQuery('')}>
+                  Clear search
+                </Button>
+              }
+            />
+          ) : statusFilter === 'active' && archivedWorkspaces.length > 0 ? (
+            <EmptyState
+              icon={<FolderOpen aria-hidden="true" />}
+              title="No active courses"
+              description="All your courses are archived."
+              actions={
+                <Button variant="secondary" onClick={() => setStatusFilter('archived')}>
+                  View archived courses ({archivedWorkspaces.length})
+                </Button>
+              }
+            />
+          ) : statusFilter === 'archived' && activeWorkspaces.length > 0 ? (
+            <EmptyState
+              icon={<FolderOpen aria-hidden="true" />}
+              title="No archived courses"
+              description="You do not have any archived courses."
+              actions={
+                <Button variant="secondary" onClick={() => setStatusFilter('active')}>
+                  View active courses ({activeWorkspaces.length})
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              icon={<FolderOpen aria-hidden="true" />}
+              title="No courses found"
+              description="Try a different course name, term, or topic."
+              actions={
+                <Button variant="secondary" onClick={() => setQuery('')}>
+                  Clear search
+                </Button>
+              }
+            />
+          )
         ) : (
           <EmptyState
             icon={<FolderOpen aria-hidden="true" />}

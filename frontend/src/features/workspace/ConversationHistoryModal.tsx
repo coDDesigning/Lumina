@@ -132,7 +132,9 @@ export function ConversationHistoryModal({
     >
       {listState.phase === 'loading' ? <DetailLoading label="Loading your threads" /> : null}
 
-      {listState.phase === 'error' ? <DetailError message={listState.message} /> : null}
+      {listState.phase === 'error' ? (
+        <DetailError message={listState.message} onRetry={() => void listQuery.refetch()} />
+      ) : null}
 
       {listState.phase === 'ready' ? (
         <MasterDetail
@@ -186,7 +188,12 @@ export function ConversationHistoryModal({
                 />
               ) : null}
               {detailState.phase === 'loading' ? <DetailLoading label="Opening" /> : null}
-              {detailState.phase === 'error' ? <DetailError message={detailState.message} /> : null}
+              {detailState.phase === 'error' ? (
+                <DetailError
+                  message={detailState.message}
+                  onRetry={() => void detailQuery.refetch()}
+                />
+              ) : null}
               {detailState.phase === 'ready' ? (
                 <>
                   <div className={styles.detailHead}>

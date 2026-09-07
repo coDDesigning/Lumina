@@ -467,3 +467,82 @@ describe('AdminPage — user courses support workflow', () => {
     );
   });
 });
+
+describe('AdminPage role change confirmation (BUG-020)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocked.listUsers.mockResolvedValue([
+      ADMIN,
+      LEARNER,
+      { ...SECOND_LEARNER, role: 'admin' },
+    ]);
+    mocked.getAiCostReport.mockResolvedValue(COST_REPORT);
+  });
+
+  it('clicking Promote opens confirmation dialog and does not mutate immediately', async () => {
+    renderPage();
+    const aliceRow = (await screen.findByText('alice@example.com')).closest('tr')!;
+    const promoteButton = within(aliceRow).getByRole('button', { name: 'Promote' });
+
+    await userEvent.click(promoteButton);
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(
+      screen.getByText('Promote this account to administrator?'),
+    ).toBeInTheDocument();
+    expect(mocked.changeUserRole).not.toHaveBeenCalled();
+  });
+
+  it('confirming Promote mutates exactly once', async () => {
+    mocked.changeUserRole.mockResolvedValue({ ...LEARNER, role: 'admin' });
+    renderPage();
+    const aliceRow = (await screen.findByText('alice@example.com')).closest('tr')!;
+    await userEvent.click(within(aliceRow).getByRole('button', { name: 'Promote' }));
+
+    const dialog = screen.getByRole('dialog');
+    const confirmButton = within(dialog).getByRole('button', { name: 'Promote' });
+    await userEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(mocked.changeUserRole).toHaveBeenCalledTimes(1);
+      expect(mocked.changeUserRole).toHaveBeenCalledWith('alice@example.com', 'admin');
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('cancelling Promote does not mutate and closes dialog', async () => {
+    renderPage();
+    const aliceRow = (await screen.findByText('alice@example.com')).closest('tr')!;
+    await userEvent.click(within(aliceRow).getByRole('button', { name: 'Promote' }));
+
+    const dialog = screen.getByRole('dialog');
+    const cancelButton = within(dialog).getByRole('button', { name: 'Cancel' });
+    await userEvent.click(cancelButton);
+
+    expect(mocked.changeUserRole).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('clicking Demote opens confirmation dialog with distinct destructive tone and confirm demotes', async () => {
+    mocked.changeUserRole.mockResolvedValue({ ...SECOND_LEARNER, role: 'user' });
+    renderPage();
+    const bobRow = (await screen.findByText('bob@example.com')).closest('tr')!;
+    const demoteButton = within(bobRow).getByRole('button', { name: 'Demote' });
+
+    await userEvent.click(demoteButton);
+
+    const dialog = screen.getByRole('dialog');
+    expect(
+      within(dialog).getByText('Demote this account to student?'),
+    ).toBeInTheDocument();
+    expect(mocked.changeUserRole).not.toHaveBeenCalled();
+
+    const confirmButton = within(dialog).getByRole('button', { name: 'Demote' });
+    await userEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(mocked.changeUserRole).toHaveBeenCalledTimes(1);
+      expect(mocked.changeUserRole).toHaveBeenCalledWith('bob@example.com', 'user');
+    });
+  });
+});

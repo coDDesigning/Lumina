@@ -481,3 +481,40 @@ def test_time_spent_is_absent_when_no_attempt_recorded_it(upload_api) -> None:
 
     assert summary["attempts_count"] == 1
     assert summary["total_time_spent_seconds"] is None
+
+
+def test_zero_attempt_course_progress_agreement_reports_null_completion(
+    upload_api,
+) -> None:
+    # upload_api.other_course_id has zero attempts
+    bulk_summary = _summaries(upload_api.client, upload_api.authorization)[
+        upload_api.other_course_id
+    ]
+    single_res = upload_api.client.get(
+        f"/api/courses/{upload_api.other_course_id}/progress",
+        headers=upload_api.authorization,
+    )
+    assert single_res.status_code == 200, single_res.text
+    single_data = single_res.json()["data"]
+
+    # 1. zero-attempt bulk completion is null
+    assert bulk_summary["attempts_count"] == 0
+    assert bulk_summary["completion"] is None
+    assert bulk_summary["average_score"] is None
+    assert bulk_summary["total_time_spent_seconds"] is None
+
+    # 2. zero-attempt per-course completion is null
+    assert single_data["attempts_count"] == 0
+    assert single_data["completion"] is None
+    assert single_data["average_score"] is None
+    assert single_data["total_time_spent_seconds"] is None
+
+    # 3. both endpoints agree
+    assert bulk_summary["completion"] == single_data["completion"]
+    assert bulk_summary["average_score"] == single_data["average_score"]
+    assert bulk_summary["status"] == single_data["status"]
+    assert bulk_summary["attempts_count"] == single_data["attempts_count"]
+    assert (
+        bulk_summary["total_time_spent_seconds"]
+        == single_data["total_time_spent_seconds"]
+    )

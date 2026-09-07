@@ -315,4 +315,28 @@ describe('AccountApiKeysPage', () => {
     renderPage();
     expect(screen.queryByRole('heading', { name: 'API keys' })).not.toBeInTheDocument();
   });
+
+  it('renders ErrorState with retry when API keys query fails to load (BUG-015)', async () => {
+    const user = userEvent.setup();
+    mockGetApiKeys.mockRejectedValueOnce(new APIError(500, { detail: 'Keys unavailable' }));
+
+    renderPage();
+
+    expect(await screen.findByText('Keys unavailable')).toBeInTheDocument();
+    const retryButton = screen.getByRole('button', { name: 'Try again' });
+    expect(retryButton).toBeInTheDocument();
+
+    mockGetApiKeys.mockResolvedValueOnce({
+      openai_api_key: null,
+      gemini_api_key: null,
+      anthropic_api_key: null,
+      has_openai_key: false,
+      has_gemini_key: false,
+      has_anthropic_key: false,
+    });
+
+    await user.click(retryButton);
+
+    expect(await screen.findByRole('heading', { name: 'API keys' })).toBeInTheDocument();
+  });
 });

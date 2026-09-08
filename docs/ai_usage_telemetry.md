@@ -42,6 +42,11 @@ Lumina implements strict privacy-safe logging controls:
 | `error_category` | `VARCHAR(50)` | Yes | Stable, high-level categorical error code for failed attempts |
 | `estimated_cost_usd` | `FLOAT` | Yes | Immutable operational estimate for a successful generation; absent when tokens or configured rates are unavailable |
 | `pricing_version` | `VARCHAR(100)` | Yes | Version of `AI_MODEL_COST_RATES` used for the estimate; present exactly when `estimated_cost_usd` is present |
+| `request_id` | `VARCHAR(64)` | Yes | HTTP request correlation when the provider attempt originated in a request |
+| `operation_id` | `VARCHAR(80)` | Yes | Server-owned API or worker operation that made the provider attempt |
+| `job_id` | `INTEGER` | Yes | Durable generation or processing job identifier when applicable |
+| `job_type` | `VARCHAR(50)` | Yes | Durable job type paired with `job_id` |
+| `attempt_number` | `INTEGER` | Yes | Worker attempt number when the call occurred inside retried background work |
 | `created_at` | `TIMESTAMP WITH TIME ZONE` | No | UTC timestamp when generation occurred |
 
 Cost estimates are operational planning data, not provider invoices or user

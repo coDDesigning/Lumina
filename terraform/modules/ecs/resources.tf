@@ -99,6 +99,33 @@ resource "aws_iam_role" "task" {
   tags = var.tags
 }
 
+resource "aws_iam_role" "api_task" {
+  name               = "${var.name_prefix}-api-task"
+  assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
+  inline_policy {
+    name = "lumina-api"
+    policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Effect = "Allow"
+          Action = [
+            "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion",
+            "s3:ListBucket", "s3:GetBucketLocation",
+          ]
+          Resource = [var.s3_bucket_arn, "${var.s3_bucket_arn}/*"]
+        },
+        {
+          Effect   = "Allow"
+          Action   = ["logs:FilterLogEvents"]
+          Resource = "${aws_cloudwatch_log_group.this.arn}:*"
+        },
+      ]
+    })
+  }
+  tags = var.tags
+}
+
 resource "aws_iam_role" "restore_task" {
   name               = "${var.name_prefix}-restore-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
@@ -123,7 +150,7 @@ resource "aws_ecs_task_definition" "api" {
   cpu                      = var.api_cpu
   memory                   = var.api_memory
   execution_role_arn       = aws_iam_role.execution.arn
-  task_role_arn            = aws_iam_role.task.arn
+  task_role_arn            = aws_iam_role.api_task.arn
   container_definitions    = jsonencode([local.api_container])
   tags                     = var.tags
 }

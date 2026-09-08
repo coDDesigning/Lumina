@@ -341,6 +341,10 @@ Application and worker logs are single-line privacy-safe JSON in CloudWatch
 Logs. Request IDs correlate API events; worker queue and outcome metrics use
 CloudWatch Embedded Metric Format. Terraform provisions the operations
 dashboard, SNS alarm topic, and baseline ALB/ECS/RDS/RDS Proxy/queue alarms.
+The API task receives the exact `/ecs/<project>-<environment>` group as
+`OPERATIONAL_LOG_CLOUDWATCH_GROUP` and a dedicated task role that can call
+`logs:FilterLogEvents` only against that group; workers do not receive the log
+read permission. This is the hosted source behind the administrator log center.
 Set the optional `alarm_email` Terraform variable and confirm the SNS
 subscription before launch. See `docs/observability.md` for the field contract,
 thresholds, and required staging alarm exercise.
@@ -352,6 +356,10 @@ push to `main` or through manual dispatch from `main`. The workflow authenticate
 GitHub OIDC role created by the `github-oidc` module, never with stored
 long-lived keys. It requires these repository environment variables and
 secrets on the `production` environment:
+
+Both the directly published frontend archive and the interface baked into the
+application image receive the same full commit SHA as `VITE_APP_VERSION`, so a
+sanitized browser error report identifies the release that produced it.
 
 | Setting | Source |
 | --- | --- |

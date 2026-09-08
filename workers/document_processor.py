@@ -19,9 +19,11 @@ from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.models import Course
 from backend.app.observability import (
+    bind_operation_context,
     bind_request_id,
     configure_logging,
     emit_emf_metrics,
+    reset_operation_context,
     reset_request_id,
 )
 from backend.app.readiness import ReadinessError, check_readiness
@@ -70,6 +72,16 @@ from workers.course_purge import run_document_purge, run_purge
 from workers.embedding_backfill import run_backfill
 
 logger = logging.getLogger(__name__)
+
+
+def _processing_job_type(job: ClaimedJob | ClaimedProfileJob) -> str:
+    return (
+        "profile_document_processing"
+        if isinstance(job, ClaimedProfileJob)
+        else "course_document_processing"
+    )
+
+
 SessionFactory = Callable[[], Session]
 RECOVERY_BATCH_SIZE = 100
 MAX_RECOVERY_BATCHES_PER_PASS = 10
@@ -215,6 +227,26 @@ def _record_failure(
             error.code,
             extra=extra_fields,
         )
+    if resulting_status is not None:
+        logger.warning(
+            "Document processing attempt ended",
+            extra={
+                "event": (
+                    "processing_job_retried"
+                    if resulting_status == "queued"
+                    else "processing_job_failed"
+                ),
+                "job_id": job.id,
+                "job_type": _processing_job_type(job),
+                "job_status": resulting_status,
+                "attempt_number": job.attempt_count,
+                "document_id": str(job.document_id),
+                "course_id": job.course_id if isinstance(job, ClaimedJob) else None,
+                "user_id": job.user_id,
+                "failed_stage": stage,
+                "error_code": error.code,
+            },
+        )
     return resulting_status
 
 
@@ -265,9 +297,28 @@ def _extraction_process(
     # this call the pipeline's 19 logging sites fall back to logging.lastResort,
     # emitting raw multi-line tracebacks and un-redacted exception text with no
     # request_id, and dropping every INFO record (P2-025).
-    configure_logging(service="worker", environment=settings.app_env)
+    configure_logging(
+        service="worker",
+        environment=settings.app_env,
+        persistence_path=(
+            settings.operational_log_path
+            if settings.operational_log_persistence_enabled
+            else None
+        ),
+        retention_days=settings.operational_log_retention_days,
+        max_records=settings.operational_log_max_records,
+    )
     if job.correlation_id is not None:
         bind_request_id(job.correlation_id)
+    bind_operation_context(
+        operation_id=(
+            f"processing_job:{'profile' if isinstance(job, ClaimedProfileJob) else 'course'}:{job.id}"
+        ),
+        parent_operation_id=job.parent_operation_id,
+        job_id=job.id,
+        job_type=_processing_job_type(job),
+        attempt_number=job.attempt_count,
+    )
     # The parent owns graceful shutdown and the hard timeout for this child.
     for shutdown_signal in WORKER_SHUTDOWN_SIGNALS:
         signal.signal(shutdown_signal, signal.SIG_IGN)
@@ -563,9 +614,29 @@ def process_next_job(
             prompt_context = None
     if job is None:
         return False
-    token = bind_request_id(job.correlation_id)
+    request_token = bind_request_id(job.correlation_id)
+    operation_token = bind_operation_context(
+        operation_id=(
+            f"processing_job:{'profile' if isinstance(job, ClaimedProfileJob) else 'course'}:{job.id}"
+        ),
+        parent_operation_id=job.parent_operation_id,
+        job_id=job.id,
+        job_type=_processing_job_type(job),
+        attempt_number=job.attempt_count,
+    )
     try:
         processing_started = time.monotonic()
+        logger.info(
+            "Document processing job claimed",
+            extra={
+                "event": "processing_job_claimed",
+                "document_id": str(job.document_id),
+                "course_id": job.course_id if isinstance(job, ClaimedJob) else None,
+                "user_id": job.user_id,
+                "job_status": "running",
+                "worker_id": worker_id,
+            },
+        )
 
         stop = threading.Event()
         claim_lost = threading.Event()
@@ -603,6 +674,14 @@ def process_next_job(
                         "The document processing claim changed unexpectedly.",
                         retryable=True,
                     )
+                logger.info(
+                    "Document processing stage started",
+                    extra={
+                        "event": "processing_stage_started",
+                        "stage": stage,
+                        "document_id": str(job.document_id),
+                    },
+                )
 
             def persist_extraction(
                 pages: list[PageData],
@@ -807,9 +886,23 @@ def process_next_job(
                 dimensions={"Service": "worker", "Environment": settings.app_env},
                 units={"ProcessingDurationMs": "Milliseconds"},
             )
+            logger.info(
+                "Document processing job completed",
+                extra={
+                    "event": "processing_job_completed",
+                    "document_id": str(job.document_id),
+                    "course_id": job.course_id if isinstance(job, ClaimedJob) else None,
+                    "user_id": job.user_id,
+                    "job_status": "succeeded",
+                    "duration_ms": round(
+                        (time.monotonic() - processing_started) * 1000, 3
+                    ),
+                },
+            )
         return True
     finally:
-        reset_request_id(token)
+        reset_operation_context(operation_token)
+        reset_request_id(request_token)
 
 
 def check_worker_ready(
@@ -1180,7 +1273,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--worker-id", help="stable identifier shown in job leases")
     args = parser.parse_args(argv)
-    configure_logging(service="worker", environment=settings.app_env)
+    configure_logging(
+        service="worker",
+        environment=settings.app_env,
+        persistence_path=(
+            settings.operational_log_path
+            if settings.operational_log_persistence_enabled
+            else None
+        ),
+        retention_days=settings.operational_log_retention_days,
+        max_records=settings.operational_log_max_records,
+    )
     if args.check:
         try:
             check_worker_ready()

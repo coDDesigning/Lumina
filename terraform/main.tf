@@ -168,6 +168,7 @@ module "github_oidc" {
     module.ecs.hosted_restore_task_definition_family,
   ]
   ecs_task_role_arn              = module.ecs.task_role_arn
+  api_task_role_arn              = module.ecs.api_task_role_arn
   ecs_execution_role_arn         = module.ecs.execution_role_arn
   restore_task_definition_family = module.ecs.hosted_restore_task_definition_family
   restore_task_role_arn          = module.ecs.restore_task_role_arn

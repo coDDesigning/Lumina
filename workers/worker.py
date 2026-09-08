@@ -84,7 +84,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="Verify worker dependencies without claiming work",
     )
     args = parser.parse_args(argv)
-    configure_logging(service="worker", environment=settings.app_env)
+    configure_logging(
+        service="worker",
+        environment=settings.app_env,
+        persistence_path=(
+            settings.operational_log_path
+            if settings.operational_log_persistence_enabled
+            else None
+        ),
+        retention_days=settings.operational_log_retention_days,
+        max_records=settings.operational_log_max_records,
+    )
 
     if args.check:
         try:

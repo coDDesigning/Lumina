@@ -190,6 +190,7 @@ Rules that are not negotiable:
 /account/ai                        model choice, and credits when metered
 /account/appearance                theme
 /admin                             admin (rail entry hidden unless role === 'admin')
+/admin/logs                        operational investigation (admin only)
 
   -- kept so older links still resolve --
 /workspaces/:id/**                 -> /courses/:id/**

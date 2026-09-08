@@ -430,7 +430,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> None:
     arguments = _build_parser().parse_args(argv)
-    configure_logging(service="maintenance", environment=settings.app_env)
+    configure_logging(
+        service="maintenance",
+        environment=settings.app_env,
+        persistence_path=(
+            settings.operational_log_path
+            if settings.operational_log_persistence_enabled
+            else None
+        ),
+        retention_days=settings.operational_log_retention_days,
+        max_records=settings.operational_log_max_records,
+    )
 
     try:
         source_url = _validate_configuration()

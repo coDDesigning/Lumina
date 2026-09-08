@@ -2,6 +2,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -15,9 +16,11 @@ from backend.app.config import Settings, settings
 from backend.app.database import get_db
 from backend.app.observability import (
     bind_request_id,
+    bind_operation_context,
     configure_logging,
     normalize_request_id,
     reset_request_id,
+    reset_operation_context,
 )
 from backend.app.readiness import ReadinessError, check_readiness
 from backend.app.request_size import (
@@ -33,6 +36,7 @@ from routes import (
     ai_models,
     ai_tutor,
     auth,
+    client_error,
     conversation,
     course,
     course_qa,
@@ -84,7 +88,17 @@ def check_admin_bootstrap_security(app_settings: Settings | None = None) -> None
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    configure_logging(service="api", environment=settings.app_env)
+    configure_logging(
+        service="api",
+        environment=settings.app_env,
+        persistence_path=(
+            settings.operational_log_path
+            if settings.operational_log_persistence_enabled
+            else None
+        ),
+        retention_days=settings.operational_log_retention_days,
+        max_records=settings.operational_log_max_records,
+    )
     check_admin_bootstrap_security(settings)
     # Every configured vendor joins the fallback chain, so an operator must be
     # able to see which ones an outage would bill without guessing.
@@ -133,6 +147,7 @@ app.include_router(course.router)
 app.include_router(course_settings.router)
 app.include_router(progress.router)
 app.include_router(activity.router)
+app.include_router(client_error.router)
 app.include_router(admin.router)
 app.include_router(user.router)
 app.include_router(ai_models.router)
@@ -162,8 +177,15 @@ app.add_exception_handler(StarletteHTTPException, document.upload_http_error)
 @app.middleware("http")
 async def observe_request(request: Request, call_next):
     request_id = normalize_request_id(request.headers.get("X-Request-ID"))
-    token = bind_request_id(request_id)
+    request_token = bind_request_id(request_id)
+    operation_token = bind_operation_context(operation_id=f"api:{uuid4().hex}")
     started = time.perf_counter()
+
+    def route_template() -> str:
+        route = request.scope.get("route")
+        path = getattr(route, "path", None)
+        return path if isinstance(path, str) and path.startswith("/") else "/unmatched"
+
     try:
         response = await call_next(request)
     except Exception as exc:
@@ -173,7 +195,7 @@ async def observe_request(request: Request, call_next):
                 "event": "http_request_failed",
                 "exception_type": type(exc).__name__,
                 "http_method": request.method,
-                "http_path": request.url.path,
+                "http_path": route_template(),
                 "http_status": 500,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 3),
             },
@@ -182,20 +204,34 @@ async def observe_request(request: Request, call_next):
         raise
     else:
         response.headers["X-Request-ID"] = request_id
-        logger.info(
+        duration_ms = round((time.perf_counter() - started) * 1000, 3)
+        if response.status_code >= 500:
+            event, log = "http_request_failed", logger.error
+        elif response.status_code == 429:
+            event, log = "http_request_rate_limited", logger.warning
+        elif response.status_code in {401, 403}:
+            event, log = "http_authorization_denied", logger.warning
+        elif response.status_code in {400, 409, 415, 422}:
+            event, log = "http_validation_rejected", logger.info
+        elif duration_ms >= 2000:
+            event, log = "http_request_slow", logger.warning
+        else:
+            event, log = "http_request_completed", logger.info
+        log(
             "HTTP request completed",
             extra={
-                "event": "http_request_completed",
+                "event": event,
                 "http_method": request.method,
-                "http_path": request.url.path,
+                "http_path": route_template(),
                 "http_status": response.status_code,
                 "error_code": response.headers.get("X-Error-Code"),
-                "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                "duration_ms": duration_ms,
             },
         )
         return response
     finally:
-        reset_request_id(token)
+        reset_operation_context(operation_token)
+        reset_request_id(request_token)
 
 
 @app.get("/ads.txt", response_class=PlainTextResponse)
@@ -240,5 +276,11 @@ if settings.cors_allowed_origins:
         allow_credentials=False,
         allow_methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
         allow_headers=("Authorization", "Content-Type"),
-        expose_headers=("Retry-After", "X-Error-Code", "X-Request-ID"),
+        expose_headers=(
+            "Retry-After",
+            "X-Error-Code",
+            "X-Export-Record-Limit",
+            "X-Export-Truncated",
+            "X-Request-ID",
+        ),
     )

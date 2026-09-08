@@ -24,6 +24,8 @@ x-lumina: &lumina
     DATABASE_URL: sqlite:////data/lumina.db
     CHROMA_PERSIST_DIRECTORY: /data/chroma
     UPLOAD_DIRECTORY: /data/uploads
+    OPERATIONAL_LOG_PATH: /data/operational-logs.db
+    OPERATIONAL_LOG_PERSISTENCE_ENABLED: "true"
     # Baked into the image and read offline. A relative path from .env would
     # send fastembed looking in an empty directory under HF_HUB_OFFLINE=1 and
     # every embedding would fail at runtime.

@@ -107,6 +107,56 @@ describe('adminAPI', () => {
     );
   });
 
+  it('forwards repeated filters to the operational log endpoint', async () => {
+    const list = {
+      records: [],
+      next_cursor: null,
+      query_window: {
+        start: '2026-09-08T08:00:00Z',
+        end: '2026-09-08T09:00:00Z',
+        timezone: 'UTC',
+        maximum_days: 30,
+      },
+      last_updated_at: '2026-09-08T09:00:00Z',
+      source_health: [],
+      partial: false,
+      limited: false,
+      omitted_records: 0,
+    };
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ success: true, message: 'ok', data: list }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const params = new URLSearchParams();
+    params.append('source', 'operational');
+    params.append('source', 'ai_telemetry');
+    params.set('level', 'ERROR');
+
+    await expect(adminAPI.listLogs(params)).resolves.toEqual(list);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/logs?source=operational&source=ai_telemetry&level=ERROR',
+      expect.objectContaining({ headers: expect.any(Headers) }),
+    );
+  });
+
+  it('reads explicit export truncation metadata', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"type":"export_metadata"}\n', {
+        status: 200,
+        headers: { 'X-Export-Truncated': 'true' },
+      }),
+    );
+
+    const result = await adminAPI.exportLogs(new URLSearchParams({ level: 'ERROR' }), 'jsonl');
+
+    expect(result.truncated).toBe(true);
+    expect(result.blob.size).toBeGreaterThan(0);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/admin/logs/export?level=ERROR&format=jsonl',
+      expect.objectContaining({ method: 'GET', headers: expect.any(Headers) }),
+    );
+  });
+
   it('bans user successfully', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       jsonResponse({

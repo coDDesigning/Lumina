@@ -80,7 +80,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     
     window.addEventListener('auth:unauthorized', handleUnauthorized);
-    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+    const handleAdminAccessRemoved = () => {
+      queryCache.remove(['admin']);
+      void fetchUser();
+    };
+    window.addEventListener('auth:admin-access-removed', handleAdminAccessRemoved);
+    return () => {
+      window.removeEventListener('auth:unauthorized', handleUnauthorized);
+      window.removeEventListener('auth:admin-access-removed', handleAdminAccessRemoved);
+    };
   }, []);
 
   const login = async (token: string) => {

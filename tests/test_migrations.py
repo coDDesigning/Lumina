@@ -66,7 +66,8 @@ DOCUMENT_GENERATION_LOCKS_REVISION = "b6d21f4c8a37"
 MISSING_CHECK_CONSTRAINTS_REVISION = "3317a08487dd"
 PROFILE_PROCESSING_JOB_INDEXES_REVISION = "d8a2b4c6e901"
 DROP_LEGACY_AI_USAGE_INDEX_REVISION = "e4c7a1b90d52"
-HEAD_REVISION = DROP_LEGACY_AI_USAGE_INDEX_REVISION
+OPERATIONAL_CORRELATION_REVISION = "a9d4e2f7c601"
+HEAD_REVISION = OPERATIONAL_CORRELATION_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -114,6 +115,7 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        OPERATIONAL_CORRELATION_REVISION: DROP_LEGACY_AI_USAGE_INDEX_REVISION,
         DROP_LEGACY_AI_USAGE_INDEX_REVISION: PROFILE_PROCESSING_JOB_INDEXES_REVISION,
         PROFILE_PROCESSING_JOB_INDEXES_REVISION: MISSING_CHECK_CONSTRAINTS_REVISION,
         MISSING_CHECK_CONSTRAINTS_REVISION: DOCUMENT_GENERATION_LOCKS_REVISION,
@@ -3510,3 +3512,53 @@ def test_legacy_ai_usage_created_index_is_dropped_on_databases_that_kept_it(
 
     check = run_alembic(database_path, tmp_path, "check")
     assert "No new upgrade operations detected" in check.stdout + check.stderr
+
+
+def test_operational_correlation_metadata_migrates_in_both_directions(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "operational-correlation.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", DROP_LEGACY_AI_USAGE_INDEX_REVISION)
+
+    run_alembic(database_path, tmp_path, "upgrade", OPERATIONAL_CORRELATION_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        for table in ("processing_jobs", "profile_processing_jobs", "generation_jobs"):
+            columns = {
+                row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            assert "parent_operation_id" in columns
+            indexes = {
+                row[1] for row in connection.execute(f"PRAGMA index_list({table})")
+            }
+            assert f"ix_{table}_parent_operation" in indexes
+
+        ai_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(ai_usage_logs)")
+        }
+        assert {
+            "request_id",
+            "operation_id",
+            "job_id",
+            "job_type",
+            "attempt_number",
+        }.issubset(ai_columns)
+        ai_indexes = {
+            row[1] for row in connection.execute("PRAGMA index_list(ai_usage_logs)")
+        }
+        assert "ix_ai_usage_logs_operation_created" in ai_indexes
+
+    run_alembic(
+        database_path, tmp_path, "downgrade", DROP_LEGACY_AI_USAGE_INDEX_REVISION
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        for table in ("processing_jobs", "profile_processing_jobs", "generation_jobs"):
+            columns = {
+                row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            assert "parent_operation_id" not in columns
+        ai_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(ai_usage_logs)")
+        }
+        assert "operation_id" not in ai_columns

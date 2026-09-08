@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import MAX_AI_EVENT_ESTIMATED_COST_USD, settings
 from backend.app.models import AiUsageLog
-from backend.app.observability import emit_emf_metrics
+from backend.app.observability import (
+    emit_emf_metrics,
+    get_operation_context,
+    get_request_id,
+)
 from schemas.ai_usage import ErrorCategory, GenerationType
 from services.text_generation import (
     GenerationMetadata,
@@ -118,6 +122,7 @@ class AiUsageLogger:
                     },
                 )
 
+        operation_context = get_operation_context()
         log_entry = AiUsageLog(
             user_id=user_id,
             course_id=course_id,
@@ -130,6 +135,11 @@ class AiUsageLogger:
             latency_ms=latency_ms,
             success=success,
             error_category=err_cat_str,
+            request_id=get_request_id(),
+            operation_id=operation_context.get("operation_id"),
+            job_id=operation_context.get("job_id"),
+            job_type=operation_context.get("job_type"),
+            attempt_number=operation_context.get("attempt_number"),
             estimated_cost_usd=estimated_cost_usd,
             pricing_version=pricing_version,
         )

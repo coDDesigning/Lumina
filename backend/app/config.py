@@ -78,6 +78,11 @@ DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS = False
 DEFAULT_AI_USAGE_RETENTION_DAYS = 90
 DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE = 1000
 DEFAULT_AI_USAGE_CLEANUP_INTERVAL_SECONDS = 86_400.0
+DEFAULT_OPERATIONAL_LOG_RETENTION_DAYS = 30
+DEFAULT_OPERATIONAL_LOG_MAX_RECORDS = 500_000
+DEFAULT_OPERATIONAL_LOG_QUERY_TIMEOUT_SECONDS = 10
+DEFAULT_CLIENT_ERROR_MAX_REPORTS = 20
+DEFAULT_CLIENT_ERROR_WINDOW_SECONDS = 60
 
 IMAGE_PROVIDER_NONE = "none"
 # Vendors with an ImageUnderstandingProvider implementation. A catalog entry
@@ -211,6 +216,16 @@ class Settings:
     database_max_overflow: int
     database_pool_recycle_seconds: int
 
+    # Operational investigation. Hosted reads one fixed CloudWatch group;
+    # self-hosted processes share the dedicated SQLite file.
+    operational_log_path: str
+    operational_log_persistence_enabled: bool
+    operational_log_retention_days: int
+    operational_log_max_records: int
+    operational_log_query_timeout_seconds: int
+    operational_log_cloudwatch_group: str | None
+    operational_log_cloudwatch_region: str | None
+
     # Where ChromaDB persists its vector data (self-hosted mode only)
     chroma_persist_directory: str
 
@@ -340,6 +355,8 @@ class Settings:
     rate_limit_verification_window_seconds: int
     rate_limit_password_reset_max_attempts: int
     rate_limit_password_reset_window_seconds: int
+    client_error_max_reports: int
+    client_error_window_seconds: int
 
     # Authentication hardening. See docs/authentication.md.
     password_min_length: int
@@ -438,6 +455,43 @@ def load_settings() -> Settings:
         DEFAULT_DATABASE_POOL_RECYCLE_SECONDS,
         minimum=60,
         maximum=3600,
+    )
+    operational_log_path = os.getenv(
+        "OPERATIONAL_LOG_PATH", "./data/operational-logs.db"
+    ).strip()
+    if not operational_log_path:
+        raise ValueError("OPERATIONAL_LOG_PATH must not be blank.")
+    operational_log_persistence_enabled = _boolean_setting(
+        "OPERATIONAL_LOG_PERSISTENCE_ENABLED",
+        default=mode == MODE_SELF_HOSTED and app_env != APP_ENV_DEVELOPMENT,
+    )
+    if mode == MODE_HOSTED and operational_log_persistence_enabled:
+        raise ValueError(
+            "Hosted deployments read CloudWatch and cannot enable local operational logs."
+        )
+    operational_log_retention_days = _bounded_positive_integer_setting(
+        "OPERATIONAL_LOG_RETENTION_DAYS",
+        DEFAULT_OPERATIONAL_LOG_RETENTION_DAYS,
+        minimum=1,
+        maximum=366,
+    )
+    operational_log_max_records = _bounded_positive_integer_setting(
+        "OPERATIONAL_LOG_MAX_RECORDS",
+        DEFAULT_OPERATIONAL_LOG_MAX_RECORDS,
+        minimum=10_000,
+        maximum=10_000_000,
+    )
+    operational_log_query_timeout_seconds = _bounded_positive_integer_setting(
+        "OPERATIONAL_LOG_QUERY_TIMEOUT_SECONDS",
+        DEFAULT_OPERATIONAL_LOG_QUERY_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=30,
+    )
+    operational_log_cloudwatch_group = (
+        os.getenv("OPERATIONAL_LOG_CLOUDWATCH_GROUP", "").strip() or None
+    )
+    operational_log_cloudwatch_region = (
+        os.getenv("OPERATIONAL_LOG_CLOUDWATCH_REGION", "").strip() or None
     )
 
     if storage_backend not in STORAGE_BACKENDS:
@@ -1040,6 +1094,18 @@ def load_settings() -> Settings:
         "RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS",
         DEFAULT_RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS,
     )
+    client_error_max_reports = _bounded_positive_integer_setting(
+        "CLIENT_ERROR_MAX_REPORTS",
+        DEFAULT_CLIENT_ERROR_MAX_REPORTS,
+        minimum=1,
+        maximum=1000,
+    )
+    client_error_window_seconds = _bounded_positive_integer_setting(
+        "CLIENT_ERROR_WINDOW_SECONDS",
+        DEFAULT_CLIENT_ERROR_WINDOW_SECONDS,
+        minimum=1,
+        maximum=3600,
+    )
 
     password_min_length = _bounded_positive_integer_setting(
         "PASSWORD_MIN_LENGTH",
@@ -1207,6 +1273,13 @@ def load_settings() -> Settings:
         database_pool_size=database_pool_size,
         database_max_overflow=database_max_overflow,
         database_pool_recycle_seconds=database_pool_recycle_seconds,
+        operational_log_path=operational_log_path,
+        operational_log_persistence_enabled=operational_log_persistence_enabled,
+        operational_log_retention_days=operational_log_retention_days,
+        operational_log_max_records=operational_log_max_records,
+        operational_log_query_timeout_seconds=operational_log_query_timeout_seconds,
+        operational_log_cloudwatch_group=operational_log_cloudwatch_group,
+        operational_log_cloudwatch_region=operational_log_cloudwatch_region,
         chroma_persist_directory=chroma_persist_directory,
         upload_directory=upload_directory,
         storage_backend=storage_backend,
@@ -1331,6 +1404,8 @@ def load_settings() -> Settings:
         rate_limit_verification_window_seconds=rate_limit_verification_window_seconds,
         rate_limit_password_reset_max_attempts=rate_limit_password_reset_max_attempts,
         rate_limit_password_reset_window_seconds=rate_limit_password_reset_window_seconds,
+        client_error_max_reports=client_error_max_reports,
+        client_error_window_seconds=client_error_window_seconds,
         password_min_length=password_min_length,
         email_verification_required=email_verification_required,
         email_verification_token_ttl_hours=email_verification_token_ttl_hours,

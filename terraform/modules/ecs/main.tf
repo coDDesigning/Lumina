@@ -126,6 +126,7 @@ locals {
   api_env = concat(local.common_env, [
     { name = "BOOTSTRAP_ADMIN_EMAIL", value = var.bootstrap_admin_email },
     { name = "CORS_ALLOWED_ORIGINS", value = join(",", var.cors_allowed_origins) },
+    { name = "OPERATIONAL_LOG_CLOUDWATCH_GROUP", value = local.log_group },
   ])
 
   worker_env = concat(local.common_env, [

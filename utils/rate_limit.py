@@ -79,6 +79,7 @@ def _retention_seconds() -> int:
         settings.rate_limit_generation_window_seconds,
         settings.rate_limit_verification_window_seconds,
         settings.rate_limit_password_reset_window_seconds,
+        settings.client_error_window_seconds,
         settings.rate_limit_lockout_max_seconds,
     )
     return longest_policy * 2
@@ -381,3 +382,27 @@ def rate_limit_password_reset(
         error_code="password_reset_rate_limited",
         control="password_reset_ip",
     )
+
+
+def check_client_error_rate(
+    db: Session,
+    *,
+    user_id: int,
+    fingerprint: str,
+) -> bool:
+    """Bound reports per actor and return whether this fingerprint is new."""
+    enforce(
+        db,
+        f"client_error:user:{user_id}",
+        window_seconds=settings.client_error_window_seconds,
+        limit=settings.client_error_max_reports,
+        error_code="client_error_rate_limited",
+        control="client_error_user",
+    )
+    decision = check_and_increment(
+        db,
+        rate_limit_key(f"client_error:fingerprint:{user_id}", fingerprint),
+        window_seconds=settings.client_error_window_seconds,
+        limit=1,
+    )
+    return decision.allowed

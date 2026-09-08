@@ -39,6 +39,7 @@ const ROUTES = [
   { name: 'account appearance', path: '/account/appearance' },
   { name: 'account security', path: '/account/security' },
   { name: 'the admin screen', path: '/admin' },
+  { name: 'the admin log center', path: '/admin/logs' },
   { name: 'Exam Mode', path: '/courses/1/exam-mode' },
   { name: 'an exam plan', path: '/courses/1/exam-mode/plans/601' },
   { name: 'an exam topic', path: '/courses/1/exam-mode/plans/601/topics/graph-traversal-algorithms' },
@@ -150,6 +151,14 @@ const MODAL_FLOWS = [
         .getByRole('button', { name: 'Ban' })
         .click()
       await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+  {
+    name: 'the operational event dialog',
+    path: '/admin/logs',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: 'http_request_failed', exact: true }).click()
+      await expect(page.getByRole('dialog', { name: 'Operational event' })).toBeVisible()
     },
   },
   {

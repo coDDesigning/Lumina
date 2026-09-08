@@ -13,6 +13,7 @@ when it is enqueued, so a third request is accepted and waits rather than being
 refused work the student has already paid for.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
@@ -35,7 +36,7 @@ from backend.app.models import (
     GenerationJob,
     User,
 )
-from backend.app.observability import get_request_id
+from backend.app.observability import get_operation_context, get_request_id
 
 # The durable clock and the write serialisation are shared with the document
 # queue rather than reimplemented, so both tables order their transitions
@@ -43,6 +44,8 @@ from backend.app.observability import get_request_id
 from services.processing_jobs import _database_now, _start_transition
 from services.credits import ChargeReceipt, CreditService
 from utils.ai_errors import InsufficientCreditsError
+
+logger = logging.getLogger(__name__)
 
 # How far back a finished job stays visible to the client that is rebuilding its
 # panel. It bounds the list a course read has to return; the rows themselves are
@@ -102,6 +105,7 @@ class ClaimedGenerationJob:
     charge_amount: float | None
     charge_transaction_id: int | None
     correlation_id: str | None
+    parent_operation_id: str | None = None
 
     @property
     def charge_receipt(self) -> ChargeReceipt | None:
@@ -191,6 +195,7 @@ def enqueue_generation_job(
             user_id=user_id,
             job_type=job_type,
             correlation_id=correlation_id,
+            parent_operation_id=get_operation_context().get("operation_id"),
             request_payload=request_payload,
             status=JOB_STATUS_QUEUED,
             attempt_count=0,
@@ -209,6 +214,17 @@ def enqueue_generation_job(
         raise
 
     session.refresh(job)
+    logger.info(
+        "Generation job enqueued",
+        extra={
+            "event": "generation_job_enqueued",
+            "job_id": job.id,
+            "job_type": job.job_type,
+            "job_status": job.status,
+            "course_id": course_id,
+            "user_id": user_id,
+        },
+    )
     return job
 
 
@@ -270,6 +286,7 @@ def retry_generation_job(
         user_id=user_id,
         job_type=original.job_type,
         correlation_id=get_request_id(),
+        parent_operation_id=get_operation_context().get("operation_id"),
         request_payload=original.request_payload,
         status=JOB_STATUS_QUEUED,
         attempt_count=0,
@@ -284,6 +301,17 @@ def retry_generation_job(
     session.add(retried)
     session.commit()
     session.refresh(retried)
+    logger.info(
+        "Generation job retry enqueued",
+        extra={
+            "event": "generation_job_retried",
+            "job_id": retried.id,
+            "job_type": retried.job_type,
+            "job_status": retried.status,
+            "course_id": course_id,
+            "user_id": user_id,
+        },
+    )
     return retried
 
 
@@ -465,6 +493,7 @@ def claim_next_generation_job(
             GenerationJob.charge_amount,
             GenerationJob.charge_transaction_id,
             GenerationJob.correlation_id,
+            GenerationJob.parent_operation_id,
         ).where(GenerationJob.id == job_id)
     ).one_or_none()
     if row is None:
@@ -517,6 +546,7 @@ def claim_next_generation_job(
         charge_amount=row.charge_amount,
         charge_transaction_id=row.charge_transaction_id,
         correlation_id=row.correlation_id,
+        parent_operation_id=row.parent_operation_id,
     )
 
 

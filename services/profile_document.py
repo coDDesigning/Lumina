@@ -157,9 +157,20 @@ class ProfileDocumentService:
 
         try:
             db.add(document)
-            enqueue_profile_document_job(db, document)
+            job = enqueue_profile_document_job(db, document)
             db.commit()
             db.refresh(document)
+            logger.info(
+                "Profile document processing job enqueued",
+                extra={
+                    "event": "processing_job_enqueued",
+                    "job_id": job.id,
+                    "job_type": "profile_document_processing",
+                    "job_status": "queued",
+                    "document_id": str(document.id),
+                    "user_id": user_id,
+                },
+            )
             return ProfileDocumentUploadResult(document=document, duplicate=False)
         except IntegrityError:
             ProfileDocumentService._rollback_and_remove(db, storage, storage_key)

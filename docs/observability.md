@@ -1,10 +1,12 @@
 # Observability
 
-Lumina emits one JSON object per application log line. ECS transports stdout
-and stderr to `/ecs/<project>-<environment>` in CloudWatch Logs; the application
-does not write local log files. Terraform retains the group for 30 days and
-enables ECS Container Insights, RDS PostgreSQL logs, a CloudWatch dashboard,
-an SNS alarm topic, and production alarms.
+Lumina emits one JSON object per application log line. Hosted ECS transports
+stdout and stderr to `/ecs/<project>-<environment>` in CloudWatch Logs; the
+application does not write local log files there. Self-hosted deployments can
+also index the same sanitized events in a bounded SQLite store for investigation
+through the application. Terraform retains the hosted group for 30 days and
+enables ECS Container Insights, RDS PostgreSQL logs, a CloudWatch dashboard, an
+SNS alarm topic, and production alarms.
 
 ## Log contract
 
@@ -34,6 +36,53 @@ the middleware already records one correlated request event.
 AI usage rows remain privacy-safe product telemetry in PostgreSQL/SQLite; they
 are not operational logs. A telemetry write uses a nested transaction so a
 failed best-effort flush cannot poison the caller's transaction.
+
+## Admin investigation center
+
+Administrators can investigate the sanitized records at `/admin/logs`. The
+page and every endpoint behind it require the administrator role. It supports
+bounded UTC ranges, cursor pagination, source capability and health reporting,
+aggregate error groups, operation timelines, shareable URL filters, and CSV or
+JSONL exports. An unavailable source is reported as unavailable; it is never
+silently presented as an empty result. Exports contain at most 10,000 records
+and carry explicit truncation and partial-result metadata.
+
+The read model combines three source names without merging their storage:
+
+- `operational` contains server and worker events;
+- `client_report` contains sanitized browser failures emitted into the
+  operational stream; and
+- `ai_telemetry` projects privacy-safe `ai_usage_logs` rows.
+
+Hosted API tasks can read only the fixed
+`OPERATIONAL_LOG_CLOUDWATCH_GROUP` configured by Terraform. The browser cannot
+select a group and never receives AWS credentials. Self-hosted deployments use
+`OPERATIONAL_LOG_PATH`; Compose mounts `/data/operational-logs.db` on the shared
+application volume. `OPERATIONAL_LOG_RETENTION_DAYS` and
+`OPERATIONAL_LOG_MAX_RECORDS` bound the local index. Cleanup is incremental and
+best effort so logging cannot fail application work.
+
+The admin API is:
+
+- `GET /api/admin/logs` for records and source health;
+- `GET /api/admin/logs/summary` for counts, distribution, and error groups;
+- `GET /api/admin/logs/events/{event_id}` for one sanitized record;
+- `GET /api/admin/logs/trace?event_id=...` for its operation lineage; and
+- `GET /api/admin/logs/export?format=jsonl|csv` for bounded exports.
+
+Queries are limited to 30 days. A page defaults to 50 records and cannot exceed
+200. An unsupported filter on an AI-only query is rejected. In a combined query,
+a source that cannot apply every active filter is explicitly excluded and makes
+the result partial; the filter is never silently ignored.
+
+Authenticated browsers send unhandled failures to `POST /api/client-errors`.
+The payload contains only a fixed route template, build version, error class,
+optional related API request ID, and a derived fingerprint. It does not contain
+the exception message, stack, query string, dynamic route values, component
+props, browser storage, or study content. The client deduplicates bursts and
+the server applies a per-user fingerprint rate limit before logging. Hosted
+releases compile the commit release ID into `VITE_APP_VERSION`; local builds use
+`development`.
 
 ## Worker and service metrics
 
@@ -114,11 +163,17 @@ used only to recycle an unresponsive process.
 
 ## Correlation ID lifecycle and query workflows
 
+`request_id` identifies an HTTP exchange. `operation_id` identifies one logical
+execution, while `parent_operation_id` links durable background work back to the
+operation that created it. The admin timeline follows both persisted job links
+and emitted parent links rather than assuming a caller-supplied request ID is
+globally unique.
+
 Correlation IDs trace execution end-to-end from the initial HTTP request through background job processing and subprocess extraction:
 
-1. **API Ingress:** When an API request arrives, the `observe_request` middleware binds `_REQUEST_ID` (preserving a valid `X-Request-ID` header or generating a UUID4 hex string) and returns `X-Request-ID` in the response headers.
-2. **Job Enqueue:** When an extraction job is enqueued (`services.processing_jobs.enqueue_document_job`), the active `request_id` is durably stored in `processing_jobs.correlation_id`.
-3. **Worker Claim:** When a worker claims the job (`claim_next_job`), `ClaimedJob.correlation_id` is bound to the worker's logging context (`bind_request_id`).
+1. **API Ingress:** When an API request arrives, the `observe_request` middleware binds `_REQUEST_ID` (preserving a valid `X-Request-ID` header or generating a UUID4 hex string), creates a server-owned `api:<uuid>` operation, and returns `X-Request-ID` in the response headers.
+2. **Job Enqueue:** When a job is enqueued, the active request ID and API operation are stored as durable correlation and parent-operation metadata.
+3. **Worker Claim:** When a worker claims the job, it binds a stable job operation such as `generation_job:<type>:<id>` together with the stored parent operation and request correlation.
 4. **Subprocess Isolation:** The `spawn` extraction subprocess re-applies `configure_logging(service="worker", ...)` as its first action and then binds the `correlation_id` passed across the `multiprocessing` boundary, so OCR, image-understanding, and chunking logs are the same one-JSON-object-per-line records — traceback-free, redacted, carrying `request_id` — as the parent. Without that call the child would fall back to `logging.lastResort` and emit raw tracebacks with no correlation.
 5. **Maintenance Logging:** In-process reconciliation (`workers.document_processor._maintenance_cycle`: course purge, embedding backfill, AI-usage retention cleanup) logs through the worker's own `configure_logging`. Standalone maintenance scripts (`workers.course_purge`, `workers.embedding_backfill`, `workers.ai_usage_cleanup`, `workers.self_hosted_backup`) format logs using `configure_logging(service="maintenance", ...)`.
 

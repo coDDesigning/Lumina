@@ -29,7 +29,9 @@ COPY frontend/src ./src
 # the API. The application validates this at module scope and throws on a bad
 # value, which shows as a blank page.
 ARG VITE_API_BASE_URL=/api
-ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+ARG VITE_APP_VERSION=development
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} \
+    VITE_APP_VERSION=${VITE_APP_VERSION}
 
 # vite build rather than `npm run build`: the package script is `tsc -b && vite
 # build`, and tsc -b would follow the project reference above and drag the

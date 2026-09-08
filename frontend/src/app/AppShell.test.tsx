@@ -119,6 +119,10 @@ describe('AppShell', () => {
     authState.role = 'admin';
     renderShell();
     expect(screen.getByRole('link', { name: 'Admin' })).toHaveAttribute('href', '/admin');
+    expect(screen.getByRole('link', { name: 'Admin logs' })).toHaveAttribute(
+      'href',
+      '/admin/logs',
+    );
   });
 
   it('toggles the theme and remembers the choice', async () => {

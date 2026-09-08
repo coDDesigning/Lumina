@@ -10,6 +10,10 @@ output "task_role_arn" {
   value = aws_iam_role.task.arn
 }
 
+output "api_task_role_arn" {
+  value = aws_iam_role.api_task.arn
+}
+
 output "restore_execution_role_arn" {
   value = aws_iam_role.restore_execution.arn
 }

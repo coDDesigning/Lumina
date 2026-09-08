@@ -128,11 +128,32 @@ const RETRY_AFTER_HEADER = 'Retry-After';
 const PERSONAL_KEY_INVALID_ERROR_CODE = 'personal_key_invalid';
 const ACCOUNT_BANNED_ERROR_CODE = 'account_banned';
 const NETWORK_RETRY_METHODS = new Set(['GET', 'HEAD']);
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+let lastApiRequestId: string | null = null;
 
 export type SessionEndReason = 'unauthorized' | 'banned';
 
 export interface SessionEndEventDetail {
   reason: SessionEndReason;
+}
+
+function responseRequestId(response: Response): string | null {
+  const value = response.headers?.get?.('X-Request-ID')?.trim() ?? '';
+  return REQUEST_ID_PATTERN.test(value) ? value : null;
+}
+
+function rememberRequestId(response: Response): void {
+  lastApiRequestId = responseRequestId(response);
+}
+
+export function getLastApiRequestId(): string | null {
+  return lastApiRequestId;
+}
+
+function notifyAdminAccessRemoved(endpoint: string, status: number, token: string | null) {
+  if (token !== null && status === 403 && endpoint.replace(/^\/+/, '').startsWith('admin/')) {
+    window.dispatchEvent(new Event('auth:admin-access-removed'));
+  }
 }
 
 function parseRetryAfterSeconds(value: string | null): number | null {
@@ -154,6 +175,7 @@ export class APIError extends Error {
     public data: unknown,
     headerCode: string | null = null,
     retryAfter: string | null = null,
+    public requestId: string | null = null,
   ) {
     const parsed = parseApiErrorBody(data);
     super(parsed.message);
@@ -186,7 +208,11 @@ export function unwrapData<T>(response: BaseResponse<T>, context: string): T {
   return response.data;
 }
 
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(
+  endpoint: string,
+  options: RequestInit = {},
+  trackRequestId = true,
+): Promise<T> {
   const token = localStorage.getItem('token');
   const headers = new Headers(options.headers);
 
@@ -201,6 +227,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const url = buildApiUrl(endpoint);
   const method = (options.method ?? 'GET').toUpperCase();
   const mayRetryNetworkError = NETWORK_RETRY_METHODS.has(method);
+  if (trackRequestId) lastApiRequestId = null;
 
   const maxRetries = 2;
   let response: Response | undefined;
@@ -211,6 +238,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
         ...options,
         headers,
       });
+      if (trackRequestId) rememberRequestId(response);
 
       if (
         response.status === 503 &&
@@ -250,6 +278,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       errorData,
       response.headers?.get(ERROR_CODE_HEADER) ?? null,
       response.headers?.get(RETRY_AFTER_HEADER) ?? null,
+      responseRequestId(response),
     );
 
     const isSessionEnded =
@@ -269,6 +298,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
           detail: { reason },
         }),
       );
+    } else {
+      notifyAdminAccessRemoved(endpoint, response.status, token);
     }
 
     throw error;
@@ -293,6 +324,17 @@ export const apiClient = {
       body: data === undefined ? undefined : JSON.stringify(data),
     }),
 
+  postDiagnostic: <T>(endpoint: string, data: unknown, options?: RequestInit) =>
+    request<T>(
+      endpoint,
+      {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+      false,
+    ),
+
   put: <T>(endpoint: string, data?: unknown, options?: RequestInit) =>
     request<T>(endpoint, {
       ...options,
@@ -309,6 +351,38 @@ export const apiClient = {
 
   delete: <T>(endpoint: string, options?: RequestInit) =>
     request<T>(endpoint, { ...options, method: 'DELETE' }),
+
+  download: async (endpoint: string, options?: RequestInit): Promise<Response> => {
+    const token = localStorage.getItem('token');
+    const headers = new Headers(options?.headers);
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    lastApiRequestId = null;
+    const response = await fetch(buildApiUrl(endpoint), {
+      ...options,
+      method: 'GET',
+      headers,
+    });
+    rememberRequestId(response);
+    if (!response.ok) {
+      let errorData: unknown = null;
+      try {
+        errorData = await response.json();
+      } catch {
+        errorData = { detail: response.statusText };
+      }
+      notifyAdminAccessRemoved(endpoint, response.status, token);
+      throw new APIError(
+        response.status,
+        errorData,
+        response.headers.get(ERROR_CODE_HEADER),
+        response.headers.get(RETRY_AFTER_HEADER),
+        responseRequestId(response),
+      );
+    }
+    return response;
+  },
 
   postForm: <T>(
     endpoint: string,

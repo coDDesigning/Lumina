@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, aliased
 
 from backend.app.config import settings
 from backend.app.database import begin_serialized_write
-from backend.app.observability import get_request_id
+from backend.app.observability import get_operation_context, get_request_id
 from backend.app.models import (
     DOCUMENT_PROCESSING_STAGES,
     EMBEDDING_DIMENSIONS,
@@ -94,6 +94,7 @@ class ClaimedJob:
     file_type: str
     file_size: int
     correlation_id: str | None = None
+    parent_operation_id: str | None = None
     user_id: int | None = None
 
 
@@ -111,6 +112,7 @@ class ClaimedProfileJob:
     file_type: str
     file_size: int
     correlation_id: str | None = None
+    parent_operation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +258,7 @@ def enqueue_document_job(
         course_id=document.course_id,
         job_type=JOB_TYPE_EXTRACT_DOCUMENT,
         correlation_id=correlation_id,
+        parent_operation_id=get_operation_context().get("operation_id"),
         status=JOB_STATUS_QUEUED,
         attempt_count=0,
         max_attempts=max_attempts,
@@ -432,6 +435,7 @@ def claim_next_job(
             UploadedDocument.file_type,
             UploadedDocument.file_size,
             ProcessingJob.correlation_id,
+            ProcessingJob.parent_operation_id,
             Course.owner_id,
         )
         .join(UploadedDocument, UploadedDocument.id == ProcessingJob.document_id)
@@ -532,6 +536,7 @@ def claim_next_job(
         file_type=row.file_type,
         file_size=row.file_size,
         correlation_id=row.correlation_id,
+        parent_operation_id=row.parent_operation_id,
         user_id=row.owner_id,
     )
 
@@ -1457,6 +1462,7 @@ def enqueue_profile_document_job(
         user_id=document.user_id,
         job_type=JOB_TYPE_EXTRACT_DOCUMENT,
         correlation_id=correlation_id,
+        parent_operation_id=get_operation_context().get("operation_id"),
         status=JOB_STATUS_QUEUED,
         attempt_count=0,
         max_attempts=max_attempts,
@@ -1552,6 +1558,7 @@ def claim_next_profile_job(
             ProfileDocument.file_type,
             ProfileDocument.file_size,
             ProfileProcessingJob.correlation_id,
+            ProfileProcessingJob.parent_operation_id,
         )
         .join(ProfileDocument, ProfileDocument.id == ProfileProcessingJob.document_id)
         .where(
@@ -1645,6 +1652,7 @@ def claim_next_profile_job(
         file_type=row.file_type,
         file_size=row.file_size,
         correlation_id=row.correlation_id,
+        parent_operation_id=row.parent_operation_id,
     )
 
 

@@ -231,7 +231,7 @@ class DocumentService:
                 status="uploaded",
                 material_kind=DocumentMaterialKind(material_kind).value,
             )
-            enqueue_document_job(db, document)
+            job = enqueue_document_job(db, document)
             db.refresh(document)
         except (IntegrityError, OperationalError) as exc:
             DocumentService._rollback_and_remove(db, storage, storage_key)
@@ -258,6 +258,18 @@ class DocumentService:
                 file_hash,
                 exc,
             )
+        logger.info(
+            "Document processing job enqueued",
+            extra={
+                "event": "processing_job_enqueued",
+                "job_id": job.id,
+                "job_type": "course_document_processing",
+                "job_status": "queued",
+                "document_id": str(document.id),
+                "course_id": course_id,
+                "user_id": user_id,
+            },
+        )
         return DocumentUploadResult(document=document, duplicate=False)
 
     @staticmethod

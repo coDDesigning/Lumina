@@ -203,6 +203,7 @@ resource "aws_iam_role" "github_actions" {
           Action = ["iam:PassRole"]
           Resource = [
             var.ecs_task_role_arn,
+            var.api_task_role_arn,
             var.ecs_execution_role_arn,
             var.restore_task_role_arn,
             var.restore_execution_role_arn,

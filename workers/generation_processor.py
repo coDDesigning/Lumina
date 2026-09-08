@@ -36,9 +36,11 @@ from backend.app.models import (
     User,
 )
 from backend.app.observability import (
+    bind_operation_context,
     bind_request_id,
     configure_logging,
     emit_emf_metrics,
+    reset_operation_context,
     reset_request_id,
 )
 from backend.app.readiness import ReadinessError, check_readiness
@@ -387,6 +389,24 @@ def _record_failure(
             },
             exc_info=exc,
         )
+    if resulting_status is not None:
+        logger.warning(
+            "Generation attempt ended",
+            extra={
+                "event": (
+                    "generation_job_retried"
+                    if resulting_status == "queued"
+                    else "generation_job_failed"
+                ),
+                "job_id": job.id,
+                "job_type": job.job_type,
+                "job_status": resulting_status,
+                "attempt_number": job.attempt_count,
+                "course_id": job.course_id,
+                "user_id": job.user_id,
+                "error_code": code.value,
+            },
+        )
     return resulting_status
 
 
@@ -418,8 +438,25 @@ def process_next_generation_job(
         return False
 
     runner = RUNNERS.get(job.job_type)
-    token = bind_request_id(job.correlation_id)
+    request_token = bind_request_id(job.correlation_id)
+    operation_token = bind_operation_context(
+        operation_id=f"generation_job:{job.job_type}:{job.id}",
+        parent_operation_id=job.parent_operation_id,
+        job_id=job.id,
+        job_type=job.job_type,
+        attempt_number=job.attempt_count,
+    )
     try:
+        logger.info(
+            "Generation job claimed",
+            extra={
+                "event": "generation_job_claimed",
+                "course_id": job.course_id,
+                "user_id": job.user_id,
+                "job_status": "running",
+                "worker_id": worker_id,
+            },
+        )
         if runner is None:
             # A job type this build does not know how to run. Failing it is the
             # only honest outcome: retrying would burn attempts against code
@@ -499,13 +536,17 @@ def process_next_generation_job(
                     "job_id": job.id,
                     "job_type": job.job_type,
                     "course_id": job.course_id,
+                    "user_id": job.user_id,
+                    "job_status": "succeeded",
+                    "attempt_number": job.attempt_count,
                     "duration_ms": round((time.monotonic() - started) * 1000, 3),
                 },
             )
         finally:
             _stop_heartbeat(stop, heartbeat)
     finally:
-        reset_request_id(token)
+        reset_operation_context(operation_token)
+        reset_request_id(request_token)
     return True
 
 
@@ -779,7 +820,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--worker-id", default=None)
     args = parser.parse_args(argv)
-    configure_logging(service="generation-worker", environment=settings.app_env)
+    configure_logging(
+        service="generation-worker",
+        environment=settings.app_env,
+        persistence_path=(
+            settings.operational_log_path
+            if settings.operational_log_persistence_enabled
+            else None
+        ),
+        retention_days=settings.operational_log_retention_days,
+        max_records=settings.operational_log_max_records,
+    )
     if args.check:
         try:
             check_worker_ready()

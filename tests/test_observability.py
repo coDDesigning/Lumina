@@ -11,8 +11,10 @@ import pytest
 
 from backend.app.observability import (
     JsonFormatter,
+    bind_operation_context,
     emit_emf_metrics,
     normalize_request_id,
+    reset_operation_context,
 )
 from services.processing_jobs import ClaimedJob
 
@@ -141,6 +143,36 @@ def test_worker_logging_includes_correlation_and_job_id() -> None:
         assert payload["service"] == "worker"
     finally:
         reset_request_id(token)
+
+
+def test_operation_context_is_inherited_and_record_fields_take_precedence() -> None:
+    formatter = JsonFormatter(service="worker", environment="production")
+    token = bind_operation_context(
+        operation_id="generation_job:quiz:42",
+        parent_operation_id="api:parent",
+        job_id=42,
+        attempt_number=2,
+    )
+    try:
+        record = logging.LogRecord(
+            "lumina.worker",
+            logging.INFO,
+            __file__,
+            1,
+            "Job completed successfully",
+            (),
+            None,
+        )
+        record.attempt_number = 3
+        payload = json.loads(formatter.format(record))
+    finally:
+        reset_operation_context(token)
+
+    assert payload["operation_id"] == "generation_job:quiz:42"
+    assert payload["parent_operation_id"] == "api:parent"
+    assert payload["job_id"] == 42
+    assert payload["attempt_number"] == 3
+    assert re.fullmatch(r"[a-f0-9]{32}", payload["event_id"])
 
 
 def test_maintenance_logging_uses_structured_json() -> None:

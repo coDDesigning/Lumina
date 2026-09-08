@@ -119,3 +119,27 @@ test.describe('changing a role', () => {
     await expect(adaRow(page).getByRole('button', { name: 'Demote' })).toBeVisible()
   })
 })
+
+test.describe('investigating operational failures', () => {
+  test('opens a sanitized record and follows its operation timeline', async ({ page }) => {
+    await open(page, '/admin/logs')
+
+    await expect(page.getByRole('heading', { name: 'Logs and errors' })).toBeVisible()
+    await expect(page.getByText('An HTTP request failed unexpectedly.')).toBeVisible()
+    await expect(page.getByText('available', { exact: true })).toBeVisible()
+
+    await page.getByRole('button', { name: 'http_request_failed', exact: true }).click()
+
+    const dialog = page.getByRole('dialog', { name: 'Operational event' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByText('OperationalError').first()).toBeVisible()
+    await expect(dialog.getByRole('heading', { name: 'Operation timeline' })).toBeVisible()
+    await expect(dialog.getByText('http_request_started')).toBeVisible()
+
+    await dialog.getByRole('button', { name: 'Inspect similar errors' }).click()
+    await expect(dialog).not.toBeVisible()
+    await expect.poll(() => new URL(page.url()).searchParams.get('error_signature')).toBe(
+      'v1:request-failed',
+    )
+  })
+})

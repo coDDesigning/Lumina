@@ -24,6 +24,7 @@ import { ProfileKnowledgeSection } from './features/account/ProfileKnowledgeSect
 import AccountSecurityPage from './features/account/AccountSecurityPage'
 import AccountApiKeysPage from './features/account/AccountApiKeysPage'
 import AdminPage from './features/admin/AdminPage'
+import AdminLogsPage from './features/admin/AdminLogsPage'
 import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
 import VerifyEmailPage from './features/auth/VerifyEmailPage'
@@ -505,6 +506,7 @@ function App() {
         </Route>
         <Route element={<ProtectedRoute requiredRole="admin" />}>
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/admin/logs" element={<AdminLogsPage />} />
         </Route>
             </Route>
           </Route>

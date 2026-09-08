@@ -663,6 +663,76 @@ const QUIZ_SESSION = {
   attempt_id: null,
 }
 
+const ADMIN_LOG_RECORD = {
+  id: 'operational:event-42',
+  source: 'operational',
+  timestamp: '2026-09-08T08:45:00.000Z',
+  level: 'ERROR',
+  service: 'api',
+  environment: 'production',
+  logger: 'main',
+  event: 'http_request_failed',
+  description: 'An HTTP request failed unexpectedly.',
+  error_code: 'database_unavailable',
+  error_category: 'database',
+  exception_type: 'OperationalError',
+  exception_chain: ['OperationalError'],
+  source_location: 'main.py:240',
+  error_signature: 'v1:request-failed',
+  http_method: 'POST',
+  http_path: '/api/courses/{course_id}/quiz',
+  http_status: 500,
+  duration_ms: 2400,
+  request_id: 'request-42',
+  related_request_id: null,
+  operation_id: 'api:operation-42',
+  parent_operation_id: null,
+  job_id: null,
+  job_type: null,
+  job_status: null,
+  attempt_number: null,
+  stage: 'persistence',
+  failed_stage: 'persistence',
+  user_id: 7,
+  course_id: 9,
+  document_id: null,
+  generation_type: 'quiz',
+  provider: 'gemini',
+  model: 'gemini-2.5-flash',
+  success: false,
+  prompt_tokens: 100,
+  completion_tokens: 50,
+  total_tokens: 150,
+  estimated_cost_usd: 0.002,
+  pricing_version: '2026-09-01',
+  runbook: null,
+  details: {},
+}
+
+const ADMIN_LOG_HEALTH = [
+  {
+    source: 'operational',
+    status: 'available',
+    available_from: '2026-09-08T08:00:00.000Z',
+    available_to: '2026-09-08T09:00:00.000Z',
+    last_successful_fetch_at: '2026-09-08T09:00:00.000Z',
+    ingestion_delay_seconds: 0,
+    malformed_records: 0,
+    dropped_records: 0,
+    limited: false,
+    detail: null,
+    supported_filters: ['service', 'error_code'],
+    collected_levels: ['INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+  },
+]
+
+const ADMIN_LOG_WINDOW = {
+  start: '2026-09-08T08:00:00.000Z',
+  end: '2026-09-08T09:00:00.000Z',
+  timezone: 'UTC',
+  maximum_days: 30,
+}
+
 type Answer = [RegExp, (match: RegExpMatchArray) => unknown]
 
 interface Sent {
@@ -898,6 +968,74 @@ const ROUTES: Answer[] = [
   [/^\/api\/profile-documents/, () => envelope(state.profileDocuments)],
   [/^\/api\/activity/, () => envelope([])],
   [/^\/api\/progress\/?$/, () => envelope(PROGRESS_SUMMARIES)],
+  [
+    /^\/api\/admin\/logs\/summary/,
+    () =>
+      envelope({
+        counts: { events: 12, warnings: 2, errors: 1, distinct_failed_operations: 1 },
+        error_groups: [
+          {
+            signature: 'v1:request-failed',
+            service: 'api',
+            event: 'http_request_failed',
+            error_code: 'database_unavailable',
+            exception_type: 'OperationalError',
+            source_location: 'main.py:240',
+            first_occurrence: ADMIN_LOG_RECORD.timestamp,
+            last_occurrence: ADMIN_LOG_RECORD.timestamp,
+            event_count: 1,
+            distinct_operations: 1,
+          },
+        ],
+        distribution: [
+          { start: ADMIN_LOG_WINDOW.start, events: 12, warnings: 2, errors: 1 },
+        ],
+        query_window: ADMIN_LOG_WINDOW,
+        last_updated_at: ADMIN_LOG_WINDOW.end,
+        source_health: ADMIN_LOG_HEALTH,
+        partial: false,
+        limited: false,
+      }),
+  ],
+  [
+    /^\/api\/admin\/logs\/events\/operational(?:%3A|:)event-42/i,
+    () => envelope({ record: ADMIN_LOG_RECORD, related_filter: {} }),
+  ],
+  [
+    /^\/api\/admin\/logs\/trace/,
+    () =>
+      envelope({
+        anchor_id: ADMIN_LOG_RECORD.id,
+        operation_id: ADMIN_LOG_RECORD.operation_id,
+        records: [
+          {
+            ...ADMIN_LOG_RECORD,
+            id: 'operational:event-41',
+            event: 'http_request_started',
+            level: 'INFO',
+          },
+          ADMIN_LOG_RECORD,
+        ],
+        correlation_status: 'correlated',
+        message: null,
+        source_health: ADMIN_LOG_HEALTH,
+        partial: false,
+      }),
+  ],
+  [
+    /^\/api\/admin\/logs(?:\?|$)/,
+    () =>
+      envelope({
+        records: [ADMIN_LOG_RECORD],
+        next_cursor: null,
+        query_window: ADMIN_LOG_WINDOW,
+        last_updated_at: ADMIN_LOG_WINDOW.end,
+        source_health: ADMIN_LOG_HEALTH,
+        partial: false,
+        limited: false,
+        omitted_records: 0,
+      }),
+  ],
   [/^\/api\/admin\/users\/([^/]+)\/credit-transactions/, () => envelope(state.creditTransactions)],
   [/^\/api\/admin\/users\/([^/]+)\/courses/, () => envelope([])],
   [/^\/api\/admin\/users/, () => envelope(state.adminUsers)],

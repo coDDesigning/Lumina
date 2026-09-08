@@ -10,11 +10,13 @@ code is the bug.
 
 ## Mechanism
 
-One `rate_limit_buckets` row per key. A key is a fixed-length SHA-256 digest of
-the identifying dimension: `login:ip:<digest>`, `login:account:<digest>`,
-`register:ip:<digest>`, `verification:ip:<digest>`,
-`password_reset:ip:<digest>`, `generation:user:<digest>`. Raw identifiers
-(IP addresses, emails) are never stored in the table. Each request atomically
+One `rate_limit_buckets` row per key. Network and account dimensions use a
+fixed-length SHA-256 digest: `login:ip:<digest>`, `login:account:<digest>`,
+`register:ip:<digest>`, `verification:ip:<digest>`, and
+`password_reset:ip:<digest>`. Authenticated controls use the database user ID,
+as in `generation:user:<id>` and `client_error:user:<id>`, while browser-error
+fingerprints are hashed. Raw IP addresses and emails are never stored in the
+table. Each request atomically
 bumps its key's counter (`SELECT ... FOR UPDATE` on PostgreSQL; `BEGIN IMMEDIATE`
 on SQLite, so behavior is identical on both engines) and compares it to the
 configured limit for the current fixed window. A window rollover resets the row
@@ -120,6 +122,14 @@ Asynchronous document processing (uploads, retries, profile documents) and
 worker-side embedding/extraction jobs have separate abuse policies and do not
 share this interactive request bucket.
 
+## Browser error policy
+
+`POST /api/client-errors` has two controls. One user-wide bucket caps total
+reports, including duplicates, and one user-plus-fingerprint bucket accepts a
+given sanitized failure once per window. Duplicate submissions therefore emit
+no second operational event, while rotating fingerprints cannot bypass the
+user-wide cap.
+
 ## Observability
 
 Every local rejection emits a privacy-safe structured event and a CloudWatch EMF
@@ -139,7 +149,7 @@ cleanup worker.
 
 ## Configuration
 
-All twelve settings live in `backend/app/config.py` and are documented with
+All fourteen settings live in `backend/app/config.py` and are documented with
 their defaults in `.env.example`:
 
 - `RATE_LIMIT_LOGIN_MAX_ATTEMPTS`
@@ -154,6 +164,8 @@ their defaults in `.env.example`:
 - `RATE_LIMIT_LOCKOUT_MAX_SECONDS`
 - `RATE_LIMIT_PASSWORD_RESET_MAX_ATTEMPTS`
 - `RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS`
+- `CLIENT_ERROR_MAX_REPORTS`
+- `CLIENT_ERROR_WINDOW_SECONDS`
 
 There is no deployment-mode gating: both hosted and self-hosted instances are
 throttled identically, since a self-hosted operator's own account is exactly as

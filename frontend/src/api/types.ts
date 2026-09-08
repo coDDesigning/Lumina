@@ -82,6 +82,149 @@ export interface AiCostReport {
   daily: AiCostDailyRow[];
 }
 
+export type AdminLogLevel = 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+export type AdminLogSource = 'operational' | 'ai_telemetry' | 'client_report';
+
+export interface AdminLogSourceHealth {
+  source: AdminLogSource;
+  status: 'available' | 'delayed' | 'unconfigured' | 'unavailable';
+  available_from: string | null;
+  available_to: string | null;
+  last_successful_fetch_at: string | null;
+  ingestion_delay_seconds: number | null;
+  malformed_records: number;
+  dropped_records: number | null;
+  limited: boolean;
+  detail: string | null;
+  supported_filters: string[];
+  collected_levels: AdminLogLevel[];
+}
+
+export interface AdminLogRecord {
+  id: string;
+  source: AdminLogSource;
+  timestamp: string;
+  level: AdminLogLevel;
+  service: string;
+  environment: string;
+  logger: string;
+  event: string;
+  description: string;
+  error_code: string | null;
+  error_category: string | null;
+  exception_type: string | null;
+  exception_chain: string[];
+  source_location: string | null;
+  error_signature: string | null;
+  http_method: string | null;
+  http_path: string | null;
+  http_status: number | null;
+  duration_ms: number | null;
+  request_id: string | null;
+  related_request_id: string | null;
+  operation_id: string | null;
+  parent_operation_id: string | null;
+  job_id: number | null;
+  job_type: string | null;
+  job_status: string | null;
+  attempt_number: number | null;
+  stage: string | null;
+  failed_stage: string | null;
+  user_id: number | null;
+  course_id: number | null;
+  document_id: string | null;
+  generation_type: string | null;
+  provider: string | null;
+  model: string | null;
+  success: boolean | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  estimated_cost_usd: number | null;
+  pricing_version: string | null;
+  runbook: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface AdminLogWindow {
+  start: string;
+  end: string;
+  timezone: 'UTC';
+  maximum_days: number;
+}
+
+export interface AdminLogList {
+  records: AdminLogRecord[];
+  next_cursor: string | null;
+  query_window: AdminLogWindow;
+  last_updated_at: string;
+  source_health: AdminLogSourceHealth[];
+  partial: boolean;
+  limited: boolean;
+  omitted_records: number;
+}
+
+export interface AdminLogErrorGroup {
+  signature: string;
+  service: string;
+  event: string;
+  error_code: string | null;
+  exception_type: string | null;
+  source_location: string | null;
+  first_occurrence: string;
+  last_occurrence: string;
+  event_count: number;
+  distinct_operations: number | null;
+}
+
+export interface AdminLogSummary {
+  counts: {
+    events: number | null;
+    warnings: number | null;
+    errors: number | null;
+    distinct_failed_operations: number | null;
+  };
+  error_groups: AdminLogErrorGroup[];
+  distribution: Array<{
+    start: string;
+    events: number;
+    warnings: number;
+    errors: number;
+  }>;
+  query_window: AdminLogWindow;
+  last_updated_at: string;
+  source_health: AdminLogSourceHealth[];
+  partial: boolean;
+  limited: boolean;
+}
+
+export interface AdminLogEventDetail {
+  record: AdminLogRecord;
+  related_filter: Record<string, string>;
+}
+
+export interface AdminLogTrace {
+  anchor_id: string | null;
+  operation_id: string | null;
+  records: AdminLogRecord[];
+  correlation_status: 'correlated' | 'none';
+  message: string | null;
+  source_health: AdminLogSourceHealth[];
+  partial: boolean;
+}
+
+export interface ClientErrorReport {
+  route_template: string;
+  application_version: string;
+  error_class: string;
+  api_request_id: string | null;
+  fingerprint: string;
+}
+
+export interface ClientErrorAccepted {
+  accepted: boolean;
+}
+
 /** The credit-charging features, keyed as the backend names them. */
 export type CreditSource =
   | 'study_guide'

@@ -1,3 +1,4 @@
+import inspect
 import json
 import threading
 import time
@@ -26,6 +27,7 @@ from services.text_generation import (
     TextGenerationTimeoutError,
     get_text_generation_provider,
     is_transient_generation_error,
+    with_template_temperature,
 )
 
 OLLAMA_SETTINGS = SimpleNamespace(
@@ -1264,6 +1266,73 @@ def test_claude_text_generation_provider_json() -> None:
     assert result == {"summary": "Study guide output", "points": [1, 2]}
     assert metadata.provider == "claude"
     assert "output_config" in captured
+
+
+def _claude_provider_with_recorder() -> tuple[ClaudeTextGenerationProvider, list[dict]]:
+    """A Claude provider whose every ``messages.create`` call is recorded."""
+    calls: list[dict] = []
+
+    class RecordingMessages:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text='{"ok": true}')],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+    provider = ClaudeTextGenerationProvider(
+        api_key="test-key",
+        model="claude-sonnet-5",
+        client=SimpleNamespace(messages=RecordingMessages()),
+    )
+    return provider, calls
+
+
+def test_claude_provider_call_kwargs_bind_to_the_installed_sdk_signature() -> None:
+    """Every keyword the provider sends must exist on the real ``messages.create``.
+
+    The other Claude tests drive a stub client that accepts any keyword, so a
+    parameter the installed SDK does not take reaches production untouched: the
+    request fails with ``TypeError`` before it is ever sent, and the provider
+    reports it as a generic ``TextGenerationProviderError``. Binding the captured
+    kwargs against the real signature is what turns that into a test failure.
+    """
+    anthropic = pytest.importorskip("anthropic")
+    signature = inspect.signature(anthropic.resources.messages.Messages.create)
+
+    provider, calls = _claude_provider_with_recorder()
+    # Every feature binds its template's declared temperature before it generates,
+    # so qualify the provider the way production does or the call recorded here is
+    # not the call production makes.
+    provider = with_template_temperature(provider, 0.2)
+    provider.generate_text_with_metadata("Hello Claude")
+    provider.generate_json_with_metadata("Generate JSON guide")
+    assert len(calls) == 2
+
+    for kwargs in calls:
+        # ``bind`` raises TypeError for a keyword the SDK does not accept.
+        signature.bind(provider, **kwargs)
+
+
+def test_claude_provider_ignores_a_template_temperature() -> None:
+    """A template's declared temperature must never reach the Anthropic client.
+
+    The Messages API dropped the sampling knobs for the current model family, so
+    ``with_template_temperature`` has to leave this provider alone rather than
+    bind a value that ``messages.create`` would reject.
+    """
+    provider, calls = _claude_provider_with_recorder()
+
+    bound = with_template_temperature(provider, 0.2)
+    assert bound is provider
+
+    bound.generate_text_with_metadata("Hello Claude")
+    bound.generate_json_with_metadata("Generate JSON guide")
+
+    for kwargs in calls:
+        assert "temperature" not in kwargs
+        assert "top_p" not in kwargs
+        assert "top_k" not in kwargs
 
 
 def test_claude_text_generation_provider_errors() -> None:

@@ -1702,6 +1702,7 @@ def test_postgresql_raw_page_replacement_is_claim_fenced(
 
 
 def test_complete_job_honors_operation_timeout_seconds_over_a_tighter_default(
+    postgresql_engine: Engine,
     postgresql_sessions: sessionmaker[Session],
 ) -> None:
     """``complete_job`` must widen the connection's timeout budget itself.
@@ -1753,28 +1754,43 @@ def test_complete_job_honors_operation_timeout_seconds_over_a_tighter_default(
             session, claim.id, claim.claim_token, "generating_embeddings"
         )
 
-    with postgresql_sessions() as session:
+    # The stand-in cap has to be a session-level ``SET``: ``complete_job`` rolls
+    # the caller's transaction back before it opens its own, so a ``SET LOCAL``
+    # would be gone before the code under test ever ran. A session-level setting
+    # lives on the connection rather than the transaction, which means this
+    # exchange has to hold one connection from beginning to end -- a Session
+    # returns its connection to the pool on every commit, ``complete_job``
+    # commits, and the pool hands out connections first-in-first-out, so a reset
+    # issued afterwards could land on a different backend and leave a 1ms
+    # ``statement_timeout`` on this one for whatever test checked it out next.
+    with postgresql_engine.connect() as connection:
         # A statement_timeout this tight would abort complete_job's bulk
         # inserts outright unless operation_timeout_seconds overrides it.
-        session.execute(text("SET statement_timeout = '1ms'"))
-        session.commit()
+        connection.exec_driver_sql("SET statement_timeout = '1ms'")
+        # Commit it, or complete_job's opening rollback would discard it.
+        connection.commit()
         try:
-            assert complete_job(
-                session,
-                claim.id,
-                claim.claim_token,
-                [
-                    ChunkData(
-                        text="Timeout override chunk", page_number=1, end_page_number=1
-                    )
-                ],
-                embeddings=[[0.1] * EMBEDDING_DIMENSIONS],
-                vector_store=PgVectorStore(),
-                operation_timeout_seconds=30,
-            )
+            with Session(bind=connection) as session:
+                assert complete_job(
+                    session,
+                    claim.id,
+                    claim.claim_token,
+                    [
+                        ChunkData(
+                            text="Timeout override chunk",
+                            page_number=1,
+                            end_page_number=1,
+                        )
+                    ],
+                    embeddings=[[0.1] * EMBEDDING_DIMENSIONS],
+                    vector_store=PgVectorStore(),
+                    operation_timeout_seconds=30,
+                )
         finally:
-            session.execute(text("RESET statement_timeout"))
-            session.commit()
+            # Drop the connection instead of resetting it: a failed assertion
+            # leaves the transaction aborted, which would make the reset fail
+            # too, and a 1ms statement_timeout must never reach the pool.
+            connection.invalidate()
 
     with postgresql_sessions() as session:
         assert (

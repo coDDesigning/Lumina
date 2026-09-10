@@ -45,6 +45,7 @@
 }
 
 .scrollArea {
+  position: relative;
   overflow-y: auto;
   padding: 0 var(--space-2) var(--space-3);
   min-height: 0;
@@ -54,6 +55,7 @@
    its body scrolls inside the panel instead of overflowing a column the page
    itself never scrolls. */
 .outputsScroll {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -86,6 +88,7 @@
 }
 
 .thread {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-5);

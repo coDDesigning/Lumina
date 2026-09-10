@@ -50,6 +50,9 @@ class DocumentProcessingError(RuntimeError):
         super().__init__(message)
 
 
+_USE_CONFIGURED_INLINE_BUDGET = "configured"
+
+
 def extract_document(
     storage: Storage,
     *,
@@ -63,6 +66,7 @@ def extract_document(
     image_provider: ImageUnderstandingProvider | None = None,
     prompt_context: PromptContext | None = None,
     image_usage_callback: ImageUsageCallback | None = None,
+    inline_visual_budget: int | None = _USE_CONFIGURED_INLINE_BUDGET,
 ) -> ProcessedDocumentData:
     if storage.provider != storage_provider:
         raise DocumentProcessingError(
@@ -177,6 +181,11 @@ def extract_document(
             options=PipelineOptions(
                 max_extracted_characters=settings.max_extracted_characters,
                 max_document_chunks=settings.max_document_chunks,
+                max_inline_visual_descriptions=(
+                    settings.image_understanding_inline_max_visuals
+                    if inline_visual_budget is _USE_CONFIGURED_INLINE_BUDGET
+                    else inline_visual_budget
+                ),
             ),
             stage_callback=stage_callback,
             extraction_callback=report_extraction,

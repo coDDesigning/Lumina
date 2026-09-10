@@ -16,6 +16,7 @@ class ProfileDocumentResponse(BaseModel):
     file_size: int
     user_id: int
     status: str
+    visual_analysis_status: str = "not_applicable"
     processing_error: str | None = None
     created_at: datetime
     updated_at: datetime

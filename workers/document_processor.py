@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import settings
 from backend.app.database import SessionLocal
-from backend.app.models import Course
+from backend.app.models import Course, JOB_TYPE_DESCRIBE_VISUALS
 from backend.app.observability import (
     bind_operation_context,
     bind_request_id,
@@ -41,17 +41,33 @@ from services.document_extraction import (
 )
 from services.exam_question_extraction import extract_past_exam_questions
 from services.ai_usage_logger import AiUsageLogger
-from services.image_understanding import ImageUnderstandingUsage
+from services.document_pipeline import (
+    _MAX_VISUAL_DESCRIPTION_CHARACTERS,
+    VisualDescription,
+    VisualType,
+)
+from services.image_understanding import (
+    ImageUnderstandingUsage,
+    get_image_understanding_provider,
+)
 from services.processing_jobs import (
     ClaimedJob,
     ClaimedProfileJob,
     ChunkData,
     PageData,
+    claim_next_describe_job,
     claim_next_job,
+    claim_next_profile_describe_job,
     claim_next_profile_job,
+    complete_describe_job,
+    complete_profile_describe_job,
+    enqueue_describe_visuals_job_if_deferred,
+    enqueue_profile_describe_visuals_job_if_deferred,
     complete_job,
     complete_profile_job,
+    fail_describe_job,
     fail_job,
+    fail_profile_describe_job,
     fail_profile_job,
     heartbeat_job,
     heartbeat_profile_job,
@@ -59,6 +75,12 @@ from services.processing_jobs import (
     recover_expired_jobs,
     replace_document_pages,
     replace_profile_document_pages,
+    record_profile_visual_description,
+    record_visual_description,
+    stored_profile_visual_descriptions,
+    stored_visual_descriptions,
+    sweep_documents_needing_visual_description,
+    sweep_profile_documents_needing_visual_description,
     update_job_stage,
     update_profile_job_stage,
 )
@@ -177,7 +199,22 @@ def _record_failure(
     retry_delay = min(60.0, 2.0**exponent)
     with session_factory() as session:
         if isinstance(job, ClaimedProfileJob):
-            resulting_status = fail_profile_job(
+            profile_failer = (
+                fail_profile_describe_job
+                if job.job_type == JOB_TYPE_DESCRIBE_VISUALS
+                else fail_profile_job
+            )
+            resulting_status = profile_failer(
+                session,
+                job.id,
+                job.claim_token,
+                error_code=error.code,
+                error_message=str(error),
+                retryable=error.retryable,
+                retry_delay_seconds=retry_delay,
+            )
+        elif job.job_type == JOB_TYPE_DESCRIBE_VISUALS:
+            resulting_status = fail_describe_job(
                 session,
                 job.id,
                 job.claim_token,
@@ -286,6 +323,127 @@ def _record_image_usage(
         )
 
 
+class _ResumingImageUnderstandingProvider:
+    """Charges the model only for visuals no earlier attempt already described."""
+
+    def __init__(self, delegate, resume_cache, connection) -> None:
+        self._delegate = delegate
+        self._resume_cache = resume_cache
+        self._connection = connection
+
+    @property
+    def enabled(self) -> bool:
+        return self._delegate.enabled
+
+    def describe_visual(
+        self,
+        visual_png: bytes,
+        *,
+        page_number: int,
+        visual_index: int,
+        suggested_type: VisualType,
+    ) -> VisualDescription | None:
+        cached = self._resume_cache.get((page_number, visual_index))
+        if cached is not None:
+            visual_type, description = cached
+            return VisualDescription(
+                visual_type=VisualType(visual_type),
+                description=description,
+            )
+
+        result = self._delegate.describe_visual(
+            visual_png,
+            page_number=page_number,
+            visual_index=visual_index,
+            suggested_type=suggested_type,
+        )
+        if result is None:
+            return None
+        self._connection.send(
+            (
+                "visual",
+                page_number,
+                visual_index,
+                str(result.visual_type),
+                result.description,
+            )
+        )
+        return result
+
+
+def _describe_visuals_process(
+    connection,
+    storage: Storage,
+    job: ClaimedJob | ClaimedProfileJob,
+    prompt_context: PromptContext | None = None,
+    resume_cache: dict[tuple[int, int], tuple[str, str]] | None = None,
+) -> None:
+    configure_logging(
+        service="worker",
+        environment=settings.app_env,
+        persistence_path=(
+            settings.operational_log_path
+            if settings.operational_log_persistence_enabled
+            else None
+        ),
+        retention_days=settings.operational_log_retention_days,
+        max_records=settings.operational_log_max_records,
+    )
+    if job.correlation_id is not None:
+        bind_request_id(job.correlation_id)
+    bind_operation_context(
+        operation_id=(
+            f"processing_job:describe:{'profile' if isinstance(job, ClaimedProfileJob) else 'course'}:{job.id}"
+        ),
+        parent_operation_id=job.parent_operation_id,
+        job_id=job.id,
+        job_type="course_document_visual_description",
+        attempt_number=job.attempt_count,
+    )
+    for shutdown_signal in WORKER_SHUTDOWN_SIGNALS:
+        signal.signal(shutdown_signal, signal.SIG_IGN)
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, WORKER_SHUTDOWN_SIGNALS)
+    try:
+
+        def report_stage(stage) -> None:
+            connection.send(("stage", stage.value))
+
+        def report_image_usage(usage: ImageUnderstandingUsage) -> None:
+            connection.send(("image_usage", usage))
+
+        provider = _ResumingImageUnderstandingProvider(
+            get_image_understanding_provider(
+                prompt_context=prompt_context,
+                usage_callback=report_image_usage,
+            ),
+            resume_cache or {},
+            connection,
+        )
+        result = extract_document(
+            storage,
+            storage_provider=job.storage_provider,
+            storage_key=job.storage_key,
+            expected_hash=job.file_hash,
+            expected_size=job.file_size,
+            file_type=job.file_type,
+            stage_callback=report_stage,
+            prompt_context=prompt_context,
+            image_provider=provider,
+            inline_visual_budget=None,
+        )
+        connection.send(("succeeded", result.pages, result.chunks))
+    except DocumentProcessingError as exc:
+        logger.info(
+            "Visual description failed for job %s with code %s", job.id, exc.code
+        )
+        connection.send(("failed", exc.code, str(exc), exc.retryable))
+    except Exception:
+        connection.send(("unexpected",))
+    finally:
+        connection.close()
+
+
 def _extraction_process(
     connection,
     storage: Storage,
@@ -348,6 +506,7 @@ def _extraction_process(
             extraction_callback=report_extraction,
             prompt_context=prompt_context,
             image_usage_callback=report_image_usage,
+            inline_visual_budget=settings.image_understanding_inline_max_visuals,
         )
         connection.send(("succeeded", result.pages, result.chunks))
     except DocumentProcessingError as exc:
@@ -370,12 +529,20 @@ def _extract_with_timeout(
     image_usage_callback: Callable[[ImageUnderstandingUsage], None] | None = None,
     *,
     prompt_context: PromptContext | None = None,
+    visual_callback: Callable[[int, int, str, str], None] | None = None,
+    resume_cache: dict[tuple[int, int], tuple[str, str]] | None = None,
 ):
     context = multiprocessing.get_context("spawn")
     parent_connection, child_connection = context.Pipe(duplex=True)
+    if resume_cache is None:
+        target = _extraction_process
+        process_args = (child_connection, storage, job, prompt_context)
+    else:
+        target = _describe_visuals_process
+        process_args = (child_connection, storage, job, prompt_context, resume_cache)
     process = context.Process(
-        target=_extraction_process,
-        args=(child_connection, storage, job, prompt_context),
+        target=target,
+        args=process_args,
         daemon=False,
     )
     started = False
@@ -432,6 +599,21 @@ def _extract_with_timeout(
                             result = None
                             break
                         parent_connection.send(("continue",))
+                        result = None
+                        continue
+                    if result[0] == "visual":
+                        if (
+                            len(result) != 5
+                            or not isinstance(result[1], int)
+                            or not isinstance(result[2], int)
+                            or not isinstance(result[3], str)
+                            or not isinstance(result[4], str)
+                            or not result[4].strip()
+                            or len(result[4]) > _MAX_VISUAL_DESCRIPTION_CHARACTERS
+                        ):
+                            break
+                        if visual_callback is not None:
+                            visual_callback(result[1], result[2], result[3], result[4])
                         result = None
                         continue
                     if result[0] == "image_usage":
@@ -570,6 +752,7 @@ def process_next_job(
     shutdown_requested: Callable[[], bool] | None = None,
     embedding_provider: EmbeddingProvider | None = None,
     vector_store: VectorStore | None = None,
+    claim_describe: bool = True,
 ) -> bool:
     if shutdown_requested is not None and shutdown_requested():
         return False
@@ -597,6 +780,20 @@ def process_next_job(
                 storage.provider,
                 lease_seconds,
                 max_active_per_user=settings.processing_job_max_active_per_user,
+            )
+        if job is None and claim_describe:
+            job = claim_next_describe_job(
+                session,
+                worker_id,
+                storage.provider,
+                lease_seconds,
+            )
+        if job is None and claim_describe:
+            job = claim_next_profile_describe_job(
+                session,
+                worker_id,
+                storage.provider,
+                lease_seconds,
             )
         if job is not None:
             if isinstance(job, ClaimedJob):
@@ -638,6 +835,7 @@ def process_next_job(
             },
         )
 
+        describing_visuals = job.job_type == JOB_TYPE_DESCRIBE_VISUALS
         stop = threading.Event()
         claim_lost = threading.Event()
         current_stage = "reading_file"
@@ -683,6 +881,35 @@ def process_next_job(
                     },
                 )
 
+            def persist_visual(
+                page_number: int,
+                visual_index: int,
+                visual_type: str,
+                description: str,
+            ) -> None:
+                with session_factory() as session:
+                    recorder = (
+                        record_profile_visual_description
+                        if isinstance(job, ClaimedProfileJob)
+                        else record_visual_description
+                    )
+                    recorded = recorder(
+                        session,
+                        job.id,
+                        job.claim_token,
+                        page_number=page_number,
+                        visual_index=visual_index,
+                        visual_type=visual_type,
+                        description=description,
+                    )
+                if not recorded:
+                    claim_lost.set()
+                    raise DocumentProcessingError(
+                        "STATUS_UPDATE_CONFLICT",
+                        "The document processing claim changed unexpectedly.",
+                        retryable=True,
+                    )
+
             def persist_extraction(
                 pages: list[PageData],
                 remaining_seconds: float,
@@ -722,17 +949,40 @@ def process_next_job(
                         failed_stage="extracting_text",
                     )
 
-            pages, chunks = _extract_with_timeout(
-                storage,
-                job,
-                settings.processing_job_attempt_timeout_seconds,
-                stage_callback=persist_stage,
-                extraction_callback=persist_extraction,
-                image_usage_callback=lambda usage: _record_image_usage(
-                    session_factory, job, usage
-                ),
-                prompt_context=prompt_context,
-            )
+            if describing_visuals:
+                with session_factory() as session:
+                    if isinstance(job, ClaimedProfileJob):
+                        resume_cache = stored_profile_visual_descriptions(
+                            session, job.document_id
+                        )
+                    else:
+                        resume_cache = stored_visual_descriptions(
+                            session, job.document_id
+                        )
+                pages, chunks = _extract_with_timeout(
+                    storage,
+                    job,
+                    settings.describe_visuals_attempt_timeout_seconds,
+                    stage_callback=persist_stage,
+                    image_usage_callback=lambda usage: _record_image_usage(
+                        session_factory, job, usage
+                    ),
+                    prompt_context=prompt_context,
+                    visual_callback=persist_visual,
+                    resume_cache=resume_cache,
+                )
+            else:
+                pages, chunks = _extract_with_timeout(
+                    storage,
+                    job,
+                    settings.processing_job_attempt_timeout_seconds,
+                    stage_callback=persist_stage,
+                    extraction_callback=persist_extraction,
+                    image_usage_callback=lambda usage: _record_image_usage(
+                        session_factory, job, usage
+                    ),
+                    prompt_context=prompt_context,
+                )
             persist_stage(EMBEDDING_STAGE)
             embeddings = embed_document_chunks(
                 [chunk.text for chunk in chunks],
@@ -803,7 +1053,29 @@ def process_next_job(
             return True
         try:
             with session_factory() as session:
-                if isinstance(job, ClaimedProfileJob):
+                if describing_visuals and isinstance(job, ClaimedProfileJob):
+                    completed = complete_profile_describe_job(
+                        session,
+                        job.id,
+                        job.claim_token,
+                        chunks,
+                        pages,
+                        embeddings=embeddings,
+                        vector_store=vector_store,
+                        operation_timeout_seconds=lease_seconds,
+                    )
+                elif describing_visuals:
+                    completed = complete_describe_job(
+                        session,
+                        job.id,
+                        job.claim_token,
+                        chunks,
+                        pages,
+                        embeddings=embeddings,
+                        vector_store=vector_store,
+                        operation_timeout_seconds=lease_seconds,
+                    )
+                elif isinstance(job, ClaimedProfileJob):
                     completed = complete_profile_job(
                         session,
                         job.id,
@@ -863,6 +1135,30 @@ def process_next_job(
             else:
                 logger.exception("Failed to finalize processing job %s", job.id)
             return True
+        except ValueError:
+            # A rejected payload is deterministic: recovery would replay the same
+            # bytes into the same refusal forever, so the job is failed here
+            # instead of being left running for the lease to expire.
+            logger.exception("Refused to finalize processing job %s", job.id)
+            failure = DocumentProcessingError(
+                "COMPLETION_PAYLOAD_INVALID",
+                "The extracted document could not be recorded.",
+                retryable=False,
+                failed_stage=EMBEDDING_STAGE,
+            )
+            try:
+                _record_failure(
+                    session_factory, job, failure, active_stage=EMBEDDING_STAGE
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to record completion refusal for job %s", job.id
+                )
+            emit_emf_metrics(
+                {"JobsFailed": 1},
+                dimensions={"Service": "worker", "Environment": settings.app_env},
+            )
+            return True
         except Exception:
             # Leave the fenced running state intact; periodic recovery safely retries it.
             logger.exception("Failed to finalize processing job %s", job.id)
@@ -874,8 +1170,24 @@ def process_next_job(
             # is ready and its chunks exist. It is best-effort by design: a
             # paper whose questions could not be read is still indexed material,
             # and the failure belongs on the document rather than on the job.
-            if isinstance(job, ClaimedJob):
-                extract_past_exam_questions(session_factory, job.document_id)
+            if not describing_visuals:
+                if isinstance(job, ClaimedJob):
+                    extract_past_exam_questions(session_factory, job.document_id)
+                try:
+                    with session_factory() as session:
+                        if isinstance(job, ClaimedProfileJob):
+                            enqueue_profile_describe_visuals_job_if_deferred(
+                                session, job.document_id
+                            )
+                        else:
+                            enqueue_describe_visuals_job_if_deferred(
+                                session, job.document_id
+                            )
+                except Exception:
+                    logger.exception(
+                        "Failed to queue visual description for document %s",
+                        job.document_id,
+                    )
             emit_emf_metrics(
                 {
                     "JobsSucceeded": 1,
@@ -930,6 +1242,12 @@ class _MaintenanceSchedule:
         self.next_backfill = 0.0 if self.backfill_interval > 0 else float("inf")
         self.next_ai_usage_cleanup = (
             0.0 if self.ai_usage_cleanup_interval > 0 else float("inf")
+        )
+        self.visual_description_sweep_interval = (
+            settings.visual_description_sweep_interval_seconds
+        )
+        self.next_visual_description_sweep = (
+            0.0 if self.visual_description_sweep_interval > 0 else float("inf")
         )
 
 
@@ -1071,6 +1389,31 @@ def _maintenance_cycle(
             monotonic_now + schedule.ai_usage_cleanup_interval
         )
 
+    if stop.is_set():
+        return
+
+    if (
+        schedule.visual_description_sweep_interval > 0
+        and monotonic_now >= schedule.next_visual_description_sweep
+    ):
+        try:
+            with session_factory() as session:
+                queued = sweep_documents_needing_visual_description(session)
+                queued += sweep_profile_documents_needing_visual_description(session)
+            if queued:
+                logger.info(
+                    "Queued documents for visual description",
+                    extra={
+                        "event": "visual_description_sweep",
+                        "queued": queued,
+                    },
+                )
+        except Exception:
+            logger.exception("Periodic visual description sweep failed")
+        schedule.next_visual_description_sweep = (
+            monotonic_now + schedule.visual_description_sweep_interval
+        )
+
 
 def _claim_once(
     *,
@@ -1078,6 +1421,7 @@ def _claim_once(
     storage: Storage,
     worker_id: str,
     stop: StopEvent,
+    claim_describe: bool = False,
 ) -> bool:
     try:
         return process_next_job(
@@ -1085,6 +1429,7 @@ def _claim_once(
             storage=storage,
             worker_id=worker_id,
             shutdown_requested=stop.is_set,
+            claim_describe=claim_describe,
         )
     except WorkerProcessFatalError:
         logger.critical("Document worker requires process recycle")
@@ -1153,7 +1498,7 @@ def _run_worker_slots(
             )
             composite.wait(settings.processing_job_poll_seconds)
 
-    def claim(slot_worker_id: str) -> None:
+    def claim(slot_worker_id: str, claim_describe: bool) -> None:
         while not composite.is_set():
             try:
                 processed = _claim_once(
@@ -1161,6 +1506,7 @@ def _run_worker_slots(
                     storage=storage,
                     worker_id=slot_worker_id,
                     stop=composite,
+                    claim_describe=claim_describe,
                 )
             except BaseException as exc:
                 with fatal_lock:
@@ -1178,7 +1524,7 @@ def _run_worker_slots(
     threads.extend(
         threading.Thread(
             target=claim,
-            args=(f"{worker_id}:slot-{index}",),
+            args=(f"{worker_id}:slot-{index}", index > 0),
             daemon=True,
         )
         for index in range(concurrency)
@@ -1193,7 +1539,11 @@ def _run_worker_slots(
     finally:
         composite.set()
         deadline = time.monotonic() + (
-            settings.processing_job_attempt_timeout_seconds + HEARTBEAT_SHUTDOWN_SECONDS
+            max(
+                settings.processing_job_attempt_timeout_seconds,
+                settings.describe_visuals_attempt_timeout_seconds,
+            )
+            + HEARTBEAT_SHUTDOWN_SECONDS
         )
         for thread in threads:
             thread.join(timeout=max(0.0, deadline - time.monotonic()))

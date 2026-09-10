@@ -42,6 +42,9 @@ _CONVERSATION_TYPES_SQL = ", ".join(f"'{kind}'" for kind in CONVERSATION_TYPES)
 # Image uploads are transcoded to a one-page PDF by the processing pipeline;
 # kept in sync with `_VISUAL_CAPABLE_FILE_TYPES` in services/document_pipeline.py.
 VISUAL_CAPABLE_FILE_TYPES = ("pdf", "png", "jpg", "jpeg")
+# An image upload is transcoded into a one-page PDF before extraction, so it
+# carries page numbers and chunk page ranges exactly as a PDF does.
+IMAGE_UPLOAD_FILE_TYPES = ("png", "jpg", "jpeg")
 
 EDUCATION_LEVELS = (
     "high_school",
@@ -150,6 +153,12 @@ _EXAM_QUESTION_DIFFICULTIES_SQL = ", ".join(
 )
 
 JOB_TYPE_EXTRACT_DOCUMENT = "extract_document"
+JOB_TYPE_DESCRIBE_VISUALS = "describe_visuals"
+DOCUMENT_JOB_TYPES = (
+    JOB_TYPE_EXTRACT_DOCUMENT,
+    JOB_TYPE_DESCRIBE_VISUALS,
+)
+_DOCUMENT_JOB_TYPES_SQL = ", ".join(f"'{kind}'" for kind in DOCUMENT_JOB_TYPES)
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_RUNNING = "running"
 JOB_STATUS_SUCCEEDED = "succeeded"
@@ -1054,7 +1063,7 @@ class ProcessingJob(Base):
             "document_id", "job_type", name="uq_processing_jobs_document_type"
         ),
         CheckConstraint(
-            f"job_type = '{JOB_TYPE_EXTRACT_DOCUMENT}'", name="job_type_valid"
+            f"job_type IN ({_DOCUMENT_JOB_TYPES_SQL})", name="job_type_valid"
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed')",
@@ -2731,6 +2740,40 @@ class ProfileDocument(Base):
         passive_deletes=True,
     )
 
+    @property
+    def visual_analysis_status(self) -> str:
+        pages = None
+        try:
+            insp = inspect(self)
+            if insp is not None and "pages" not in insp.unloaded:
+                pages = self.pages
+        except Exception:
+            pages = getattr(self, "__dict__", {}).get("pages")
+
+        if not pages:
+            if self.file_type not in VISUAL_CAPABLE_FILE_TYPES:
+                return "not_applicable"
+            if self.status in ("uploaded", "processing"):
+                return "pending"
+            return "not_applicable"
+
+        visual_pages = [p for p in pages if getattr(p, "has_visual_content", False)]
+        if not visual_pages:
+            return "not_applicable"
+
+        statuses = {
+            getattr(p, "visual_analysis_status", "not_applicable") for p in visual_pages
+        }
+        if "pending" in statuses:
+            return "pending"
+        if statuses == {"completed"}:
+            return "completed"
+        if statuses == {"not_configured"}:
+            return "not_configured"
+        if statuses == {"failed"}:
+            return "failed"
+        return "partial"
+
 
 class ProfileDocumentChunk(Base):
     __tablename__ = "profile_document_chunks"
@@ -3024,7 +3067,7 @@ class ProfileProcessingJob(Base):
             "document_id", "job_type", name="uq_profile_processing_jobs_doc_type"
         ),
         CheckConstraint(
-            f"job_type = '{JOB_TYPE_EXTRACT_DOCUMENT}'", name="profile_job_type_valid"
+            f"job_type IN ({_DOCUMENT_JOB_TYPES_SQL})", name="profile_job_type_valid"
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed')",

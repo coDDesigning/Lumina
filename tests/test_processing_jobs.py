@@ -2239,3 +2239,208 @@ def test_claim_skips_documents_for_another_storage_provider(session_factory, tmp
         job = session.get(ProcessingJob, queued.job_id)
         assert job is not None
         assert job.status == JOB_STATUS_QUEUED
+
+
+class _CountingVisionProvider:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def describe_visual(
+        self,
+        visual_png: bytes,
+        *,
+        page_number: int,
+        visual_index: int,
+        suggested_type,
+    ):
+        from services.document_pipeline import VisualDescription
+
+        self.calls += 1
+        return VisualDescription(
+            visual_type=suggested_type,
+            description=f"A diagram on page {page_number}.",
+        )
+
+
+def _multi_visual_pdf(page_count: int) -> bytes:
+    pdf = pymupdf.open()
+    for number in range(page_count):
+        page = pdf.new_page(width=300, height=300)
+        page.insert_text((30, 30), f"Page {number + 1} body text.")
+        pixel = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 2, 2), False)
+        pixel.clear_with(255)
+        page.insert_image(pymupdf.Rect(30, 50, 270, 270), stream=pixel.tobytes("png"))
+    content = pdf.tobytes()
+    pdf.close()
+    return content
+
+
+def _store_pdf(tmp_path: Path, content: bytes) -> tuple[LocalStorage, str]:
+    storage = LocalStorage(tmp_path / "visual-uploads", namespace="visual")
+    key = storage.generate_key(1, uuid4(), "pdf")
+    storage.save(key, BytesIO(content))
+    return storage, key
+
+
+def test_extraction_defers_visuals_beyond_the_configured_inline_budget(
+    tmp_path, monkeypatch
+):
+    content = _multi_visual_pdf(4)
+    storage, key = _store_pdf(tmp_path, content)
+    monkeypatch.setattr(
+        document_extraction,
+        "settings",
+        replace(
+            document_extraction.settings,
+            image_understanding_inline_max_visuals=2,
+        ),
+    )
+    provider = _CountingVisionProvider()
+
+    result = extract_document(
+        storage,
+        storage_provider=storage.provider,
+        storage_key=key,
+        expected_hash=hashlib.sha256(content).hexdigest(),
+        expected_size=len(content),
+        file_type="pdf",
+        image_provider=provider,
+    )
+
+    assert provider.calls == 2
+    statuses = [
+        visual.analysis_status for page in result.pages for visual in page.visuals
+    ]
+    assert statuses.count("succeeded") == 2
+    assert statuses.count("pending") == 2
+
+
+def test_an_explicit_unset_inline_budget_describes_every_visual(tmp_path, monkeypatch):
+    content = _multi_visual_pdf(4)
+    storage, key = _store_pdf(tmp_path, content)
+    monkeypatch.setattr(
+        document_extraction,
+        "settings",
+        replace(
+            document_extraction.settings,
+            image_understanding_inline_max_visuals=2,
+        ),
+    )
+    provider = _CountingVisionProvider()
+
+    result = extract_document(
+        storage,
+        storage_provider=storage.provider,
+        storage_key=key,
+        expected_hash=hashlib.sha256(content).hexdigest(),
+        expected_size=len(content),
+        file_type="pdf",
+        image_provider=provider,
+        inline_visual_budget=None,
+    )
+
+    assert provider.calls == 4
+    statuses = [
+        visual.analysis_status for page in result.pages for visual in page.visuals
+    ]
+    assert statuses.count("succeeded") == 4
+
+
+def test_an_image_upload_completes_with_the_page_numbers_it_renders(
+    session_factory, tmp_path
+):
+    queued = _queue_document(
+        session_factory,
+        tmp_path,
+        content=_image_pdf(),
+        file_type="jpeg",
+    )
+    with session_factory() as session:
+        claim = claim_next_job(
+            session,
+            "image-worker",
+            queued.storage.provider,
+            60,
+            now=queued.available_at + timedelta(seconds=1),
+        )
+    assert claim is not None
+    _advance_to_embedding(session_factory, claim)
+
+    pages = [
+        PageData(
+            content_index=0,
+            text="A described photograph of a lecture slide.",
+            page_number=1,
+            extraction_method="ocr",
+            has_images=True,
+            needs_ocr=False,
+            raw_text="",
+            raw_extraction_method=None,
+            has_visual_content=True,
+            raw_needs_ocr=True,
+            ocr_status="no_text",
+            visual_analysis_status="completed",
+            visuals=(
+                VisualData(
+                    visual_index=0,
+                    visual_type="figure",
+                    source="image",
+                    bbox=(0.0, 0.0, 100.0, 100.0),
+                    description="A described photograph of a lecture slide.",
+                    analysis_status="succeeded",
+                ),
+            ),
+        )
+    ]
+    chunks = [
+        ChunkData(
+            text="A described photograph of a lecture slide.",
+            page_number=1,
+            end_page_number=1,
+        )
+    ]
+
+    with session_factory() as session:
+        completed = complete_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            chunks,
+            pages,
+            embeddings=_embeddings(1),
+            vector_store=PgVectorStore(),
+        )
+
+    assert completed is True
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        assert document.status == "ready"
+
+
+def test_a_completion_payload_the_job_can_never_persist_fails_it(
+    session_factory, tmp_path, monkeypatch
+):
+    queued = _queue_document(session_factory, tmp_path)
+
+    def refuse(*args, **kwargs):
+        raise ValueError("Document chunks must contain text")
+
+    monkeypatch.setattr(document_processor, "complete_job", refuse)
+
+    handled = _process_next_job(
+        session_factory=session_factory,
+        storage=queued.storage,
+        worker_id="finalize-worker",
+    )
+
+    assert handled is True
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        document = session.get(UploadedDocument, queued.document_id)
+        assert job.status == JOB_STATUS_FAILED
+        assert job.last_error_code == "COMPLETION_PAYLOAD_INVALID"
+        assert document.status == "failed"

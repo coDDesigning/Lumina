@@ -8550,6 +8550,11 @@
           "user_id": {
             "title": "User Id",
             "type": "integer"
+          },
+          "visual_analysis_status": {
+            "default": "not_applicable",
+            "title": "Visual Analysis Status",
+            "type": "string"
           }
         },
         "required": [

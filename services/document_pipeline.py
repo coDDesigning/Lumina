@@ -142,6 +142,9 @@ class PipelineOptions:
     image_dpi: int = 72
     max_visuals_per_page: int = 10
     max_visuals_per_document: int = 500
+    max_inline_visual_descriptions: int | None = None
+    full_page_drawing_area_ratio: float = 0.9
+    full_page_drawing_text_characters: int = 500
     chunk_target_characters: int = settings.document_chunk_size_characters
     chunk_overlap_characters: int = settings.document_chunk_overlap_characters
     max_extracted_characters: int = settings.max_extracted_characters
@@ -169,6 +172,29 @@ class PipelineOptions:
             value = getattr(self, option_name)
             if type(value) is not int or value <= 0:
                 raise ValueError(f"{option_name} must be a positive integer")
+
+        if self.max_inline_visual_descriptions is not None and (
+            type(self.max_inline_visual_descriptions) is not int
+            or self.max_inline_visual_descriptions <= 0
+        ):
+            raise ValueError(
+                "max_inline_visual_descriptions must be a positive integer or None"
+            )
+
+        if (
+            type(self.full_page_drawing_area_ratio) is not float
+            or not 0.0 < self.full_page_drawing_area_ratio <= 1.0
+        ):
+            raise ValueError(
+                "full_page_drawing_area_ratio must be a ratio above 0 and at most 1"
+            )
+        if (
+            type(self.full_page_drawing_text_characters) is not int
+            or self.full_page_drawing_text_characters < 0
+        ):
+            raise ValueError(
+                "full_page_drawing_text_characters must be a non-negative integer"
+            )
 
         if type(self.ocr_enabled) is not bool:
             raise ValueError("ocr_enabled must be a boolean")
@@ -555,6 +581,10 @@ _EXTRACTORS: dict[str, DocumentExtractor] = {
 # MuPDF stores parser warnings globally. Every operation that clears or reads
 # the warning buffer must be isolated from other PDF processing threads.
 _PDF_WARNING_LOCK = threading.Lock()
+_RECOVERABLE_MUPDF_WARNINGS = (
+    "cannot load object",
+    "invalid key in dict",
+)
 _PIPELINE_SEMAPHORE = threading.BoundedSemaphore(
     settings.max_concurrent_document_validations
 )
@@ -586,6 +616,7 @@ _PDF_WRAP_MIN_CHARACTERS = 40
 _REPEATED_CONTENT_MIN_PAGES = 3
 _REPEATED_CONTENT_MIN_RATIO = 0.6
 _MAX_VISUAL_DESCRIPTION_CHARACTERS = 2_000
+_TEMPORARY_VISUAL_FAILURE_ABORT_THRESHOLD = 3
 _MIN_VISUAL_DIMENSION_POINTS = 36.0
 _MIN_PAGES_FOR_PARALLEL_EXTRACTION = 8
 _MIN_PAGES_FOR_PARALLEL_OCR = 4
@@ -934,6 +965,17 @@ def _failure(
     return DocumentProcessingError(code, stage, retryable=retryable)
 
 
+def _mupdf_reported_damage() -> bool:
+    reported = pymupdf.TOOLS.mupdf_warnings()
+    if not reported:
+        return False
+    return any(
+        not any(marker in line for marker in _RECOVERABLE_MUPDF_WARNINGS)
+        for line in reported.splitlines()
+        if line.strip()
+    )
+
+
 def _pdf_preflight(content: bytes, options: PipelineOptions) -> _PDFPreflight:
     with _PDF_WARNING_LOCK:
         return _pdf_preflight_locked(content, options)
@@ -1088,7 +1130,7 @@ def _pdf_preflight_locked(content: bytes, options: PipelineOptions) -> _PDFPrefl
                     remaining_bytes,
                 )
 
-            if pymupdf.TOOLS.mupdf_warnings():
+            if _mupdf_reported_damage():
                 raise _failure(
                     ProcessingErrorCode.CORRUPTED_PDF,
                     PipelineStage.VALIDATING,
@@ -1233,7 +1275,7 @@ def _page_work(
     text = page.get_text("text").replace("\x00", "")
     text_blocks, header_candidates, footer_candidates = _pdf_layout_content(page)
     candidates, overflowed = _detect_visual_candidates(
-        page, image_info, drawings, options
+        page, image_info, drawings, options, page_text=text
     )
     return _PageWork(
         number=page.number,
@@ -1296,7 +1338,7 @@ def _ocr_page_range(page_numbers: tuple[int, ...]) -> tuple[dict[int, str], bool
         )
         for page_number in page_numbers
     }
-    return recognized, bool(pymupdf.TOOLS.mupdf_warnings())
+    return recognized, _mupdf_reported_damage()
 
 
 def _page_work_range(bounds: tuple[int, int]) -> tuple[list[_PageWork], bool]:
@@ -1308,7 +1350,7 @@ def _page_work_range(bounds: tuple[int, int]) -> tuple[list[_PageWork], bool]:
         _page_work(pdf.load_page(number), preflight, options)
         for number in range(start, stop)
     ]
-    return works, bool(pymupdf.TOOLS.mupdf_warnings())
+    return works, _mupdf_reported_damage()
 
 
 def _page_ranges(page_count: int, workers: int) -> list[tuple[int, int]]:
@@ -1521,7 +1563,7 @@ def _image_to_single_page_pdf(content: bytes, options: PipelineOptions) -> bytes
                 rendered = document.tobytes(garbage=4, deflate=True)
             finally:
                 document.close()
-            if pymupdf.TOOLS.mupdf_warnings():
+            if _mupdf_reported_damage():
                 raise RuntimeError("mupdf reported warnings transcoding an image")
             if not isinstance(rendered, bytes) or not rendered.startswith(b"%PDF-"):
                 raise RuntimeError("image transcode did not produce a PDF")
@@ -1598,7 +1640,7 @@ def _extract_pdf_document(
                         )
                     )
                     candidate_pages.append((list(work.candidates), work.overflowed))
-                if warnings_seen or pymupdf.TOOLS.mupdf_warnings():
+                if warnings_seen or _mupdf_reported_damage():
                     raise _failure(
                         ProcessingErrorCode.CORRUPTED_PDF,
                         PipelineStage.VALIDATING,
@@ -1641,7 +1683,7 @@ def _extract_pdf_document(
                         strict=True,
                     )
                 )
-                if pymupdf.TOOLS.mupdf_warnings():
+                if _mupdf_reported_damage():
                     raise _failure(
                         ProcessingErrorCode.CORRUPTED_PDF,
                         PipelineStage.EXTRACTING_TEXT,
@@ -1693,6 +1735,8 @@ def _detect_visual_candidates(
     image_info: list[dict],
     drawings: list,
     options: PipelineOptions,
+    *,
+    page_text: str = "",
 ) -> tuple[list[_VisualCandidate], bool]:
     page_rect = page.rect
     candidates: list[_VisualCandidate] = []
@@ -1742,6 +1786,9 @@ def _detect_visual_candidates(
     except Exception:
         logger.exception("Drawing detection failed on PDF page %s", page.number + 1)
         drawing_rects = (page_rect,)
+    describes_the_page = len(page_text.strip()) >= (
+        options.full_page_drawing_text_characters
+    )
     for drawing_rect in drawing_rects:
         candidate = _make_visual_candidate(
             drawing_rect,
@@ -1749,11 +1796,17 @@ def _detect_visual_candidates(
             visual_type=VisualType.DIAGRAM,
             source=VisualSource.DRAWING,
         )
-        if candidate is not None:
-            overflowed = (
-                _retain_visual_candidate(candidates, candidate, candidate_limit)
-                or overflowed
-            )
+        if candidate is None:
+            continue
+        if (
+            describes_the_page
+            and candidate.page_area_ratio >= options.full_page_drawing_area_ratio
+        ):
+            continue
+        overflowed = (
+            _retain_visual_candidate(candidates, candidate, candidate_limit)
+            or overflowed
+        )
 
     candidates.sort(
         key=lambda candidate: (
@@ -1944,7 +1997,7 @@ def _apply_ocr(
                         if not isinstance(text, str):
                             raise OCRExecutionError
                         recognized[page_number] = text
-                    if pymupdf.TOOLS.mupdf_warnings():
+                    if _mupdf_reported_damage():
                         raise OCRExecutionError
         except OCRUnavailableError:
             raise _failure(
@@ -2061,7 +2114,7 @@ def _recognize_pages_serially(
             )
             for page_number in page_numbers
         }
-    if pymupdf.TOOLS.mupdf_warnings() or not _recognized_pages_are_complete(
+    if _mupdf_reported_damage() or not _recognized_pages_are_complete(
         recognized, page_numbers
     ):
         raise OCRExecutionError
@@ -2106,6 +2159,10 @@ def _apply_visual_understanding(
 
     _validate_visual_render_budget(pages, options)
     enriched_pages: list[EnrichedPage] = []
+    consecutive_temporary_failures = 0
+    temporary_failures = 0
+    succeeded = 0
+    remaining_budget = options.max_inline_visual_descriptions
     for page in pages:
         if page.page_number is None:
             enriched_pages.append(page)
@@ -2117,12 +2174,19 @@ def _apply_visual_understanding(
             continue
         analyzed_visuals: list[VisualContent] = []
         for visual in page.visuals:
+            if remaining_budget is not None and remaining_budget <= 0:
+                analyzed_visuals.append(
+                    replace(visual, analysis_status=VisualAnalysisStatus.PENDING)
+                )
+                continue
             visual_png = _render_pdf_visual(
                 content,
                 page.page_number,
                 visual,
                 options.image_dpi,
             )
+            if remaining_budget is not None:
+                remaining_budget -= 1
             try:
                 result = provider.describe_visual(
                     visual_png,
@@ -2145,11 +2209,30 @@ def _apply_visual_understanding(
                 )
                 continue
             except TemporaryVisualServiceError:
-                raise _failure(
-                    ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED,
-                    PipelineStage.UNDERSTANDING_IMAGES,
-                    retryable=True,
-                ) from None
+                consecutive_temporary_failures += 1
+                temporary_failures += 1
+                if (
+                    consecutive_temporary_failures
+                    >= _TEMPORARY_VISUAL_FAILURE_ABORT_THRESHOLD
+                ):
+                    raise _failure(
+                        ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED,
+                        PipelineStage.UNDERSTANDING_IMAGES,
+                        retryable=True,
+                    ) from None
+                logger.warning(
+                    "Visual analysis temporarily unavailable for PDF page %s visual %s",
+                    page.page_number,
+                    visual.visual_index,
+                )
+                analyzed_visuals.append(
+                    replace(
+                        visual,
+                        analysis_status=VisualAnalysisStatus.FAILED,
+                        error_code="VISUAL_SERVICE_TEMPORARY",
+                    )
+                )
+                continue
             except Exception:
                 logger.exception(
                     "Unexpected visual provider failure on PDF page %s visual %s",
@@ -2190,6 +2273,8 @@ def _apply_visual_understanding(
                     )
                 )
                 continue
+            consecutive_temporary_failures = 0
+            succeeded += 1
             analyzed_visuals.append(
                 replace(
                     visual,
@@ -2205,12 +2290,22 @@ def _apply_visual_understanding(
                 visuals=tuple(analyzed_visuals),
             )
         )
+    if temporary_failures and not succeeded:
+        raise _failure(
+            ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED,
+            PipelineStage.UNDERSTANDING_IMAGES,
+            retryable=True,
+        )
     return tuple(enriched_pages)
 
 
 def _page_visual_status(
     visuals: list[VisualContent],
 ) -> PageVisualAnalysisStatus:
+    if any(
+        visual.analysis_status == VisualAnalysisStatus.PENDING for visual in visuals
+    ):
+        return PageVisualAnalysisStatus.PENDING
     failed = sum(
         visual.analysis_status == VisualAnalysisStatus.FAILED for visual in visuals
     )
@@ -2261,7 +2356,7 @@ def _render_pdf_visual(
                     alpha=False,
                     clip=pymupdf.Rect(visual.bbox),
                 ).tobytes("png")
-                if pymupdf.TOOLS.mupdf_warnings():
+                if _mupdf_reported_damage():
                     raise RuntimeError
                 return rendered
         except DocumentProcessingError:
@@ -2522,7 +2617,7 @@ def _validate_render_budget(
                             stage,
                             retryable=False,
                         )
-                if pymupdf.TOOLS.mupdf_warnings():
+                if _mupdf_reported_damage():
                     raise _failure(
                         ProcessingErrorCode.CORRUPTED_PDF,
                         stage,

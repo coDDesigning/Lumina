@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from backend.app.database import begin_serialized_write
 from backend.app.models import (
@@ -208,6 +208,7 @@ class ProfileDocumentService:
     def list_user_documents(db: Session, user_id: int) -> Sequence[ProfileDocument]:
         return db.scalars(
             select(ProfileDocument)
+            .options(selectinload(ProfileDocument.pages))
             .where(
                 ProfileDocument.user_id == user_id,
                 ProfileDocument.status != "deleting",

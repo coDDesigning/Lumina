@@ -30,11 +30,11 @@ Verify that the primary and fallback providers are reachable and configured with
    ```bash
    # Verify Ollama service is running and models are downloaded
    curl -s http://localhost:11434/api/tags
-   ollama pull llama3.1
+   ollama pull qwen3.5:9b
    ```
    Ensure `.env` sets:
    * `OLLAMA_BASE_URL=http://localhost:11434` (this is what makes `ollama:*` models available)
-   * `OLLAMA_MODEL=llama3.1`
+   * `OLLAMA_MODEL=qwen3.5:9b`
 
    Embeddings need nothing here: they are computed in-process.
 

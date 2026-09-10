@@ -50,7 +50,7 @@ cd Lumina
 Lumina needs one model from Ollama, for generation:
 
 ```bash
-ollama pull llama3.1          # generates study guides, quizzes, and answers
+ollama pull qwen3.5:9b        # generates study guides and quizzes, and reads diagrams
 ```
 
 Semantic search needs nothing from Ollama. Embeddings are computed inside the
@@ -125,7 +125,7 @@ survived. Set these in `.env`:
 
 ```bash
 OLLAMA_BASE_URL=http://host.docker.internal:11434
-OLLAMA_MODEL=llama3.1
+OLLAMA_MODEL=qwen3.5:9b
 OLLAMA_NUM_CTX=8192
 
 # Local models are far slower than a hosted API. A twenty-question quiz does not

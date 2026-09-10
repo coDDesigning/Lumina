@@ -117,7 +117,7 @@ See `docs/runbooks/provider_outage.md`.
 2. Pull a model that meets the capability bar below.
 
    ```bash
-   ollama pull llama3.1
+   ollama pull qwen3.5:9b
    ```
 
 3. Configure the backend. Use `localhost` for Python processes on the host and
@@ -126,7 +126,7 @@ See `docs/runbooks/provider_outage.md`.
    ```bash
    OLLAMA_BASE_URL=http://localhost:11434
    OLLAMA_BASE_URL=http://localhost:11434
-   OLLAMA_MODEL=llama3.1
+   OLLAMA_MODEL=qwen3.5:9b
    ```
 
    ```bash
@@ -166,9 +166,17 @@ reliably. The configured model must offer:
 - **Enough capability for the schema's breadth.** The study-guide schema alone
   requires roughly a dozen populated sections.
 
-`llama3.1` (8B) is the documented known-good baseline. Larger instruction-tuned
-models produce better guides; models below roughly 7B parameters frequently fail
-schema validation.
+`qwen3.5:9b` is the default, and it is multimodal: the same model answers text
+generation and image understanding, which is why the default is not an 8B
+text-only model. `llama3.1` (8B) remains the documented known-good baseline for
+generation and is what the measurements below were taken on. Larger
+instruction-tuned models produce better guides; models below roughly 7B
+parameters frequently fail schema validation.
+
+A text-only model still generates perfectly well — it simply cannot describe a
+diagram. Ollama reports what a model can do, so choosing one switches visual
+analysis off truthfully rather than failing every visual; see **Visual
+Understanding Providers** below.
 
 `OLLAMA_MODEL` validity is not the same as model availability. Configuration
 only checks that the value is a well-formed model tag. A model that is not
@@ -178,14 +186,14 @@ generation time with a provider error — pull it first.
 ## Sampling Options
 
 Ollama's own defaults are tuned for open-ended chat, not for schema-constrained
-JSON. The provider therefore sends an explicit `options` block on every request
-rather than inheriting them:
+JSON. Both the generation provider and the image-understanding provider therefore
+send an explicit `options` block on every request rather than inheriting them:
 
 | Variable | Default | Bounds | Meaning |
 | --- | --- | --- | --- |
 | `OLLAMA_TEMPERATURE` | `0.2` | `0.0`-`2.0` | Sampling randomness. Ollama's own default is `0.8`. |
 | `OLLAMA_TOP_P` | `0.9` | `0.01`-`1.0` | Nucleus sampling cutoff. |
-| `OLLAMA_NUM_CTX` | `8192` | `512`-`131072` | Context window. The prompt and the response share it. |
+| `OLLAMA_NUM_CTX` | `8192` | `512`-`131072` | Context window. The prompt and the response share it. It also sizes the KV cache, which is why it is sent on visual requests too: left to a multimodal model's own default window, the cache alone pushed `qwen3.5:9b` from fully resident to 64% of it on an 8 GB card, and one description from 46 s to 118 s. |
 | `OLLAMA_NUM_PREDICT` | `4096` | `64`-`131072` | Maximum response tokens. May not exceed `OLLAMA_NUM_CTX`. |
 | `OLLAMA_REPEAT_PENALTY` | `1.1` | `0.5`-`2.0` | Penalty applied to repeated tokens. |
 
@@ -230,7 +238,10 @@ five, which then turns into generation timeouts rather than merely slow answers.
 
 An 8B model at Q4_K_M with an 8192-token window occupies about 5.8 GB loaded,
 which fits 8 GB VRAM with room for the desktop. That is the largest practical
-model for this profile.
+model for this profile, which is why this profile pins `llama3.1` rather than the
+multimodal `qwen3.5:9b` default: the larger model leaves no room on an 8 GB card,
+and a model that spills into system RAM turns generation into timeouts. The
+trade is explicit — this profile generates well and describes no visuals.
 
 ```bash
 ollama pull llama3.1
@@ -351,15 +362,15 @@ Each model entry must provide its model identifier and capability metadata:
 {
   "ollama": [
     {
+      "model": "qwen3.5:9b",
+      "json_mode": true,
+      "context_window": 8192,
+      "vision": true
+    },
+    {
       "model": "llama3.1",
       "json_mode": true,
       "context_window": 8192,
-      "vision": false
-    },
-    {
-      "model": "qwen3:8b",
-      "json_mode": true,
-      "context_window": 32768,
       "vision": false
     }
   ]
@@ -713,11 +724,70 @@ load-bearing rather than cosmetic: the default catalog marks OpenAI and Claude
 entries `vision: true`, so an OpenAI-only deployment would otherwise derive an
 image model it cannot send an image to.
 
+There is no separate vision model. A vendor answers image understanding with the
+same model it already answers generation with, so a self-hosted deployment needs
+`OLLAMA_MODEL` to name a multimodal model — the default does.
+
+Whether it is one is not taken on trust. Ollama reports what a model can do, so
+the first time visual analysis resolves to `ollama` the model is asked, once per
+process, and a model that does not list `vision` switches visual analysis off
+rather than being sent images it cannot read. That decision is announced as an
+`image_understanding_disabled` operational event naming the provider and model,
+so an operator sees why visuals stopped being described instead of finding a
+corpus of failed ones. An Ollama that cannot be reached is not an answer: the
+capability stays unknown, visual analysis stays on, and the ordinary retry path
+handles the outage.
+
+### Most visuals are described after the document is ready
+
+Describing one visual costs tens of seconds. A lecture deck carrying fifty of
+them cannot be described inside the extraction attempt that must also parse,
+OCR, clean and chunk the whole document within
+`PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS`, and a killed attempt used to discard
+every description it had already paid for.
+
+So extraction describes at most `IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS` visuals
+and records the rest as `pending`. The document reaches `ready` on extraction
+time alone, and a second job of type `describe_visuals` — one row per document,
+claimed only while that document is `ready`, and never touching its status —
+describes what is left.
+
+That job is resumable, which is the point of splitting it out:
+
+- Every description is written to its own `document_visuals` row the moment it
+  arrives, under the claim that produced it.
+- An attempt that times out or dies loses at most the one call in flight. The
+  next attempt reads the stored descriptions and charges the model only for the
+  visuals still missing.
+- When the last visual is described, the job re-derives the document's page text,
+  re-chunks it and replaces the chunks and vectors in one transaction. The
+  document is `ready` throughout; only its text improves.
+- Page rows are updated in place. A completion whose page shape, OCR outcome or
+  detected visual layout no longer matches what extraction stored is refused
+  rather than allowed to overwrite the document with something else.
+
+Two things queue that job, both automatically: extraction queues it as soon as it
+defers a visual, and a periodic sweep queues every `ready` document still
+carrying a `pending` or `not_configured` visual — which is how documents
+processed while visual analysis was switched off are rescued without re-uploading
+them. A document is swept once; the unique `(document_id, job_type)` row is the
+record that it had its turn, so a visual no provider can describe does not
+re-enter the queue forever.
+
+A document with visuals still queued reports `status="ready"` with
+`visual_analysis_status="pending"`. Profile-knowledge documents work the same
+way and are swept by the same pass; `ProfileDocumentResponse` carries the same
+rollup field.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `IMAGE_UNDERSTANDING_ENABLED` | `true` | Set `false` to skip visual analysis entirely. Describing a visual is a paid call per image, so a deployment can decline it without giving up the vendor that answers generation. |
-| `IMAGE_UNDERSTANDING_TIMEOUT_SECONDS` | `30` | Per-visual deadline, 1-300 seconds. |
+| `IMAGE_UNDERSTANDING_TIMEOUT_SECONDS` | `180` | Per-visual deadline, 1-300 seconds. A local multimodal model on one GPU answers in tens of seconds, and Gemini's SDK sends this value as a server-side deadline, so a value below the provider's real latency turns every visual into a `504`. |
 | `IMAGE_UNDERSTANDING_MAX_BYTES` | `10485760` | Maximum accepted rendered image size (10 MB). |
+| `IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS` | `2` | How many visuals extraction describes before deferring the rest. Keep it small relative to `PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS`. |
+| `DESCRIBE_VISUALS_ATTEMPT_TIMEOUT_SECONDS` | `1800` | Deadline for one visual-description attempt. Progress is checkpointed per visual, so one long attempt is cheaper than several short ones: each retry re-pays the parse, OCR and chunking the attempt also performs. |
+| `DESCRIBE_VISUALS_MAX_ACTIVE_PER_USER` | `1` | Visual-description jobs running at once per account. Counted separately from `PROCESSING_JOB_MAX_ACTIVE_PER_USER` so a long description cannot keep its owner from uploading. |
+| `VISUAL_DESCRIPTION_SWEEP_INTERVAL_SECONDS` | `900` | How often the worker looks for ready documents whose visuals nothing described. `0` disables the sweep. |
 
 ### Supported Formats and Extraction Pipeline
 
@@ -731,7 +801,7 @@ image model it cannot send an image to.
 Image understanding distinguishes between temporary infrastructure failures and per-visual content failures:
 
 - **Temporary Provider Failures** (`TemporaryVisualServiceError` for rate limits, timeouts, network loss, or 5xx server errors):
-  Treated as retryable processing errors (`IMAGE_UNDERSTANDING_FAILED`, retryable=True). The worker halts extraction and safely requeues the job with backoff.
+  An isolated one is recorded on that visual as `analysis_status="failed"` with `error_code="VISUAL_SERVICE_TEMPORARY"` and the attempt continues, because one flaky call must not discard a document's other fifty descriptions. Three in a row, or a run in which no visual succeeded at all, mean the provider is down rather than flaky: the attempt stops with a retryable `IMAGE_UNDERSTANDING_FAILED` and the job requeues with backoff.
 - **Per-Visual Failures** (`VisualAnalysisError` for unsupported images, safety filter blocks, or provider-specific rejections):
   Recorded per-visual as `analysis_status="failed"` with `error_code="VISUAL_ANALYSIS_FAILED"`. The document extraction continues so other pages and valid text/visuals remain fully processable.
 - **Partial-Success Behavior**:
@@ -739,7 +809,7 @@ Image understanding distinguishes between temporary infrastructure failures and 
 - **Document-Level Visual Status Rollup**:
   Exposed via API as `UploadedDocument.visual_analysis_status`:
   - `not_applicable`: Non-PDF documents or PDFs with no detected visual elements.
-  - `pending`: Document is actively processing or pending extraction.
+  - `pending`: Extraction has not run yet, or the document is `ready` and its remaining visuals are queued for the `describe_visuals` job.
   - `not_configured`: Visual elements exist, but no available vendor offers a vision-capable model.
   - `completed`: All detected visual elements were successfully analyzed and indexed.
   - `partial`: Mixed outcomes (e.g., some succeeded and some failed, or some succeeded and some not configured).

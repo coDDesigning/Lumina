@@ -60,7 +60,9 @@ def test_worker_drains_active_job_and_does_not_claim_another(
     monkeypatch.setattr(document_processor, "check_worker_ready", lambda **_k: None)
     monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *_a, **_k: 0)
 
-    def process_job(*, session_factory, storage, worker_id, shutdown_requested):
+    def process_job(
+        *, session_factory, storage, worker_id, shutdown_requested, claim_describe=False
+    ):
         session_factories.append(session_factory)
         assert storage is storage_instance
         worker_ids.append(worker_id)
@@ -140,7 +142,9 @@ def test_worker_uses_one_generated_identity_for_all_claims(monkeypatch) -> None:
     monkeypatch.setattr(document_processor, "_default_worker_id", lambda: "stable-id")
     monkeypatch.setattr(document_processor, "recover_expired_jobs", lambda *_a, **_k: 0)
 
-    def process_job(*, session_factory, storage, worker_id, shutdown_requested):
+    def process_job(
+        *, session_factory, storage, worker_id, shutdown_requested, claim_describe=False
+    ):
         assert session_factory is fake_session_factory
         assert storage is storage_instance
         assert shutdown_requested() is False
@@ -665,7 +669,9 @@ def test_worker_runs_jobs_concurrently_across_slots(monkeypatch) -> None:
     lock = threading.Lock()
     worker_ids: list[str] = []
 
-    def process_job(*, session_factory, storage, worker_id, shutdown_requested):
+    def process_job(
+        *, session_factory, storage, worker_id, shutdown_requested, claim_describe=False
+    ):
         with lock:
             worker_ids.append(worker_id)
         barrier.wait()
@@ -767,7 +773,9 @@ def test_once_forces_a_single_slot_and_the_bare_identity(monkeypatch) -> None:
     stop = threading.Event()
     worker_ids: list[str] = []
 
-    def process_job(*, session_factory, storage, worker_id, shutdown_requested):
+    def process_job(
+        *, session_factory, storage, worker_id, shutdown_requested, claim_describe=False
+    ):
         worker_ids.append(worker_id)
         return True
 

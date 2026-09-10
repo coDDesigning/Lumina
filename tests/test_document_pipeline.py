@@ -517,6 +517,69 @@ def test_corrupted_pdfs_fail_safely(
     assert "truncated" not in error.safe_message.lower()
 
 
+def test_recoverable_mupdf_warnings_do_not_report_damage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        pymupdf.TOOLS,
+        "mupdf_warnings",
+        lambda *args, **kwargs: (
+            "syntax error: invalid key in dict\ncannot load object (4483 0 R) into cache"
+        ),
+    )
+    assert pipeline._mupdf_reported_damage() is False
+
+
+def test_content_level_mupdf_warnings_report_damage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        pymupdf.TOOLS,
+        "mupdf_warnings",
+        lambda *args, **kwargs: (
+            "syntax error: invalid key in dict\n"
+            "encountered syntax errors; page may not be correct"
+        ),
+    )
+    assert pipeline._mupdf_reported_damage() is True
+
+
+def test_pdf_extracts_despite_recoverable_mupdf_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = pdf_bytes("First page", "Second page")
+    monkeypatch.setattr(
+        pymupdf.TOOLS,
+        "mupdf_warnings",
+        lambda *args, **kwargs: "cannot load object (4483 0 R) into cache",
+    )
+
+    document = extract_raw_document("pdf", content)
+
+    assert [page.text.strip() for page in document.contents] == [
+        "First page",
+        "Second page",
+    ]
+
+
+def test_pdf_with_unrecognised_mupdf_warning_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = pdf_bytes("First page", "Second page")
+    monkeypatch.setattr(
+        pymupdf.TOOLS,
+        "mupdf_warnings",
+        lambda *args, **kwargs: "content stream is not a stream (99999 0 R)",
+    )
+
+    assert_pipeline_error(
+        "pdf",
+        content,
+        ProcessingErrorCode.CORRUPTED_PDF,
+        PipelineStage.VALIDATING,
+    )
+
+
 def test_password_protected_pdf_fails_safely() -> None:
     error = assert_pipeline_error(
         "pdf",
@@ -2565,3 +2628,272 @@ def test_a_short_pdf_is_extracted_without_starting_a_pool(monkeypatch) -> None:
         "pdf", parallel_capable_pdf(4), options=pipeline_options(page_workers=4)
     )
     assert len(result.contents) == 4
+
+
+def test_isolated_temporary_visual_failure_leaves_the_document_processable() -> None:
+    class FlakyOnFirstVisual:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            if page_number == 1:
+                raise TemporaryVisualServiceError("private provider detail")
+            return VisualDescription(
+                visual_type=suggested_type,
+                description=f"A diagram drawn on page {page_number}.",
+            )
+
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "First page text.",
+            "Second page text.",
+            "Third page text.",
+            "Fourth page text.",
+            image_pages={1, 2, 3, 4},
+            width=300,
+            height=300,
+        ),
+        options=pipeline_options(),
+        image_provider=FlakyOnFirstVisual(),
+    )
+
+    first_page = result.pages[0]
+    assert first_page.visuals[0].analysis_status == VisualAnalysisStatus.FAILED
+    assert first_page.visuals[0].error_code == "VISUAL_SERVICE_TEMPORARY"
+    assert first_page.visual_analysis_status == PageVisualAnalysisStatus.FAILED
+    assert all(
+        visual.analysis_status == VisualAnalysisStatus.SUCCEEDED
+        for page in result.pages[1:]
+        for visual in page.visuals
+    )
+    assert "A diagram drawn on page 2." in result.pages[1].text
+    assert "private" not in result.pages[0].text
+
+
+def test_consecutive_temporary_visual_failures_abort_the_attempt() -> None:
+    class AlwaysTemporarilyFailing:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            raise TemporaryVisualServiceError("private provider detail")
+
+    error = assert_pipeline_error(
+        "pdf",
+        pdf_bytes(
+            "First page text.",
+            "Second page text.",
+            "Third page text.",
+            "Fourth page text.",
+            image_pages={1, 2, 3, 4},
+            width=300,
+            height=300,
+        ),
+        ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED,
+        PipelineStage.UNDERSTANDING_IMAGES,
+        image_provider=AlwaysTemporarilyFailing(),
+    )
+
+    assert error.retryable is True
+    assert "private" not in str(error)
+
+
+def test_inline_visual_budget_defers_the_visuals_it_cannot_afford() -> None:
+    class CountingProvider:
+        enabled = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            self.calls += 1
+            return VisualDescription(
+                visual_type=suggested_type,
+                description=f"A diagram drawn on page {page_number}.",
+            )
+
+    provider = CountingProvider()
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "First page text.",
+            "Second page text.",
+            "Third page text.",
+            "Fourth page text.",
+            image_pages={1, 2, 3, 4},
+            width=300,
+            height=300,
+        ),
+        options=pipeline_options(max_inline_visual_descriptions=2),
+        image_provider=provider,
+    )
+
+    assert provider.calls == 2
+    described = [
+        visual
+        for page in result.pages
+        for visual in page.visuals
+        if visual.analysis_status == VisualAnalysisStatus.SUCCEEDED
+    ]
+    deferred = [
+        visual
+        for page in result.pages
+        for visual in page.visuals
+        if visual.analysis_status == VisualAnalysisStatus.PENDING
+    ]
+    assert len(described) == 2
+    assert len(deferred) == 2
+    assert all(visual.description is None for visual in deferred)
+    assert "A diagram drawn on page 1." in result.pages[0].text
+    assert "A diagram drawn on page 3." not in result.pages[2].text
+
+
+def test_a_page_holding_a_deferred_visual_reports_pending() -> None:
+    class SilentProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            return VisualDescription(
+                visual_type=suggested_type,
+                description="A described diagram.",
+            )
+
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "First page text.",
+            "Second page text.",
+            image_pages={1, 2},
+            width=300,
+            height=300,
+        ),
+        options=pipeline_options(max_inline_visual_descriptions=1),
+        image_provider=SilentProvider(),
+    )
+
+    assert result.pages[0].visual_analysis_status == PageVisualAnalysisStatus.COMPLETED
+    assert result.pages[1].visual_analysis_status == PageVisualAnalysisStatus.PENDING
+
+
+def test_an_unset_inline_visual_budget_describes_every_visual() -> None:
+    class CountingProvider:
+        enabled = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            self.calls += 1
+            return VisualDescription(
+                visual_type=suggested_type,
+                description=f"A diagram drawn on page {page_number}.",
+            )
+
+    provider = CountingProvider()
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "First page text.",
+            "Second page text.",
+            "Third page text.",
+            image_pages={1, 2, 3},
+            width=300,
+            height=300,
+        ),
+        options=pipeline_options(),
+        image_provider=provider,
+    )
+
+    assert provider.calls == 3
+    assert all(
+        visual.analysis_status == VisualAnalysisStatus.SUCCEEDED
+        for page in result.pages
+        for visual in page.visuals
+    )
+
+
+@pytest.mark.parametrize("value", [0, -1, 2.5, "2", True])
+def test_inline_visual_budget_must_be_a_positive_integer(value: object) -> None:
+    with pytest.raises(ValueError, match="max_inline_visual_descriptions"):
+        pipeline_options(max_inline_visual_descriptions=value)
+
+
+def _slide_pdf(*, body_characters: int) -> bytes:
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=720, height=540)
+    shape = page.new_shape()
+    shape.draw_rect(pymupdf.Rect(4, 4, 716, 536))
+    shape.draw_line(pymupdf.Point(4, 60), pymupdf.Point(716, 60))
+    shape.finish(color=(0, 0, 0), width=1.5)
+    shape.commit()
+    if body_characters:
+        sentence = "Balanced binary search trees keep their height logarithmic. "
+        body = (sentence * ((body_characters // len(sentence)) + 1))[:body_characters]
+        page.insert_textbox(
+            pymupdf.Rect(30, 80, 690, 520), body, fontsize=11
+        )
+    content = pdf.tobytes()
+    pdf.close()
+    return content
+
+
+def _detected_sources(content: bytes, **overrides) -> list[str]:
+    provider = _StubVision("A description of the whole slide.")
+    result = process_document(
+        "pdf", content, options=pipeline_options(**overrides), image_provider=provider
+    )
+    return [visual.source.value for page in result.pages for visual in page.visuals]
+
+
+def test_a_full_page_drawing_on_a_text_slide_is_not_a_figure() -> None:
+    sources = _detected_sources(_slide_pdf(body_characters=900))
+
+    assert sources == []
+
+
+def test_a_full_page_drawing_on_a_sparse_slide_is_still_described() -> None:
+    sources = _detected_sources(_slide_pdf(body_characters=40))
+
+    assert "drawing" in sources
+
+
+def test_the_text_threshold_that_silences_a_full_page_drawing_is_configurable() -> None:
+    content = _slide_pdf(body_characters=900)
+
+    assert _detected_sources(content, full_page_drawing_text_characters=5000) == [
+        "drawing"
+    ]

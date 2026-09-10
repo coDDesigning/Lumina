@@ -143,6 +143,8 @@ class PipelineOptions:
     max_visuals_per_page: int = 10
     max_visuals_per_document: int = 500
     max_inline_visual_descriptions: int | None = None
+    full_page_drawing_area_ratio: float = 0.9
+    full_page_drawing_text_characters: int = 500
     chunk_target_characters: int = settings.document_chunk_size_characters
     chunk_overlap_characters: int = settings.document_chunk_overlap_characters
     max_extracted_characters: int = settings.max_extracted_characters
@@ -177,6 +179,21 @@ class PipelineOptions:
         ):
             raise ValueError(
                 "max_inline_visual_descriptions must be a positive integer or None"
+            )
+
+        if (
+            type(self.full_page_drawing_area_ratio) is not float
+            or not 0.0 < self.full_page_drawing_area_ratio <= 1.0
+        ):
+            raise ValueError(
+                "full_page_drawing_area_ratio must be a ratio above 0 and at most 1"
+            )
+        if (
+            type(self.full_page_drawing_text_characters) is not int
+            or self.full_page_drawing_text_characters < 0
+        ):
+            raise ValueError(
+                "full_page_drawing_text_characters must be a non-negative integer"
             )
 
         if type(self.ocr_enabled) is not bool:
@@ -1258,7 +1275,7 @@ def _page_work(
     text = page.get_text("text").replace("\x00", "")
     text_blocks, header_candidates, footer_candidates = _pdf_layout_content(page)
     candidates, overflowed = _detect_visual_candidates(
-        page, image_info, drawings, options
+        page, image_info, drawings, options, page_text=text
     )
     return _PageWork(
         number=page.number,
@@ -1718,6 +1735,8 @@ def _detect_visual_candidates(
     image_info: list[dict],
     drawings: list,
     options: PipelineOptions,
+    *,
+    page_text: str = "",
 ) -> tuple[list[_VisualCandidate], bool]:
     page_rect = page.rect
     candidates: list[_VisualCandidate] = []
@@ -1767,6 +1786,9 @@ def _detect_visual_candidates(
     except Exception:
         logger.exception("Drawing detection failed on PDF page %s", page.number + 1)
         drawing_rects = (page_rect,)
+    describes_the_page = len(page_text.strip()) >= (
+        options.full_page_drawing_text_characters
+    )
     for drawing_rect in drawing_rects:
         candidate = _make_visual_candidate(
             drawing_rect,
@@ -1774,11 +1796,17 @@ def _detect_visual_candidates(
             visual_type=VisualType.DIAGRAM,
             source=VisualSource.DRAWING,
         )
-        if candidate is not None:
-            overflowed = (
-                _retain_visual_candidate(candidates, candidate, candidate_limit)
-                or overflowed
-            )
+        if candidate is None:
+            continue
+        if (
+            describes_the_page
+            and candidate.page_area_ratio >= options.full_page_drawing_area_ratio
+        ):
+            continue
+        overflowed = (
+            _retain_visual_candidate(candidates, candidate, candidate_limit)
+            or overflowed
+        )
 
     candidates.sort(
         key=lambda candidate: (

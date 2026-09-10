@@ -2850,3 +2850,50 @@ def test_an_unset_inline_visual_budget_describes_every_visual() -> None:
 def test_inline_visual_budget_must_be_a_positive_integer(value: object) -> None:
     with pytest.raises(ValueError, match="max_inline_visual_descriptions"):
         pipeline_options(max_inline_visual_descriptions=value)
+
+
+def _slide_pdf(*, body_characters: int) -> bytes:
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=720, height=540)
+    shape = page.new_shape()
+    shape.draw_rect(pymupdf.Rect(4, 4, 716, 536))
+    shape.draw_line(pymupdf.Point(4, 60), pymupdf.Point(716, 60))
+    shape.finish(color=(0, 0, 0), width=1.5)
+    shape.commit()
+    if body_characters:
+        sentence = "Balanced binary search trees keep their height logarithmic. "
+        body = (sentence * ((body_characters // len(sentence)) + 1))[:body_characters]
+        page.insert_textbox(
+            pymupdf.Rect(30, 80, 690, 520), body, fontsize=11
+        )
+    content = pdf.tobytes()
+    pdf.close()
+    return content
+
+
+def _detected_sources(content: bytes, **overrides) -> list[str]:
+    provider = _StubVision("A description of the whole slide.")
+    result = process_document(
+        "pdf", content, options=pipeline_options(**overrides), image_provider=provider
+    )
+    return [visual.source.value for page in result.pages for visual in page.visuals]
+
+
+def test_a_full_page_drawing_on_a_text_slide_is_not_a_figure() -> None:
+    sources = _detected_sources(_slide_pdf(body_characters=900))
+
+    assert sources == []
+
+
+def test_a_full_page_drawing_on_a_sparse_slide_is_still_described() -> None:
+    sources = _detected_sources(_slide_pdf(body_characters=40))
+
+    assert "drawing" in sources
+
+
+def test_the_text_threshold_that_silences_a_full_page_drawing_is_configurable() -> None:
+    content = _slide_pdf(body_characters=900)
+
+    assert _detected_sources(content, full_page_drawing_text_characters=5000) == [
+        "drawing"
+    ]

@@ -775,7 +775,9 @@ record that it had its turn, so a visual no provider can describe does not
 re-enter the queue forever.
 
 A document with visuals still queued reports `status="ready"` with
-`visual_analysis_status="pending"`.
+`visual_analysis_status="pending"`. Profile-knowledge documents work the same
+way and are swept by the same pass; `ProfileDocumentResponse` carries the same
+rollup field.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

@@ -2124,12 +2124,342 @@ def enqueue_profile_document_job(
     return job
 
 
+def enqueue_profile_describe_visuals_job(
+    session: Session,
+    document: ProfileDocument,
+    *,
+    correlation_id: str | None = None,
+    max_attempts: int | None = None,
+    now: datetime | None = None,
+) -> ProfileProcessingJob:
+    """Add a visual-description job to the caller's profile document transaction."""
+    if document.status != "ready":
+        raise ProcessingJobStateError(
+            "Visual descriptions are only queued for a document that is ready."
+        )
+    if max_attempts is None:
+        max_attempts = settings.processing_job_max_attempts
+    if max_attempts <= 0:
+        raise ValueError("max_attempts must be positive")
+
+    if correlation_id is None:
+        correlation_id = get_request_id()
+
+    job = ProfileProcessingJob(
+        document_id=document.id,
+        user_id=document.user_id,
+        job_type=JOB_TYPE_DESCRIBE_VISUALS,
+        correlation_id=correlation_id,
+        parent_operation_id=get_operation_context().get("operation_id"),
+        status=JOB_STATUS_QUEUED,
+        attempt_count=0,
+        max_attempts=max_attempts,
+        available_at=_database_now(session, now),
+    )
+    session.add(job)
+    session.flush()
+    return job
+
+
+def _profile_describe_claim_is_live(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    checked_at: datetime,
+) -> UUID | None:
+    return session.scalar(
+        select(ProfileProcessingJob.document_id).where(
+            ProfileProcessingJob.id == job_id,
+            ProfileProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            ProfileProcessingJob.status == JOB_STATUS_RUNNING,
+            ProfileProcessingJob.claim_token == claim_token,
+            ProfileProcessingJob.lease_expires_at > checked_at,
+        )
+    )
+
+
+def _profile_visual_checkpoint(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    page_number: int,
+    visual_index: int,
+    values: dict[str, object],
+    now: datetime | None = None,
+) -> bool:
+    _start_transition(session)
+    checked_at = _database_now(session, now)
+    document_id = _profile_describe_claim_is_live(
+        session, job_id, claim_token, checked_at
+    )
+    if document_id is None:
+        session.rollback()
+        return False
+
+    page_ids = (
+        select(ProfileDocumentPage.id)
+        .where(
+            ProfileDocumentPage.document_id == document_id,
+            ProfileDocumentPage.page_number == page_number,
+        )
+        .scalar_subquery()
+    )
+    result = session.execute(
+        update(ProfileDocumentVisual)
+        .where(
+            ProfileDocumentVisual.page_id.in_(page_ids),
+            ProfileDocumentVisual.visual_index == visual_index,
+        )
+        .values(**values)
+    )
+    if result.rowcount != 1:
+        session.rollback()
+        return False
+    session.commit()
+    return True
+
+
+def record_profile_visual_description(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    page_number: int,
+    visual_index: int,
+    visual_type: str,
+    description: str,
+    now: datetime | None = None,
+) -> bool:
+    """Persist one profile description the moment it arrives, under the claim."""
+    cleaned = description.replace("\x00", "").strip()
+    if not cleaned:
+        raise ValueError("A recorded visual description must contain text")
+    if visual_type not in VISUAL_TYPES:
+        raise ValueError(f"Unknown visual type '{visual_type}'")
+    return _profile_visual_checkpoint(
+        session,
+        job_id,
+        claim_token,
+        page_number=page_number,
+        visual_index=visual_index,
+        values={
+            "visual_type": visual_type,
+            "description": cleaned,
+            "analysis_status": "succeeded",
+            "error_code": None,
+        },
+        now=now,
+    )
+
+
+def record_profile_visual_failure(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    page_number: int,
+    visual_index: int,
+    error_code: str,
+    now: datetime | None = None,
+) -> bool:
+    """Record a profile visual the provider could not describe."""
+    cleaned = error_code.replace("\x00", "").strip()[:100]
+    if not cleaned:
+        raise ValueError("A failed visual must carry an error code")
+    return _profile_visual_checkpoint(
+        session,
+        job_id,
+        claim_token,
+        page_number=page_number,
+        visual_index=visual_index,
+        values={
+            "description": None,
+            "analysis_status": "failed",
+            "error_code": cleaned,
+        },
+        now=now,
+    )
+
+
+def stored_profile_visual_descriptions(
+    session: Session,
+    document_id: UUID,
+) -> dict[tuple[int, int], tuple[str, str]]:
+    """The profile descriptions a later attempt may reuse."""
+    rows = session.execute(
+        select(
+            ProfileDocumentPage.page_number,
+            ProfileDocumentVisual.visual_index,
+            ProfileDocumentVisual.visual_type,
+            ProfileDocumentVisual.description,
+        )
+        .join(
+            ProfileDocumentPage,
+            ProfileDocumentPage.id == ProfileDocumentVisual.page_id,
+        )
+        .where(
+            ProfileDocumentPage.document_id == document_id,
+            ProfileDocumentPage.page_number.is_not(None),
+            ProfileDocumentVisual.analysis_status == "succeeded",
+            ProfileDocumentVisual.description.is_not(None),
+        )
+    ).all()
+    return {
+        (row.page_number, row.visual_index): (row.visual_type, row.description)
+        for row in rows
+    }
+
+
+def _profile_documents_needing_visual_description(
+    session: Session,
+) -> list[ProfileDocument]:
+    existing_describe_job = (
+        select(ProfileProcessingJob.id)
+        .where(
+            ProfileProcessingJob.document_id == ProfileDocument.id,
+            ProfileProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+        )
+        .correlate(ProfileDocument)
+        .exists()
+    )
+    undescribed_visual = (
+        select(ProfileDocumentVisual.id)
+        .join(
+            ProfileDocumentPage,
+            ProfileDocumentPage.id == ProfileDocumentVisual.page_id,
+        )
+        .where(
+            ProfileDocumentPage.document_id == ProfileDocument.id,
+            ProfileDocumentVisual.analysis_status.in_(_UNDESCRIBED_VISUAL_STATUSES),
+        )
+        .correlate(ProfileDocument)
+        .exists()
+    )
+    statement = (
+        select(ProfileDocument)
+        .where(
+            ProfileDocument.status == "ready",
+            undescribed_visual,
+            ~existing_describe_job,
+        )
+        .order_by(ProfileDocument.created_at, ProfileDocument.id)
+    )
+    return list(session.scalars(statement).all())
+
+
+def sweep_profile_documents_needing_visual_description(
+    session: Session,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Queue every ready profile document still carrying an undescribed visual."""
+    queued = 0
+    for document in _profile_documents_needing_visual_description(session):
+        try:
+            enqueue_profile_describe_visuals_job(session, document, now=now)
+        except ProcessingJobStateError:
+            continue
+        queued += 1
+    if queued:
+        session.commit()
+    else:
+        session.rollback()
+    return queued
+
+
+def enqueue_profile_describe_visuals_job_if_deferred(
+    session: Session,
+    document_id: UUID,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Queue the profile visuals an extraction attempt left for the background job."""
+    document = session.get(ProfileDocument, document_id)
+    if document is None or document.status != "ready":
+        return False
+    if session.scalar(
+        select(ProfileProcessingJob.id).where(
+            ProfileProcessingJob.document_id == document_id,
+            ProfileProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+        )
+    ):
+        return False
+    undescribed = session.scalar(
+        select(ProfileDocumentVisual.id)
+        .join(
+            ProfileDocumentPage,
+            ProfileDocumentPage.id == ProfileDocumentVisual.page_id,
+        )
+        .where(
+            ProfileDocumentPage.document_id == document_id,
+            ProfileDocumentVisual.analysis_status.in_(_UNDESCRIBED_VISUAL_STATUSES),
+        )
+        .limit(1)
+    )
+    if undescribed is None:
+        return False
+    enqueue_profile_describe_visuals_job(session, document, now=now)
+    session.commit()
+    return True
+
+
 def claim_next_profile_job(
     session: Session,
     worker_id: str,
     storage_provider: str,
     lease_seconds: int,
     *,
+    max_active_per_user: int | None = None,
+    now: datetime | None = None,
+) -> ClaimedProfileJob | None:
+    return _claim_next_profile_document_job(
+        session,
+        worker_id,
+        storage_provider,
+        lease_seconds,
+        job_type=JOB_TYPE_EXTRACT_DOCUMENT,
+        claimable_document_status="uploaded",
+        claimed_document_status="processing",
+        max_active_per_user=max_active_per_user,
+        now=now,
+    )
+
+
+def claim_next_profile_describe_job(
+    session: Session,
+    worker_id: str,
+    storage_provider: str,
+    lease_seconds: int,
+    *,
+    max_active_per_user: int | None = None,
+    now: datetime | None = None,
+) -> ClaimedProfileJob | None:
+    """Claim a profile visual-description job without disturbing its document."""
+    if max_active_per_user is None:
+        max_active_per_user = settings.describe_visuals_max_active_per_user
+    return _claim_next_profile_document_job(
+        session,
+        worker_id,
+        storage_provider,
+        lease_seconds,
+        job_type=JOB_TYPE_DESCRIBE_VISUALS,
+        claimable_document_status="ready",
+        claimed_document_status=None,
+        max_active_per_user=max_active_per_user,
+        now=now,
+    )
+
+
+def _claim_next_profile_document_job(
+    session: Session,
+    worker_id: str,
+    storage_provider: str,
+    lease_seconds: int,
+    *,
+    job_type: str,
+    claimable_document_status: str,
+    claimed_document_status: str | None,
     max_active_per_user: int | None = None,
     now: datetime | None = None,
 ) -> ClaimedProfileJob | None:
@@ -2158,6 +2488,7 @@ def claim_next_profile_job(
         .where(
             running_course.owner_id == ProfileProcessingJob.user_id,
             running_course_job.status == JOB_STATUS_RUNNING,
+            running_course_job.job_type == job_type,
         )
         .correlate(ProfileProcessingJob)
         .scalar_subquery()
@@ -2169,6 +2500,7 @@ def claim_next_profile_job(
         .where(
             running_profile_job.user_id == ProfileProcessingJob.user_id,
             running_profile_job.status == JOB_STATUS_RUNNING,
+            running_profile_job.job_type == job_type,
         )
         .correlate(ProfileProcessingJob)
         .scalar_subquery()
@@ -2177,11 +2509,11 @@ def claim_next_profile_job(
         select(ProfileProcessingJob.id)
         .join(ProfileDocument, ProfileDocument.id == ProfileProcessingJob.document_id)
         .where(
-            ProfileProcessingJob.job_type == JOB_TYPE_EXTRACT_DOCUMENT,
+            ProfileProcessingJob.job_type == job_type,
             ProfileProcessingJob.status == JOB_STATUS_QUEUED,
             ProfileProcessingJob.available_at <= eligibility_time,
             ProfileProcessingJob.attempt_count < ProfileProcessingJob.max_attempts,
-            ProfileDocument.status == "uploaded",
+            ProfileDocument.status == claimable_document_status,
             ProfileDocument.storage_provider == storage_provider,
             running_course_for_owner + running_profile_for_owner < max_active_per_user,
         )
@@ -2214,7 +2546,7 @@ def claim_next_profile_job(
         .join(ProfileDocument, ProfileDocument.id == ProfileProcessingJob.document_id)
         .where(
             ProfileProcessingJob.id == job_id,
-            ProfileDocument.status == "uploaded",
+            ProfileDocument.status == claimable_document_status,
         )
     )
     if dialect_name == "postgresql":
@@ -2281,14 +2613,19 @@ def claim_next_profile_job(
         session.rollback()
         return None
 
-    session.execute(
-        update(ProfileDocument)
-        .where(
-            ProfileDocument.id == row.document_id,
-            ProfileDocument.status == "uploaded",
+    if claimed_document_status is not None:
+        session.execute(
+            update(ProfileDocument)
+            .where(
+                ProfileDocument.id == row.document_id,
+                ProfileDocument.status == claimable_document_status,
+            )
+            .values(
+                status=claimed_document_status,
+                processing_error=None,
+                updated_at=claimed_at,
+            )
         )
-        .values(status="processing", processing_error=None, updated_at=claimed_at)
-    )
     session.commit()
     return ClaimedProfileJob(
         id=row.id,
@@ -2304,6 +2641,7 @@ def claim_next_profile_job(
         file_size=row.file_size,
         correlation_id=row.correlation_id,
         parent_operation_id=row.parent_operation_id,
+        job_type=job_type,
     )
 
 
@@ -2590,6 +2928,130 @@ def complete_profile_job(
     return True
 
 
+def complete_profile_describe_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    chunks: list[ChunkData],
+    pages: list[PageData],
+    *,
+    embeddings: list[list[float]],
+    vector_store: VectorStore | None = None,
+    now: datetime | None = None,
+    operation_timeout_seconds: float | None = None,
+) -> bool:
+    """Swap in the described text of a ready profile document without unreadying it."""
+    _validate_completion_payload(chunks, embeddings)
+    if not pages:
+        raise ValueError("A described document must contain at least one page")
+    if [page.content_index for page in pages] != list(range(len(pages))):
+        raise ValueError("Document page content indexes must be contiguous")
+
+    _start_transition_with_operation_timeout(session, operation_timeout_seconds)
+    job, document = _lock_profile_job_and_document(session, job_id)
+    if job is None or document is None:
+        session.rollback()
+        return False
+
+    finished_at = _database_now(session, now)
+    if (
+        job.job_type != JOB_TYPE_DESCRIBE_VISUALS
+        or job.status != JOB_STATUS_RUNNING
+        or job.claim_token != claim_token
+        or job.lease_expires_at is None
+        or job.lease_expires_at <= finished_at
+        or job.processing_stage != "generating_embeddings"
+        or document.status != "ready"
+    ):
+        session.rollback()
+        return False
+
+    stored_pages = list(
+        session.scalars(
+            select(ProfileDocumentPage)
+            .where(ProfileDocumentPage.document_id == job.document_id)
+            .order_by(ProfileDocumentPage.content_index)
+        ).all()
+    )
+    try:
+        _validate_described_page_shape(stored_pages, pages)
+    except ValueError:
+        session.rollback()
+        raise
+
+    job.status = JOB_STATUS_SUCCEEDED
+    job.finished_at = finished_at
+    job.last_error_code = None
+    job.last_error_message = None
+    job.processing_stage = None
+    job.failed_stage = None
+    job.updated_at = finished_at
+    _clear_profile_lease(job)
+
+    for stored, described in zip(stored_pages, pages, strict=True):
+        stored.text = described.text.replace("\x00", "")
+        stored.visual_analysis_status = described.visual_analysis_status
+        _apply_described_visuals(stored, described)
+
+    session.execute(
+        delete(ProfileDocumentChunk).where(
+            ProfileDocumentChunk.document_id == job.document_id
+        )
+    )
+    session.add_all(
+        ProfileDocumentChunk(
+            document_id=job.document_id,
+            user_id=job.user_id,
+            chunk_index=index,
+            page_number=chunk.page_number,
+            end_page_number=chunk.end_page_number,
+            text=chunk.text.replace("\x00", ""),
+        )
+        for index, chunk in enumerate(chunks)
+    )
+    session.flush()
+
+    stored_chunks = list(
+        session.scalars(
+            select(ProfileDocumentChunk)
+            .where(ProfileDocumentChunk.document_id == job.document_id)
+            .order_by(ProfileDocumentChunk.chunk_index)
+        ).all()
+    )
+    if len(stored_chunks) != len(chunks):
+        session.rollback()
+        raise RuntimeError("Persisted chunk count does not match the described chunks")
+
+    embedding_provider, embedding_model = configured_embedding_identity()
+    store = vector_store if vector_store is not None else get_vector_store()
+    try:
+        store.replace_profile_document_vectors(
+            session,
+            document_id=job.document_id,
+            user_id=job.user_id,
+            records=[
+                VectorRecord(
+                    chunk_id=stored.id,
+                    document_id=job.document_id,
+                    course_id=job.user_id,
+                    chunk_index=stored.chunk_index,
+                    embedding=embeddings[position],
+                )
+                for position, stored in enumerate(stored_chunks)
+            ],
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+        )
+    except VectorStoreError:
+        session.rollback()
+        raise
+
+    document.updated_at = finished_at
+    session.flush()
+    session.commit()
+    return True
+
+
 def fail_profile_job(
     session: Session,
     job_id: int,
@@ -2600,6 +3062,66 @@ def fail_profile_job(
     failed_stage: str | None = None,
     retryable: bool = False,
     retry_delay_seconds: int = 60,
+    now: datetime | None = None,
+) -> bool:
+    return _fail_profile_document_job(
+        session,
+        job_id,
+        claim_token,
+        error_code,
+        error_message,
+        failed_stage=failed_stage,
+        retryable=retryable,
+        retry_delay_seconds=retry_delay_seconds,
+        claimed_document_status="processing",
+        requeued_document_status="uploaded",
+        failed_document_status="failed",
+        now=now,
+    )
+
+
+def fail_profile_describe_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    error_code: str,
+    error_message: str | None,
+    *,
+    failed_stage: str | None = None,
+    retryable: bool = False,
+    retry_delay_seconds: int = 60,
+    now: datetime | None = None,
+) -> bool:
+    """Record a profile description failure without disturbing its ready document."""
+    return _fail_profile_document_job(
+        session,
+        job_id,
+        claim_token,
+        error_code,
+        error_message,
+        failed_stage=failed_stage,
+        retryable=retryable,
+        retry_delay_seconds=retry_delay_seconds,
+        claimed_document_status="ready",
+        requeued_document_status=None,
+        failed_document_status=None,
+        now=now,
+    )
+
+
+def _fail_profile_document_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    error_code: str,
+    error_message: str | None,
+    *,
+    failed_stage: str | None,
+    retryable: bool,
+    retry_delay_seconds: int,
+    claimed_document_status: str,
+    requeued_document_status: str | None,
+    failed_document_status: str | None,
     now: datetime | None = None,
 ) -> bool:
     error_code = error_code.strip()
@@ -2622,7 +3144,7 @@ def fail_profile_job(
         or job.claim_token != claim_token
         or job.lease_expires_at is None
         or job.lease_expires_at <= failed_at
-        or document.status != "processing"
+        or document.status != claimed_document_status
     ):
         session.rollback()
         return False
@@ -2641,16 +3163,18 @@ def fail_profile_job(
         job.status = JOB_STATUS_QUEUED
         job.available_at = failed_at + timedelta(seconds=retry_delay_seconds)
         job.finished_at = None
-        document.status = "uploaded"
-        document.processing_error = None
-        document.updated_at = failed_at
+        if requeued_document_status is not None:
+            document.status = requeued_document_status
+            document.processing_error = None
+            document.updated_at = failed_at
     else:
         job.status = JOB_STATUS_FAILED
         job.available_at = failed_at
         job.finished_at = failed_at
-        document.status = "failed"
-        document.processing_error = public_message
-        document.updated_at = failed_at
+        if failed_document_status is not None:
+            document.status = failed_document_status
+            document.processing_error = public_message
+            document.updated_at = failed_at
 
     session.commit()
     return True

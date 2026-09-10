@@ -57,13 +57,17 @@ from services.processing_jobs import (
     PageData,
     claim_next_describe_job,
     claim_next_job,
+    claim_next_profile_describe_job,
     claim_next_profile_job,
     complete_describe_job,
+    complete_profile_describe_job,
     enqueue_describe_visuals_job_if_deferred,
+    enqueue_profile_describe_visuals_job_if_deferred,
     complete_job,
     complete_profile_job,
     fail_describe_job,
     fail_job,
+    fail_profile_describe_job,
     fail_profile_job,
     heartbeat_job,
     heartbeat_profile_job,
@@ -71,9 +75,12 @@ from services.processing_jobs import (
     recover_expired_jobs,
     replace_document_pages,
     replace_profile_document_pages,
+    record_profile_visual_description,
     record_visual_description,
+    stored_profile_visual_descriptions,
     stored_visual_descriptions,
     sweep_documents_needing_visual_description,
+    sweep_profile_documents_needing_visual_description,
     update_job_stage,
     update_profile_job_stage,
 )
@@ -192,7 +199,12 @@ def _record_failure(
     retry_delay = min(60.0, 2.0**exponent)
     with session_factory() as session:
         if isinstance(job, ClaimedProfileJob):
-            resulting_status = fail_profile_job(
+            profile_failer = (
+                fail_profile_describe_job
+                if job.job_type == JOB_TYPE_DESCRIBE_VISUALS
+                else fail_profile_job
+            )
+            resulting_status = profile_failer(
                 session,
                 job.id,
                 job.claim_token,
@@ -362,7 +374,7 @@ class _ResumingImageUnderstandingProvider:
 def _describe_visuals_process(
     connection,
     storage: Storage,
-    job: ClaimedJob,
+    job: ClaimedJob | ClaimedProfileJob,
     prompt_context: PromptContext | None = None,
     resume_cache: dict[tuple[int, int], tuple[str, str]] | None = None,
 ) -> None:
@@ -380,7 +392,9 @@ def _describe_visuals_process(
     if job.correlation_id is not None:
         bind_request_id(job.correlation_id)
     bind_operation_context(
-        operation_id=f"processing_job:describe:{job.id}",
+        operation_id=(
+            f"processing_job:describe:{'profile' if isinstance(job, ClaimedProfileJob) else 'course'}:{job.id}"
+        ),
         parent_operation_id=job.parent_operation_id,
         job_id=job.id,
         job_type="course_document_visual_description",
@@ -492,11 +506,7 @@ def _extraction_process(
             extraction_callback=report_extraction,
             prompt_context=prompt_context,
             image_usage_callback=report_image_usage,
-            inline_visual_budget=(
-                None
-                if isinstance(job, ClaimedProfileJob)
-                else settings.image_understanding_inline_max_visuals
-            ),
+            inline_visual_budget=settings.image_understanding_inline_max_visuals,
         )
         connection.send(("succeeded", result.pages, result.chunks))
     except DocumentProcessingError as exc:
@@ -778,6 +788,13 @@ def process_next_job(
                 storage.provider,
                 lease_seconds,
             )
+        if job is None and claim_describe:
+            job = claim_next_profile_describe_job(
+                session,
+                worker_id,
+                storage.provider,
+                lease_seconds,
+            )
         if job is not None:
             if isinstance(job, ClaimedJob):
                 prompt_context = resolve_prompt_context(
@@ -818,9 +835,7 @@ def process_next_job(
             },
         )
 
-        describing_visuals = (
-            isinstance(job, ClaimedJob) and job.job_type == JOB_TYPE_DESCRIBE_VISUALS
-        )
+        describing_visuals = job.job_type == JOB_TYPE_DESCRIBE_VISUALS
         stop = threading.Event()
         claim_lost = threading.Event()
         current_stage = "reading_file"
@@ -873,7 +888,12 @@ def process_next_job(
                 description: str,
             ) -> None:
                 with session_factory() as session:
-                    recorded = record_visual_description(
+                    recorder = (
+                        record_profile_visual_description
+                        if isinstance(job, ClaimedProfileJob)
+                        else record_visual_description
+                    )
+                    recorded = recorder(
                         session,
                         job.id,
                         job.claim_token,
@@ -931,7 +951,14 @@ def process_next_job(
 
             if describing_visuals:
                 with session_factory() as session:
-                    resume_cache = stored_visual_descriptions(session, job.document_id)
+                    if isinstance(job, ClaimedProfileJob):
+                        resume_cache = stored_profile_visual_descriptions(
+                            session, job.document_id
+                        )
+                    else:
+                        resume_cache = stored_visual_descriptions(
+                            session, job.document_id
+                        )
                 pages, chunks = _extract_with_timeout(
                     storage,
                     job,
@@ -1026,7 +1053,18 @@ def process_next_job(
             return True
         try:
             with session_factory() as session:
-                if describing_visuals:
+                if describing_visuals and isinstance(job, ClaimedProfileJob):
+                    completed = complete_profile_describe_job(
+                        session,
+                        job.id,
+                        job.claim_token,
+                        chunks,
+                        pages,
+                        embeddings=embeddings,
+                        vector_store=vector_store,
+                        operation_timeout_seconds=lease_seconds,
+                    )
+                elif describing_visuals:
                     completed = complete_describe_job(
                         session,
                         job.id,
@@ -1108,13 +1146,19 @@ def process_next_job(
             # is ready and its chunks exist. It is best-effort by design: a
             # paper whose questions could not be read is still indexed material,
             # and the failure belongs on the document rather than on the job.
-            if isinstance(job, ClaimedJob) and not describing_visuals:
-                extract_past_exam_questions(session_factory, job.document_id)
+            if not describing_visuals:
+                if isinstance(job, ClaimedJob):
+                    extract_past_exam_questions(session_factory, job.document_id)
                 try:
                     with session_factory() as session:
-                        enqueue_describe_visuals_job_if_deferred(
-                            session, job.document_id
-                        )
+                        if isinstance(job, ClaimedProfileJob):
+                            enqueue_profile_describe_visuals_job_if_deferred(
+                                session, job.document_id
+                            )
+                        else:
+                            enqueue_describe_visuals_job_if_deferred(
+                                session, job.document_id
+                            )
                 except Exception:
                     logger.exception(
                         "Failed to queue visual description for document %s",
@@ -1331,6 +1375,7 @@ def _maintenance_cycle(
         try:
             with session_factory() as session:
                 queued = sweep_documents_needing_visual_description(session)
+                queued += sweep_profile_documents_needing_visual_description(session)
             if queued:
                 logger.info(
                     "Queued documents for visual description",

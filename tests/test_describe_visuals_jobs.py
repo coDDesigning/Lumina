@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import pymupdf
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
 from backend.app.models import (
     Course,
@@ -25,6 +26,10 @@ from backend.app.models import (
     JOB_TYPE_DESCRIBE_VISUALS,
     JOB_TYPE_EXTRACT_DOCUMENT,
     ProcessingJob,
+    ProfileDocument,
+    ProfileDocumentPage,
+    ProfileDocumentVisual,
+    ProfileProcessingJob,
     Role,
     UploadedDocument,
     User,
@@ -40,15 +45,21 @@ from services.processing_jobs import (
     update_job_stage,
     claim_next_describe_job,
     claim_next_job,
+    claim_next_profile_describe_job,
+    claim_next_profile_job,
     enqueue_describe_visuals_job,
     enqueue_describe_visuals_job_if_deferred,
     enqueue_document_job,
+    enqueue_profile_describe_visuals_job,
     fail_describe_job,
+    fail_profile_describe_job,
     record_visual_description,
+    record_profile_visual_description,
     record_visual_failure,
     recover_expired_jobs,
     stored_visual_descriptions,
     sweep_documents_needing_visual_description,
+    sweep_profile_documents_needing_visual_description,
 )
 from services.document_pipeline import VisualDescription, VisualType
 from services import image_understanding
@@ -1439,7 +1450,7 @@ def test_a_course_extraction_defers_visuals_beyond_its_inline_budget(
     assert statuses.count("pending") == 2
 
 
-def test_a_profile_extraction_still_describes_every_visual(
+def test_a_profile_extraction_defers_visuals_the_same_way(
     session_factory, tmp_path, monkeypatch
 ):
     ready = seed_ready_document(
@@ -1454,5 +1465,295 @@ def test_a_profile_extraction_still_describes_every_visual(
         )
 
     statuses = _described_statuses(connection)
-    assert statuses.count("succeeded") == 4
-    assert "pending" not in statuses
+    assert statuses.count("succeeded") == 2
+    assert statuses.count("pending") == 2
+
+
+@dataclass
+class ReadyProfileDocument:
+    document_id: UUID
+    user_id: int
+    storage: LocalStorage
+    storage_key: str
+
+
+def seed_ready_profile_document(
+    session_factory,
+    tmp_path: Path,
+    *,
+    email: str = "profile-describe@example.com",
+    pending_visuals: int = 2,
+    described_visuals: int = 0,
+) -> ReadyProfileDocument:
+    content = visual_pdf(page_count=pending_visuals + described_visuals)
+    storage = LocalStorage(tmp_path / "profile-uploads", namespace="profile")
+    document_id = uuid4()
+
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Profile owner",
+            email=email,
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        session.add(user)
+        session.flush()
+
+        storage_key = storage.generate_key(user.id, document_id, "pdf")
+        storage.save(storage_key, BytesIO(content))
+
+        document = ProfileDocument(
+            id=document_id,
+            user_id=user.id,
+            original_file_name="profile-visuals.pdf",
+            file_type="pdf",
+            mime_type="application/pdf",
+            file_size=len(content),
+            file_hash=hashlib.sha256(content).hexdigest(),
+            storage_provider=storage.provider,
+            storage_key=storage_key,
+            status="ready",
+        )
+        session.add(document)
+        session.flush()
+
+        for index in range(pending_visuals + described_visuals):
+            page = ProfileDocumentPage(
+                document_id=document_id,
+                user_id=user.id,
+                content_index=index,
+                page_number=index + 1,
+                raw_text=f"Page {index + 1} body text.",
+                text=f"Page {index + 1} body text.",
+                extraction_method="native",
+                raw_extraction_method="native",
+                has_images=True,
+                has_visual_content=True,
+                visual_analysis_status=(
+                    "completed" if index < described_visuals else "pending"
+                ),
+            )
+            page.visuals = [
+                ProfileDocumentVisual(
+                    visual_index=0,
+                    visual_type="figure",
+                    source="image",
+                    bbox_x0=30.0,
+                    bbox_y0=50.0,
+                    bbox_x1=270.0,
+                    bbox_y1=270.0,
+                    description=(
+                        f"A described figure on page {index + 1}."
+                        if index < described_visuals
+                        else None
+                    ),
+                    analysis_status=(
+                        "succeeded" if index < described_visuals else "pending"
+                    ),
+                )
+            ]
+            session.add(page)
+        session.commit()
+        return ReadyProfileDocument(
+            document_id=document_id,
+            user_id=user.id,
+            storage=storage,
+            storage_key=storage_key,
+        )
+
+
+def profile_describe_job_count(session_factory, document_id):
+    with session_factory() as session:
+        return session.scalar(
+            select(func.count())
+            .select_from(ProfileProcessingJob)
+            .where(
+                ProfileProcessingJob.document_id == document_id,
+                ProfileProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            )
+        )
+
+
+def test_claiming_a_profile_describe_job_leaves_the_document_ready(
+    session_factory, tmp_path
+):
+    ready = seed_ready_profile_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+
+    with session_factory() as session:
+        document = session.get(ProfileDocument, ready.document_id)
+        enqueue_profile_describe_visuals_job(session, document, now=queued_at)
+        session.commit()
+
+    with session_factory() as session:
+        claim = claim_next_profile_describe_job(
+            session,
+            "profile-describe-worker",
+            ready.storage.provider,
+            60,
+            now=queued_at + timedelta(seconds=1),
+        )
+
+    assert claim is not None
+    assert claim.job_type == JOB_TYPE_DESCRIBE_VISUALS
+    assert claim.document_id == ready.document_id
+
+    with session_factory() as session:
+        assert session.get(ProfileDocument, ready.document_id).status == "ready"
+
+
+def test_the_profile_extract_claim_ignores_describe_jobs(session_factory, tmp_path):
+    ready = seed_ready_profile_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+
+    with session_factory() as session:
+        document = session.get(ProfileDocument, ready.document_id)
+        enqueue_profile_describe_visuals_job(session, document, now=queued_at)
+        session.commit()
+
+    with session_factory() as session:
+        claim = claim_next_profile_job(
+            session,
+            "profile-worker",
+            ready.storage.provider,
+            60,
+            now=queued_at + timedelta(seconds=1),
+        )
+
+    assert claim is None
+
+
+def test_a_profile_visual_is_checkpointed_on_its_own(session_factory, tmp_path):
+    ready = seed_ready_profile_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+
+    with session_factory() as session:
+        document = session.get(ProfileDocument, ready.document_id)
+        enqueue_profile_describe_visuals_job(session, document, now=queued_at)
+        session.commit()
+    with session_factory() as session:
+        claim = claim_next_profile_describe_job(
+            session,
+            "profile-describe-worker",
+            ready.storage.provider,
+            60,
+            now=queued_at + timedelta(seconds=1),
+        )
+
+    with session_factory() as session:
+        recorded = record_profile_visual_description(
+            session,
+            claim.id,
+            claim.claim_token,
+            page_number=1,
+            visual_index=0,
+            visual_type="diagram",
+            description="A labelled profile diagram.",
+        )
+
+    assert recorded is True
+
+    with session_factory() as session:
+        visuals = session.scalars(
+            select(ProfileDocumentVisual)
+            .join(
+                ProfileDocumentPage,
+                ProfileDocumentPage.id == ProfileDocumentVisual.page_id,
+            )
+            .where(ProfileDocumentPage.document_id == ready.document_id)
+            .order_by(ProfileDocumentPage.page_number)
+        ).all()
+        assert visuals[0].analysis_status == "succeeded"
+        assert visuals[0].description == "A labelled profile diagram."
+        assert visuals[1].analysis_status == "pending"
+
+
+def test_a_failed_profile_describe_job_leaves_the_document_ready(
+    session_factory, tmp_path
+):
+    ready = seed_ready_profile_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+
+    with session_factory() as session:
+        document = session.get(ProfileDocument, ready.document_id)
+        enqueue_profile_describe_visuals_job(session, document, now=queued_at)
+        session.commit()
+    with session_factory() as session:
+        claim = claim_next_profile_describe_job(
+            session,
+            "profile-describe-worker",
+            ready.storage.provider,
+            60,
+            now=queued_at + timedelta(seconds=1),
+        )
+
+    with session_factory() as session:
+        requeued = fail_profile_describe_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            "IMAGE_UNDERSTANDING_FAILED",
+            "The vision provider is unavailable.",
+            retryable=True,
+            now=queued_at + timedelta(seconds=5),
+        )
+
+    assert requeued is True
+
+    with session_factory() as session:
+        document = session.get(ProfileDocument, ready.document_id)
+        assert document.status == "ready"
+        assert document.processing_error is None
+
+
+def test_the_sweep_queues_profile_documents_too(session_factory, tmp_path):
+    ready = seed_ready_profile_document(session_factory, tmp_path)
+
+    with session_factory() as session:
+        assert sweep_profile_documents_needing_visual_description(session) == 1
+    with session_factory() as session:
+        assert sweep_profile_documents_needing_visual_description(session) == 0
+
+    assert profile_describe_job_count(session_factory, ready.document_id) == 1
+
+
+def test_a_described_profile_document_is_never_swept(session_factory, tmp_path):
+    ready = seed_ready_profile_document(
+        session_factory, tmp_path, pending_visuals=0, described_visuals=2
+    )
+
+    with session_factory() as session:
+        assert sweep_profile_documents_needing_visual_description(session) == 0
+
+    assert profile_describe_job_count(session_factory, ready.document_id) == 0
+
+
+def test_a_profile_document_reports_its_visual_analysis_rollup(
+    session_factory, tmp_path
+):
+    ready = seed_ready_profile_document(session_factory, tmp_path)
+
+    with session_factory() as session:
+        document = session.scalar(
+            select(ProfileDocument)
+            .options(selectinload(ProfileDocument.pages))
+            .where(ProfileDocument.id == ready.document_id)
+        )
+        assert document.visual_analysis_status == "pending"
+
+    ready_described = seed_ready_profile_document(
+        session_factory,
+        tmp_path,
+        email="profile-described@example.com",
+        pending_visuals=0,
+        described_visuals=2,
+    )
+    with session_factory() as session:
+        document = session.scalar(
+            select(ProfileDocument)
+            .options(selectinload(ProfileDocument.pages))
+            .where(ProfileDocument.id == ready_described.document_id)
+        )
+        assert document.visual_analysis_status == "completed"

@@ -2737,6 +2737,40 @@ class ProfileDocument(Base):
         passive_deletes=True,
     )
 
+    @property
+    def visual_analysis_status(self) -> str:
+        pages = None
+        try:
+            insp = inspect(self)
+            if insp is not None and "pages" not in insp.unloaded:
+                pages = self.pages
+        except Exception:
+            pages = getattr(self, "__dict__", {}).get("pages")
+
+        if not pages:
+            if self.file_type not in VISUAL_CAPABLE_FILE_TYPES:
+                return "not_applicable"
+            if self.status in ("uploaded", "processing"):
+                return "pending"
+            return "not_applicable"
+
+        visual_pages = [p for p in pages if getattr(p, "has_visual_content", False)]
+        if not visual_pages:
+            return "not_applicable"
+
+        statuses = {
+            getattr(p, "visual_analysis_status", "not_applicable") for p in visual_pages
+        }
+        if "pending" in statuses:
+            return "pending"
+        if statuses == {"completed"}:
+            return "completed"
+        if statuses == {"not_configured"}:
+            return "not_configured"
+        if statuses == {"failed"}:
+            return "failed"
+        return "partial"
+
 
 class ProfileDocumentChunk(Base):
     __tablename__ = "profile_document_chunks"

@@ -70,7 +70,7 @@ CHUNK_RANGES_REVISION = "a8c4e2f7b913"
 HARDENING_REVISION = "a1c5e7f9b203"
 CREDIT_LEDGER_REVISION = "d7f3a2c48e15"
 # When updating alembic versions, update this constant to the new head revision.
-HEAD_REVISION = "a9d4e2f7c601"
+HEAD_REVISION = "c1d7e94b3a20"
 
 pytestmark = pytest.mark.skipif(
     not settings.is_hosted,

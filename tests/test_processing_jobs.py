@@ -2239,3 +2239,110 @@ def test_claim_skips_documents_for_another_storage_provider(session_factory, tmp
         job = session.get(ProcessingJob, queued.job_id)
         assert job is not None
         assert job.status == JOB_STATUS_QUEUED
+
+
+class _CountingVisionProvider:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def describe_visual(
+        self,
+        visual_png: bytes,
+        *,
+        page_number: int,
+        visual_index: int,
+        suggested_type,
+    ):
+        from services.document_pipeline import VisualDescription
+
+        self.calls += 1
+        return VisualDescription(
+            visual_type=suggested_type,
+            description=f"A diagram on page {page_number}.",
+        )
+
+
+def _multi_visual_pdf(page_count: int) -> bytes:
+    pdf = pymupdf.open()
+    for number in range(page_count):
+        page = pdf.new_page(width=300, height=300)
+        page.insert_text((30, 30), f"Page {number + 1} body text.")
+        pixel = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 2, 2), False)
+        pixel.clear_with(255)
+        page.insert_image(pymupdf.Rect(30, 50, 270, 270), stream=pixel.tobytes("png"))
+    content = pdf.tobytes()
+    pdf.close()
+    return content
+
+
+def _store_pdf(tmp_path: Path, content: bytes) -> tuple[LocalStorage, str]:
+    storage = LocalStorage(tmp_path / "visual-uploads", namespace="visual")
+    key = storage.generate_key(1, uuid4(), "pdf")
+    storage.save(key, BytesIO(content))
+    return storage, key
+
+
+def test_extraction_defers_visuals_beyond_the_configured_inline_budget(
+    tmp_path, monkeypatch
+):
+    content = _multi_visual_pdf(4)
+    storage, key = _store_pdf(tmp_path, content)
+    monkeypatch.setattr(
+        document_extraction,
+        "settings",
+        replace(
+            document_extraction.settings,
+            image_understanding_inline_max_visuals=2,
+        ),
+    )
+    provider = _CountingVisionProvider()
+
+    result = extract_document(
+        storage,
+        storage_provider=storage.provider,
+        storage_key=key,
+        expected_hash=hashlib.sha256(content).hexdigest(),
+        expected_size=len(content),
+        file_type="pdf",
+        image_provider=provider,
+    )
+
+    assert provider.calls == 2
+    statuses = [
+        visual.analysis_status for page in result.pages for visual in page.visuals
+    ]
+    assert statuses.count("succeeded") == 2
+    assert statuses.count("pending") == 2
+
+
+def test_an_explicit_unset_inline_budget_describes_every_visual(tmp_path, monkeypatch):
+    content = _multi_visual_pdf(4)
+    storage, key = _store_pdf(tmp_path, content)
+    monkeypatch.setattr(
+        document_extraction,
+        "settings",
+        replace(
+            document_extraction.settings,
+            image_understanding_inline_max_visuals=2,
+        ),
+    )
+    provider = _CountingVisionProvider()
+
+    result = extract_document(
+        storage,
+        storage_provider=storage.provider,
+        storage_key=key,
+        expected_hash=hashlib.sha256(content).hexdigest(),
+        expected_size=len(content),
+        file_type="pdf",
+        image_provider=provider,
+        inline_visual_budget=None,
+    )
+
+    assert provider.calls == 4
+    statuses = [
+        visual.analysis_status for page in result.pages for visual in page.visuals
+    ]
+    assert statuses.count("succeeded") == 4

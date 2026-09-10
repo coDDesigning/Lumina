@@ -55,7 +55,7 @@ AI_VENDOR_PREFERENCE_ORDER = (
     AI_PROVIDER_OPENAI,
     AI_PROVIDER_CLAUDE,
 )
-DEFAULT_OLLAMA_MODEL = "llama3.1"
+DEFAULT_OLLAMA_MODEL = "qwen3.5:9b"
 DEFAULT_OLLAMA_TEMPERATURE = 0.2
 DEFAULT_OLLAMA_TOP_P = 0.9
 DEFAULT_OLLAMA_NUM_CTX = 8192
@@ -89,8 +89,10 @@ IMAGE_PROVIDER_NONE = "none"
 # may advertise vision for a vendor we cannot send an image to.
 IMPLEMENTED_IMAGE_VENDORS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
 DEFAULT_IMAGE_UNDERSTANDING_ENABLED = True
-DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS = 30
+DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS = 180
 DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES = 10 * 1024 * 1024
+DEFAULT_IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS = 2
+MAX_IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS = 50
 
 VECTOR_BACKEND_PGVECTOR = "pgvector"
 VECTOR_BACKEND_CHROMA = "chroma"
@@ -104,8 +106,8 @@ DEFAULT_MAX_DOCUMENTS_PER_COURSE = 1000
 DEFAULT_MAX_COURSE_STORAGE_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_PDF_PAGES = 500
 DEFAULT_MAX_PDF_PAGE_PIXELS = 40_000_000
-DEFAULT_MAX_PDF_TOTAL_PIXELS = 100_000_000
-DEFAULT_MAX_PDF_CONTENT_STREAM_BYTES = 5 * 1024 * 1024
+DEFAULT_MAX_PDF_TOTAL_PIXELS = 200_000_000
+DEFAULT_MAX_PDF_CONTENT_STREAM_BYTES = 16 * 1024 * 1024
 DEFAULT_MAX_PDF_DRAWING_OPERATIONS = 100_000
 DEFAULT_PROCESSING_JOB_LEASE_SECONDS = 60
 DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS = 3
@@ -116,6 +118,9 @@ MAX_PROCESSING_JOB_CONCURRENCY = 6
 # Course and profile jobs share this account-level ceiling so one student cannot
 # occupy the whole processing pool through either upload surface.
 DEFAULT_PROCESSING_JOB_MAX_ACTIVE_PER_USER = 1
+DEFAULT_DESCRIBE_VISUALS_MAX_ACTIVE_PER_USER = 1
+DEFAULT_DESCRIBE_VISUALS_ATTEMPT_TIMEOUT_SECONDS = 1800
+DEFAULT_VISUAL_DESCRIPTION_SWEEP_INTERVAL_SECONDS = 900.0
 MAX_PROCESSING_JOB_MAX_ACTIVE_PER_USER = 10
 DEFAULT_PDF_PAGE_WORKERS = 4
 MAX_PDF_PAGE_WORKERS = 8
@@ -284,6 +289,7 @@ class Settings:
     # Visual understanding
     image_understanding_timeout_seconds: int
     image_understanding_max_bytes: int
+    image_understanding_inline_max_visuals: int
 
     # Maximum accepted document size before content validation
     max_upload_size_bytes: int
@@ -302,6 +308,9 @@ class Settings:
     processing_job_max_attempts: int
     processing_job_poll_seconds: float
     processing_job_attempt_timeout_seconds: int
+    describe_visuals_attempt_timeout_seconds: int
+    describe_visuals_max_active_per_user: int
+    visual_description_sweep_interval_seconds: float
     processing_job_concurrency: int
     processing_job_max_active_per_user: int
     generation_job_lease_seconds: int
@@ -740,6 +749,22 @@ def load_settings() -> Settings:
         minimum=1,
         maximum=86_400,
     )
+    describe_visuals_attempt_timeout_seconds = _bounded_positive_integer_setting(
+        "DESCRIBE_VISUALS_ATTEMPT_TIMEOUT_SECONDS",
+        DEFAULT_DESCRIBE_VISUALS_ATTEMPT_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=86_400,
+    )
+    describe_visuals_max_active_per_user = _bounded_positive_integer_setting(
+        "DESCRIBE_VISUALS_MAX_ACTIVE_PER_USER",
+        DEFAULT_DESCRIBE_VISUALS_MAX_ACTIVE_PER_USER,
+        minimum=1,
+        maximum=MAX_PROCESSING_JOB_MAX_ACTIVE_PER_USER,
+    )
+    visual_description_sweep_interval_seconds = _nonnegative_float_setting(
+        "VISUAL_DESCRIPTION_SWEEP_INTERVAL_SECONDS",
+        DEFAULT_VISUAL_DESCRIPTION_SWEEP_INTERVAL_SECONDS,
+    )
     processing_job_concurrency = _bounded_positive_integer_setting(
         "PROCESSING_JOB_CONCURRENCY",
         DEFAULT_PROCESSING_JOB_CONCURRENCY,
@@ -982,6 +1007,12 @@ def load_settings() -> Settings:
         DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES,
         minimum=1024,
         maximum=50 * 1024 * 1024,
+    )
+    image_understanding_inline_max_visuals = _bounded_positive_integer_setting(
+        "IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS",
+        DEFAULT_IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS,
+        minimum=1,
+        maximum=MAX_IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS,
     )
 
     database_is_postgresql = make_url(database_url).get_backend_name() == "postgresql"
@@ -1323,6 +1354,7 @@ def load_settings() -> Settings:
         vector_backend=vector_backend,
         image_understanding_timeout_seconds=image_understanding_timeout_seconds,
         image_understanding_max_bytes=image_understanding_max_bytes,
+        image_understanding_inline_max_visuals=image_understanding_inline_max_visuals,
         max_upload_size_bytes=max_upload_size_bytes,
         max_request_size_bytes=max_request_size_bytes,
         max_concurrent_document_validations=max_concurrent_document_validations,
@@ -1339,6 +1371,9 @@ def load_settings() -> Settings:
         processing_job_max_attempts=processing_job_max_attempts,
         processing_job_poll_seconds=processing_job_poll_seconds,
         processing_job_attempt_timeout_seconds=processing_job_attempt_timeout_seconds,
+        describe_visuals_attempt_timeout_seconds=describe_visuals_attempt_timeout_seconds,
+        describe_visuals_max_active_per_user=describe_visuals_max_active_per_user,
+        visual_description_sweep_interval_seconds=visual_description_sweep_interval_seconds,
         processing_job_concurrency=processing_job_concurrency,
         processing_job_max_active_per_user=processing_job_max_active_per_user,
         generation_job_lease_seconds=generation_job_lease_seconds,
@@ -1669,7 +1704,7 @@ def _ai_model_catalog_setting(
                     "model": ollama_model,
                     "json_mode": True,
                     "context_window": ollama_num_ctx,
-                    "vision": False,
+                    "vision": True,
                 }
             ],
             AI_PROVIDER_GEMINI: [

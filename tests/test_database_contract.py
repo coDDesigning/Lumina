@@ -20,6 +20,8 @@ from backend.app.models import (
     EMBEDDING_DIMENSIONS,
     GeneratedOutput,
     JOB_STATUS_FAILED,
+    JOB_TYPE_DESCRIBE_VISUALS,
+    JOB_TYPE_EXTRACT_DOCUMENT,
     ProcessingJob,
     ProfileKnowledge,
     Progress,
@@ -1037,5 +1039,69 @@ def test_chunk_embedding_rejects_a_foreign_dimension_count(
         )
         assert stored is not None
         stored.dimensions = EMBEDDING_DIMENSIONS + 1
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_a_document_may_carry_both_an_extract_and_a_describe_job(
+    session_factory: sessionmaker[Session],
+) -> None:
+    queued_at = datetime.now(timezone.utc)
+    document_id = uuid4()
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Describe job user",
+            email="describe-job@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        course = Course(owner=user, title="Describe job course")
+        document = UploadedDocument(
+            id=document_id,
+            original_file_name="describe-contract.pdf",
+            file_type="pdf",
+            mime_type="application/pdf",
+            file_size=8,
+            file_hash="e" * 64,
+            uploader=user,
+            course=course,
+            storage_provider="local:contract",
+            storage_key=f"contract/{document_id}.pdf",
+            status="ready",
+        )
+        session.add(document)
+        session.flush()
+        course_id = course.id
+        session.add_all(
+            ProcessingJob(
+                document_id=document_id,
+                course_id=course_id,
+                job_type=job_type,
+                max_attempts=3,
+                available_at=queued_at,
+            )
+            for job_type in (JOB_TYPE_EXTRACT_DOCUMENT, JOB_TYPE_DESCRIBE_VISUALS)
+        )
+        session.commit()
+
+        stored = session.scalars(
+            select(ProcessingJob.job_type).where(
+                ProcessingJob.document_id == document_id
+            )
+        ).all()
+        assert set(stored) == {JOB_TYPE_EXTRACT_DOCUMENT, JOB_TYPE_DESCRIBE_VISUALS}
+
+    with session_factory() as session:
+        session.add(
+            ProcessingJob(
+                document_id=document_id,
+                course_id=course_id,
+                job_type=JOB_TYPE_DESCRIBE_VISUALS,
+                max_attempts=3,
+                available_at=queued_at,
+            )
+        )
         with pytest.raises(IntegrityError):
             session.commit()

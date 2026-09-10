@@ -400,22 +400,26 @@ class DocumentService:
                 .where(
                     UploadedDocument.id == document_id,
                     UploadedDocument.course_id == course_id,
-                    ProcessingJob.job_type == JOB_TYPE_EXTRACT_DOCUMENT,
                 )
             )
             if db.get_bind().dialect.name == "postgresql":
                 statement = statement.with_for_update(
                     of=(ProcessingJob, UploadedDocument)
                 )
-            row = db.execute(statement).one_or_none()
+            rows = db.execute(statement).all()
         except SQLAlchemyError as exc:
             raise DocumentDeletionError from exc
 
-        if row is None:
+        if not rows:
             db.rollback()
             raise NotFoundException("Document not found")
-        document, job = row
-        job_is_active = (job.status in {"queued", "running"}) if not force else False
+        document = rows[0][0]
+        jobs = [job for _, job in rows]
+        job_is_active = (
+            any(job.status in {"queued", "running"} for job in jobs)
+            if not force
+            else False
+        )
         if job_is_active or is_document_locked_for_generation(db, document_id):
             db.rollback()
             raise DocumentActiveError

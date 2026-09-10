@@ -44,6 +44,7 @@ EVENT_DESCRIPTIONS = {
     "http_authorization_denied": "An HTTP request was denied by authorization.",
     "http_request_slow": "An HTTP request exceeded the slow-request threshold.",
     "http_validation_rejected": "An HTTP request was rejected by validation or a business rule.",
+    "image_understanding_disabled": "The configured model cannot read images, so visual analysis is switched off.",
     "permanent_document_failure": "Document processing failed permanently.",
     "permanent_generation_failure": "Generation failed permanently.",
     "processing_job_claimed": "A document processing job was claimed by a worker.",

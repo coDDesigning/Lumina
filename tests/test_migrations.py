@@ -67,7 +67,8 @@ MISSING_CHECK_CONSTRAINTS_REVISION = "3317a08487dd"
 PROFILE_PROCESSING_JOB_INDEXES_REVISION = "d8a2b4c6e901"
 DROP_LEGACY_AI_USAGE_INDEX_REVISION = "e4c7a1b90d52"
 OPERATIONAL_CORRELATION_REVISION = "a9d4e2f7c601"
-HEAD_REVISION = OPERATIONAL_CORRELATION_REVISION
+DESCRIBE_VISUALS_JOBS_REVISION = "c1d7e94b3a20"
+HEAD_REVISION = DESCRIBE_VISUALS_JOBS_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -115,6 +116,7 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        DESCRIBE_VISUALS_JOBS_REVISION: OPERATIONAL_CORRELATION_REVISION,
         OPERATIONAL_CORRELATION_REVISION: DROP_LEGACY_AI_USAGE_INDEX_REVISION,
         DROP_LEGACY_AI_USAGE_INDEX_REVISION: PROFILE_PROCESSING_JOB_INDEXES_REVISION,
         PROFILE_PROCESSING_JOB_INDEXES_REVISION: MISSING_CHECK_CONSTRAINTS_REVISION,
@@ -3562,3 +3564,132 @@ def test_operational_correlation_metadata_migrates_in_both_directions(
             row[1] for row in connection.execute("PRAGMA table_info(ai_usage_logs)")
         }
         assert "operation_id" not in ai_columns
+
+
+def test_describe_visuals_migration_widens_both_job_types_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "describe-visuals.db"
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        suffix = uuid4().hex
+        role_id = connection.execute(
+            "SELECT id FROM roles WHERE name = 'user'"
+        ).fetchone()[0]
+        user_id = connection.execute(
+            "INSERT INTO users (name, email, password_hash, role_id) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                "Describe migration user",
+                f"describe-{suffix}@example.com",
+                "hash",
+                role_id,
+            ),
+        ).lastrowid
+        course_id = connection.execute(
+            "INSERT INTO courses (title, owner_id) VALUES (?, ?)",
+            (f"Describe course {suffix}", user_id),
+        ).lastrowid
+        document_id = uuid4().hex
+        connection.execute(
+            "INSERT INTO uploaded_documents "
+            "(id, original_file_name, file_type, mime_type, file_size, file_hash, "
+            "user_id, course_id, storage_provider, storage_key, status) "
+            "VALUES (?, ?, 'pdf', 'application/pdf', 7, ?, ?, ?, 'local:test', ?, "
+            "'ready')",
+            (
+                document_id,
+                f"describe-{suffix}.pdf",
+                uuid4().hex * 2,
+                user_id,
+                course_id,
+                f"local:test/describe-{suffix}",
+            ),
+        )
+        for job_type in ("extract_document", "describe_visuals"):
+            connection.execute(
+                "INSERT INTO processing_jobs "
+                "(document_id, course_id, job_type, status, attempt_count, "
+                "max_attempts, available_at) "
+                "VALUES (?, ?, ?, 'queued', 0, 3, CURRENT_TIMESTAMP)",
+                (document_id, course_id, job_type),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO processing_jobs "
+                "(document_id, course_id, job_type, status, attempt_count, "
+                "max_attempts, available_at) "
+                "VALUES (?, ?, 'summarise_document', 'queued', 0, 3, "
+                "CURRENT_TIMESTAMP)",
+                (document_id, course_id),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO processing_jobs "
+                "(document_id, course_id, job_type, status, attempt_count, "
+                "max_attempts, available_at) "
+                "VALUES (?, ?, 'describe_visuals', 'queued', 0, 3, "
+                "CURRENT_TIMESTAMP)",
+                (document_id, course_id),
+            )
+
+        profile_document_id = uuid4().hex
+        connection.execute(
+            "INSERT INTO profile_documents "
+            "(id, user_id, original_file_name, file_type, mime_type, file_size, "
+            "file_hash, storage_provider, storage_key, status) "
+            "VALUES (?, ?, 'cv.txt', 'txt', 'text/plain', 7, ?, 'local:test', ?, "
+            "'ready')",
+            (profile_document_id, user_id, uuid4().hex * 2, "local:test/profile-cv"),
+        )
+        for job_type in ("extract_document", "describe_visuals"):
+            connection.execute(
+                "INSERT INTO profile_processing_jobs "
+                "(document_id, user_id, job_type, status, attempt_count, "
+                "max_attempts, available_at) "
+                "VALUES (?, ?, ?, 'queued', 0, 3, CURRENT_TIMESTAMP)",
+                (profile_document_id, user_id, job_type),
+            )
+        connection.commit()
+
+    run_alembic(database_path, tmp_path, "downgrade", "-1")
+
+    with sqlite3.connect(database_path) as connection:
+        remaining = connection.execute(
+            "SELECT COUNT(*) FROM processing_jobs WHERE job_type = 'describe_visuals'"
+        ).fetchone()[0]
+        profile_remaining = connection.execute(
+            "SELECT COUNT(*) FROM profile_processing_jobs "
+            "WHERE job_type = 'describe_visuals'"
+        ).fetchone()[0]
+        surviving = connection.execute(
+            "SELECT COUNT(*) FROM processing_jobs WHERE job_type = 'extract_document'"
+        ).fetchone()[0]
+        assert remaining == 0
+        assert profile_remaining == 0
+        assert surviving == 1
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO processing_jobs "
+                "(document_id, course_id, job_type, status, attempt_count, "
+                "max_attempts, available_at) "
+                "VALUES (?, ?, 'describe_visuals', 'queued', 0, 3, "
+                "CURRENT_TIMESTAMP)",
+                (document_id, course_id),
+            )
+        connection.commit()
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            "INSERT INTO processing_jobs "
+            "(document_id, course_id, job_type, status, attempt_count, "
+            "max_attempts, available_at) "
+            "VALUES (?, ?, 'describe_visuals', 'queued', 0, 3, CURRENT_TIMESTAMP)",
+            (document_id, course_id),
+        )
+        connection.commit()

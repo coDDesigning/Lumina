@@ -150,6 +150,12 @@ _EXAM_QUESTION_DIFFICULTIES_SQL = ", ".join(
 )
 
 JOB_TYPE_EXTRACT_DOCUMENT = "extract_document"
+JOB_TYPE_DESCRIBE_VISUALS = "describe_visuals"
+DOCUMENT_JOB_TYPES = (
+    JOB_TYPE_EXTRACT_DOCUMENT,
+    JOB_TYPE_DESCRIBE_VISUALS,
+)
+_DOCUMENT_JOB_TYPES_SQL = ", ".join(f"'{kind}'" for kind in DOCUMENT_JOB_TYPES)
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_RUNNING = "running"
 JOB_STATUS_SUCCEEDED = "succeeded"
@@ -1054,7 +1060,7 @@ class ProcessingJob(Base):
             "document_id", "job_type", name="uq_processing_jobs_document_type"
         ),
         CheckConstraint(
-            f"job_type = '{JOB_TYPE_EXTRACT_DOCUMENT}'", name="job_type_valid"
+            f"job_type IN ({_DOCUMENT_JOB_TYPES_SQL})", name="job_type_valid"
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed')",
@@ -3024,7 +3030,7 @@ class ProfileProcessingJob(Base):
             "document_id", "job_type", name="uq_profile_processing_jobs_doc_type"
         ),
         CheckConstraint(
-            f"job_type = '{JOB_TYPE_EXTRACT_DOCUMENT}'", name="profile_job_type_valid"
+            f"job_type IN ({_DOCUMENT_JOB_TYPES_SQL})", name="profile_job_type_valid"
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed')",

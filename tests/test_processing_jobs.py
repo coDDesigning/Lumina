@@ -2346,3 +2346,101 @@ def test_an_explicit_unset_inline_budget_describes_every_visual(tmp_path, monkey
         visual.analysis_status for page in result.pages for visual in page.visuals
     ]
     assert statuses.count("succeeded") == 4
+
+
+def test_an_image_upload_completes_with_the_page_numbers_it_renders(
+    session_factory, tmp_path
+):
+    queued = _queue_document(
+        session_factory,
+        tmp_path,
+        content=_image_pdf(),
+        file_type="jpeg",
+    )
+    with session_factory() as session:
+        claim = claim_next_job(
+            session,
+            "image-worker",
+            queued.storage.provider,
+            60,
+            now=queued.available_at + timedelta(seconds=1),
+        )
+    assert claim is not None
+    _advance_to_embedding(session_factory, claim)
+
+    pages = [
+        PageData(
+            content_index=0,
+            text="A described photograph of a lecture slide.",
+            page_number=1,
+            extraction_method="ocr",
+            has_images=True,
+            needs_ocr=False,
+            raw_text="",
+            raw_extraction_method=None,
+            has_visual_content=True,
+            raw_needs_ocr=True,
+            ocr_status="no_text",
+            visual_analysis_status="completed",
+            visuals=(
+                VisualData(
+                    visual_index=0,
+                    visual_type="figure",
+                    source="image",
+                    bbox=(0.0, 0.0, 100.0, 100.0),
+                    description="A described photograph of a lecture slide.",
+                    analysis_status="succeeded",
+                ),
+            ),
+        )
+    ]
+    chunks = [
+        ChunkData(
+            text="A described photograph of a lecture slide.",
+            page_number=1,
+            end_page_number=1,
+        )
+    ]
+
+    with session_factory() as session:
+        completed = complete_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            chunks,
+            pages,
+            embeddings=_embeddings(1),
+            vector_store=PgVectorStore(),
+        )
+
+    assert completed is True
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        assert document.status == "ready"
+
+
+def test_a_completion_payload_the_job_can_never_persist_fails_it(
+    session_factory, tmp_path, monkeypatch
+):
+    queued = _queue_document(session_factory, tmp_path)
+
+    def refuse(*args, **kwargs):
+        raise ValueError("Document chunks must contain text")
+
+    monkeypatch.setattr(document_processor, "complete_job", refuse)
+
+    handled = _process_next_job(
+        session_factory=session_factory,
+        storage=queued.storage,
+        worker_id="finalize-worker",
+    )
+
+    assert handled is True
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        document = session.get(UploadedDocument, queued.document_id)
+        assert job.status == JOB_STATUS_FAILED
+        assert job.last_error_code == "COMPLETION_PAYLOAD_INVALID"
+        assert document.status == "failed"

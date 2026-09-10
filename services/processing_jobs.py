@@ -14,6 +14,7 @@ from backend.app.observability import get_operation_context, get_request_id
 from backend.app.models import (
     DOCUMENT_PROCESSING_STAGES,
     EMBEDDING_DIMENSIONS,
+    IMAGE_UPLOAD_FILE_TYPES,
     JOB_STATUS_FAILED,
     JOB_STATUS_QUEUED,
     JOB_STATUS_RUNNING,
@@ -1512,7 +1513,7 @@ def _validate_document_provenance(
             )
         )
     )
-    if file_type != "pdf":
+    if file_type != "pdf" and file_type not in IMAGE_UPLOAD_FILE_TYPES:
         if any(page_number is not None for page_number in page_numbers):
             raise ValueError("Non-PDF document pages cannot contain page numbers")
         if any(chunk.page_number is not None for chunk in chunks):
@@ -2070,7 +2071,7 @@ def _validate_profile_document_provenance(
             )
         )
     )
-    if file_type != "pdf":
+    if file_type != "pdf" and file_type not in IMAGE_UPLOAD_FILE_TYPES:
         if any(page_number is not None for page_number in page_numbers):
             raise ValueError("Non-PDF document pages cannot contain page numbers")
         if any(chunk.page_number is not None for chunk in chunks):

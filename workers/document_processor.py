@@ -1135,6 +1135,30 @@ def process_next_job(
             else:
                 logger.exception("Failed to finalize processing job %s", job.id)
             return True
+        except ValueError:
+            # A rejected payload is deterministic: recovery would replay the same
+            # bytes into the same refusal forever, so the job is failed here
+            # instead of being left running for the lease to expire.
+            logger.exception("Refused to finalize processing job %s", job.id)
+            failure = DocumentProcessingError(
+                "COMPLETION_PAYLOAD_INVALID",
+                "The extracted document could not be recorded.",
+                retryable=False,
+                failed_stage=EMBEDDING_STAGE,
+            )
+            try:
+                _record_failure(
+                    session_factory, job, failure, active_stage=EMBEDDING_STAGE
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to record completion refusal for job %s", job.id
+                )
+            emit_emf_metrics(
+                {"JobsFailed": 1},
+                dimensions={"Service": "worker", "Environment": settings.app_env},
+            )
+            return True
         except Exception:
             # Leave the fenced running state intact; periodic recovery safely retries it.
             logger.exception("Failed to finalize processing job %s", job.id)

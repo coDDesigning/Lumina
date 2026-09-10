@@ -42,6 +42,9 @@ _CONVERSATION_TYPES_SQL = ", ".join(f"'{kind}'" for kind in CONVERSATION_TYPES)
 # Image uploads are transcoded to a one-page PDF by the processing pipeline;
 # kept in sync with `_VISUAL_CAPABLE_FILE_TYPES` in services/document_pipeline.py.
 VISUAL_CAPABLE_FILE_TYPES = ("pdf", "png", "jpg", "jpeg")
+# An image upload is transcoded into a one-page PDF before extraction, so it
+# carries page numbers and chunk page ranges exactly as a PDF does.
+IMAGE_UPLOAD_FILE_TYPES = ("png", "jpg", "jpeg")
 
 EDUCATION_LEVELS = (
     "high_school",

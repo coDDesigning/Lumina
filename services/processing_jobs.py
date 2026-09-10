@@ -3231,6 +3231,12 @@ def retry_failed_profile_job(
     job.failed_stage = None
     job.updated_at = available_at
     _clear_profile_lease(job)
+    session.execute(
+        delete(ProfileProcessingJob).where(
+            ProfileProcessingJob.document_id == document.id,
+            ProfileProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+        )
+    )
     document.status = "uploaded"
     document.processing_error = None
     document.updated_at = available_at

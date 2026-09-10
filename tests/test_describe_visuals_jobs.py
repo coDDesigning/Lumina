@@ -55,6 +55,7 @@ from services.processing_jobs import (
     fail_profile_describe_job,
     record_visual_description,
     record_profile_visual_description,
+    retry_failed_profile_job,
     record_visual_failure,
     recover_expired_jobs,
     stored_visual_descriptions,
@@ -1757,3 +1758,41 @@ def test_a_profile_document_reports_its_visual_analysis_rollup(
             .where(ProfileDocument.id == ready_described.document_id)
         )
         assert document.visual_analysis_status == "completed"
+
+
+def test_retrying_a_failed_profile_document_rearms_its_visual_description(
+    session_factory, tmp_path
+):
+    ready = seed_ready_profile_document(session_factory, tmp_path)
+    with session_factory() as session:
+        document = session.get(ProfileDocument, ready.document_id)
+        enqueue_profile_describe_visuals_job(session, document)
+        session.commit()
+
+    with session_factory() as session:
+        job = session.scalar(
+            select(ProfileProcessingJob).where(
+                ProfileProcessingJob.document_id == ready.document_id,
+                ProfileProcessingJob.job_type == JOB_TYPE_EXTRACT_DOCUMENT,
+            )
+        )
+        if job is None:
+            job = ProfileProcessingJob(
+                document_id=ready.document_id,
+                user_id=ready.user_id,
+                job_type=JOB_TYPE_EXTRACT_DOCUMENT,
+                max_attempts=3,
+                available_at=datetime.now(timezone.utc),
+            )
+            session.add(job)
+        job.status = JOB_STATUS_FAILED
+        job.finished_at = datetime.now(timezone.utc)
+        job.last_error_code = "OCR_REQUIRED"
+        job.attempt_count = 1
+        session.get(ProfileDocument, ready.document_id).status = "failed"
+        session.commit()
+
+    with session_factory() as session:
+        retry_failed_profile_job(session, ready.document_id, ready.user_id)
+
+    assert profile_describe_job_count(session_factory, ready.document_id) == 0

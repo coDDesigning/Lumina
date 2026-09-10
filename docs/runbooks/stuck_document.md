@@ -16,6 +16,40 @@ A document processing job transitions through `queued -> running -> succeeded` (
 * API document list (`GET /api/courses/{id}/documents`) shows `status="processing"` or `status="failed"`.
 * Document processing error codes in `processing_jobs.last_error_code` (e.g. `PROCESSING_TIMEOUT`, `EXTRACTION_FAILED`, `EXTRACTION_PERSISTENCE_FAILED`).
 
+### Not stuck: a ready document whose visuals are still queued
+
+`status="ready"` with `visual_analysis_status="pending"` is the normal state of a
+document whose visuals are being described in the background, not a stuck one.
+Extraction describes `IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS` visuals and defers
+the rest to a `describe_visuals` job, so the document is readable and searchable
+while its diagrams are still being read. The text is already indexed; the
+descriptions are added later and the chunks replaced in one transaction.
+
+Check the second job row rather than the extraction one:
+
+```sql
+SELECT status, attempt_count, last_error_code, available_at
+FROM processing_jobs
+WHERE document_id = '<uuid>' AND job_type = 'describe_visuals';
+```
+
+* No row at all: the periodic sweep has not reached it yet
+  (`VISUAL_DESCRIPTION_SWEEP_INTERVAL_SECONDS`, default 900), or the document has
+  no undescribed visual left.
+* `queued` with a future `available_at`: a previous attempt failed and is waiting
+  out its backoff. Progress is checkpointed per visual, so the retry re-describes
+  only what is still missing.
+* `failed`: the visuals that were described are kept and indexed; the rest stay
+  `pending`. The document is not damaged. Re-arm it by deleting the row, which
+  lets the sweep queue it again.
+* An `image_understanding_disabled` operational event means the configured model
+  cannot read images at all. Visual analysis is off by design until
+  `OLLAMA_MODEL` names a multimodal model; nothing is stuck.
+
+A document is only stuck on visuals if its `describe_visuals` job is `running`
+with an expired `lease_expires_at` and periodic recovery is not requeueing it —
+which is the same lease problem as any other job, handled below.
+
 ### Diagnostic Queries
 
 #### CloudWatch Logs Insights (Hosted):

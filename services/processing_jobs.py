@@ -1466,9 +1466,15 @@ def _validate_described_visual_layout(
         )
         for visual in described_page.visuals
     }
-    if stored_layout != described_layout:
+    if not described_layout.keys() <= stored_layout.keys():
         raise ValueError(
             "A described page must carry the visuals its extraction detected"
+        )
+    if any(
+        stored_layout[index] != region for index, region in described_layout.items()
+    ):
+        raise ValueError(
+            "A described visual must cover the region its extraction detected"
         )
 
 
@@ -1477,6 +1483,10 @@ def _apply_described_visuals(
     described_page: PageData,
 ) -> None:
     by_index = {visual.visual_index: visual for visual in stored_page.visuals}
+    described_indexes = {visual.visual_index for visual in described_page.visuals}
+    for index, stored in by_index.items():
+        if index not in described_indexes and stored.analysis_status == "pending":
+            stored.analysis_status = "skipped"
     for described in described_page.visuals:
         stored = by_index.get(described.visual_index)
         if stored is None:

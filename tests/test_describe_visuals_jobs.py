@@ -1796,3 +1796,80 @@ def test_retrying_a_failed_profile_document_rearms_its_visual_description(
         retry_failed_profile_job(session, ready.document_id, ready.user_id)
 
     assert profile_describe_job_count(session_factory, ready.document_id) == 0
+
+
+def test_a_visual_detection_no_longer_produces_is_recorded_as_skipped(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+    claim = claimed_describe_job(session_factory, ready, now=queued_at)
+    advance_describe_to_embedding(session_factory, claim)
+
+    pages = described_pages()
+    pages[1] = replace(
+        pages[1],
+        text="Page 2 body text.",
+        visuals=(),
+        visual_analysis_status="partial",
+    )
+    chunks = [
+        ChunkData(
+            text="Page 1 body text.\n\n[Figure]\nA described figure.",
+            page_number=1,
+            end_page_number=1,
+        ),
+        ChunkData(text="Page 2 body text.", page_number=2, end_page_number=2),
+    ]
+
+    with session_factory() as session:
+        completed = complete_describe_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            chunks,
+            pages,
+            embeddings=[[0.1] * EMBEDDING_DIMENSIONS for _ in range(2)],
+            vector_store=PgVectorStore(),
+            now=queued_at + timedelta(seconds=10),
+        )
+
+    assert completed is True
+
+    with session_factory() as session:
+        visuals = session.scalars(
+            select(DocumentVisual)
+            .join(DocumentPage, DocumentPage.id == DocumentVisual.page_id)
+            .where(DocumentPage.document_id == ready.document_id)
+            .order_by(DocumentPage.page_number)
+        ).all()
+        assert visuals[0].analysis_status == "succeeded"
+        assert visuals[1].analysis_status == "skipped"
+        assert visuals[1].description is None
+        assert session.get(UploadedDocument, ready.document_id).status == "ready"
+
+
+def test_a_visual_that_moved_is_still_refused(session_factory, tmp_path):
+    ready = seed_ready_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+    claim = claimed_describe_job(session_factory, ready, now=queued_at)
+    advance_describe_to_embedding(session_factory, claim)
+
+    moved = described_pages()
+    moved[0] = replace(
+        moved[0],
+        visuals=(replace(moved[0].visuals[0], bbox=(31.0, 51.0, 271.0, 271.0)),),
+    )
+
+    with session_factory() as session:
+        with pytest.raises(ValueError):
+            complete_describe_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                described_chunks(),
+                moved,
+                embeddings=[[0.1] * EMBEDDING_DIMENSIONS for _ in range(2)],
+                vector_store=PgVectorStore(),
+                now=queued_at + timedelta(seconds=10),
+            )

@@ -151,6 +151,7 @@ def _heartbeat_loop(
     call eventually returns.
     """
     interval = min(30.0, max(0.05, lease_seconds / 3))
+    consecutive_failures = 0
     while not stop.is_set():
         if time.monotonic() >= attempt_deadline:
             logger.warning(
@@ -171,10 +172,31 @@ def _heartbeat_loop(
                     session, job.id, job.claim_token, lease_seconds
                 )
         except Exception:
-            logger.exception("Failed to heartbeat generation job %s", job.id)
+            consecutive_failures += 1
+            if consecutive_failures == 1:
+                logger.exception(
+                    "Failed to heartbeat generation job %s",
+                    job.id,
+                    extra={"job_id": job.id, "attempt_number": consecutive_failures},
+                )
+            else:
+                logger.warning(
+                    "Still failing to heartbeat generation job %s (%s in a row)",
+                    job.id,
+                    consecutive_failures,
+                    extra={"job_id": job.id, "attempt_number": consecutive_failures},
+                )
             if stop.wait(interval):
                 return
             continue
+        if consecutive_failures:
+            logger.warning(
+                "Heartbeat for generation job %s recovered after %s failures",
+                job.id,
+                consecutive_failures,
+                extra={"job_id": job.id, "attempt_number": consecutive_failures},
+            )
+            consecutive_failures = 0
         if not current:
             claim_lost.set()
             return

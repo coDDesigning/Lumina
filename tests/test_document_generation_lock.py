@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.models import (
@@ -23,6 +23,7 @@ from backend.app.models import (
 from services.document import DocumentActiveError, DocumentService
 from services.document_lock import (
     acquire_generation_locks,
+    active_generation_lock,
     is_document_locked_for_generation,
     release_expired_generation_locks,
     reset_generation_locks,
@@ -321,9 +322,12 @@ def test_delete_document_http_409_when_locked_for_generation(authz_api):
             )
             assert response.status_code == 409
             assert (
-                "cannot be deleted while it is being processed"
-                in response.json()["detail"]
+                response.headers["X-Error-Code"] == "document_generation_in_progress"
             )
+            assert int(response.headers["Retry-After"]) > 0
+            detail = response.json()["detail"]
+            assert "reading this document" in detail
+            assert "being processed" not in detail
 
     # Deleting without lock succeeds
     response = authz_api.client.delete(
@@ -331,3 +335,83 @@ def test_delete_document_http_409_when_locked_for_generation(authz_api):
         headers=authz_api.authorization_a,
     )
     assert response.status_code == 204
+
+
+def test_active_generation_lock_reports_who_holds_it(db_session):
+    doc_id = uuid4()
+
+    assert active_generation_lock(db_session, doc_id) is None
+
+    with acquire_generation_locks(db_session, [doc_id]):
+        hold = active_generation_lock(db_session, doc_id)
+        assert hold is not None
+        assert hold.holder
+        assert hold.expires_at > hold.acquired_at
+        assert is_document_locked_for_generation(db_session, doc_id)
+
+    assert active_generation_lock(db_session, doc_id) is None
+    assert not is_document_locked_for_generation(db_session, doc_id)
+
+
+def test_the_reported_hold_is_the_last_lease_to_lapse(db_session):
+    doc_id = uuid4()
+
+    with acquire_generation_locks(db_session, [doc_id]):
+        first = active_generation_lock(db_session, doc_id)
+        assert first is not None
+        db_session.execute(
+            update(DocumentGenerationLock)
+            .where(DocumentGenerationLock.document_id == doc_id)
+            .values(expires_at=datetime.now(timezone.utc) + timedelta(seconds=30))
+        )
+        db_session.commit()
+        shortened = active_generation_lock(db_session, doc_id)
+        assert shortened is not None
+
+        with acquire_generation_locks(db_session, [doc_id]):
+            latest = active_generation_lock(db_session, doc_id)
+            assert latest is not None
+            assert latest.expires_at > shortened.expires_at
+
+
+def test_an_expired_hold_does_not_block_a_deletion(db_session):
+    doc_id = uuid4()
+
+    with acquire_generation_locks(db_session, [doc_id]):
+        now = datetime.now(timezone.utc)
+        db_session.execute(
+            update(DocumentGenerationLock)
+            .where(DocumentGenerationLock.document_id == doc_id)
+            .values(
+                acquired_at=now - timedelta(hours=2),
+                expires_at=now - timedelta(seconds=1),
+            )
+        )
+        db_session.commit()
+
+        assert active_generation_lock(db_session, doc_id) is None
+        assert not is_document_locked_for_generation(db_session, doc_id)
+
+
+def test_the_delete_refusal_says_which_reason_stopped_it(db_session, tmp_path):
+    storage = LocalStorage(tmp_path / "reason-uploads", namespace="reason-test")
+    course, document, _ = _seed_document(
+        db_session, storage, "delete-reason@example.com"
+    )
+
+    with acquire_generation_locks(db_session, [document.id]):
+        with pytest.raises(DocumentActiveError) as held:
+            DocumentService.delete_document(
+                db_session, storage, document.id, course.id
+            )
+
+    assert held.value.reason == "generation_in_progress"
+    assert held.value.lease_expires_at is not None
+
+    with acquire_generation_locks(db_session, [document.id]):
+        with pytest.raises(DocumentActiveError) as forced:
+            DocumentService.delete_document(
+                db_session, storage, document.id, course.id, force=True
+            )
+
+    assert forced.value.reason == "generation_in_progress"

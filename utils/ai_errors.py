@@ -342,14 +342,14 @@ def ai_generation_http_exception(exc: BaseException, *, feature: str) -> HTTPExc
             feature,
             code.value,
             exc_info=exc,
-            extra={"error_code": code.value},
+            extra={"event": "ai_route_failed", "error_code": code.value},
         )
     else:
         logger.warning(
             "%s generation rejected with %s",
             feature,
             code.value,
-            extra={"error_code": code.value},
+            extra={"event": "ai_route_refused", "error_code": code.value},
         )
 
     detail = PUBLIC_MESSAGES[code]

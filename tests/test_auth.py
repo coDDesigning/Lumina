@@ -46,3 +46,40 @@ def test_registration_rejects_commonly_used_passwords(
         },
     )
     assert response.status_code == 422
+
+
+def test_an_unreadable_issued_at_is_rejected_rather_than_waved_through(
+    upload_api,
+) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    import jwt
+
+    from backend.app.config import settings
+    from backend.app.models import User
+    from utils.security import ALGORITHM
+
+    with upload_api.session_factory() as session:
+        user = session.get(User, upload_api.user_id)
+        assert user is not None
+        user.tokens_valid_after = datetime.now(timezone.utc) - timedelta(days=1)
+        email = user.email
+        session.commit()
+
+    unreadable = jwt.encode(
+        {
+            "sub": email,
+            "iat": 10**18,
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        },
+        settings.jwt_secret_key,
+        algorithm=ALGORITHM,
+    )
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/documents",
+        headers={"Authorization": f"Bearer {unreadable}"},
+    )
+
+    assert response.status_code == 401
+    assert response.headers["X-Error-Code"] == "invalid_credentials"

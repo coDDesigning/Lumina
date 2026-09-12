@@ -7,7 +7,7 @@ import unicodedata
 import zlib
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from math import ceil
@@ -1250,6 +1250,7 @@ class _PageWork:
     drawing_operations: int
     candidates: tuple[_VisualCandidate, ...]
     overflowed: bool
+    detection_failures: tuple[str, ...]
 
 
 def _page_work(
@@ -1274,7 +1275,7 @@ def _page_work(
     page.get_pixmap(alpha=False)
     text = page.get_text("text").replace("\x00", "")
     text_blocks, header_candidates, footer_candidates = _pdf_layout_content(page)
-    candidates, overflowed = _detect_visual_candidates(
+    candidates, overflowed, detection_failures = _detect_visual_candidates(
         page, image_info, drawings, options, page_text=text
     )
     return _PageWork(
@@ -1297,6 +1298,7 @@ def _page_work(
         drawing_operations=sum(len(drawing.get("items", ())) for drawing in drawings),
         candidates=tuple(candidates),
         overflowed=overflowed,
+        detection_failures=detection_failures,
     )
 
 
@@ -1640,6 +1642,7 @@ def _extract_pdf_document(
                         )
                     )
                     candidate_pages.append((list(work.candidates), work.overflowed))
+                _report_detection_failures(page_work)
                 if warnings_seen or _mupdf_reported_damage():
                     raise _failure(
                         ProcessingErrorCode.CORRUPTED_PDF,
@@ -1730,6 +1733,30 @@ def _pdf_layout_content(
     return tuple(text_blocks), tuple(header_lines), tuple(footer_lines)
 
 
+def _report_detection_failures(page_work: Sequence[_PageWork]) -> None:
+    counts: Counter[str] = Counter()
+    affected = 0
+    for work in page_work:
+        if work.detection_failures:
+            affected += 1
+            counts.update(work.detection_failures)
+    if not counts:
+        return
+    kind, _ = counts.most_common(1)[0]
+    logger.warning(
+        "Visual detection degraded on %s of %s pages (%s)",
+        affected,
+        len(page_work),
+        ", ".join(f"{name}x{count}" for name, count in sorted(counts.items())),
+        extra={
+            "event": "visual_detection_degraded",
+            "failed_stage": "extracting_text",
+            "error_class": kind,
+            "exception_type": kind.split(":", 1)[1],
+        },
+    )
+
+
 def _detect_visual_candidates(
     page: pymupdf.Page,
     image_info: list[dict],
@@ -1737,17 +1764,18 @@ def _detect_visual_candidates(
     options: PipelineOptions,
     *,
     page_text: str = "",
-) -> tuple[list[_VisualCandidate], bool]:
+) -> tuple[list[_VisualCandidate], bool, tuple[str, ...]]:
     page_rect = page.rect
     candidates: list[_VisualCandidate] = []
     candidate_limit = options.max_visuals_per_page * 2
     overflowed = False
     image_fingerprints: set[tuple[int, ...]] = set()
+    failures: list[str] = []
 
     try:
         tables = page.find_tables().tables
-    except Exception:
-        logger.exception("Table detection failed on PDF page %s", page.number + 1)
+    except Exception as exc:
+        failures.append(f"table:{type(exc).__name__}")
         tables = ()
     for table in tables:
         candidate = _make_visual_candidate(
@@ -1783,8 +1811,8 @@ def _detect_visual_candidates(
 
     try:
         drawing_rects = page.cluster_drawings(drawings=drawings)
-    except Exception:
-        logger.exception("Drawing detection failed on PDF page %s", page.number + 1)
+    except Exception as exc:
+        failures.append(f"drawing:{type(exc).__name__}")
         drawing_rects = (page_rect,)
     describes_the_page = len(page_text.strip()) >= (
         options.full_page_drawing_text_characters
@@ -1823,7 +1851,7 @@ def _detect_visual_candidates(
         ):
             continue
         selected.append(candidate)
-    return selected, overflowed
+    return selected, overflowed, tuple(failures)
 
 
 def _retain_visual_candidate(

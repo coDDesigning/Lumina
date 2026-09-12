@@ -422,3 +422,147 @@ def test_payload_sanitizer_rejects_messages_and_unsafe_identifiers() -> None:
     assert "message" not in payload
     assert "error_code" not in payload
     assert "SECRET" not in str(payload)
+
+
+def test_request_detail_survives_into_the_operational_store(
+    tmp_path: Path, db_session
+) -> None:
+    path = tmp_path / "operational.db"
+    handler = OperationalEventHandler(
+        str(path),
+        service="api",
+        environment="test",
+        retention_days=30,
+        max_records=10_000,
+    )
+    _emit(
+        handler,
+        "http_request_rate_limited",
+        level=logging.WARNING,
+        http_method="POST",
+        http_path="/api/courses/{course_id}/documents",
+        http_status=429,
+        error_code="generation_rate_limited",
+        auth_state="authenticated",
+        response_bytes=812,
+        retry_after_seconds=42,
+        rate_limit_control="per_user",
+        rate_limit_feature="generation",
+        user_id=17,
+    )
+    service = LogReadService(db_session, app_settings=_local_settings(path))
+
+    page = service.list(replace(_window(), sources=("operational",)), limit=10)
+
+    assert len(page.records) == 1
+    record = page.records[0]
+    assert record.user_id == 17
+    assert record.details["auth_state"] == "authenticated"
+    assert record.details["response_bytes"] == 812
+    assert record.details["retry_after_seconds"] == 42
+    assert record.details["rate_limit_control"] == "per_user"
+    assert record.details["rate_limit_feature"] == "generation"
+
+
+def test_requests_can_be_narrowed_to_one_route(tmp_path: Path, db_session) -> None:
+    path = tmp_path / "operational.db"
+    handler = OperationalEventHandler(
+        str(path),
+        service="api",
+        environment="test",
+        retention_days=30,
+        max_records=10_000,
+    )
+    _emit(handler, "http_request_completed", http_path="/api/courses/{course_id}")
+    _emit(handler, "http_not_found", http_path="/api/unmatched")
+    service = LogReadService(db_session, app_settings=_local_settings(path))
+
+    filtered = service.list(
+        replace(
+            _window(),
+            sources=("operational",),
+            http_paths=("/api/unmatched",),
+        ),
+        limit=10,
+    )
+    searched = service.list(
+        replace(_window(), sources=("operational",), search="unmatched"),
+        limit=10,
+    )
+
+    assert [record.http_path for record in filtered.records] == ["/api/unmatched"]
+    assert [record.http_path for record in searched.records] == ["/api/unmatched"]
+
+
+def test_a_request_record_is_reachable_by_the_account_that_made_it(
+    tmp_path: Path, db_session
+) -> None:
+    path = tmp_path / "operational.db"
+    handler = OperationalEventHandler(
+        str(path),
+        service="api",
+        environment="test",
+        retention_days=30,
+        max_records=10_000,
+    )
+    _emit(handler, "http_request_completed", http_method="POST", user_id=99)
+    _emit(handler, "http_request_completed", http_method="POST", user_id=100)
+    service = LogReadService(db_session, app_settings=_local_settings(path))
+
+    page = service.list(
+        replace(_window(), sources=("operational",), user_id=99), limit=10
+    )
+
+    assert [record.user_id for record in page.records] == [99]
+
+
+def test_hosted_requests_can_be_narrowed_to_one_route(db_session) -> None:
+    now = datetime.now(timezone.utc)
+
+    def payload(event_id: str, event: str, http_path: str) -> dict[str, object]:
+        return {
+            "event_id": event_id,
+            "timestamp": now.isoformat(),
+            "level": "INFO",
+            "service": "api",
+            "environment": "production",
+            "logger": "main",
+            "event": event,
+            "http_path": http_path,
+        }
+
+    class LogsClient:
+        def filter_log_events(self, **request):
+            return {
+                "events": [
+                    {
+                        "message": json.dumps(
+                            payload(
+                                "event-1",
+                                "http_request_completed",
+                                "/api/courses/{course_id}",
+                            )
+                        )
+                    },
+                    {
+                        "message": json.dumps(
+                            payload("event-2", "http_not_found", "/api/unmatched")
+                        )
+                    },
+                ]
+            }
+
+    service = LogReadService(
+        db_session,
+        app_settings=_hosted_settings(),
+        cloudwatch_client=LogsClient(),
+    )
+    window = LogFilters(
+        start=now - timedelta(minutes=1), end=now + timedelta(minutes=1)
+    )
+
+    filtered = service.list(replace(window, http_paths=("/api/unmatched",)))
+    searched = service.list(replace(window, search="unmatched"))
+
+    assert [record.http_path for record in filtered.records] == ["/api/unmatched"]
+    assert [record.http_path for record in searched.records] == ["/api/unmatched"]

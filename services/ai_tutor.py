@@ -140,10 +140,7 @@ class AiTutorService:
                 **extra,
             )
             if resolved_user_id:
-                try:
-                    db.commit()
-                except Exception:
-                    db.rollback()
+                AiUsageLogger.commit(db)
 
         conversation: Conversation | None = None
         if conversation_id is not None:

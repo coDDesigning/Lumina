@@ -166,6 +166,7 @@ def _heartbeat_loop(
     claim_lost: threading.Event,
 ) -> None:
     interval = min(30.0, max(0.05, lease_seconds / 3))
+    consecutive_failures = 0
     while not stop.is_set():
         try:
             with session_factory() as session:
@@ -178,10 +179,31 @@ def _heartbeat_loop(
                         session, job.id, job.claim_token, lease_seconds
                     )
         except Exception:
-            logger.exception("Failed to heartbeat processing job %s", job.id)
+            consecutive_failures += 1
+            if consecutive_failures == 1:
+                logger.exception(
+                    "Failed to heartbeat processing job %s",
+                    job.id,
+                    extra={"job_id": job.id, "attempt_number": consecutive_failures},
+                )
+            else:
+                logger.warning(
+                    "Still failing to heartbeat processing job %s (%s in a row)",
+                    job.id,
+                    consecutive_failures,
+                    extra={"job_id": job.id, "attempt_number": consecutive_failures},
+                )
             if stop.wait(interval):
                 return
             continue
+        if consecutive_failures:
+            logger.warning(
+                "Heartbeat for processing job %s recovered after %s failures",
+                job.id,
+                consecutive_failures,
+                extra={"job_id": job.id, "attempt_number": consecutive_failures},
+            )
+            consecutive_failures = 0
         if not current:
             claim_lost.set()
             return
@@ -438,8 +460,17 @@ def _describe_visuals_process(
             "Visual description failed for job %s with code %s", job.id, exc.code
         )
         connection.send(("failed", exc.code, str(exc), exc.retryable))
-    except Exception:
-        connection.send(("unexpected",))
+    except Exception as exc:
+        logger.exception(
+            "Visual description failed unexpectedly for job %s",
+            job.id,
+            extra={
+                "event": "processing_job_failed",
+                "error_code": "UNEXPECTED_PROCESSING_ERROR",
+                "job_id": job.id,
+            },
+        )
+        connection.send(("unexpected", type(exc).__name__))
     finally:
         connection.close()
 
@@ -514,8 +545,17 @@ def _extraction_process(
             "Document processing failed for job %s with code %s", job.id, exc.code
         )
         connection.send(("failed", exc.code, str(exc), exc.retryable))
-    except Exception:
-        connection.send(("unexpected",))
+    except Exception as exc:
+        logger.exception(
+            "Document processing failed unexpectedly for job %s",
+            job.id,
+            extra={
+                "event": "processing_job_failed",
+                "error_code": "UNEXPECTED_PROCESSING_ERROR",
+                "job_id": job.id,
+            },
+        )
+        connection.send(("unexpected", type(exc).__name__))
     finally:
         connection.close()
 
@@ -676,6 +716,24 @@ def _document_data_from_process_result(
             result[1],
             result[2],
             retryable=result[3],
+        )
+    if result[0] == "unexpected":
+        logger.error(
+            "A document processing subprocess ended unexpectedly",
+            extra={
+                "event": "processing_job_failed",
+                "error_code": "UNEXPECTED_PROCESSING_ERROR",
+                "exception_type": (
+                    result[1]
+                    if len(result) == 2 and isinstance(result[1], str)
+                    else None
+                ),
+            },
+        )
+        raise DocumentProcessingError(
+            "UNEXPECTED_PROCESSING_ERROR",
+            "Document processing failed unexpectedly.",
+            retryable=True,
         )
     if result[0] != "succeeded" or len(result) != 3:
         raise DocumentProcessingError(

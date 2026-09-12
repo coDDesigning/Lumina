@@ -185,6 +185,46 @@ describe('error description helpers', () => {
       expect(described.message).toBe('This source is no longer available.');
     });
 
+    it('tells the two reasons a source refuses deletion apart', () => {
+      const processing = describeDocumentError(
+        new APIError(
+          409,
+          { detail: 'still being read' },
+          'document_processing_active',
+        ),
+        'The source could not be removed.',
+      );
+      const held = describeDocumentError(
+        new APIError(
+          409,
+          { detail: 'a generation is reading it' },
+          'document_generation_in_progress',
+          '90',
+        ),
+        'The source could not be removed.',
+      );
+
+      expect(processing.message).not.toBe(held.message);
+      expect(processing.message).toContain('cancel the processing');
+      expect(held.message).toContain('2 minutes');
+      expect(processing.retryable).toBe(true);
+      expect(held.retryable).toBe(true);
+    });
+
+    it('does not offer a retry that can never succeed', () => {
+      const described = describeDocumentError(
+        new APIError(
+          500,
+          { detail: 'wrong backend' },
+          'document_storage_provider_mismatch',
+        ),
+        'The source could not be removed.',
+      );
+
+      expect(described.retryable).toBe(false);
+      expect(described.message).toContain('administrator');
+    });
+
     it('tells the two failures that share a 409 apart', () => {
       const missed = describeGenerationError(
         new APIError(409, { detail: 'No course material matched.' }, 'no_relevant_material'),

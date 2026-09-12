@@ -17,6 +17,7 @@ vi.mock('../api/courses', () => ({
 const listDocuments = vi.mocked(coursesAPI.listDocuments);
 const getDocumentStatus = vi.mocked(coursesAPI.getDocumentStatus);
 const retryDocument = vi.mocked(coursesAPI.retryDocument);
+const deleteDocument = vi.mocked(coursesAPI.deleteDocument);
 
 const DOCUMENT_ID = '11111111-1111-1111-1111-111111111111';
 
@@ -304,5 +305,42 @@ describe('useCourseDocuments polling lifecycle', () => {
     getDocumentStatus.mockClear();
     await advance(2000);
     expect(getDocumentStatus).toHaveBeenCalled();
+  });
+  it('keeps a refused removal readable while the source keeps being polled', async () => {
+    listDocuments.mockResolvedValue([document('ready', '2026-08-19T10:00:00Z')]);
+    getDocumentStatus.mockResolvedValue(
+      status('ready', '2026-08-19T10:00:00Z', {
+        status: 'succeeded',
+        processing_stage: null,
+        finished_at: '2026-08-19T10:00:00Z',
+      }),
+    );
+    deleteDocument.mockRejectedValue(
+      new APIError(409, {
+        detail: 'The document cannot be deleted while it is being processed.',
+      }),
+    );
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+
+    await act(async () => {
+      await result.current.deleteDocument(DOCUMENT_ID);
+    });
+
+    expect(result.current.entries[0].error).toBe(
+      'The document cannot be deleted while it is being processed.',
+    );
+
+    await advance(10_000);
+
+    expect(result.current.entries).toHaveLength(1);
+    expect(result.current.entries[0].error).toBe(
+      'The document cannot be deleted while it is being processed.',
+    );
   });
 });

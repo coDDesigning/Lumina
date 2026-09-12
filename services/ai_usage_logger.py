@@ -204,6 +204,22 @@ class AiUsageLogger:
             return None
 
     @classmethod
+    def commit(cls, db: Session) -> bool:
+        try:
+            db.commit()
+            return True
+        except Exception as exc:
+            db.rollback()
+            logger.warning(
+                "Failed to commit AI usage telemetry",
+                extra={
+                    "event": "ai_usage_write_failed",
+                    "exception_type": type(exc).__name__,
+                },
+            )
+            return False
+
+    @classmethod
     def log_success(
         cls,
         db: Session,

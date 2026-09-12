@@ -77,6 +77,7 @@ _COMMON_FILTERS = frozenset(
 OPERATIONAL_FILTERS = _COMMON_FILTERS | frozenset(
     {
         "http_methods",
+        "http_paths",
         "http_statuses",
         "http_status_classes",
         "failed_stages",
@@ -117,6 +118,7 @@ class LogFilters:
     loggers: tuple[str, ...] = ()
     events: tuple[str, ...] = ()
     http_methods: tuple[str, ...] = ()
+    http_paths: tuple[str, ...] = ()
     http_statuses: tuple[int, ...] = ()
     http_status_classes: tuple[int, ...] = ()
     minimum_duration_ms: float | None = None
@@ -266,6 +268,7 @@ def _sql_conditions(filters: LogFilters, *, include_source: bool = True):
     values("logger", filters.loggers)
     values("event", filters.events)
     values("http_method", filters.http_methods)
+    values("http_path", filters.http_paths)
     values("http_status", filters.http_statuses)
     values("error_code", filters.error_codes)
     values("error_category", filters.error_categories)
@@ -326,6 +329,7 @@ def _sql_conditions(filters: LogFilters, *, include_source: bool = True):
         conditions.append(
             "lower(description || ' ' || event || ' ' || coalesce(error_code, '') || "
             "' ' || coalesce(error_category, '') || ' ' || coalesce(exception_type, '') || "
+            "' ' || coalesce(http_path, '') || "
             "' ' || service || ' ' || logger) LIKE ? ESCAPE '\\'"
         )
         params.append(f"%{escaped}%")
@@ -826,6 +830,7 @@ def _record_matches(record: AdminLogRecord, filters: LogFilters) -> bool:
         selected(record.logger, filters.loggers),
         selected(record.event, filters.events),
         selected(record.http_method, filters.http_methods),
+        selected(record.http_path, filters.http_paths),
         selected(record.error_code, filters.error_codes),
         selected(record.error_category, filters.error_categories),
         selected(record.error_signature, filters.error_signatures),
@@ -886,6 +891,7 @@ def _record_matches(record: AdminLogRecord, filters: LogFilters) -> bool:
                 record.error_code,
                 record.error_category,
                 record.exception_type,
+                record.http_path,
                 record.service,
                 record.logger,
             )

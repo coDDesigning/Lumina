@@ -11441,6 +11441,25 @@
           },
           {
             "in": "query",
+            "name": "http_path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Http Path"
+            }
+          },
+          {
+            "in": "query",
             "name": "http_status",
             "required": false,
             "schema": {
@@ -12136,6 +12155,25 @@
           },
           {
             "in": "query",
+            "name": "http_path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Http Path"
+            }
+          },
+          {
+            "in": "query",
             "name": "http_status",
             "required": false,
             "schema": {
@@ -12748,6 +12786,25 @@
                 }
               ],
               "title": "Http Method"
+            }
+          },
+          {
+            "in": "query",
+            "name": "http_path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Http Path"
             }
           },
           {
@@ -14886,7 +14943,7 @@
             "description": "Course or document not found"
           },
           "409": {
-            "description": "Active documents cannot be deleted"
+            "description": "The document is being processed, or a generation is reading it"
           },
           "422": {
             "content": {

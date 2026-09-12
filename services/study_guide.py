@@ -320,10 +320,7 @@ class StudyGuideService:
                 **extra,
             )
             if resolved_user_id:
-                try:
-                    db.commit()
-                except Exception:
-                    db.rollback()
+                AiUsageLogger.commit(db)
 
         if count_available_chunks(db, course_id) == 0:
             log_failure(ErrorCategory.NO_READY_MATERIAL)

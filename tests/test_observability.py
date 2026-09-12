@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from backend.app.readiness import ReadinessError
 from backend.app.observability import (
     JsonFormatter,
     bind_operation_context,
@@ -553,3 +554,192 @@ def test_the_stack_is_capped() -> None:
         payload = _formatted(_record_with_exception(exc))
 
     assert len(payload["stack"]) == 12
+
+
+def _records(caplog) -> list[logging.LogRecord]:
+    return [record for record in caplog.records if getattr(record, "event", "")]
+
+
+def _http_records(caplog) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if getattr(record, "event", "").startswith("http_")
+    ]
+
+
+def test_a_successful_read_is_not_logged_but_is_still_correlated(
+    api_context, caplog
+) -> None:
+    with caplog.at_level(logging.INFO):
+        response = api_context.client.get(
+            "/health/live", headers={"X-Request-ID": "quiet-1"}
+        )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == "quiet-1"
+    assert _http_records(caplog) == []
+
+
+def test_health_probe_is_logged_when_it_fails(api_context, caplog, monkeypatch) -> None:
+    def unready(*_args, **_kwargs):
+        raise ReadinessError("storage is unavailable")
+
+    monkeypatch.setattr("main.check_readiness", unready)
+
+    with caplog.at_level(logging.INFO):
+        response = api_context.client.get("/health/ready")
+
+    assert response.status_code == 503
+    records = _http_records(caplog)
+    assert [record.event for record in records] == ["http_request_failed"]
+    assert records[0].http_path == "/health/ready"
+
+
+def test_a_successful_mutation_is_logged_with_its_actor(upload_api, caplog) -> None:
+    with caplog.at_level(logging.INFO):
+        response = upload_api.client.post(
+            f"/api/courses/{upload_api.course_id}/documents",
+            headers=upload_api.authorization,
+            files={"document": ("notes.txt", b"Some notes", "text/plain")},
+        )
+
+    assert response.status_code == 201, response.text
+    records = _http_records(caplog)
+    assert [record.event for record in records] == ["http_request_completed"]
+    record = records[0]
+    assert record.http_method == "POST"
+    assert record.http_path == "/api/courses/{course_id}/documents"
+    assert record.user_id == upload_api.user_id
+    assert record.auth_state == "authenticated"
+    assert record.course_id == upload_api.course_id
+    assert isinstance(record.course_id, int)
+
+
+def test_a_delete_names_the_document_it_acted_on(upload_api, caplog) -> None:
+    uploaded = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/documents",
+        headers=upload_api.authorization,
+        files={"document": ("gone.txt", b"Disposable", "text/plain")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    document_id = uploaded.json()["document"]["id"]
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        response = upload_api.client.delete(
+            f"/api/courses/{upload_api.course_id}/documents/{document_id}?force=true",
+            headers=upload_api.authorization,
+        )
+
+    assert response.status_code == 204, response.text
+    records = _http_records(caplog)
+    assert len(records) == 1
+    assert records[0].document_id == document_id
+    assert records[0].course_id == upload_api.course_id
+
+
+def test_an_unauthenticated_request_names_why_it_was_denied(
+    api_context, caplog
+) -> None:
+    with caplog.at_level(logging.INFO):
+        response = api_context.client.get("/api/courses")
+
+    assert response.status_code == 401
+    records = _http_records(caplog)
+    assert [record.event for record in records] == ["http_authorization_denied"]
+    assert records[0].error_code == "unauthenticated"
+    assert records[0].auth_state == "anonymous"
+
+
+def test_a_rejected_token_is_told_apart_from_a_missing_one(api_context, caplog) -> None:
+    with caplog.at_level(logging.INFO):
+        response = api_context.client.get(
+            "/api/courses", headers={"Authorization": "Bearer not-a-real-token"}
+        )
+
+    assert response.status_code == 401
+    records = _http_records(caplog)
+    assert [record.event for record in records] == ["http_authorization_denied"]
+    assert records[0].error_code == "invalid_credentials"
+    assert records[0].auth_state == "rejected"
+
+
+def test_an_admin_denial_is_told_apart_from_a_ban(authz_api, caplog) -> None:
+    with caplog.at_level(logging.INFO):
+        response = authz_api.client.get(
+            "/api/admin/users", headers=authz_api.authorization_a
+        )
+
+    assert response.status_code == 403
+    records = _http_records(caplog)
+    assert [record.event for record in records] == ["http_authorization_denied"]
+    assert records[0].error_code == "admin_required"
+    assert records[0].auth_state == "authenticated"
+    assert records[0].user_id == authz_api.user_a_id
+
+
+def test_an_unknown_api_path_is_told_apart_from_a_missing_record(
+    api_context, caplog
+) -> None:
+    with caplog.at_level(logging.INFO):
+        unknown = api_context.client.get("/api/does-not-exist")
+
+    assert unknown.status_code == 404
+    records = _http_records(caplog)
+    assert [record.event for record in records] == ["http_not_found"]
+    assert records[0].http_path == "/api/unmatched"
+    assert records[0].error_code == "not_found"
+
+
+def test_a_missing_course_names_the_course_not_found_code(
+    upload_api, caplog
+) -> None:
+    with caplog.at_level(logging.INFO):
+        response = upload_api.client.get(
+            "/api/courses/98765/documents", headers=upload_api.authorization
+        )
+
+    assert response.status_code == 404
+    records = _http_records(caplog)
+    assert [record.event for record in records] == ["http_not_found"]
+    assert records[0].error_code == "course_not_found"
+    assert records[0].http_path == "/api/courses/{course_id}/documents"
+
+
+def test_a_slow_read_is_logged_even_though_reads_are_not(
+    upload_api, caplog, monkeypatch
+) -> None:
+    monkeypatch.setattr("main.SLOW_REQUEST_THRESHOLD_MS", 0.0)
+
+    with caplog.at_level(logging.INFO):
+        response = upload_api.client.get(
+            f"/api/courses/{upload_api.course_id}/documents",
+            headers=upload_api.authorization,
+        )
+
+    assert response.status_code == 200
+    assert [record.event for record in _http_records(caplog)] == ["http_request_slow"]
+
+
+def test_a_query_string_never_reaches_a_request_record(upload_api, caplog) -> None:
+    with caplog.at_level(logging.INFO):
+        response = upload_api.client.get(
+            f"/api/courses/{upload_api.course_id}/documents?token=secret-value",
+            headers=upload_api.authorization,
+        )
+
+    assert response.status_code == 200
+    rendered = json.dumps(
+        [
+            {
+                key: str(value)
+                for key, value in record.__dict__.items()
+                if not key.startswith("_")
+            }
+            for record in _records(caplog)
+        ]
+    )
+    assert "secret-value" not in rendered
+    for record in _http_records(caplog):
+        assert "?" not in record.http_path

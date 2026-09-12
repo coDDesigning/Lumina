@@ -201,3 +201,48 @@ def test_only_a_dotted_final_segment_asks_for_a_file(
     route_path: str, expected: bool
 ) -> None:
     assert has_extension(route_path) is expected
+
+
+def _http_records(caplog) -> list:
+    return [
+        record
+        for record in caplog.records
+        if getattr(record, "event", "").startswith("http_")
+    ]
+
+
+def test_serving_the_interface_leaves_no_request_records(client: TestClient, caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO):
+        shell = client.get("/")
+        asset = client.get("/assets/app-abc123.js")
+        missing = client.get("/missing-bundle.js")
+
+    assert shell.status_code == 200
+    assert asset.status_code == 200
+    assert missing.status_code == 404
+    assert _http_records(caplog) == []
+
+
+def test_a_failure_while_serving_the_shell_is_still_logged(
+    client: TestClient, caplog, monkeypatch
+) -> None:
+    import logging
+
+    from backend.app import spa
+
+    def exploding_get_response(*_args, **_kwargs):
+        raise RuntimeError("the shell could not be read")
+
+    monkeypatch.setattr(
+        spa.StaticFiles, "get_response", exploding_get_response, raising=True
+    )
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(RuntimeError):
+            client.get("/")
+
+    records = _http_records(caplog)
+    assert [record.event for record in records] == ["http_request_failed"]
+    assert records[0].http_path == "/spa"

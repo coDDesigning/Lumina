@@ -1,6 +1,8 @@
 """HTTP routes for course-scoped document uploads."""
 
 import logging
+import math
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
@@ -41,6 +43,7 @@ from services.document import (
     CourseDocumentLimitError,
     DocumentActiveError,
     DocumentDeletionError,
+    DocumentStorageProviderMismatchError,
     DocumentDeletionInProgressError,
     DocumentRegistrationError,
     DocumentService,
@@ -280,6 +283,39 @@ def retry_document(
     return _status_response(document, job)
 
 
+def _delete_conflict(exc: DocumentActiveError) -> HTTPException:
+    if exc.reason == "generation_in_progress":
+        headers = {"X-Error-Code": "document_generation_in_progress"}
+        retry_after = _seconds_until(exc.lease_expires_at)
+        if retry_after is not None:
+            headers["Retry-After"] = str(retry_after)
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A generation is reading this document right now. It can be "
+                "removed once that finishes."
+            ),
+            headers=headers,
+        )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "This document is still being read. Wait for it to finish, or "
+            "cancel the processing to remove it now."
+        ),
+        headers={"X-Error-Code": "document_processing_active"},
+    )
+
+
+def _seconds_until(moment: datetime | None) -> int | None:
+    if moment is None:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    remaining = (moment - datetime.now(timezone.utc)).total_seconds()
+    return max(1, math.ceil(remaining)) if remaining > 0 else None
+
+
 @router.delete(
     "/{course_id}/documents/{document_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -288,7 +324,11 @@ def retry_document(
         401: {"description": "Authentication required"},
         403: {"description": "Account is not allowed to delete documents"},
         404: {"description": "Course or document not found"},
-        409: {"description": "Active documents cannot be deleted"},
+        409: {
+            "description": (
+                "The document is being processed, or a generation is reading it"
+            )
+        },
         500: {"description": "Document deletion failed"},
     },
 )
@@ -312,9 +352,26 @@ def delete_document(
             db, storage, document_id, course.id, force=force
         )
     except DocumentActiveError as exc:
+        raise _delete_conflict(exc) from exc
+    except DocumentStorageProviderMismatchError as exc:
+        logger.error(
+            "Document deletion refused for %s: storage provider mismatch",
+            document_id,
+            extra={
+                "event": "document_storage_provider_mismatch",
+                "error_code": "document_storage_provider_mismatch",
+                "document_id": str(document_id),
+                "course_id": course.id,
+            },
+        )
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="The document cannot be deleted while it is being processed.",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "This document was stored by a different storage backend than "
+                "this deployment is configured to use, so it cannot be removed. "
+                "An administrator needs to look at it."
+            ),
+            headers={"X-Error-Code": "document_storage_provider_mismatch"},
         ) from exc
     except DocumentDeletionError as exc:
         logger.exception("Document deletion failed for %s", document_id)

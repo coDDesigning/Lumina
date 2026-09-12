@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -71,6 +72,9 @@ class SafetyPreconditionError(ValueError):
 
 class UpgradeError(RuntimeError):
     """The isolated target could not be upgraded."""
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -231,6 +235,13 @@ def _verify_document_object(
             size += len(chunk)
             digest.update(chunk)
     except Exception:
+        logger.exception(
+            "A restored document object could not be read",
+            extra={
+                "event": "self_hosted_restore_object_unavailable",
+                "document_id": str(document.id),
+            },
+        )
         report.fail("object_unavailable")
         return
 
@@ -407,6 +418,13 @@ def verify_restore(
                     _verify_ready_document(session, document, report)
                     session.rollback()
     except Exception:
+        logger.exception(
+            "Restore verification could not read the target database",
+            extra={
+                "event": "self_hosted_restore_verification_failed",
+                "runbook": "/docs/runbooks/hosted-backup-restore.md",
+            },
+        )
         report.fail("database")
     return report
 
@@ -446,6 +464,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         source_url = _validate_configuration()
         target_url = derive_target_database_url(source_url, arguments.target_host)
     except SafetyPreconditionError:
+        logger.exception(
+            "Restore verification refused to run",
+            extra={"event": "self_hosted_restore_verification_failed"},
+        )
         _emit(_invalid_report())
         raise SystemExit(2) from None
 
@@ -453,6 +475,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         try:
             _upgrade_target(target_url)
         except UpgradeError:
+            logger.exception(
+                "Restore verification could not upgrade the target schema",
+                extra={"event": "self_hosted_restore_verification_failed"},
+            )
             _emit(_upgrade_failure_report())
             raise SystemExit(1) from None
 
@@ -476,6 +502,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         report = verify_restore(session_factory=factory, storage=storage)
         payload = report.as_dict()
     except Exception:
+        logger.exception(
+            "Restore verification failed before it could report",
+            extra={
+                "event": "self_hosted_restore_verification_failed",
+                "runbook": "/docs/runbooks/hosted-backup-restore.md",
+            },
+        )
         payload = _upgrade_failure_report()
     finally:
         if engine is not None:

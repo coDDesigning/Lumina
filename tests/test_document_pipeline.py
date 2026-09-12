@@ -2897,3 +2897,43 @@ def test_the_text_threshold_that_silences_a_full_page_drawing_is_configurable() 
     assert _detected_sources(content, full_page_drawing_text_characters=5000) == [
         "drawing"
     ]
+
+
+def test_unreadable_pages_are_summarised_once_not_logged_per_page(
+    caplog, monkeypatch
+) -> None:
+    page_count = 6
+    content = pdf_bytes(*[f"Page {number} text." for number in range(page_count)])
+
+    def unreadable_tables(self):
+        raise RuntimeError("table detection exploded")
+
+    def unreadable_drawings(self, drawings=None):
+        raise RuntimeError("drawing detection exploded")
+
+    monkeypatch.setattr(pymupdf.Page, "find_tables", unreadable_tables, raising=False)
+    monkeypatch.setattr(
+        pymupdf.Page, "cluster_drawings", unreadable_drawings, raising=False
+    )
+
+    with caplog.at_level(logging.WARNING, logger="services.document_pipeline"):
+        result = process_document("pdf", content, options=pipeline_options())
+
+    assert len(result.pages) == page_count
+
+    degraded = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "visual_detection_degraded"
+    ]
+    per_page = [
+        record
+        for record in caplog.records
+        if record.levelno >= logging.ERROR
+        and record.name == "services.document_pipeline"
+    ]
+
+    assert len(degraded) == 1
+    assert per_page == []
+    assert degraded[0].exception_type == "RuntimeError"
+    assert degraded[0].error_class in {"table:RuntimeError", "drawing:RuntimeError"}

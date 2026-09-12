@@ -360,10 +360,7 @@ class ExamArtifactService:
                 error_category=category,
                 **extra,
             )
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+            AiUsageLogger.commit(db)
 
         try:
             unlock = ExamEntitlementService.ensure_unlocked(
@@ -489,10 +486,7 @@ class ExamArtifactService:
                 error_category=category,
                 **extra,
             )
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+            AiUsageLogger.commit(db)
 
         receipt = CreditService.charge(
             db, user_id, GENERATION_CREDIT_COSTS[price_key], source_type=price_key

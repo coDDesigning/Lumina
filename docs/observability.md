@@ -31,7 +31,49 @@ names and the fields validation rejected, and the response text itself appears
 only when an operator turns on `AI_LOG_RAW_RESPONSE_ON_FAILURE`. See
 [Diagnosing an unusable AI response](#diagnosing-an-unusable-ai-response). Known
 token/password/API-key forms are redacted from messages. Uvicorn access logging is disabled because
-the middleware already records one correlated request event.
+it carries neither correlation nor sanitisation; the middleware records the
+request events described under [Which requests are logged](#which-requests-are-logged).
+
+### Which requests are logged
+
+A request event is recorded when it says something an operator could act on:
+
+- every response at 5xx, whatever the path;
+- every rejection: 429, 401/403, 404, and every other 4xx;
+- every request slower than the two-second threshold; and
+- every successful mutation (`POST`, `PUT`, `PATCH`, `DELETE`).
+
+A successful read is not logged, and neither is the interface itself: the shell,
+static assets, `/health/live`, `/health/ready` and `/ads.txt` are silent unless
+they answer 5xx, which is always logged.
+
+This is a correctness property of the local store rather than a preference.
+`OperationalEventHandler._cleanup` deletes at most a thousand rows per
+ten-minute pass, so an instance logging one row per request, per polled document
+status, and per asset of every page load outruns its own retention: the window
+`/admin/logs` can show shrinks until it no longer covers the incident being
+investigated. The events that survive are the ones that carry a finding.
+
+`http_path` is the matched route template, never a concrete URL, and it carries
+four sentinels for the paths routing never claimed: `/spa` for a shell load,
+`/static` for a file in the build output, `/api/unmatched` for an unknown API
+path, and `/unmatched` for anything else. `auth_state` says whether the caller
+was `authenticated`, `rejected` (credentials were offered and refused), or
+`anonymous`. `user_id` is bound only on success, so `user_id` present means
+authenticated.
+
+Every rejection carries a machine-readable `X-Error-Code`, which the middleware
+records as `error_code` and the interface renders as specific copy. The code is
+set in the exception constructor (`utils/exceptions.py`), so a refusal raised
+anywhere is typed by default; the log falls back to a per-status code so
+`error_code` is never null.
+
+Taking a reported 4xx to the account and route that produced it:
+```sql
+fields @timestamp, event, http_path, http_status, error_code, user_id, request_id
+| filter http_status >= 400 and user_id = 4711
+| sort @timestamp desc
+```
 
 AI usage rows remain privacy-safe product telemetry in PostgreSQL/SQLite; they
 are not operational logs. A telemetry write uses a nested transaction so a
@@ -194,8 +236,8 @@ fields @timestamp, event, error_code, failed_stage, course_id, document_id, runb
 | filter event = "permanent_document_failure" or event = "aged_tombstone_detected"
 | sort @timestamp desc
 ```
-`course_id`, `document_id`, `owner_id`, `user_id`, `failed_stage` and `runbook` are
-part of the emitted JSON because they are on the `_ALLOWED_FIELDS` allowlist in
+`course_id`, `document_id`, `owner_id`, `user_id`, `auth_state`, `response_bytes`,
+`failed_stage` and `runbook` are part of the emitted JSON because they are on the `_ALLOWED_FIELDS` allowlist in
 `backend/app/observability.py`. A field set through `extra=` but absent from that
 tuple is dropped by `JsonFormatter` and never reaches CloudWatch, so adding a new
 structured field means adding it there and to the allowlist pin in

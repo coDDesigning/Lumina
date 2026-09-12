@@ -697,3 +697,61 @@ def test_visual_analysis_status_backward_compatibility_legacy_documents(upload_a
     )
     assert response.status_code == 200
     assert response.json()["document"]["visual_analysis_status"] == "not_applicable"
+
+
+def test_a_queued_document_refusal_names_the_reason_and_the_remedy(upload_api):
+    uploaded = _upload(upload_api, b"Queued and refused")
+    document_id = UUID(uploaded.json()["document"]["id"])
+    path = f"/api/courses/{upload_api.course_id}/documents/{document_id}"
+
+    refused = upload_api.client.delete(path, headers=upload_api.authorization)
+
+    assert refused.status_code == 409
+    assert refused.headers["X-Error-Code"] == "document_processing_active"
+    assert "Retry-After" not in refused.headers
+    assert "cancel the processing" in refused.json()["detail"]
+
+    forced = upload_api.client.delete(
+        f"{path}?force=true", headers=upload_api.authorization
+    )
+    assert forced.status_code == 204
+
+
+def test_a_storage_provider_mismatch_stops_promising_a_retry(upload_api):
+    uploaded = _upload(upload_api, b"Stored somewhere else")
+    document_id = UUID(uploaded.json()["document"]["id"])
+
+    with upload_api.session_factory() as session:
+        document = session.get(UploadedDocument, document_id)
+        assert document is not None
+        document.storage_provider = "s3:some-other-bucket"
+        session.commit()
+
+    response = upload_api.client.delete(
+        f"/api/courses/{upload_api.course_id}/documents/{document_id}?force=true",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 500
+    assert (
+        response.headers["X-Error-Code"] == "document_storage_provider_mismatch"
+    )
+    detail = response.json()["detail"]
+    assert "retry" not in detail.lower()
+    assert "administrator" in detail
+
+
+def test_a_missing_document_is_told_apart_from_a_missing_course(upload_api):
+    missing_document = upload_api.client.delete(
+        f"/api/courses/{upload_api.course_id}/documents/{UUID(int=7)}",
+        headers=upload_api.authorization,
+    )
+    missing_course = upload_api.client.delete(
+        f"/api/courses/98765/documents/{UUID(int=7)}",
+        headers=upload_api.authorization,
+    )
+
+    assert missing_document.status_code == 404
+    assert missing_document.headers["X-Error-Code"] == "document_not_found"
+    assert missing_course.status_code == 404
+    assert missing_course.headers["X-Error-Code"] == "course_not_found"

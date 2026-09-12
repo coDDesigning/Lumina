@@ -441,10 +441,7 @@ class ExamSourceAnalysisService:
                 error_category=category,
                 **extra,
             )
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+            AiUsageLogger.commit(db)
 
         selected = cls.resolve_selected_documents(db, course_id, request.document_ids)
 

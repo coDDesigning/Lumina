@@ -19,6 +19,7 @@ export interface ConfirmDialogProps {
   destructive?: boolean;
   confirmPhrase?: string;
   confirmPhraseLabel?: string;
+  canConfirm?: boolean;
 }
 
 export function ConfirmDialog({
@@ -35,6 +36,7 @@ export function ConfirmDialog({
   destructive = true,
   confirmPhrase,
   confirmPhraseLabel,
+  canConfirm: propCanConfirm = true,
 }: ConfirmDialogProps) {
   const [typed, setTyped] = useState('');
 
@@ -45,7 +47,7 @@ export function ConfirmDialog({
   }, [open]);
 
   const phraseSatisfied = !confirmPhrase || typed.trim() === confirmPhrase;
-  const canConfirm = phraseSatisfied && !isPending;
+  const canConfirm = propCanConfirm && phraseSatisfied && !isPending;
 
   const body =
     children || confirmPhrase ? (

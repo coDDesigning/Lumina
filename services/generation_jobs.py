@@ -441,11 +441,13 @@ def claim_next_generation_job(
     statement = (
         select(GenerationJob.id)
         .join(Course, Course.id == GenerationJob.course_id)
+        .join(User, User.id == GenerationJob.user_id)
         .where(
             GenerationJob.status == JOB_STATUS_QUEUED,
             GenerationJob.available_at <= eligibility_time,
             GenerationJob.attempt_count < GenerationJob.max_attempts,
             Course.is_deleted.is_(False),
+            User.deletion_requested_at.is_(None),
             running_for_owner < max_active_per_user,
         )
         .order_by(GenerationJob.available_at, GenerationJob.id)
@@ -468,7 +470,17 @@ def claim_next_generation_job(
     # Different slots can select different queued rows for the same student.
     # Locking that student's row serializes the final slot check on PostgreSQL;
     # SQLite is already serialized by ``_start_transition``.
-    session.scalar(select(User.id).where(User.id == user_id).with_for_update())
+    active_user = session.scalar(
+        select(User.id)
+        .where(
+            User.id == user_id,
+            User.deletion_requested_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if active_user is None:
+        session.rollback()
+        return None
     running_count = session.scalar(
         select(func.count())
         .select_from(GenerationJob)
@@ -510,6 +522,9 @@ def claim_next_generation_job(
             GenerationJob.status == JOB_STATUS_QUEUED,
             GenerationJob.available_at <= claimed_at,
             GenerationJob.attempt_count < GenerationJob.max_attempts,
+            GenerationJob.user_id.in_(
+                select(User.id).where(User.deletion_requested_at.is_(None))
+            ),
         )
         .values(
             status=JOB_STATUS_RUNNING,

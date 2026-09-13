@@ -2,14 +2,19 @@ import logging
 import secrets
 
 from email_validator import EmailNotValidError, validate_email
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from datetime import datetime, timezone
 
 from backend.app.config import settings
-from backend.app.models import Role as RoleModel
-from backend.app.models import User
+from backend.app.database import begin_serialized_write
+from backend.app.models import (
+    EmailVerificationToken,
+    PasswordResetToken,
+    Role as RoleModel,
+    User,
+)
 from schemas.prompt_context import EducationLevel
 from schemas.user import (
     Role,
@@ -22,7 +27,7 @@ from schemas.user import (
 )
 from services.credits import CreditService
 from services.text_generation import get_available_models
-from utils.exceptions import BadRequestException, NotFoundException
+from utils.exceptions import BadRequestException, ConflictException, NotFoundException
 from utils.password_policy import PasswordPolicyError, validate_password
 from utils.security import get_password_hash, verify_password
 
@@ -66,10 +71,62 @@ class UserService:
         )
 
     @staticmethod
+    def request_account_deletion(
+        db: Session, user_id: int, current_password: str
+    ) -> None:
+        """Fence an account durably after password re-authentication.
+
+        External resources are deliberately left named by their relational rows
+        for the retry worker. Credentials that can be removed without losing
+        cleanup metadata are erased in this same transaction.
+        """
+        db.rollback()
+        begin_serialized_write(db)
+        user = db.scalar(
+            select(User).where(User.id == user_id).with_for_update(of=User)
+        )
+        if user is None:
+            raise NotFoundException("Account not found")
+        if user.deletion_requested_at is not None:
+            db.rollback()
+            return
+        if user.is_initial_admin:
+            db.rollback()
+            raise ConflictException(
+                "The protected initial administrator account cannot be deleted.",
+                error_code="initial_admin_deletion_forbidden",
+            )
+        if not verify_password(current_password, user.password_hash):
+            db.rollback()
+            raise BadRequestException(
+                "Account deletion could not be requested.",
+                error_code="account_deletion_reauthentication_failed",
+            )
+
+        requested_at = datetime.now(timezone.utc)
+        user.deletion_requested_at = requested_at
+        user.tokens_valid_after = requested_at
+        user.encrypted_openai_api_key = None
+        user.encrypted_gemini_api_key = None
+        user.encrypted_anthropic_api_key = None
+        db.execute(
+            delete(EmailVerificationToken).where(
+                EmailVerificationToken.user_id == user.id
+            )
+        )
+        db.execute(
+            delete(PasswordResetToken).where(PasswordResetToken.user_id == user.id)
+        )
+        db.commit()
+
+    @staticmethod
     def list_users(db: Session) -> list[UserResponse]:
         """Lists all registered users."""
         users = db.scalars(
-            select(User).options(selectinload(User.role)).order_by(User.id)
+            select(User)
+            .options(selectinload(User.role))
+            .where(User.deletion_requested_at.is_(None))
+            .order_by(User.id)
         ).all()
         return [UserService.to_response(u) for u in users]
 
@@ -202,6 +259,10 @@ class UserService:
             is_initial_admin=True if claims_initial_admin else None,
             credits=opening_balance,
             is_banned=False,
+            # JWT NumericDate claims have whole-second precision. This prevents
+            # a token from a previously deleted account with the same email from
+            # authenticating as this newly created account.
+            tokens_valid_after=datetime.now(timezone.utc).replace(microsecond=0),
             preferred_model=default_model,
         )
         if not settings.email_verification_required:

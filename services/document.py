@@ -19,6 +19,7 @@ from backend.app.models import (
     Course,
     ProcessingJob,
     UploadedDocument,
+    User,
 )
 from backend.app.repositories.document import DocumentRepository
 from schemas.prompt_context import DocumentMaterialKind
@@ -130,9 +131,11 @@ class DocumentService:
             begin_serialized_write(db)
             active_course = db.scalar(
                 select(Course.id)
+                .join(User, User.id == Course.owner_id)
                 .where(
                     Course.id == course_id,
                     Course.is_deleted.is_(False),
+                    User.deletion_requested_at.is_(None),
                 )
                 .with_for_update()
             )
@@ -195,9 +198,11 @@ class DocumentService:
             begin_serialized_write(db)
             active_course = db.scalar(
                 select(Course.id)
+                .join(User, User.id == Course.owner_id)
                 .where(
                     Course.id == course_id,
                     Course.is_deleted.is_(False),
+                    User.deletion_requested_at.is_(None),
                 )
                 .with_for_update()
             )

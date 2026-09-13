@@ -63,6 +63,17 @@ Changing your password automatically invalidates all existing JWT sessions.
 The password reset flow is implemented using single-use expiring tokens and 
 calls `validate_password` internally to ensure consistent policy enforcement.
 
+## Account deletion and session fencing
+
+Account deletion (`DELETE /api/users/me`) requires the user's current password
+and explicit confirmation (`confirmation: "DELETE"`). Once verified:
+
+- `User.deletion_requested_at` is set, making the user immediately invisible to reads and worker claims.
+- `User.tokens_valid_after` is set to the same UTC timestamp, atomically invalidating all outstanding JWTs.
+- Access tokens embed a `uid` claim and newly registered accounts initialize `tokens_valid_after` at creation time, ensuring an expired or leaked JWT from a deleted account can never authenticate if the same email address is later re-registered.
+- Outstanding verification and reset tokens are purged immediately in the same transaction.
+- Login and credentials validation return standard generic unauthorized errors to prevent enumeration of deleted or tombstoned accounts.
+
 ## Email verification
 
 ### Why it gates paid work

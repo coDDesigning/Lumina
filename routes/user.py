@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
@@ -10,6 +10,7 @@ from schemas.credits import CreditStatusResponse, CreditTransactionResponse
 from schemas.prompt_context import EducationLevel
 from schemas.response import BaseResponse
 from schemas.user import (
+    AccountDeletionRequest,
     PasswordChangeRequest,
     UserApiKeysResponse,
     UserApiKeysUpdateRequest,
@@ -27,6 +28,29 @@ from services.user import UserService
 from utils.deps import get_current_admin, get_current_user
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
+
+
+@router.delete(
+    "/me",
+    response_model=BaseResponse[None],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def delete_my_account(
+    payload: AccountDeletionRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Fence this account now and queue permanent erasure for retryable cleanup."""
+    UserService.request_account_deletion(
+        db,
+        current_user.id,
+        payload.current_password,
+    )
+    return BaseResponse(
+        success=True,
+        message="Account deletion requested",
+        data=None,
+    )
 
 
 @router.put("/me/model", response_model=BaseResponse[UserResponse])

@@ -90,7 +90,7 @@ from storage.base import Storage
 from storage.dependencies import get_storage
 from services.document_lock import release_expired_generation_locks
 from workers.ai_usage_cleanup import run_cleanup as run_ai_usage_cleanup
-from workers.course_purge import run_document_purge, run_purge
+from workers.course_purge import run_account_purge, run_document_purge, run_purge
 from workers.embedding_backfill import run_backfill
 
 logger = logging.getLogger(__name__)
@@ -1385,6 +1385,14 @@ def _maintenance_cycle(
         return
 
     if schedule.purge_interval > 0 and monotonic_now >= schedule.next_purge:
+        try:
+            run_account_purge(
+                session_factory=session_factory,
+                storage=storage,
+                stop_event=stop,
+            )
+        except Exception:
+            logger.exception("Periodic account purge reconciliation failed")
         try:
             run_purge(
                 session_factory=session_factory,

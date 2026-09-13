@@ -751,6 +751,7 @@ def _claim_next_document_job(
         select(ProcessingJob.id)
         .join(UploadedDocument, UploadedDocument.id == ProcessingJob.document_id)
         .join(Course, Course.id == ProcessingJob.course_id)
+        .join(User, User.id == Course.owner_id)
         .where(
             ProcessingJob.job_type == job_type,
             ProcessingJob.status == JOB_STATUS_QUEUED,
@@ -759,6 +760,7 @@ def _claim_next_document_job(
             UploadedDocument.status == claimable_document_status,
             UploadedDocument.storage_provider == storage_provider,
             Course.is_deleted.is_(False),
+            User.deletion_requested_at.is_(None),
             running_course_for_owner + running_profile_for_owner < max_active_per_user,
         )
         .order_by(ProcessingJob.available_at, ProcessingJob.id)
@@ -802,7 +804,17 @@ def _claim_next_document_job(
         session.rollback()
         return None
 
-    session.scalar(select(User.id).where(User.id == row.owner_id).with_for_update())
+    active_user = session.scalar(
+        select(User.id)
+        .where(
+            User.id == row.owner_id,
+            User.deletion_requested_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if active_user is None:
+        session.rollback()
+        return None
     running_count = session.scalar(
         select(func.count())
         .select_from(ProcessingJob)
@@ -836,6 +848,11 @@ def _claim_next_document_job(
             ProcessingJob.status == JOB_STATUS_QUEUED,
             ProcessingJob.available_at <= claimed_at,
             ProcessingJob.attempt_count < ProcessingJob.max_attempts,
+            ProcessingJob.course_id.in_(
+                select(Course.id)
+                .join(User, User.id == Course.owner_id)
+                .where(User.deletion_requested_at.is_(None))
+            ),
         )
         .values(
             status=JOB_STATUS_RUNNING,
@@ -2519,6 +2536,7 @@ def _claim_next_profile_document_job(
     statement = (
         select(ProfileProcessingJob.id)
         .join(ProfileDocument, ProfileDocument.id == ProfileProcessingJob.document_id)
+        .join(User, User.id == ProfileProcessingJob.user_id)
         .where(
             ProfileProcessingJob.job_type == job_type,
             ProfileProcessingJob.status == JOB_STATUS_QUEUED,
@@ -2526,6 +2544,7 @@ def _claim_next_profile_document_job(
             ProfileProcessingJob.attempt_count < ProfileProcessingJob.max_attempts,
             ProfileDocument.status == claimable_document_status,
             ProfileDocument.storage_provider == storage_provider,
+            User.deletion_requested_at.is_(None),
             running_course_for_owner + running_profile_for_owner < max_active_per_user,
         )
         .order_by(ProfileProcessingJob.available_at, ProfileProcessingJob.id)
@@ -2567,7 +2586,17 @@ def _claim_next_profile_document_job(
         session.rollback()
         return None
 
-    session.scalar(select(User.id).where(User.id == row.user_id).with_for_update())
+    active_user = session.scalar(
+        select(User.id)
+        .where(
+            User.id == row.user_id,
+            User.deletion_requested_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if active_user is None:
+        session.rollback()
+        return None
     running_count = session.scalar(
         select(func.count())
         .select_from(ProcessingJob)
@@ -2599,6 +2628,9 @@ def _claim_next_profile_document_job(
             ProfileProcessingJob.status == JOB_STATUS_QUEUED,
             ProfileProcessingJob.available_at <= claimed_at,
             ProfileProcessingJob.attempt_count < ProfileProcessingJob.max_attempts,
+            ProfileProcessingJob.user_id.in_(
+                select(User.id).where(User.deletion_requested_at.is_(None))
+            ),
         )
         .values(
             status=JOB_STATUS_RUNNING,

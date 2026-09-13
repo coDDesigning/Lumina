@@ -109,6 +109,7 @@ def _configure_sqlite_connection(
 ) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA secure_delete=ON")
     cursor.execute(f"PRAGMA busy_timeout={busy_timeout_milliseconds}")
     if enable_wal:
         current_mode = cursor.execute("PRAGMA journal_mode").fetchone()[0]

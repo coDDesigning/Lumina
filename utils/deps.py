@@ -51,6 +51,13 @@ def _authenticate(
     if user is None:
         raise credentials_exception
 
+    token_user_id = payload.get("uid")
+    if token_user_id is not None and token_user_id != user.id:
+        raise credentials_exception
+
+    if user.deletion_requested_at is not None:
+        raise credentials_exception
+
     if user.is_banned:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

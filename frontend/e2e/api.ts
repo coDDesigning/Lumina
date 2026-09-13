@@ -953,6 +953,16 @@ const WRITES: Write[] = [
       return envelope(null)
     },
   ],
+  [
+    'DELETE',
+    /^\/api\/users\/me$/,
+    (_match, sent) => {
+      if (sent.json.confirmation !== 'DELETE' || !sent.json.current_password) {
+        throw new Error('Invalid account deletion payload')
+      }
+      return envelope(null)
+    },
+  ],
 ]
 
 const ROUTES: Answer[] = [

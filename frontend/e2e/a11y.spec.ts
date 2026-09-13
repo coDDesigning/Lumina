@@ -188,6 +188,14 @@ const MODAL_FLOWS = [
       await expect(page.getByRole('dialog')).toBeVisible()
     },
   },
+  {
+    name: 'the delete account confirmation dialog',
+    path: '/account/security',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: /^delete my account$/i }).click()
+      await expect(page.getByRole('dialog', { name: /permanently delete your account/i })).toBeVisible()
+    },
+  },
 ]
 
 /**

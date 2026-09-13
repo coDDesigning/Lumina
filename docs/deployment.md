@@ -478,13 +478,13 @@ longer exist, which `python -m workers.embedding_backfill --prune-orphans`
 resolves.
 
 After a storage or vector-store outage, `python -m workers.course_purge` finishes
-course deletions that answered `500` while it was down, and `python -m workers.embedding_backfill`
+account and course deletions that answered `500` while it was down, and `python -m workers.embedding_backfill`
 re-indexes missing vectors. In production, the background worker automatically executes
 both reconciliation tasks periodically on configured intervals (`COURSE_PURGE_INTERVAL_SECONDS`
 and `EMBEDDING_BACKFILL_INTERVAL_SECONDS`, defaulting to 1 hour), and rerunning them is always safe.
-On PostgreSQL, deleting one course (its documents, chunks, and vectors) runs under a
+On PostgreSQL, deleting one account or course (its documents, chunks, and vectors) runs under a
 transaction-local lock/statement timeout of `COURSE_PURGE_OPERATION_TIMEOUT_SECONDS`
-(default 300s) instead of the API request path's 5s cap, so a large course is not
+(default 300s) instead of the API request path's 5s cap, so a large purge is not
 aborted mid-delete by `QueryCanceled`.
 
 A hosted PostgreSQL deployment sets `VECTOR_BACKEND=pgvector` instead and stores

@@ -40,9 +40,9 @@ Repository-level sources are `LICENSE`, `SECURITY.md`, and
 4. Update `THIRD_PARTY_NOTICES.md` when runtime dependencies, bundled tools,
    fonts, or models change. Run `python scripts/check_legal_artifacts.py`.
 5. Run frontend route/link/registration tests, direct-refresh tests for both
-   delivery modes, backend migration tests, and the release checklist.
-6. Obtain the jurisdiction-specific legal/compliance approval recorded in the
-   release checklist before publishing to production.
+   delivery modes, and backend migration tests.
+6. Obtain jurisdiction-specific legal/compliance approval before publishing to
+   production.
 
 Material changes must be announced in-product or by email as appropriate. A
 material change to user obligations requires renewed agreement where legal

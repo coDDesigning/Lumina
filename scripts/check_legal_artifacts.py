@@ -12,7 +12,6 @@ REQUIRED_ARTIFACTS = (
     "THIRD_PARTY_NOTICES.md",
     "THIRD_PARTY_LICENSES/OFL-1.1.txt",
     "docs/legal/README.md",
-    "docs/legal/release-checklist.md",
 )
 
 

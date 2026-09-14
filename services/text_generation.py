@@ -651,6 +651,7 @@ class OllamaTextGenerationProvider(TemperatureBindingMixin):
             "num_predict": settings.ollama_num_predict,
             "repeat_penalty": settings.ollama_repeat_penalty,
         }
+        self._think = settings.ollama_think
         self._client = client or _get_shared_http_client()
 
     def _request(self, prompt: str, *, as_json: bool) -> tuple[str, dict[str, object]]:
@@ -661,6 +662,7 @@ class OllamaTextGenerationProvider(TemperatureBindingMixin):
             "model": self._model,
             "prompt": prompt,
             "stream": False,
+            "think": self._think,
             "options": options,
         }
         if as_json:

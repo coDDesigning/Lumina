@@ -49,6 +49,7 @@ OLLAMA_SETTINGS = SimpleNamespace(
     ollama_num_ctx=8192,
     ollama_num_predict=4096,
     ollama_repeat_penalty=1.1,
+    ollama_think=False,
 )
 
 
@@ -377,6 +378,21 @@ def test_ollama_provider_sends_sampling_options_on_json_requests(monkeypatch) ->
     assert payload["format"] == "json"
     assert payload["options"]["temperature"] == 0.2
     assert payload["options"]["num_ctx"] == 8192
+
+
+def test_ollama_provider_sends_the_configured_think_flag(monkeypatch) -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=_ollama_envelope('{"title": "Test Guide"}'))
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    provider.generate_json("Build a study guide")
+    provider.generate_text("Explain photosynthesis")
+
+    assert [json.loads(request.content)["think"] for request in captured] == [False, False]
 
 
 def test_ollama_provider_requests_json_format(monkeypatch) -> None:
@@ -1007,6 +1023,7 @@ def test_every_implemented_provider_is_constructible(monkeypatch) -> None:
                 ollama_num_ctx=8192,
                 ollama_num_predict=4096,
                 ollama_repeat_penalty=1.1,
+                ollama_think=False,
             ),
         )
 

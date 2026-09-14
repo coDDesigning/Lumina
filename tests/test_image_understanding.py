@@ -65,6 +65,7 @@ OLLAMA_VISION_SETTINGS = SimpleNamespace(
     ollama_num_ctx=8192,
     ollama_num_predict=4096,
     ollama_repeat_penalty=1.1,
+    ollama_think=False,
 )
 
 GEMINI_VISION_SETTINGS = SimpleNamespace(
@@ -1093,3 +1094,21 @@ def test_a_visual_request_bounds_the_context_window(monkeypatch) -> None:
     assert options["top_p"] == OLLAMA_VISION_SETTINGS.ollama_top_p
     assert options["num_predict"] == OLLAMA_VISION_SETTINGS.ollama_num_predict
     assert options["repeat_penalty"] == OLLAMA_VISION_SETTINGS.ollama_repeat_penalty
+
+
+def test_a_visual_request_sends_the_configured_think_flag(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"response": "A described diagram."})
+
+    provider = _ollama_vision_provider(monkeypatch, handler)
+    provider.describe_visual(
+        VALID_PNG_BYTES,
+        page_number=1,
+        visual_index=0,
+        suggested_type=VisualType.DIAGRAM,
+    )
+
+    assert captured["think"] is False

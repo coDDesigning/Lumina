@@ -185,6 +185,7 @@ def test_get_text_generation_provider_honors_model(monkeypatch: pytest.MonkeyPat
         ollama_num_ctx=8192,
         ollama_num_predict=4096,
         ollama_repeat_penalty=1.1,
+        ollama_think=False,
     )
     monkeypatch.setattr(text_generation, "settings", fake_settings)
 
@@ -297,6 +298,7 @@ def test_selected_model_is_passed_to_provider(
         ollama_num_ctx=8192,
         ollama_num_predict=4096,
         ollama_repeat_penalty=1.1,
+        ollama_think=False,
     )
 
     monkeypatch.setattr(text_generation, "settings", fake_settings)

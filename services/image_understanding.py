@@ -320,6 +320,7 @@ class OllamaImageUnderstandingProvider:
             "num_predict": settings.ollama_num_predict,
             "repeat_penalty": settings.ollama_repeat_penalty,
         }
+        self._think = settings.ollama_think
 
     def _report_usage(
         self,
@@ -390,6 +391,7 @@ class OllamaImageUnderstandingProvider:
             "prompt": prompt,
             "images": [b64_image],
             "stream": False,
+            "think": self._think,
             "options": dict(self._options),
         }
 

@@ -61,6 +61,7 @@ DEFAULT_OLLAMA_TOP_P = 0.9
 DEFAULT_OLLAMA_NUM_CTX = 8192
 DEFAULT_OLLAMA_NUM_PREDICT = 4096
 DEFAULT_OLLAMA_REPEAT_PENALTY = 1.1
+DEFAULT_OLLAMA_THINK = False
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-5"
@@ -272,6 +273,7 @@ class Settings:
     ollama_num_ctx: int
     ollama_num_predict: int
     ollama_repeat_penalty: float
+    ollama_think: bool
     ai_generation_timeout_seconds: int
     ai_generation_max_attempts: int
     ai_generation_backoff_base_seconds: float
@@ -658,6 +660,7 @@ def load_settings() -> Settings:
         minimum=0.5,
         maximum=2.0,
     )
+    ollama_think = _boolean_setting("OLLAMA_THINK", default=DEFAULT_OLLAMA_THINK)
     if ollama_num_predict > ollama_num_ctx:
         raise ValueError(
             "OLLAMA_NUM_PREDICT must not exceed OLLAMA_NUM_CTX; the response shares "
@@ -1343,6 +1346,7 @@ def load_settings() -> Settings:
         ollama_num_ctx=ollama_num_ctx,
         ollama_num_predict=ollama_num_predict,
         ollama_repeat_penalty=ollama_repeat_penalty,
+        ollama_think=ollama_think,
         ai_generation_timeout_seconds=ai_generation_timeout_seconds,
         ai_generation_max_attempts=ai_generation_max_attempts,
         ai_generation_backoff_base_seconds=ai_generation_backoff_base_seconds,

@@ -196,6 +196,7 @@ send an explicit `options` block on every request rather than inheriting them:
 | `OLLAMA_NUM_CTX` | `8192` | `512`-`131072` | Context window. The prompt and the response share it. It also sizes the KV cache, which is why it is sent on visual requests too: left to a multimodal model's own default window, the cache alone pushed `qwen3.5:9b` from fully resident to 64% of it on an 8 GB card, and one description from 46 s to 118 s. |
 | `OLLAMA_NUM_PREDICT` | `4096` | `64`-`131072` | Maximum response tokens. May not exceed `OLLAMA_NUM_CTX`. |
 | `OLLAMA_REPEAT_PENALTY` | `1.1` | `0.5`-`2.0` | Penalty applied to repeated tokens. |
+| `OLLAMA_THINK` | `false` | boolean | Sent as the top-level `think` field on text and visual requests. Unset, Ollama lets a thinking-capable model reason first. Measured on `qwen3.5:9b`, a five-question JSON quiz spent its whole turn thinking and returned an empty `response`, and a diagram description produced 513 tokens with thinking against 116 without. |
 
 **Temperature is a correctness setting here, not a style setting.** Every
 generation feature except the AI tutor validates model output against a Pydantic
@@ -344,6 +345,7 @@ rather than at the first user click:
 | `OLLAMA_NUM_CTX` | not a positive integer, or outside `512`-`131072` |
 | `OLLAMA_NUM_PREDICT` | not a positive integer, outside `64`-`131072`, or greater than `OLLAMA_NUM_CTX` |
 | `OLLAMA_REPEAT_PENALTY` | not a finite number, or outside `0.5`-`2.0` |
+| `OLLAMA_THINK` | not one of `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off` |
 | `AI_DEFAULT_MODEL` | not an available `provider:model` id |
 | `AI_MODEL_CATALOG` | not valid JSON, empty, contains an unimplemented provider, contains duplicate model names, or a model entry is missing/invalid `model`, `json_mode`, `context_window`, or `vision` metadata |
 

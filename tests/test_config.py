@@ -102,6 +102,7 @@ CONFIGURATION_KEYS = (
     "OLLAMA_NUM_CTX",
     "OLLAMA_NUM_PREDICT",
     "OLLAMA_REPEAT_PENALTY",
+    "OLLAMA_THINK",
     "MAX_UPLOAD_SIZE_BYTES",
     "MAX_REQUEST_SIZE_BYTES",
     "MAX_CONCURRENT_DOCUMENT_VALIDATIONS",
@@ -1816,6 +1817,18 @@ def test_ollama_sampling_defaults_target_a_single_gpu_box(
     assert settings.ollama_num_ctx == 8192
     assert settings.ollama_num_predict == 4096
     assert settings.ollama_repeat_penalty == 1.1
+    assert settings.ollama_think is False
+
+
+def test_ollama_think_is_configurable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("OLLAMA_THINK", "true")
+
+    settings = load_settings()
+
+    assert settings.ollama_think is True
 
 
 def test_ollama_sampling_settings_are_configurable(
@@ -1850,6 +1863,7 @@ def test_ollama_sampling_settings_are_configurable(
         ("OLLAMA_NUM_PREDICT", "0"),
         ("OLLAMA_REPEAT_PENALTY", "0"),
         ("OLLAMA_REPEAT_PENALTY", "3"),
+        ("OLLAMA_THINK", "maybe"),
     ],
 )
 def test_invalid_ollama_sampling_settings_are_rejected(

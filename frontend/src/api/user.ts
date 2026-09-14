@@ -55,6 +55,13 @@ export const userAPI = {
     );
   },
 
+  deleteAccount: async (current_password: string, options?: RequestInit): Promise<void> => {
+    await apiClient.delete<BaseResponse<null>>('/users/me', {
+      ...options,
+      body: JSON.stringify({ current_password, confirmation: 'DELETE' }),
+    });
+  },
+
   getApiKeys: async (options?: RequestInit): Promise<UserApiKeys> => {
     const res = await apiClient.get<BaseResponse<UserApiKeys>>('/users/me/api-keys', options);
     return unwrapData(res, 'User API keys');

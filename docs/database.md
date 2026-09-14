@@ -539,6 +539,52 @@ vectors, then the row, and reports a failure in any of those steps to the caller
 instead of returning success over an orphaned file. A repeat delete resumes the
 tombstone it finds, and the same purge command finishes the ones nobody retried.
 
+## Account hard deletion
+
+Deleting an account is permanent, privacy-safe, and initiated strictly by the
+authenticated account owner via `DELETE /api/users/me`. Self-service deletion requires
+current-password re-authentication and typed confirmation (`"DELETE"`). An administrator
+may inspect user listings but cannot delete another user's account without an explicit product
+and authorization rule; the protected bootstrap administrator (`is_initial_admin = True`)
+cannot be deleted (`409 Conflict`, `initial_admin_deletion_forbidden`).
+
+The deletion lifecycle is partitioned into atomic fencing and idempotent external cleanup:
+
+1. **Immediate fencing and credential scrubbing**:
+   Inside a single locked write transaction (`UserService.request_account_deletion`):
+   - `User.deletion_requested_at` is set to UTC `now`.
+   - `User.tokens_valid_after` is set to the same instant, atomically invalidating all active JWTs.
+   - Any outstanding `email_verification_tokens` and `password_reset_tokens` for the user are deleted.
+   - Encrypted BYOK credentials (`encrypted_openai_api_key`, `encrypted_gemini_api_key`, `encrypted_anthropic_api_key`) are cleared immediately.
+   - Any subsequent login attempt, token validation, password reset, or email verification is rejected with generic authentication errors to prevent account enumeration.
+
+2. **Durable, retryable tombstone**:
+   `User.deletion_requested_at IS NOT NULL` acts as the durable account tombstone. If cleanup fails at
+   any stage, the user row remains tombstoned, recording `deletion_attempt_count` and
+   `deletion_last_error_code`. The account is invisible to administrative listings and cannot be claimed by workers.
+
+3. **External storage and vector erasure**:
+   `AccountDeletionService.purge` executes the external cleanup:
+   - Verifies whether any account document is held by an active reader (`DocumentGenerationLock`); if locked, cleanup is safely deferred until the lease expires.
+   - Deletes all course and profile document source files from storage (local filesystem or S3).
+   - Deletes vector embeddings from pgvector or Chroma across all owned courses and profile namespaces.
+
+4. **Relational cascade and audit anonymization**:
+   Once external cleanup succeeds:
+   - Deleting the `User` row cascades all owned courses, documents, chunks, pages, visuals, processing jobs, attempts, sessions, progress, and profile knowledge rows (`ON DELETE CASCADE`).
+   - Generation jobs, generated outputs, and quizzes authored by the user are deleted.
+   - User-specific rate limit buckets (`generation:user:{id}`, `client_error:user:{id}`, `login:account:{hash}`) are purged.
+   - In financial audit records (`credit_transactions`), rows where the user acted as administrator have `actor_user_id` set to `NULL` and `actor_label` anonymized to `"Deleted administrator"`.
+   - SQLite connections maintain `PRAGMA secure_delete=ON`, zeroing deleted database cells.
+
+5. **Retention boundaries**:
+   Account deletion purges live application data. Retained historical operational logs (CloudWatch 30 days,
+   local SQLite 30 days) and automated database backups (RDS snapshots 30 days, self-hosted 7 daily / 4 weekly
+   archives) expire according to their bounded retention schedules rather than immediate removal.
+
+`workers.course_purge` (`run_account_purge`) finishes tombstones automatically during periodic maintenance
+and supports operator execution via `python -m workers.course_purge --user-id <USER_ID>`.
+
 ## Quizzes
 
 A quiz belongs to one course, carries the attribution of the generation that

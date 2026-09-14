@@ -1,7 +1,7 @@
 """record policy acknowledgements
 
 Revision ID: 6f2a9c4d1e73
-Revises: c1d7e94b3a20
+Revises: a2e8c6f14b90
 Create Date: 2026-09-12 00:00:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = "6f2a9c4d1e73"
-down_revision: str | None = "c1d7e94b3a20"
+down_revision: str | None = "a2e8c6f14b90"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

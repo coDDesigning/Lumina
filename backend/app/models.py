@@ -295,6 +295,18 @@ class User(Base):
     tokens_valid_after: Mapped[datetime | None] = mapped_column(
         UTCDateTime(), nullable=True
     )
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True, index=True
+    )
+    deletion_attempt_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    deletion_last_attempt_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
+    deletion_last_error_code: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
     education_level: Mapped[str] = mapped_column(
         String(20), default="unspecified", server_default="unspecified"
     )

@@ -56,7 +56,12 @@ class ProfileDocumentService:
         user_id: int,
     ) -> ProfileDocumentUploadResult:
         try:
-            user_exists = db.scalar(select(User.id).where(User.id == user_id))
+            user_exists = db.scalar(
+                select(User.id).where(
+                    User.id == user_id,
+                    User.deletion_requested_at.is_(None),
+                )
+            )
         except SQLAlchemyError as exc:
             raise ProfileDocumentRegistrationError from exc
 
@@ -132,7 +137,12 @@ class ProfileDocumentService:
         try:
             begin_serialized_write(db)
             user_exists = db.scalar(
-                select(User.id).where(User.id == user_id).with_for_update()
+                select(User.id)
+                .where(
+                    User.id == user_id,
+                    User.deletion_requested_at.is_(None),
+                )
+                .with_for_update()
             )
         except SQLAlchemyError as exc:
             ProfileDocumentService._rollback_and_remove(db, storage, storage_key)

@@ -11,6 +11,8 @@ If a network timeout or crash interrupts steps 1 or 2, the course row remains to
 
 Document deletion is the same two-phase erase one level down. `DocumentService.delete_document` and `ProfileDocumentService.delete_document` commit `status = 'deleting'` on the document row, then remove the storage object, then the vectors, then the row. A failure after the tombstone is committed leaves a row that is hidden from every read endpoint, spends no course quota, cannot be resurrected by any job transition, and can only be finished by this same command, which makes a second pass over document tombstones after the course pass.
 
+Account deletion follows the same pattern at the top level. `UserService.request_account_deletion` sets `User.deletion_requested_at` as a durable tombstone, and `workers.course_purge` reconciles pending accounts, erasing stored files, vector embeddings, and cascading relational records via `AccountDeletionService.purge`.
+
 In production, the running worker automatically executes periodic purge reconciliation scans every `COURSE_PURGE_INTERVAL_SECONDS` (default: 3600 seconds / 1 hour). Stranded tombstones will clear on the next cycle without manual intervention. Standalone daemon execution is also supported via `python -m workers.course_purge --interval-seconds <SECONDS>`.
 
 ---
@@ -40,12 +42,17 @@ SELECT id, user_id, status, created_at, updated_at
 FROM profile_documents
 WHERE status = 'deleting'
 ORDER BY updated_at ASC;
+
+SELECT id, email, deletion_requested_at, deletion_attempt_count, deletion_last_error_code
+FROM users
+WHERE deletion_requested_at IS NOT NULL
+ORDER BY deletion_requested_at ASC;
 ```
 
 #### CloudWatch Logs Insights:
 ```sql
-fields @timestamp, service, event, message
-| filter service = "maintenance" or event like /course_purge/
+fields @timestamp, service, event, user_id, error_code, message
+| filter service = "maintenance" or event like /purge/
 | sort @timestamp desc
 ```
 
@@ -62,19 +69,25 @@ fields @timestamp, service, event, message
    ```
    Inspect the summary output: `examined=X purged=0 failed=0`.
 
-2. **Execute the live purge across all tombstoned courses:**
+2. **Execute the live purge across all tombstoned accounts and courses:**
    ```bash
    docker compose run --rm lumina \
      python -m workers.course_purge
    ```
 
-3. **Purge a specific course ID:**
+3. **Purge a specific account tombstone:**
+   ```bash
+   docker compose run --rm lumina \
+     python -m workers.course_purge --user-id <USER_ID>
+   ```
+
+4. **Purge a specific course ID:**
    ```bash
    docker compose run --rm lumina \
      python -m workers.course_purge --course-id <COURSE_ID>
    ```
 
-4. **Purge a specific document tombstone:**
+5. **Purge a specific document tombstone:**
    ```bash
    docker compose run --rm lumina \
      python -m workers.course_purge --document-id <DOCUMENT_ID>

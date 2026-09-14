@@ -69,4 +69,28 @@ test.describe('account security', () => {
       'Your password has been changed successfully.',
     )
   })
+
+  test('deletes account after password and typed confirmation and redirects to login', async ({ page }) => {
+    await open(page, '/account/security')
+
+    await page.getByRole('button', { name: /^delete my account$/i }).click()
+    const dialog = page.getByRole('dialog', { name: /permanently delete your account/i })
+    await expect(dialog).toBeVisible()
+
+    const deleteRequest = page.waitForRequest(
+      (request) => request.url().endsWith('/api/users/me') && request.method() === 'DELETE',
+    )
+
+    await page.getByLabel(/^current password for account deletion$/i).fill('Current-password-123!')
+    await page.getByLabel(/^type DELETE to confirm$/i).fill('DELETE')
+    await dialog.getByRole('button', { name: /^delete account permanently$/i }).click()
+
+    const request = await deleteRequest
+    expect(request.postDataJSON()).toEqual({
+      current_password: 'Current-password-123!',
+      confirmation: 'DELETE',
+    })
+
+    await expect(page).toHaveURL(/\/login$/)
+  })
 })

@@ -177,7 +177,7 @@ def login_user(
         form_data.password,
         user.password_hash if user is not None else DUMMY_PASSWORD_HASH,
     )
-    if user is None or not password_matches:
+    if user is None or user.deletion_requested_at is not None or not password_matches:
         enforce(
             rate_limit_db,
             account_bucket_key,
@@ -206,7 +206,7 @@ def login_user(
     # An unverified account signs in deliberately. It has to: the screen that
     # explains why the balance is zero, and the control that resends the link,
     # are both behind the session.
-    access_token = create_access_token(data={"sub": user.email})
+    access_token = create_access_token(data={"sub": user.email, "uid": user.id})
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -298,7 +298,12 @@ def resend_verification_email(
         raise ConflictException(VERIFICATION_DISABLED_MESSAGE)
 
     user = UserService.get_user_by_email(db, payload.email)
-    if user is not None and user.email_verified_at is None and not user.is_banned:
+    if (
+        user is not None
+        and user.deletion_requested_at is None
+        and user.email_verified_at is None
+        and not user.is_banned
+    ):
         EmailVerificationService.issue_and_send(
             db, user, background_tasks=background_tasks
         )
@@ -333,7 +338,7 @@ def request_password_reset(
     Issue a password reset link to the given address, if it exists.
     """
     user = UserService.get_user_by_email(db, payload.email)
-    if user is not None and not user.is_banned:
+    if user is not None and user.deletion_requested_at is None and not user.is_banned:
         PasswordResetService.issue_and_send(db, user, background_tasks=background_tasks)
 
     return {"message": RESET_SENT_MESSAGE}

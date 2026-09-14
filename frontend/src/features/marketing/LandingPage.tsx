@@ -219,6 +219,13 @@ export default function LandingPage() {
             </>
           ) : null}
         </p>
+        <p className={styles.sectionLede}>
+          You can permanently delete your account from Account &gt; Security. Access is revoked
+          immediately, while database records, source files, and search vectors are removed by a
+          retrying cleanup process. Privacy-safe operational records and backups expire under bounded
+          deployment retention policies rather than being erased immediately; hosted noncurrent object
+          versions can remain for up to 90 days, and self-hosted operators control their backup copies.
+        </p>
       </section>
 
       {legalPolicies.enabled ? (

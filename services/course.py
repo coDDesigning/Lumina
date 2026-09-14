@@ -5,7 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from backend.app.database import begin_serialized_write
-from backend.app.models import Course, CourseTopic, UploadedDocument
+from backend.app.models import Course, CourseTopic, UploadedDocument, User
 from schemas.course import CourseCreate, CourseResponse, CourseUpdate
 from schemas.user import UserResponse
 from services.processing_jobs import fence_course_jobs
@@ -69,6 +69,19 @@ class CourseService:
     def create_course(
         db: Session, course_data: CourseCreate, owner_id: int
     ) -> CourseResponse:
+        db.rollback()
+        begin_serialized_write(db)
+        active_owner = db.scalar(
+            select(User.id)
+            .where(
+                User.id == owner_id,
+                User.deletion_requested_at.is_(None),
+            )
+            .with_for_update()
+        )
+        if active_owner is None:
+            db.rollback()
+            raise NotFoundException("User not found")
         fields = course_data.model_dump()
         topics = fields.pop("topics")
         course = Course(

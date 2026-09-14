@@ -31,6 +31,7 @@ def test_sqlite_engine_creates_parent_and_enables_foreign_keys(
         assert engine.hide_parameters is True
         with engine.connect() as connection:
             foreign_keys = connection.exec_driver_sql("PRAGMA foreign_keys").scalar()
+            secure_delete = connection.exec_driver_sql("PRAGMA secure_delete").scalar()
             busy_timeout = connection.exec_driver_sql("PRAGMA busy_timeout").scalar()
             journal_mode = connection.exec_driver_sql("PRAGMA journal_mode").scalar()
             synchronous = connection.exec_driver_sql("PRAGMA synchronous").scalar()
@@ -42,6 +43,7 @@ def test_sqlite_engine_creates_parent_and_enables_foreign_keys(
             ).scalar()
         assert database_path.exists()
         assert foreign_keys == 1
+        assert secure_delete == 1
         assert busy_timeout == SQLITE_BUSY_TIMEOUT_MILLISECONDS
         assert journal_mode == "wal"
         assert synchronous == 2

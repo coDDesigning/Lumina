@@ -95,6 +95,7 @@ vi.mock('@/api/user', () => ({
     getApiKeys: vi.fn(),
     updateApiKeys: vi.fn(),
     changePassword: vi.fn(),
+    deleteAccount: vi.fn(),
   },
 }))
 
@@ -117,6 +118,7 @@ const mockUpdateEducationLevel = vi.mocked(userAPI.updateEducationLevel)
 const mockGetCreditTransactions = vi.mocked(userAPI.getCreditTransactions)
 const mockGetApiKeys = vi.mocked(userAPI.getApiKeys)
 const mockChangePassword = vi.mocked(userAPI.changePassword)
+const mockDeleteAccount = vi.mocked(userAPI.deleteAccount)
 
 function renderAccountPage(path = '/account') {
   return render(
@@ -131,6 +133,7 @@ function renderAccountPage(path = '/account') {
             <Route path="security" element={<AccountSecurityPage />} />
             <Route path="appearance" element={<AccountAppearancePage />} />
           </Route>
+          <Route path="/login" element={<div>Signed out after deletion</div>} />
         </Routes>
       </MemoryRouter>
     </ThemeProvider>,
@@ -244,6 +247,118 @@ describe('AccountPage', () => {
     expect(screen.getByRole('button', { name: 'Show current password' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Show new password' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Show confirm new password' })).toBeInTheDocument()
+  })
+
+  it('requires password re-authentication and typed confirmation to delete an account', async () => {
+    const user = userEvent.setup()
+    mockDeleteAccount.mockResolvedValue(undefined)
+    renderAccountPage('/account/security')
+
+    await user.click(screen.getByRole('button', { name: 'Delete my account' }))
+    const dialog = screen.getByRole('dialog', { name: 'Permanently delete your account?' })
+    const confirm = within(dialog).getByRole('button', { name: 'Delete account permanently' })
+    expect(confirm).toBeDisabled()
+    expect(within(dialog).getByText(/not erased immediately/i)).toBeInTheDocument()
+    expect(within(dialog).getByText(/up to 90 days/i)).toBeInTheDocument()
+
+    await user.type(
+      within(dialog).getByLabelText('Current password for account deletion'),
+      'Current-password-123!',
+    )
+    await user.type(within(dialog).getByLabelText('Type DELETE to confirm'), 'DELETE')
+    await user.click(confirm)
+
+    await waitFor(() => {
+      expect(mockDeleteAccount).toHaveBeenCalledWith('Current-password-123!')
+    })
+    expect(mockLogout).toHaveBeenCalledWith({ remote: false })
+    expect(await screen.findByText('Signed out after deletion')).toBeInTheDocument()
+  })
+
+  it('disables deletion confirm button until both password and exact confirmation phrase are typed', async () => {
+    const user = userEvent.setup()
+    renderAccountPage('/account/security')
+
+    await user.click(screen.getByRole('button', { name: 'Delete my account' }))
+    const dialog = screen.getByRole('dialog', { name: 'Permanently delete your account?' })
+    const confirm = within(dialog).getByRole('button', { name: 'Delete account permanently' })
+    const passwordInput = within(dialog).getByLabelText('Current password for account deletion')
+    const phraseInput = within(dialog).getByLabelText('Type DELETE to confirm')
+
+    expect(confirm).toBeDisabled()
+
+    // Typed phrase without password: remains disabled
+    await user.type(phraseInput, 'DELETE')
+    expect(confirm).toBeDisabled()
+
+    // Typed password as well: now enabled
+    await user.type(passwordInput, 'MyPassword123!')
+    expect(confirm).toBeEnabled()
+
+    // Mismatched phrase with password: disabled
+    await user.clear(phraseInput)
+    await user.type(phraseInput, 'delete')
+    expect(confirm).toBeDisabled()
+  })
+
+  it('allows recovering and successfully submitting after an initial deletion failure', async () => {
+    const user = userEvent.setup()
+    mockDeleteAccount
+      .mockRejectedValueOnce(
+        new APIError(400, { detail: 'Current password is incorrect.' }),
+      )
+      .mockResolvedValueOnce(undefined)
+    renderAccountPage('/account/security')
+
+    await user.click(screen.getByRole('button', { name: 'Delete my account' }))
+    const dialog = screen.getByRole('dialog', { name: 'Permanently delete your account?' })
+    const passwordInput = within(dialog).getByLabelText('Current password for account deletion')
+    const phraseInput = within(dialog).getByLabelText('Type DELETE to confirm')
+    const confirm = within(dialog).getByRole('button', { name: 'Delete account permanently' })
+
+    await user.type(passwordInput, 'wrong-password')
+    await user.type(phraseInput, 'DELETE')
+    await user.click(confirm)
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Current password is incorrect.',
+    )
+    expect(mockLogout).not.toHaveBeenCalled()
+
+    // Correct the password and retry
+    await user.clear(passwordInput)
+    await user.type(passwordInput, 'correct-password')
+    await user.click(confirm)
+
+    await waitFor(() => {
+      expect(mockDeleteAccount).toHaveBeenCalledTimes(2)
+      expect(mockDeleteAccount).toHaveBeenLastCalledWith('correct-password')
+    })
+    expect(mockLogout).toHaveBeenCalledWith({ remote: false })
+    expect(await screen.findByText('Signed out after deletion')).toBeInTheDocument()
+  })
+
+  it('keeps the deletion dialog open with a recovery path when the request fails', async () => {
+    const user = userEvent.setup()
+    mockDeleteAccount.mockRejectedValue(
+      new APIError(400, { detail: 'Account deletion could not be requested.' }),
+    )
+    renderAccountPage('/account/security')
+
+    await user.click(screen.getByRole('button', { name: 'Delete my account' }))
+    const dialog = screen.getByRole('dialog', { name: 'Permanently delete your account?' })
+    await user.type(
+      within(dialog).getByLabelText('Current password for account deletion'),
+      'wrong-password',
+    )
+    await user.type(within(dialog).getByLabelText('Type DELETE to confirm'), 'DELETE')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete account permanently' }))
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Account deletion could not be requested.',
+    )
+    expect(mockLogout).not.toHaveBeenCalled()
+    expect(within(dialog).getByRole('button', { name: 'Delete account permanently' })).toBeEnabled()
   })
 
   it('renders model capabilities and cost hints for the selected model', async () => {

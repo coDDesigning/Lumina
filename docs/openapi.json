@@ -1,6 +1,28 @@
 {
   "components": {
     "schemas": {
+      "AccountDeletionRequest": {
+        "description": "Re-authenticate and explicitly acknowledge permanent account erasure.",
+        "properties": {
+          "confirmation": {
+            "const": "DELETE",
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "current_password": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Current Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_password",
+          "confirmation"
+        ],
+        "title": "AccountDeletionRequest",
+        "type": "object"
+      },
       "ActivityItem": {
         "properties": {
           "action_type": {
@@ -19306,6 +19328,53 @@
         "summary": "Generate Prompt",
         "tags": [
           "Prompt Generator"
+        ]
+      }
+    },
+    "/api/users/me": {
+      "delete": {
+        "description": "Fence this account now and queue permanent erasure for retryable cleanup.",
+        "operationId": "delete_my_account_api_users_me_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_NoneType_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete My Account",
+        "tags": [
+          "Users"
         ]
       }
     },

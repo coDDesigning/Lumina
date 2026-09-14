@@ -73,8 +73,7 @@ cleanup() {
     # Intentional splitting restores exactly the services that were running.
     # --no-deps keeps that exact, now that lumina-worker depends on lumina.
     # --no-build because a scheduled backup must not depend on a build
-    # succeeding; the `docker compose run` calls above have no such flag and do
-    # build, because lumina carries pull_policy: build.
+    # succeeding.
     if docker compose up -d --no-build --no-deps --wait --wait-timeout 180 $running_services; then
       if ! clear_restart_state; then
         [ "$status" -ne 0 ] || status=1

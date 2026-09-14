@@ -11,7 +11,7 @@
 name: lumina
 
 x-lumina: &lumina
-  image: lumina
+  image: ${LUMINA_IMAGE:-ghcr.io/coddesigning/lumina:latest}
   build: .
   env_file: .env
   environment:
@@ -59,11 +59,6 @@ x-lumina: &lumina
 services:
   lumina:
     <<: *lumina
-    # Rebuild before starting, so `docker compose up -d` after a `git pull`
-    # cannot run yesterday's code from a stale image tag. A cached rebuild
-    # takes a moment; `--no-build` skips it. Deliberately not on the one-shot
-    # services: `docker compose run` has no --no-build to opt out with.
-    pull_policy: build
     # The only published port, and the whole address. Change LUMINA_PORT alone
     # -- nothing needs rebuilding, because the interface calls /api on whatever
     # origin served it. 8000 is inside the container and is not configurable.
@@ -82,7 +77,6 @@ services:
 
   lumina-worker:
     <<: *lumina
-    pull_policy: build
     command: ["python", "-m", "workers.worker"]
     depends_on:
       lumina:

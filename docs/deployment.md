@@ -131,9 +131,14 @@ docker compose ps --all
 curl --fail "http://127.0.0.1:${LUMINA_PORT:-10312}/health/ready"
 ```
 
-`up` rebuilds before starting, so a `git pull` cannot leave the previous image
-running; `--no-build` opts out. An operator deploying a prebuilt image tags it
-`lumina` and starts with `docker compose up --detach --no-build`.
+`up` runs the image named by `LUMINA_IMAGE`, which defaults to
+`ghcr.io/coddesigning/lumina:latest`, and does not pull it again once it is on
+the host. Run `docker compose pull lumina` before `up` to take a new release.
+Pin a release by setting `LUMINA_IMAGE` to
+`ghcr.io/coddesigning/lumina:<full commit SHA>`; the tag is the same release ID
+production uses. To run a build of the checkout instead, start with
+`docker compose up --build --detach --wait --wait-timeout 600`, and repeat
+`--build` after every `git pull` so the image cannot fall behind the code.
 
 Migration failure stops `lumina` before it serves, and `lumina-worker` waits on
 `lumina` being healthy, so it never starts against a schema that is behind. The

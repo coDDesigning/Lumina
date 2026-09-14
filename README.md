@@ -22,14 +22,14 @@ they are configured.
 
 ## Quickstart
 
-This is the complete path from a clean clone to your first generated quiz. It
-needs no Node.js, no separate development server, and no CORS configuration.
+This is the complete path from an empty directory to your first generated quiz.
+It needs no clone, no build, no Node.js, and no CORS configuration: Compose pulls
+the prebuilt image from `ghcr.io/coddesigning/lumina`.
 
 ### Prerequisites
 
 | Requirement | Notes |
 | --- | --- |
-| Git | To clone the repository. |
 | Docker Engine or Docker Desktop | Supplies the whole stack. |
 | Docker Compose v2.20 or newer | `docker compose version` must succeed. |
 | [Ollama](https://ollama.com) | Runs the AI models locally. |
@@ -40,12 +40,29 @@ Generation speed depends heavily on RAM and VRAM. The profile below targets
 16 GB of system RAM and 8 GB of VRAM; a smaller machine still works, but answers
 arrive more slowly.
 
-### 1. Clone the repository
+### 1. Download the Compose file
+
+Lumina runs from a directory holding two files. Keep this directory: it is
+where every later `docker compose` command runs.
+
+**Linux / macOS**
 
 ```bash
-git clone https://github.com/coDDesigning/Lumina.git
-cd Lumina
+mkdir lumina && cd lumina
+curl -fsSLO https://raw.githubusercontent.com/coDDesigning/Lumina/main/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/coDDesigning/Lumina/main/.env.example
 ```
+
+**Windows PowerShell**
+
+```powershell
+New-Item -ItemType Directory lumina | Out-Null; Set-Location lumina
+Invoke-WebRequest https://raw.githubusercontent.com/coDDesigning/Lumina/main/docker-compose.yml -OutFile docker-compose.yml
+Invoke-WebRequest https://raw.githubusercontent.com/coDDesigning/Lumina/main/.env.example -OutFile .env.example
+```
+
+To work on Lumina itself, clone the repository instead; see
+[Development and tests](#development-and-tests).
 
 ### 2. Install and configure Ollama
 
@@ -88,7 +105,7 @@ install -m 0600 .env.example .env
 Copy-Item .env.example .env
 ```
 
-Never commit `.env`; it is already ignored by Git.
+`.env` holds your secrets. Keep it private, and never commit it.
 
 ### 4. Set the values that have no safe default
 
@@ -153,9 +170,13 @@ docker compose up --detach --wait --wait-timeout 600
 docker compose ps --all
 ```
 
-The first run builds the image and takes around ten minutes, most of it
-downloading the embedding model that is baked in so the running container never
-needs the network for it. Later runs reuse the cache and take seconds.
+The first run pulls the prebuilt image, `ghcr.io/coddesigning/lumina:latest`,
+for `linux/amd64` or `linux/arm64`. It carries the embedding model baked in, so
+the running container never needs the network for it. Later runs reuse the
+pulled image and take seconds.
+
+To build the image from your checkout instead, add `--build`. That takes around
+ten minutes the first time, most of it downloading the embedding model.
 
 `lumina` and `lumina-worker` should both be healthy. Confirm the stack is serving:
 
@@ -250,9 +271,20 @@ docker compose down                 # remove containers; named volumes are kept
 docker compose up --detach --wait --wait-timeout 600
 ```
 
-`up` rebuilds before it starts, so after a `git pull` there is no separate
-build step and no way to leave yesterday's code running by accident. Add
-`--no-build` to start without rebuilding.
+`up` starts whatever image is already on the machine. To update, fetch the
+Compose file and the image together, so the two cannot disagree:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/coDDesigning/Lumina/main/docker-compose.yml
+docker compose pull lumina
+docker compose up --detach --wait --wait-timeout 600
+```
+
+`latest` follows `main`. To stay on one release, set `LUMINA_IMAGE` in `.env` to
+`ghcr.io/coddesigning/lumina:<full commit SHA>`, and download the Compose file
+from that same commit. If you run a build of your own clone instead, use
+`docker compose up --build` after every `git pull` so the image matches the
+code.
 
 > `docker compose down --volumes` **permanently deletes your database, uploaded
 > documents, and search index.** There is no undo. Use it only when you intend
@@ -278,9 +310,11 @@ database, your uploaded documents, and the Chroma vector index.
 
 All three must be captured as a single consistent set. Copying a live SQLite
 file or Chroma directory is not a supported backup — the supported wrapper stops
-the writing services first:
+the writing services first. Run it from the directory that holds
+`docker-compose.yml`:
 
 ```bash
+curl -fsSL --create-dirs -o ops/self_hosted_backup.sh https://raw.githubusercontent.com/coDDesigning/Lumina/main/ops/self_hosted_backup.sh
 export LUMINA_BACKUP_DIRECTORY=/mnt/lumina-backups
 sudo install -d -o 10001 -g 10001 -m 0700 "${LUMINA_BACKUP_DIRECTORY}"
 sh ops/self_hosted_backup.sh
@@ -292,7 +326,14 @@ encrypted, off-host storage. The complete restore and rollback procedure is in
 
 ## Development and tests
 
-These mirror [`.github/workflows/ci.yml`](.github/workflows/ci.yml), which is
+Working on Lumina itself needs the repository:
+
+```bash
+git clone https://github.com/coDDesigning/Lumina.git
+cd Lumina
+```
+
+The commands below mirror [`.github/workflows/ci.yml`](.github/workflows/ci.yml), which is
 the executable source of truth.
 
 ### Backend
@@ -329,12 +370,19 @@ type-checks the test and browser suites. Run both.
 ```bash
 docker compose config --quiet
 docker compose -f docker-compose.hosted.yml config --quiet
-docker compose up --detach --wait --wait-timeout 600
+docker compose up --build --detach --wait --wait-timeout 600
 ```
+
+Without `--build`, Compose runs the published image instead of your changes.
 
 One image carries both halves: its first build stage compiles the interface,
 and the API serves the result beside `/api` from a single port. `docker build`
 alone builds it; `VITE_API_BASE_URL` is a `--build-arg`, not a runtime setting.
+The published image is built with `/api`.
+
+`.github/workflows/publish-image.yml` publishes that image to
+`ghcr.io/coddesigning/lumina` on every push to `main`, for `linux/amd64` and
+`linux/arm64`, tagged `latest` and with the full commit SHA.
 
 ## Deployment modes
 

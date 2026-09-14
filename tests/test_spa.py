@@ -59,6 +59,13 @@ def test_a_client_side_route_serves_the_shell_unchanged(client: TestClient) -> N
     assert deep_link.text == client.get("/").text
 
 
+def test_a_public_legal_route_serves_the_shell_unchanged(client: TestClient) -> None:
+    deep_link = client.get("/legal/privacy")
+
+    assert deep_link.status_code == 200
+    assert deep_link.text == client.get("/").text
+
+
 def test_a_client_side_route_is_served_without_testing_that_it_exists(
     client: TestClient,
 ) -> None:

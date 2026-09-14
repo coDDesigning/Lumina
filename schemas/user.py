@@ -33,6 +33,7 @@ class UserCreate(UserBase):
     """Schema for user registration payload."""
 
     password: str
+    policies_acknowledged: bool = False
 
     @field_validator("name")
     @classmethod

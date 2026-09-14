@@ -5,8 +5,10 @@ yourself. You add your course material, and Lumina extracts and indexes it, then
 answers questions, writes study guides, generates and grades quizzes, and tracks
 what you have actually learned — all grounded in your own documents.
 
-Because you run it, your material never has to leave your machine: paired with a
-local Ollama model, Lumina makes no third-party request at all.
+With local storage and Ollama, and with no external provider or fallback
+configured, document processing and AI inference can remain on the self-hosted
+operator's infrastructure. External providers receive relevant content when
+they are configured.
 
 ## What you can do
 
@@ -365,6 +367,18 @@ contract, and production configuration.
 | Observability | [`docs/observability.md`](docs/observability.md) |
 | AI usage telemetry | [`docs/ai_usage_telemetry.md`](docs/ai_usage_telemetry.md) |
 | Dependencies | [`docs/dependencies.md`](docs/dependencies.md) |
+| Legal policy sources and update process | [`docs/legal/README.md`](docs/legal/README.md) |
 | Operational runbooks | [`docs/runbooks/`](docs/runbooks/) |
 | Branch protection and status checks | [`docs/branch_protection.md`](docs/branch_protection.md) |
 | PR-Agent | [`docs/pr-agent.md`](docs/pr-agent.md) |
+
+## Licence and security
+
+Copyright © 2026 coDDesigning contributors. Lumina is licensed under the
+[GNU Affero General Public License version 3 only](LICENSE) (`AGPL-3.0-only`).
+Third-party components retain their own terms; see
+[Third-Party Notices](THIRD_PARTY_NOTICES.md).
+
+Report suspected vulnerabilities privately as described in the
+[Security Policy](SECURITY.md). Do not open a public issue for an exploitable
+weakness.

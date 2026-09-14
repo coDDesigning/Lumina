@@ -35,6 +35,7 @@ test.describe('signing in', () => {
     await page.getByLabel(/email/i).fill('ada@example.com')
     await page.getByLabel(/^password$/i).fill('Correct-horse-battery!')
     await page.getByLabel(/^confirm password$/i).fill('Something-else!')
+    await page.getByRole('checkbox', { name: /by creating an account/i }).check()
     await page.getByRole('button', { name: /create|register|sign up/i }).click()
 
     await expect(page).toHaveURL(/\/register$/)

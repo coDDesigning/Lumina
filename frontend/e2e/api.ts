@@ -969,6 +969,10 @@ const ROUTES: Answer[] = [
   [/^\/api\/auth\/me$/, () => USER],
   [/^\/api\/auth\/login$/, () => ({ access_token: 'stub', token_type: 'bearer', user: USER })],
   [/^\/api\/auth\/register$/, () => envelope(USER)],
+  [
+    /^\/api\/legal\/config$/,
+    () => envelope({ enabled: true, terms_version: '1.0', privacy_version: '1.0', effective_date: '2026-09-12' }),
+  ],
   [/^\/api\/users\/me\/password$/, () => envelope(null)],
   [/^\/api\/users\/me\/credits$/, () => envelope(CREDITS)],
   [/^\/api\/users\/me\/credit-transactions/, () => envelope([])],

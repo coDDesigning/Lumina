@@ -69,7 +69,8 @@ DROP_LEGACY_AI_USAGE_INDEX_REVISION = "e4c7a1b90d52"
 OPERATIONAL_CORRELATION_REVISION = "a9d4e2f7c601"
 DESCRIBE_VISUALS_JOBS_REVISION = "c1d7e94b3a20"
 ACCOUNT_DELETION_REVISION = "a2e8c6f14b90"
-HEAD_REVISION = ACCOUNT_DELETION_REVISION
+POLICY_ACKNOWLEDGEMENTS_REVISION = "6f2a9c4d1e73"
+HEAD_REVISION = POLICY_ACKNOWLEDGEMENTS_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -117,6 +118,7 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        POLICY_ACKNOWLEDGEMENTS_REVISION: ACCOUNT_DELETION_REVISION,
         ACCOUNT_DELETION_REVISION: DESCRIBE_VISUALS_JOBS_REVISION,
         DESCRIBE_VISUALS_JOBS_REVISION: OPERATIONAL_CORRELATION_REVISION,
         OPERATIONAL_CORRELATION_REVISION: DROP_LEGACY_AI_USAGE_INDEX_REVISION,
@@ -344,6 +346,7 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert "processing_jobs" in tables
         assert "ai_usage_logs" in tables
         assert "credit_transactions" in tables
+        assert "policy_acknowledgements" in tables
         assert "conversations" in tables
         assert "conversation_messages" in tables
 
@@ -3656,7 +3659,15 @@ def test_describe_visuals_migration_widens_both_job_types_and_round_trips(
             )
         connection.commit()
 
-    run_alembic(database_path, tmp_path, "downgrade", "-1")
+    # A later head may add unrelated revisions. Target the parent of the
+    # describe-visuals migration explicitly so this test keeps exercising the
+    # migration it names rather than whichever revision happens to be newest.
+    run_alembic(
+        database_path,
+        tmp_path,
+        "downgrade",
+        OPERATIONAL_CORRELATION_REVISION,
+    )
 
     with sqlite3.connect(database_path) as connection:
         remaining = connection.execute(

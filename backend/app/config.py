@@ -404,6 +404,8 @@ class Settings:
     hosted_ads_provider: str | None
     hosted_ads_publisher_id: str | None
 
+    legal_policies_enabled: bool
+
     @property
     def is_hosted(self) -> bool:
         return self.deployment_mode == MODE_HOSTED
@@ -1469,6 +1471,9 @@ def load_settings() -> Settings:
         enable_hosted_ads=enable_hosted_ads,
         hosted_ads_provider=hosted_ads_provider,
         hosted_ads_publisher_id=hosted_ads_publisher_id,
+        legal_policies_enabled=_boolean_setting(
+            "LEGAL_POLICIES_ENABLED", default=False
+        ),
     )
 
 

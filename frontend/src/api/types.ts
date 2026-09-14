@@ -1538,6 +1538,13 @@ export interface ReverseQuizQuestionsResponse {
 export type AdPlacement = 'sidebar' | 'footer' | 'dashboard' | 'landing';
 export type AdStatus = 'rendered' | 'blocked' | 'no_fill' | 'error';
 
+export interface LegalConfigResponse {
+  enabled: boolean;
+  terms_version: string | null;
+  privacy_version: string | null;
+  effective_date: string | null;
+}
+
 export interface AdConfigResponse {
   enabled: boolean;
   provider: string | null;

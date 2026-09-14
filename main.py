@@ -57,6 +57,7 @@ from routes import (
     flashcard,
     generated_output,
     generation_job,
+    legal,
     profile_document,
     profile_knowledge,
     progress,
@@ -178,6 +179,7 @@ app.include_router(prompt_generator.router)
 app.include_router(ai_tutor.router)
 app.include_router(course_qa.router)
 app.include_router(ads.router)
+app.include_router(legal.router)
 app.add_exception_handler(
     RequestValidationError,
     document.upload_request_validation_error,

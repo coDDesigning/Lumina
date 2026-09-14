@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
-import { open } from './support'
+import { open, visit } from './support'
 
 /**
  * jsdom has no layout engine, so no component test can catch a contrast,
@@ -79,6 +79,24 @@ for (const route of ROUTES) {
     await open(page, route.path)
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
     await assertNoBlockingViolations(page, route.path)
+  })
+}
+
+const PUBLIC_LEGAL_ROUTES = [
+  '/legal/privacy',
+  '/legal/terms',
+  '/legal/acceptable-use',
+  '/legal/cookies',
+  '/legal/ai-disclosure',
+  '/legal/security',
+  '/legal/open-source',
+]
+
+for (const route of PUBLIC_LEGAL_ROUTES) {
+  test(`${route} has no serious accessibility violation while signed out`, async ({ page }) => {
+    await visit(page, route)
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+    await assertNoBlockingViolations(page, route)
   })
 }
 

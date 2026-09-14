@@ -1,0 +1,33 @@
+.footer {
+  width: 100%;
+  border-top: var(--border-width) solid var(--border);
+  padding: var(--space-4) var(--space-5);
+}
+
+.inner {
+  max-width: var(--width-page);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+.links {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.links a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.links a:hover {
+  color: var(--text);
+  text-decoration: underline;
+}

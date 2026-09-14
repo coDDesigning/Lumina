@@ -56,9 +56,27 @@ describe('public legal routes', () => {
     expect(screen.getByRole('main')).toHaveAttribute('id', 'main');
   });
 
-  it('exposes every legal destination in the footer', async () => {
-    render(
+  it('shows the legal footer on the landing and legal pages only', async () => {
+    const { unmount } = render(
       <MemoryRouter initialEntries={['/legal/privacy']}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { level: 1, name: 'Privacy Notice' })).toBeVisible();
+    expect(await screen.findByRole('navigation', { name: 'Legal' })).toBeVisible();
+    unmount();
+
+    const signIn = render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('button', { name: /sign in/i })).toBeVisible();
+    expect(screen.queryByRole('navigation', { name: 'Legal' })).toBeNull();
+    signIn.unmount();
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
         <App />
       </MemoryRouter>,
     );

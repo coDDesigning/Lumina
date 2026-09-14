@@ -28,7 +28,9 @@ def _enable_legal_policies(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> No
     monkeypatch.setattr(legal_routes, "settings", patched)
 
 
-def test_legal_policies_are_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_legal_policies_are_disabled_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("LEGAL_POLICIES_ENABLED", raising=False)
 
     assert load_settings().legal_policies_enabled is False
@@ -43,7 +45,9 @@ def test_legal_policies_accept_yes_style_values(
     assert load_settings().legal_policies_enabled is True
 
 
-def test_legal_policies_reject_an_unknown_value(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_legal_policies_reject_an_unknown_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("LEGAL_POLICIES_ENABLED", "maybe")
 
     with pytest.raises(ValueError, match="LEGAL_POLICIES_ENABLED"):

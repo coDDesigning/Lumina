@@ -18,7 +18,6 @@ import { comparePlans } from './comparePlans';
 import type { TopicChange } from './comparePlans';
 import { describePlanWarning, formatExamDate } from './examModeFormatters';
 import styles from './ExamModeComparePage.module.css';
-import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 
 export interface ExamModeComparePageProps {
   workspace: Workspace;
@@ -232,7 +231,6 @@ export default function ExamModeComparePage({ workspace }: ExamModeComparePagePr
         <h1 className="visually-hidden">
           Comparing exam plan versions {before.plan_version} and {after.plan_version}
         </h1>
-        <AiDisclosureNotice />
 
         <div className={styles.masthead}>
           <p className={styles.summaryTitle}>

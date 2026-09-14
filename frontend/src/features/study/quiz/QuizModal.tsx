@@ -15,6 +15,7 @@ import { Select } from '@/ui/Input';
 import { GenerationError, NoMaterialNotice, SetupPanel } from '../GenerationStates';
 import { ALL_TOPICS, topicOptions } from '../topicOptions';
 import styles from './QuizModal.module.css';
+import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 
 export interface QuizModalProps {
   onQueued: (jobId: number) => void;
@@ -267,6 +268,7 @@ export function QuizModal({
                   setSetup({ ...setup, includeProfileContext: event.target.checked })
                 }
               />
+              <AiDisclosureNotice />
 
               {quizCost !== null ? (
                 <p className={styles.cost}>

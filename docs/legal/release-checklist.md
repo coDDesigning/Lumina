@@ -9,7 +9,7 @@ release.
 - [ ] Public legal routes render without authentication on desktop and mobile.
 - [ ] Direct navigation and refresh work through the application SPA fallback
   and the hosted CloudFront rewrite.
-- [ ] Footer links resolve from landing, authentication, and signed-in shells.
+- [ ] Legal footer links resolve from the landing page and the legal pages, the only places the footer is shown.
 - [ ] Registration exposes Terms and Privacy and records versioned
   acknowledgements; optional ad consent remains separate.
 - [ ] `LEGAL_POLICIES_ENABLED=true` is set for the hosted deployment.
@@ -17,7 +17,7 @@ release.
   be disabled later. `frontend/index.html` carries no ad script.
 - [ ] Provider flow is rechecked against Gemini, OpenAI, Anthropic, Ollama,
   failover order, BYOK, local embeddings, and visual-understanding behavior.
-- [ ] Hosted storage, eu-central-1 core region, CloudFront, the SMTP relay,
+- [ ] Hosted storage, eu-central-1 core region, CloudFront, Google SMTP,
   CloudWatch, operational logs, AI telemetry, snapshots, and S3 version expiry
   match the Privacy Notice.
 - [ ] Course/document purge behavior and self-hosted backup rotation match the
@@ -40,12 +40,12 @@ release.
 - [ ] Decide whether signed-out session identifiers and used verification/reset
   token hashes get a scheduled purge; the Privacy Notice currently says they are
   kept until the account is deleted.
-- [ ] Complete the separate account hard-delete Jira task and verify database,
+- [ ] Account hard delete (SCRUM-209) is merged on dev; after merging dev into this
+  branch, verify database,
   source storage, vectors, credentials, tokens, logs, retry metadata, and backup
   expiry. Until then, the Privacy Notice truthfully directs hosted requests to
   email rather than claiming an in-product deletion control.
-- [ ] Name the hosted SMTP relay provider in the Privacy Notice, and confirm it and
-  each hosted AI/advertising/cloud provider's
+- [ ] Confirm Google SMTP and each hosted AI/advertising/cloud provider's
   contracts, international-transfer mechanism, retention/training settings,
   data-processing terms, and final subprocessor disclosure.
 - [ ] Validate the hosted AdSense consent flow for every launch jurisdiction;

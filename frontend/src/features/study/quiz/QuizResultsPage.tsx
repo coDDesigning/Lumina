@@ -14,7 +14,6 @@ import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
 import { QuizResults } from './QuizResults';
 import styles from './QuizAttemptPage.module.css';
-import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 
 export interface QuizResultsPageProps {
   workspace: Workspace;
@@ -125,7 +124,6 @@ export default function QuizResultsPage({ workspace }: QuizResultsPageProps) {
 
       <div className={styles.body}>
         <h1 className="visually-hidden">Quiz results</h1>
-        <AiDisclosureNotice />
         {error ? (
           <ErrorState
             title="These results are not here"

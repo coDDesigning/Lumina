@@ -10,7 +10,6 @@ import { useAuth } from '@/context/AuthContext';
 import { useCredits } from '@/context/CreditContext';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { GeneratingState, GenerationError } from '@/features/study/GenerationStates';
-import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import { Alert } from '@/ui/Alert';
 import { Badge } from '@/ui/Badge';
@@ -180,7 +179,6 @@ export default function ExamModePage({ workspace }: ExamModePageProps) {
         ) : null}
 
         <h1 className="visually-hidden">{workspace.name} Exam Mode</h1>
-        <AiDisclosureNotice />
 
         {exam.isLoading || !readiness ? (
           <div className={styles.loading} role="status" aria-label="Loading Exam Mode">

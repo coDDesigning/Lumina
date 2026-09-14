@@ -20,6 +20,7 @@ import { Select } from '@/ui/Input';
 import { GenerationError, NoMaterialNotice, SetupPanel } from './GenerationStates';
 import { ALL_TOPICS, topicOptions } from './topicOptions';
 import styles from './StudyGuideModal.module.css';
+import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 
 export interface StudyGuideModalProps {
   courseId: number;
@@ -192,6 +193,7 @@ export function StudyGuideModal({
               checked={includeProfileContext}
               onChange={(event) => setIncludeProfileContext(event.target.checked)}
             />
+            <AiDisclosureNotice />
           </>
         ) : (
           <NoMaterialNotice what="A study guide" />

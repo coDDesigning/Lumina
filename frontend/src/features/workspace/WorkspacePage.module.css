@@ -9,10 +9,6 @@
   flex: 1;
 }
 
-.aiNotice {
-  margin: 0 var(--space-4) var(--space-3);
-}
-
 .columns {
   display: grid;
   grid-template-columns: var(--sources-width) minmax(0, 1fr) var(--outputs-width);

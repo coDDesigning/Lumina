@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import { Brandmark } from '@/ui/Brandmark';
 import { CourseLight } from '@/ui/CourseLight';
-import { LegalFooter } from '@/features/legal/LegalFooter';
 import styles from './AuthLayout.module.css';
 
 export interface AuthLayoutProps {
@@ -30,20 +29,17 @@ export function AuthLayout({
 
   return (
     <CourseLight courseId={tone} className={styles.shell}>
-      <div className={styles.stage}>
-        <main className={styles.panel}>
-          <Link to="/" className={styles.back}>
-            &larr; Back to Lumina
-          </Link>
-          <Brandmark size="lg" />
-          <h1 className={styles.title}>{title}</h1>
-          {subtitle ? <p className={styles.subtitle}>{subtitle}</p> : null}
-          {children}
-          {footer ? <p className={styles.footer}>{footer}</p> : null}
-          {note ? <p className={styles.note}>{note}</p> : null}
-        </main>
-      </div>
-      <LegalFooter />
+      <main className={styles.panel}>
+        <Link to="/" className={styles.back}>
+          &larr; Back to Lumina
+        </Link>
+        <Brandmark size="lg" />
+        <h1 className={styles.title}>{title}</h1>
+        {subtitle ? <p className={styles.subtitle}>{subtitle}</p> : null}
+        {children}
+        {footer ? <p className={styles.footer}>{footer}</p> : null}
+        {note ? <p className={styles.note}>{note}</p> : null}
+      </main>
     </CourseLight>
   );
 }

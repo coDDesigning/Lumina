@@ -17,8 +17,9 @@ and account-creation acknowledgement use that source together with
 
 The package is switched by `LEGAL_POLICIES_ENABLED` (default `false`, accepts
 `true`/`false` or `yes`/`no`). `GET /api/legal/config` reports the flag to the
-frontend. While it is off, `/legal/*` redirects to `/`, the legal footer and AI
-disclosure notices are not rendered, registration shows no acknowledgement, and
+frontend. The legal footer is rendered only on the landing page and the legal pages, and the short AI
+notice only under each "Use my study profile" control. While it is off, `/legal/*`
+redirects to `/`, neither is rendered, registration shows no acknowledgement, and
 no `policy_acknowledgements` rows are written. While it is on, registration
 requires `policies_acknowledged: true` and records the Terms and Privacy
 versions. Hosted Terraform sets it to `true`.

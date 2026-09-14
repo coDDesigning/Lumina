@@ -75,8 +75,9 @@ export const privacyPolicy: LegalDocument = {
           <p>
             Hosted Lumina currently uses Amazon Web Services in the eu-central-1 region for its core
             application, PostgreSQL database, object storage, and CloudWatch logs. CloudFront may process
-            requests at global edge locations. The hosted email delivery provider receives email addresses
-            and the message content needed to deliver verification, recovery, and service mail.
+            requests at global edge locations. Google's SMTP service delivers hosted mail and receives the
+            email addresses and message content needed to send verification, recovery, and service
+            mail.
           </p>
           <p>
             When configured for a request, Google Gemini, OpenAI, or Anthropic may receive the prompt
@@ -126,9 +127,15 @@ export const privacyPolicy: LegalDocument = {
             immediate.
           </p>
           <p>
-            Lumina does not yet expose self-service account deletion. Requests sent to {contact} are
-            handled by the hosted operator while the verified hard-delete workflow is completed. A
-            self-hosted operator defines and performs its own account deletion and backup rotation.
+            You can permanently delete your account from Account → Security after confirming your
+            password. Sign-in, existing sessions, verification and password-reset links, and stored
+            provider keys stop working immediately. A retrying cleanup process then removes your uploaded
+            files, search vectors, courses, generated materials, quizzes, progress, conversations, profile
+            data, credit history, and the account record; if a step fails, the deletion stays queued and
+            is retried rather than reported as complete. Credit entries on other accounts that you made as
+            an administrator are kept for accounting with your name replaced by "Deleted administrator".
+            Operational logs and backups expire on the schedules above rather than immediately. A
+            self-hosted operator runs the same cleanup and controls its own log and backup retention.
           </p>
         </>
       ),
@@ -382,8 +389,8 @@ export const aiDisclosure: LegalDocument = {
         <p>
           Lumina uses AI to generate or transform study guides, flashcards, quiz content, grading feedback,
           explanations, tutor and Q&amp;A responses, topic-mastery estimates, and Exam Mode analyses and
-          recommendations. Screens that show this work carry an AI-assisted notice, and the tutor is
-          labelled as an AI tutor. A conversational presentation does not mean a human teacher is
+          recommendations. The controls that start this work carry a short AI notice linking to this
+          page, and the tutor is labelled as an AI tutor. A conversational presentation does not mean a human teacher is
           answering.
         </p>
       ),

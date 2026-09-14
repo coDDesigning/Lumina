@@ -32,6 +32,7 @@ import type {
   RetrievedContext,
 } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
+import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 import CreditBalance from '@/components/credits/CreditBalance';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { DocumentRow } from '@/components/documents/DocumentRow';
@@ -111,11 +112,11 @@ const THREAD_TABS = [
 const THREAD_COPY: Record<ConversationType, { title: string; body: string }> = {
   course_qa: {
     title: 'Ask anything about this course.',
-    body: 'Answers come from the material you uploaded, and each one names the passages it used.',
+    body: 'AI answers come from the material you uploaded, and each one names the passages it used.',
   },
   ai_tutor: {
-    title: 'Work through it with a tutor.',
-    body: 'The tutor explains step by step and asks you questions back, rather than handing over the answer.',
+    title: 'Work through it with the AI tutor.',
+    body: 'The AI tutor explains step by step and asks you questions back, rather than handing over the answer. It can be wrong, so check what matters against your material.',
   },
 };
 
@@ -534,6 +535,8 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
       ) : null}
 
       <h1 className="visually-hidden">{workspace.name} workspace</h1>
+
+      <AiDisclosureNotice className={styles.aiNotice} />
 
       <div className={styles.columns}>
         <section className={`${styles.panel} ${styles.sources}`} aria-label="Sources">

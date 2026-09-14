@@ -49,7 +49,7 @@ describe('AdConsentBanner component', () => {
       await screen.findByRole('region', { name: 'Advertising and privacy choices' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('heading', { name: 'Support Lumina with privacy-first ads' }),
+      screen.getByRole('heading', { name: 'Support Lumina with ads' }),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Decline' })).toBeInTheDocument();

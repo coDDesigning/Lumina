@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { cx } from '@/lib/cx';
 import { Brandmark } from '@/ui/Brandmark';
 import { AdConsentBanner } from '@/features/ads/AdConsentBanner';
+import { LegalFooter } from '@/features/legal/LegalFooter';
 import { ErrorBoundary } from './ErrorBoundary';
 import { useTheme } from './themeContext';
 import styles from './AppShell.module.css';
@@ -91,6 +92,7 @@ export function AppShell() {
         <ErrorBoundary key={pathname}>
           <Outlet />
         </ErrorBoundary>
+        <LegalFooter />
       </main>
 
       <AdConsentBanner />

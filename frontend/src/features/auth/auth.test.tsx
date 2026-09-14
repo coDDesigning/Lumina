@@ -57,7 +57,22 @@ const PASSWORD_POLICY = {
     'contain your name or email address.',
 };
 
+vi.mock('@/api/legal', () => ({
+  legalAPI: {
+    getConfig: vi.fn(),
+  },
+}));
+
+const LEGAL_ENABLED = {
+  enabled: true,
+  terms_version: '1.0',
+  privacy_version: '1.0',
+  effective_date: '2026-09-12',
+};
+
 const { authAPI } = await import('@/api/auth');
+const { legalAPI } = await import('@/api/legal');
+const mockedLegalConfig = vi.mocked(legalAPI.getConfig);
 const mockedLogin = vi.mocked(authAPI.login);
 const mockedRegister = vi.mocked(authAPI.register);
 const mockedVerifyEmail = vi.mocked(authAPI.verifyEmail);
@@ -81,6 +96,12 @@ function renderAt(
   );
 }
 
+async function acknowledgeRegistrationPolicies() {
+  await userEvent.click(
+    await screen.findByRole('checkbox', { name: /by creating an account/i }),
+  );
+}
+
 beforeEach(() => {
   login.mockReset();
   refreshUser.mockReset();
@@ -90,6 +111,8 @@ beforeEach(() => {
   mockedVerifyEmail.mockReset();
   mockedResend.mockReset();
   mockedPasswordPolicy.mockReset();
+  mockedLegalConfig.mockReset();
+  mockedLegalConfig.mockResolvedValue(LEGAL_ENABLED);
   mockedPasswordPolicy.mockResolvedValue(PASSWORD_POLICY);
 });
 
@@ -186,6 +209,7 @@ describe('RegisterPage', () => {
     await userEvent.type(screen.getByLabelText('Email'), 'deniz@uni.edu');
     await userEvent.type(screen.getByLabelText('Password'), 'correct-horse');
     await userEvent.type(screen.getByLabelText('Confirm password'), 'correct-hoose');
+    await acknowledgeRegistrationPolicies();
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     expect(await screen.findByText('Those two passwords do not match.')).toBeInTheDocument();
@@ -205,6 +229,7 @@ describe('RegisterPage', () => {
     await userEvent.type(screen.getByLabelText('Email'), 'deniz@uni.edu');
     await userEvent.type(screen.getByLabelText('Password'), tooLong);
     await userEvent.type(screen.getByLabelText('Confirm password'), tooLong);
+    await acknowledgeRegistrationPolicies();
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     expect(
@@ -230,10 +255,11 @@ describe('RegisterPage', () => {
     await userEvent.type(screen.getByLabelText('Email'), '  deniz@uni.edu  ');
     await userEvent.type(screen.getByLabelText('Password'), 'correct-horse');
     await userEvent.type(screen.getByLabelText('Confirm password'), 'correct-horse');
+    await acknowledgeRegistrationPolicies();
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     await waitFor(() => {
-      expect(mockedRegister).toHaveBeenCalledWith('Deniz Kaya', 'deniz@uni.edu', 'correct-horse');
+      expect(mockedRegister).toHaveBeenCalledWith('Deniz Kaya', 'deniz@uni.edu', 'correct-horse', true);
     });
     expect(mockedLogin).toHaveBeenCalledWith('deniz@uni.edu', 'correct-horse');
     expect(login).toHaveBeenCalledWith('token-xyz');
@@ -247,6 +273,60 @@ describe('RegisterPage', () => {
     // never describe a minimum this deployment does not enforce.
     expect(await screen.findByText(PASSWORD_POLICY.description)).toBeInTheDocument();
     expect(mockedPasswordPolicy).toHaveBeenCalled();
+  });
+
+  it('links Terms and Privacy before signup without combining optional consent', async () => {
+    renderAt(<RegisterPage />, '/register');
+
+    const acknowledgement = await screen.findByRole('checkbox', {
+      name: /by creating an account/i,
+    });
+    expect(acknowledgement).toBeRequired();
+    expect(screen.getByRole('link', { name: 'Terms of Service' })).toHaveAttribute(
+      'href',
+      '/legal/terms',
+    );
+    expect(screen.getByRole('link', { name: 'Privacy Notice' })).toHaveAttribute(
+      'href',
+      '/legal/privacy',
+    );
+    expect(screen.getByText(/not consent to optional advertising or analytics/i)).toBeVisible();
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1);
+  });
+
+  it('registers without an acknowledgement when the legal package is disabled', async () => {
+    mockedLegalConfig.mockResolvedValue({
+      enabled: false,
+      terms_version: null,
+      privacy_version: null,
+      effective_date: null,
+    });
+    mockedRegister.mockResolvedValue({
+      message: 'User registered successfully',
+      user_email: 'deniz@uni.edu',
+      role: 'user',
+      email_verification_required: false,
+      is_email_verified: false,
+    });
+    mockedLogin.mockResolvedValue({ access_token: 'token-xyz', token_type: 'bearer' });
+    mockedPasswordPolicy.mockResolvedValue(PASSWORD_POLICY);
+
+    renderAt(<RegisterPage />, '/register');
+
+    await waitFor(() => expect(mockedLegalConfig).toHaveBeenCalled());
+    await userEvent.type(screen.getByLabelText('Name'), 'Deniz Kaya');
+    await userEvent.type(screen.getByLabelText('Email'), 'deniz@uni.edu');
+    await userEvent.type(screen.getByLabelText('Password'), 'correct-horse');
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'correct-horse');
+
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Terms of Service' })).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    await waitFor(() => {
+      expect(mockedRegister).toHaveBeenCalledWith('Deniz Kaya', 'deniz@uni.edu', 'correct-horse', false);
+    });
   });
 
   it('holds a hosted registration at the inbox instead of the dashboard', async () => {
@@ -265,6 +345,7 @@ describe('RegisterPage', () => {
     await userEvent.type(screen.getByLabelText('Email'), 'deniz@uni.edu');
     await userEvent.type(screen.getByLabelText('Password'), 'correct-horse');
     await userEvent.type(screen.getByLabelText('Confirm password'), 'correct-horse');
+    await acknowledgeRegistrationPolicies();
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     expect(
@@ -299,6 +380,7 @@ describe('RegisterPage', () => {
     await userEvent.type(screen.getByLabelText('Email'), 'deniz@uni.edu');
     await userEvent.type(screen.getByLabelText('Password'), 'correct-horse');
     await userEvent.type(screen.getByLabelText('Confirm password'), 'correct-horse');
+    await acknowledgeRegistrationPolicies();
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     await userEvent.click(await screen.findByRole('button', { name: 'Send the link again' }));

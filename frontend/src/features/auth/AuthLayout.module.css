@@ -1,9 +1,15 @@
 .shell {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+
+.stage {
+  flex: 1;
   display: grid;
   place-items: center;
   padding: var(--space-6) var(--space-4);
-  background: var(--surface);
 }
 
 .panel {

@@ -386,6 +386,36 @@ class User(Base):
         passive_deletes=True,
     )
 
+    policy_acknowledgements: Mapped[list["PolicyAcknowledgement"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class PolicyAcknowledgement(Base):
+    __tablename__ = "policy_acknowledgements"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "policy_key",
+            "policy_version",
+            name="uq_policy_acknowledgements_user_policy_version",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    policy_key: Mapped[str] = mapped_column(String(50))
+    policy_version: Mapped[str] = mapped_column(String(20))
+    acknowledged_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="policy_acknowledgements")
+
 
 class EmailVerificationToken(Base):
     """One issued email-verification link, stored as a hash of the credential.

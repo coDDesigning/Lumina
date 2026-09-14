@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session, selectinload
 from datetime import datetime, timezone
 
 from backend.app.config import settings
+from backend.app.legal import REGISTRATION_POLICY_VERSIONS
+from backend.app.models import PolicyAcknowledgement
 from backend.app.models import Role as RoleModel
 from backend.app.models import User
 from schemas.prompt_context import EducationLevel
@@ -90,6 +92,12 @@ class UserService:
         bootstrap_token: str | None = None,
     ) -> User:
         """Register a user and assign the configured initial administrator."""
+        if settings.legal_policies_enabled and not user_data.policies_acknowledged:
+            raise BadRequestException(
+                "Agree to the Terms of Service and acknowledge the Privacy Notice to create an account",
+                error_code="policy_acknowledgement_required",
+            )
+
         if UserService.get_user_by_email(db, user_data.email) is not None:
             raise BadRequestException("Email already registered")
 
@@ -204,6 +212,11 @@ class UserService:
             is_banned=False,
             preferred_model=default_model,
         )
+        if settings.legal_policies_enabled:
+            user.policy_acknowledgements.extend(
+                PolicyAcknowledgement(policy_key=policy_key, policy_version=version)
+                for policy_key, version in REGISTRATION_POLICY_VERSIONS
+            )
         if not settings.email_verification_required:
             initial_grant = CreditService.build_initial_grant(user)
             if initial_grant is not None:

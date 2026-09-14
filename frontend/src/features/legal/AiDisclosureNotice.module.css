@@ -1,0 +1,4 @@
+.notice a {
+  font-weight: var(--weight-semibold);
+  text-decoration: underline;
+}

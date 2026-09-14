@@ -15,6 +15,7 @@ import { LinkButton } from '@/ui/LinkButton';
 import { PageHeader } from '@/ui/PageHeader';
 import { useCourseProgress } from './useCourseProgress';
 import styles from './ProgressPage.module.css';
+import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 
 export interface ProgressPageProps {
   workspace: Workspace;
@@ -62,6 +63,7 @@ export default function ProgressPage({ workspace }: ProgressPageProps) {
       <h1 className="visually-hidden">{workspace.name} progress</h1>
 
       <div className={styles.body}>
+        <AiDisclosureNotice />
         <ProgressView
           courseId={workspace.id}
           documentCount={entries.length}

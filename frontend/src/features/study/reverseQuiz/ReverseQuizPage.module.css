@@ -20,6 +20,12 @@
   width: 100%;
 }
 
+.notice {
+  max-width: calc(1100px - 2 * var(--space-6));
+  margin: var(--space-4) auto 0;
+  width: calc(100% - 2 * var(--space-6));
+}
+
 .chooser {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 22rem);

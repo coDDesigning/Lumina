@@ -26,8 +26,14 @@ export const authAPI = {
     name: string,
     email: string,
     password: string,
+    policiesAcknowledged = false,
   ): Promise<RegistrationResult> => {
-    return apiClient.post<RegistrationResult>('/auth/register', { name, email, password });
+    return apiClient.post<RegistrationResult>('/auth/register', {
+      name,
+      email,
+      password,
+      policies_acknowledged: policiesAcknowledged,
+    });
   },
 
   /** Redeem one emailed verification link. Needs no session: the token is the proof. */

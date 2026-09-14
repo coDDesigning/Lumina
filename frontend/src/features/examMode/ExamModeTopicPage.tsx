@@ -29,6 +29,7 @@ import { ExamTopicGuide, ExamTopicGuideUnavailable } from './ExamTopicGuide';
 import { SimilarQuestionBuilder } from './SimilarQuestionBuilder';
 import { useElapsed } from './useElapsed';
 import styles from './ExamModeTopicPage.module.css';
+import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 
 export interface ExamModeTopicPageProps {
   workspace: Workspace;
@@ -189,6 +190,7 @@ export default function ExamModeTopicPage({ workspace }: ExamModeTopicPageProps)
       {header}
       <div className={styles.body}>
         <h1 className="visually-hidden">{topic.display_label}</h1>
+        <AiDisclosureNotice />
 
         <div className={styles.masthead}>
           <p className={styles.rank}>

@@ -40,6 +40,7 @@ import {
 import { useElapsed } from './useElapsed';
 import { usePlanRoadmap } from './usePlanRoadmap';
 import styles from './ExamModePlanPage.module.css';
+import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 
 export interface ExamModePlanPageProps {
   workspace: Workspace;
@@ -223,6 +224,7 @@ export default function ExamModePlanPage({ workspace }: ExamModePlanPageProps) {
         <h1 className="visually-hidden">
           {workspace.name} exam plan version {current.plan_version}
         </h1>
+        <AiDisclosureNotice />
 
         <div className={styles.masthead}>
           <p className={styles.version}>Version {current.plan_version}</p>

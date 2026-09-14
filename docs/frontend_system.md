@@ -11,8 +11,8 @@ There is no CSS framework, no component library and no state manager. There is n
 data-fetching *dependency* either: server state is owned by `src/lib/query/`, a small
 in-repo query cache described below. UI state stays in `useState`.
 
-Styling is **CSS Modules over a design-token layer**. Fonts are self-hosted, so a
-self-hosted deployment makes no third-party requests.
+Styling is **CSS Modules over a design-token layer**. Fonts are self-hosted, so
+loading the interface's typography makes no third-party request.
 
 ```
 cd frontend

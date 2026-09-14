@@ -2185,6 +2185,34 @@
         "title": "BaseResponse[GenerationJobView]",
         "type": "object"
       },
+      "BaseResponse_LegalConfigResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LegalConfigResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[LegalConfigResponse]",
+        "type": "object"
+      },
       "BaseResponse_NoneType_": {
         "properties": {
           "data": {
@@ -7892,6 +7920,54 @@
         "title": "ImportantTerm",
         "type": "object"
       },
+      "LegalConfigResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Date"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "privacy_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Privacy Version"
+          },
+          "terms_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terms Version"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "LegalConfigResponse",
+        "type": "object"
+      },
       "LogErrorGroup": {
         "properties": {
           "distinct_operations": {
@@ -10985,6 +11061,11 @@
           "password": {
             "title": "Password",
             "type": "string"
+          },
+          "policies_acknowledged": {
+            "default": false,
+            "title": "Policies Acknowledged",
+            "type": "boolean"
           }
         },
         "required": [
@@ -18519,6 +18600,27 @@
         "summary": "Enqueue Study Guide",
         "tags": [
           "Study Guide"
+        ]
+      }
+    },
+    "/api/legal/config": {
+      "get": {
+        "operationId": "get_legal_config_api_legal_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_LegalConfigResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Legal Config",
+        "tags": [
+          "Legal"
         ]
       }
     },

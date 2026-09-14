@@ -723,4 +723,22 @@ describe('when the account cannot be saved', () => {
     await person.selectOptions(select, 'allowed')
     expect(localStorage.getItem('lumina_ad_consent')).toBe('granted')
   })
+
+  it('records a decline chosen before any advertising choice was made', async () => {
+    const person = userEvent.setup()
+    localStorage.removeItem('lumina_ad_consent')
+    mockAdsGetConfig.mockResolvedValue({
+      enabled: true,
+      provider: 'adsense',
+      publisher_id: 'ca-pub-0000000000000000',
+    })
+
+    renderAccountPage('/account/appearance')
+
+    const select = await screen.findByLabelText('Advertising preference')
+    expect(select).toHaveValue('pending')
+
+    await person.selectOptions(select, 'declined')
+    expect(localStorage.getItem('lumina_ad_consent')).toBe('denied')
+  })
 })

@@ -13,6 +13,7 @@ import { Button } from '@/ui/Button';
 import { Input } from '@/ui/Input';
 import { Spinner } from '@/ui/Spinner';
 import { GenerationError } from '@/features/study/GenerationStates';
+import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 import { ReverseQuizSession } from './ReverseQuizSession';
 import styles from './ReverseQuizPage.module.css';
 
@@ -86,6 +87,7 @@ export default function ReverseQuizPage({ workspace }: ReverseQuizPageProps) {
       <p className={styles.description}>
         Explain concepts in your own words to check your understanding.
       </p>
+      <AiDisclosureNotice className={styles.notice} />
 
       <div className={styles.content}>
         {selected ? (

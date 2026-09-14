@@ -25,11 +25,12 @@ export function AdConsentBanner() {
       role="region"
     >
       <div className={styles.content}>
-        <h2 className={styles.title}>Support Lumina with privacy-first ads</h2>
+        <h2 className={styles.title}>Support Lumina with ads</h2>
         <p className={styles.description}>
-          We display non-personalized, privacy-friendly ads to help support the
-          hosted service. Lumina never shares your study materials, prompts,
-          uploaded documents, or personal data with advertisers.
+          If you allow ads, the advertising provider loads in your browser and may
+          use cookies or similar identifiers under its own policy. Lumina does not
+          send your study materials, prompts, or uploaded documents to advertisers.
+          You can change this later in Account, Appearance.
         </p>
       </div>
       <div className={styles.actions}>

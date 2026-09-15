@@ -22,9 +22,10 @@ from backend.app.config import (
     IMAGE_PROVIDER_NONE,
     settings,
 )
-from schemas.ai_usage import ErrorCategory
+from schemas.ai_usage import ErrorCategory, GenerationType
 from schemas.prompt_context import PromptContext
 from schemas.prompt_template import PromptTemplateError
+from utils.ai_diagnostics import ai_failure_fields
 from services.ollama import resolve_ollama_base_url
 from services.document_pipeline import (
     DisabledImageUnderstandingProvider,
@@ -41,6 +42,9 @@ from services.prompt_loader import PromptLoader
 logger = logging.getLogger(__name__)
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_SHOW_PATH = "/api/show"
+_VISION_CAPABILITY: dict[tuple[str, str], bool] = {}
+_CAPABILITY_TIMEOUT_SECONDS = 10.0
 _shared_http_client: httpx.Client | None = None
 
 
@@ -309,6 +313,14 @@ class OllamaImageUnderstandingProvider:
         self._prompt_context = prompt_context or PromptContext()
         self._client = client or _get_shared_http_client()
         self._usage_callback = usage_callback
+        self._options = {
+            "temperature": settings.ollama_temperature,
+            "top_p": settings.ollama_top_p,
+            "num_ctx": settings.ollama_num_ctx,
+            "num_predict": settings.ollama_num_predict,
+            "repeat_penalty": settings.ollama_repeat_penalty,
+        }
+        self._think = settings.ollama_think
 
     def _report_usage(
         self,
@@ -350,6 +362,19 @@ class OllamaImageUnderstandingProvider:
                 extra={"event": "image_understanding_usage_report_failed"},
             )
 
+    def _log_unusable_response(self, raw_text: str, exc: BaseException | None) -> None:
+        logger.warning(
+            "AI generation failed",
+            extra=ai_failure_fields(
+                generation_type=GenerationType.IMAGE_UNDERSTANDING,
+                provider=self.PROVIDER_NAME,
+                model=self._model,
+                error_category=ErrorCategory.INVALID_STRUCTURE,
+                raw_text=raw_text,
+                exc=exc,
+            ),
+        )
+
     def describe_visual(
         self,
         visual_png: bytes,
@@ -366,6 +391,8 @@ class OllamaImageUnderstandingProvider:
             "prompt": prompt,
             "images": [b64_image],
             "stream": False,
+            "think": self._think,
+            "options": dict(self._options),
         }
 
         started_at = perf_counter()
@@ -430,6 +457,7 @@ class OllamaImageUnderstandingProvider:
                 success=False,
                 error_category=ErrorCategory.INVALID_STRUCTURE,
             )
+            self._log_unusable_response(response.text, exc)
             raise VisualAnalysisError(
                 "Ollama returned an invalid JSON response."
             ) from exc
@@ -440,6 +468,7 @@ class OllamaImageUnderstandingProvider:
                 success=False,
                 error_category=ErrorCategory.INVALID_STRUCTURE,
             )
+            self._log_unusable_response(response.text, None)
             raise VisualAnalysisError(
                 "Ollama returned an unexpected response structure."
             )
@@ -456,11 +485,56 @@ class OllamaImageUnderstandingProvider:
         )
 
 
+def _ollama_model_supports_vision(base_url: str, model: str) -> bool | None:
+    """Ask Ollama what the configured model can do. None means it would not say."""
+    cached = _VISION_CAPABILITY.get((base_url, model))
+    if cached is not None:
+        return cached
+    try:
+        response = _get_shared_http_client().post(
+            f"{base_url}{_SHOW_PATH}",
+            json={"model": model},
+            timeout=_CAPABILITY_TIMEOUT_SECONDS,
+        )
+        if not response.is_success:
+            return None
+        payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    capabilities = payload.get("capabilities")
+    if not isinstance(capabilities, list):
+        return None
+    supports = "vision" in capabilities
+    _VISION_CAPABILITY[(base_url, model)] = supports
+    if not supports:
+        logger.warning(
+            "The configured model does not support images, so visual analysis "
+            "is disabled",
+            extra={
+                "event": "image_understanding_disabled",
+                "provider": AI_PROVIDER_OLLAMA,
+                "model": model,
+            },
+        )
+    return supports
+
+
+def _ollama_vision_is_available(model: str) -> bool:
+    base_url = resolve_ollama_base_url(settings.ollama_base_url)
+    return _ollama_model_supports_vision(base_url, model) is not False
+
+
 def configured_image_understanding_identity() -> tuple[str, str | None]:
     """Report the provider and model attributed to visual descriptions."""
     if not settings.ai_vision_model:
         return IMAGE_PROVIDER_NONE, None
     provider_name, model_name = settings.ai_vision_model.split(":", 1)
+    if provider_name == AI_PROVIDER_OLLAMA and not _ollama_vision_is_available(
+        model_name
+    ):
+        return IMAGE_PROVIDER_NONE, None
     return provider_name, model_name
 
 
@@ -480,6 +554,8 @@ def get_image_understanding_provider(
             usage_callback=usage_callback,
         )
     if provider_name == AI_PROVIDER_OLLAMA:
+        if not _ollama_vision_is_available(model_name):
+            return DisabledImageUnderstandingProvider()
         return OllamaImageUnderstandingProvider(
             model=model_name,
             prompt_context=prompt_context,

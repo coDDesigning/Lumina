@@ -55,12 +55,13 @@ AI_VENDOR_PREFERENCE_ORDER = (
     AI_PROVIDER_OPENAI,
     AI_PROVIDER_CLAUDE,
 )
-DEFAULT_OLLAMA_MODEL = "llama3.1"
+DEFAULT_OLLAMA_MODEL = "qwen3.5:9b"
 DEFAULT_OLLAMA_TEMPERATURE = 0.2
 DEFAULT_OLLAMA_TOP_P = 0.9
 DEFAULT_OLLAMA_NUM_CTX = 8192
 DEFAULT_OLLAMA_NUM_PREDICT = 4096
 DEFAULT_OLLAMA_REPEAT_PENALTY = 1.1
+DEFAULT_OLLAMA_THINK = False
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-5"
@@ -78,14 +79,21 @@ DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS = False
 DEFAULT_AI_USAGE_RETENTION_DAYS = 90
 DEFAULT_AI_USAGE_CLEANUP_BATCH_SIZE = 1000
 DEFAULT_AI_USAGE_CLEANUP_INTERVAL_SECONDS = 86_400.0
+DEFAULT_OPERATIONAL_LOG_RETENTION_DAYS = 30
+DEFAULT_OPERATIONAL_LOG_MAX_RECORDS = 500_000
+DEFAULT_OPERATIONAL_LOG_QUERY_TIMEOUT_SECONDS = 10
+DEFAULT_CLIENT_ERROR_MAX_REPORTS = 20
+DEFAULT_CLIENT_ERROR_WINDOW_SECONDS = 60
 
 IMAGE_PROVIDER_NONE = "none"
 # Vendors with an ImageUnderstandingProvider implementation. A catalog entry
 # may advertise vision for a vendor we cannot send an image to.
 IMPLEMENTED_IMAGE_VENDORS = (AI_PROVIDER_GEMINI, AI_PROVIDER_OLLAMA)
 DEFAULT_IMAGE_UNDERSTANDING_ENABLED = True
-DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS = 30
+DEFAULT_IMAGE_UNDERSTANDING_TIMEOUT_SECONDS = 180
 DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES = 10 * 1024 * 1024
+DEFAULT_IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS = 2
+MAX_IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS = 50
 
 VECTOR_BACKEND_PGVECTOR = "pgvector"
 VECTOR_BACKEND_CHROMA = "chroma"
@@ -99,8 +107,8 @@ DEFAULT_MAX_DOCUMENTS_PER_COURSE = 1000
 DEFAULT_MAX_COURSE_STORAGE_BYTES = 2 * 1024 * 1024 * 1024
 DEFAULT_MAX_PDF_PAGES = 500
 DEFAULT_MAX_PDF_PAGE_PIXELS = 40_000_000
-DEFAULT_MAX_PDF_TOTAL_PIXELS = 100_000_000
-DEFAULT_MAX_PDF_CONTENT_STREAM_BYTES = 5 * 1024 * 1024
+DEFAULT_MAX_PDF_TOTAL_PIXELS = 200_000_000
+DEFAULT_MAX_PDF_CONTENT_STREAM_BYTES = 16 * 1024 * 1024
 DEFAULT_MAX_PDF_DRAWING_OPERATIONS = 100_000
 DEFAULT_PROCESSING_JOB_LEASE_SECONDS = 60
 DEFAULT_PROCESSING_JOB_MAX_ATTEMPTS = 3
@@ -111,6 +119,9 @@ MAX_PROCESSING_JOB_CONCURRENCY = 6
 # Course and profile jobs share this account-level ceiling so one student cannot
 # occupy the whole processing pool through either upload surface.
 DEFAULT_PROCESSING_JOB_MAX_ACTIVE_PER_USER = 1
+DEFAULT_DESCRIBE_VISUALS_MAX_ACTIVE_PER_USER = 1
+DEFAULT_DESCRIBE_VISUALS_ATTEMPT_TIMEOUT_SECONDS = 1800
+DEFAULT_VISUAL_DESCRIPTION_SWEEP_INTERVAL_SECONDS = 900.0
 MAX_PROCESSING_JOB_MAX_ACTIVE_PER_USER = 10
 DEFAULT_PDF_PAGE_WORKERS = 4
 MAX_PDF_PAGE_WORKERS = 8
@@ -150,6 +161,7 @@ DEFAULT_AI_GENERATION_BACKOFF_MAX_SECONDS = 10.0
 DEFAULT_AI_GENERATION_MAX_CONCURRENCY = 10
 DEFAULT_AI_GENERATION_OVERALL_TIMEOUT_SECONDS = 110
 DEFAULT_AI_GRADING_OVERALL_TIMEOUT_SECONDS = 45
+DEFAULT_AI_LOG_RAW_RESPONSE_ON_FAILURE = False
 MAX_AI_MODEL_COST_RATE_USD_PER_MILLION = 1_000_000.0
 MAX_AI_EVENT_ESTIMATED_COST_USD = 1_000_000.0
 DEFAULT_DATABASE_POOL_SIZE = 5
@@ -210,6 +222,16 @@ class Settings:
     database_max_overflow: int
     database_pool_recycle_seconds: int
 
+    # Operational investigation. Hosted reads one fixed CloudWatch group;
+    # self-hosted processes share the dedicated SQLite file.
+    operational_log_path: str
+    operational_log_persistence_enabled: bool
+    operational_log_retention_days: int
+    operational_log_max_records: int
+    operational_log_query_timeout_seconds: int
+    operational_log_cloudwatch_group: str | None
+    operational_log_cloudwatch_region: str | None
+
     # Where ChromaDB persists its vector data (self-hosted mode only)
     chroma_persist_directory: str
 
@@ -251,6 +273,7 @@ class Settings:
     ollama_num_ctx: int
     ollama_num_predict: int
     ollama_repeat_penalty: float
+    ollama_think: bool
     ai_generation_timeout_seconds: int
     ai_generation_max_attempts: int
     ai_generation_backoff_base_seconds: float
@@ -258,6 +281,7 @@ class Settings:
     ai_generation_max_concurrency: int
     ai_generation_overall_timeout_seconds: int
     ai_grading_overall_timeout_seconds: int
+    ai_log_raw_response_on_failure: bool
 
     # Embeddings are computed in-process; only where the weights live varies
     embedding_model_cache_directory: str
@@ -267,6 +291,7 @@ class Settings:
     # Visual understanding
     image_understanding_timeout_seconds: int
     image_understanding_max_bytes: int
+    image_understanding_inline_max_visuals: int
 
     # Maximum accepted document size before content validation
     max_upload_size_bytes: int
@@ -285,6 +310,9 @@ class Settings:
     processing_job_max_attempts: int
     processing_job_poll_seconds: float
     processing_job_attempt_timeout_seconds: int
+    describe_visuals_attempt_timeout_seconds: int
+    describe_visuals_max_active_per_user: int
+    visual_description_sweep_interval_seconds: float
     processing_job_concurrency: int
     processing_job_max_active_per_user: int
     generation_job_lease_seconds: int
@@ -338,6 +366,8 @@ class Settings:
     rate_limit_verification_window_seconds: int
     rate_limit_password_reset_max_attempts: int
     rate_limit_password_reset_window_seconds: int
+    client_error_max_reports: int
+    client_error_window_seconds: int
 
     # Authentication hardening. See docs/authentication.md.
     password_min_length: int
@@ -375,6 +405,8 @@ class Settings:
     enable_hosted_ads: bool
     hosted_ads_provider: str | None
     hosted_ads_publisher_id: str | None
+
+    legal_policies_enabled: bool
 
     @property
     def is_hosted(self) -> bool:
@@ -436,6 +468,43 @@ def load_settings() -> Settings:
         DEFAULT_DATABASE_POOL_RECYCLE_SECONDS,
         minimum=60,
         maximum=3600,
+    )
+    operational_log_path = os.getenv(
+        "OPERATIONAL_LOG_PATH", "./data/operational-logs.db"
+    ).strip()
+    if not operational_log_path:
+        raise ValueError("OPERATIONAL_LOG_PATH must not be blank.")
+    operational_log_persistence_enabled = _boolean_setting(
+        "OPERATIONAL_LOG_PERSISTENCE_ENABLED",
+        default=mode == MODE_SELF_HOSTED and app_env != APP_ENV_DEVELOPMENT,
+    )
+    if mode == MODE_HOSTED and operational_log_persistence_enabled:
+        raise ValueError(
+            "Hosted deployments read CloudWatch and cannot enable local operational logs."
+        )
+    operational_log_retention_days = _bounded_positive_integer_setting(
+        "OPERATIONAL_LOG_RETENTION_DAYS",
+        DEFAULT_OPERATIONAL_LOG_RETENTION_DAYS,
+        minimum=1,
+        maximum=366,
+    )
+    operational_log_max_records = _bounded_positive_integer_setting(
+        "OPERATIONAL_LOG_MAX_RECORDS",
+        DEFAULT_OPERATIONAL_LOG_MAX_RECORDS,
+        minimum=10_000,
+        maximum=10_000_000,
+    )
+    operational_log_query_timeout_seconds = _bounded_positive_integer_setting(
+        "OPERATIONAL_LOG_QUERY_TIMEOUT_SECONDS",
+        DEFAULT_OPERATIONAL_LOG_QUERY_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=30,
+    )
+    operational_log_cloudwatch_group = (
+        os.getenv("OPERATIONAL_LOG_CLOUDWATCH_GROUP", "").strip() or None
+    )
+    operational_log_cloudwatch_region = (
+        os.getenv("OPERATIONAL_LOG_CLOUDWATCH_REGION", "").strip() or None
     )
 
     if storage_backend not in STORAGE_BACKENDS:
@@ -591,6 +660,7 @@ def load_settings() -> Settings:
         minimum=0.5,
         maximum=2.0,
     )
+    ollama_think = _boolean_setting("OLLAMA_THINK", default=DEFAULT_OLLAMA_THINK)
     if ollama_num_predict > ollama_num_ctx:
         raise ValueError(
             "OLLAMA_NUM_PREDICT must not exceed OLLAMA_NUM_CTX; the response shares "
@@ -683,6 +753,22 @@ def load_settings() -> Settings:
         DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
         minimum=1,
         maximum=86_400,
+    )
+    describe_visuals_attempt_timeout_seconds = _bounded_positive_integer_setting(
+        "DESCRIBE_VISUALS_ATTEMPT_TIMEOUT_SECONDS",
+        DEFAULT_DESCRIBE_VISUALS_ATTEMPT_TIMEOUT_SECONDS,
+        minimum=1,
+        maximum=86_400,
+    )
+    describe_visuals_max_active_per_user = _bounded_positive_integer_setting(
+        "DESCRIBE_VISUALS_MAX_ACTIVE_PER_USER",
+        DEFAULT_DESCRIBE_VISUALS_MAX_ACTIVE_PER_USER,
+        minimum=1,
+        maximum=MAX_PROCESSING_JOB_MAX_ACTIVE_PER_USER,
+    )
+    visual_description_sweep_interval_seconds = _nonnegative_float_setting(
+        "VISUAL_DESCRIPTION_SWEEP_INTERVAL_SECONDS",
+        DEFAULT_VISUAL_DESCRIPTION_SWEEP_INTERVAL_SECONDS,
     )
     processing_job_concurrency = _bounded_positive_integer_setting(
         "PROCESSING_JOB_CONCURRENCY",
@@ -896,6 +982,10 @@ def load_settings() -> Settings:
         minimum=1,
         maximum=55,
     )
+    ai_log_raw_response_on_failure = _boolean_setting(
+        "AI_LOG_RAW_RESPONSE_ON_FAILURE",
+        default=DEFAULT_AI_LOG_RAW_RESPONSE_ON_FAILURE,
+    )
 
     embedding_model_cache_directory = os.getenv(
         "EMBEDDING_MODEL_CACHE_DIRECTORY",
@@ -922,6 +1012,12 @@ def load_settings() -> Settings:
         DEFAULT_IMAGE_UNDERSTANDING_MAX_BYTES,
         minimum=1024,
         maximum=50 * 1024 * 1024,
+    )
+    image_understanding_inline_max_visuals = _bounded_positive_integer_setting(
+        "IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS",
+        DEFAULT_IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS,
+        minimum=1,
+        maximum=MAX_IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS,
     )
 
     database_is_postgresql = make_url(database_url).get_backend_name() == "postgresql"
@@ -1033,6 +1129,18 @@ def load_settings() -> Settings:
     rate_limit_password_reset_window_seconds = _positive_integer_setting(
         "RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS",
         DEFAULT_RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS,
+    )
+    client_error_max_reports = _bounded_positive_integer_setting(
+        "CLIENT_ERROR_MAX_REPORTS",
+        DEFAULT_CLIENT_ERROR_MAX_REPORTS,
+        minimum=1,
+        maximum=1000,
+    )
+    client_error_window_seconds = _bounded_positive_integer_setting(
+        "CLIENT_ERROR_WINDOW_SECONDS",
+        DEFAULT_CLIENT_ERROR_WINDOW_SECONDS,
+        minimum=1,
+        maximum=3600,
     )
 
     password_min_length = _bounded_positive_integer_setting(
@@ -1201,6 +1309,13 @@ def load_settings() -> Settings:
         database_pool_size=database_pool_size,
         database_max_overflow=database_max_overflow,
         database_pool_recycle_seconds=database_pool_recycle_seconds,
+        operational_log_path=operational_log_path,
+        operational_log_persistence_enabled=operational_log_persistence_enabled,
+        operational_log_retention_days=operational_log_retention_days,
+        operational_log_max_records=operational_log_max_records,
+        operational_log_query_timeout_seconds=operational_log_query_timeout_seconds,
+        operational_log_cloudwatch_group=operational_log_cloudwatch_group,
+        operational_log_cloudwatch_region=operational_log_cloudwatch_region,
         chroma_persist_directory=chroma_persist_directory,
         upload_directory=upload_directory,
         storage_backend=storage_backend,
@@ -1231,6 +1346,7 @@ def load_settings() -> Settings:
         ollama_num_ctx=ollama_num_ctx,
         ollama_num_predict=ollama_num_predict,
         ollama_repeat_penalty=ollama_repeat_penalty,
+        ollama_think=ollama_think,
         ai_generation_timeout_seconds=ai_generation_timeout_seconds,
         ai_generation_max_attempts=ai_generation_max_attempts,
         ai_generation_backoff_base_seconds=ai_generation_backoff_base_seconds,
@@ -1238,11 +1354,13 @@ def load_settings() -> Settings:
         ai_generation_max_concurrency=ai_generation_max_concurrency,
         ai_generation_overall_timeout_seconds=ai_generation_overall_timeout_seconds,
         ai_grading_overall_timeout_seconds=ai_grading_overall_timeout_seconds,
+        ai_log_raw_response_on_failure=ai_log_raw_response_on_failure,
         embedding_model_cache_directory=embedding_model_cache_directory,
         embedding_batch_size=embedding_batch_size,
         vector_backend=vector_backend,
         image_understanding_timeout_seconds=image_understanding_timeout_seconds,
         image_understanding_max_bytes=image_understanding_max_bytes,
+        image_understanding_inline_max_visuals=image_understanding_inline_max_visuals,
         max_upload_size_bytes=max_upload_size_bytes,
         max_request_size_bytes=max_request_size_bytes,
         max_concurrent_document_validations=max_concurrent_document_validations,
@@ -1259,6 +1377,9 @@ def load_settings() -> Settings:
         processing_job_max_attempts=processing_job_max_attempts,
         processing_job_poll_seconds=processing_job_poll_seconds,
         processing_job_attempt_timeout_seconds=processing_job_attempt_timeout_seconds,
+        describe_visuals_attempt_timeout_seconds=describe_visuals_attempt_timeout_seconds,
+        describe_visuals_max_active_per_user=describe_visuals_max_active_per_user,
+        visual_description_sweep_interval_seconds=visual_description_sweep_interval_seconds,
         processing_job_concurrency=processing_job_concurrency,
         processing_job_max_active_per_user=processing_job_max_active_per_user,
         generation_job_lease_seconds=generation_job_lease_seconds,
@@ -1324,6 +1445,8 @@ def load_settings() -> Settings:
         rate_limit_verification_window_seconds=rate_limit_verification_window_seconds,
         rate_limit_password_reset_max_attempts=rate_limit_password_reset_max_attempts,
         rate_limit_password_reset_window_seconds=rate_limit_password_reset_window_seconds,
+        client_error_max_reports=client_error_max_reports,
+        client_error_window_seconds=client_error_window_seconds,
         password_min_length=password_min_length,
         email_verification_required=email_verification_required,
         email_verification_token_ttl_hours=email_verification_token_ttl_hours,
@@ -1352,6 +1475,9 @@ def load_settings() -> Settings:
         enable_hosted_ads=enable_hosted_ads,
         hosted_ads_provider=hosted_ads_provider,
         hosted_ads_publisher_id=hosted_ads_publisher_id,
+        legal_policies_enabled=_boolean_setting(
+            "LEGAL_POLICIES_ENABLED", default=False
+        ),
     )
 
 
@@ -1587,7 +1713,7 @@ def _ai_model_catalog_setting(
                     "model": ollama_model,
                     "json_mode": True,
                     "context_window": ollama_num_ctx,
-                    "vision": False,
+                    "vision": True,
                 }
             ],
             AI_PROVIDER_GEMINI: [

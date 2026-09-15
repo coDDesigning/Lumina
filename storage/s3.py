@@ -1,5 +1,6 @@
 """S3-compatible object storage for uploaded documents."""
 
+import logging
 import re
 from collections.abc import Iterator
 from io import BytesIO
@@ -16,6 +17,8 @@ from storage.base import (
     generate_portable_key,
     validate_portable_key,
 )
+
+logger = logging.getLogger(__name__)
 
 _BUCKET_PATTERN = re.compile(r"(?!.*\.\.)[a-z0-9][a-z0-9.-]{2,62}")
 _MAX_PROBE_VERSIONS = 10
@@ -245,9 +248,22 @@ class S3Storage(Storage):
         except ClientError as exc:
             if _error_code(exc) in {"NoSuchKey", "NotFound"}:
                 return
+            logger.exception(
+                "Failed to delete a stored document",
+                extra={"event": "stored_document_delete_failed", "provider": "s3"},
+            )
             raise StorageError("Unable to delete stored document.") from exc
         except Exception as exc:
+            logger.exception(
+                "Failed to delete a stored document",
+                extra={"event": "stored_document_delete_failed", "provider": "s3"},
+            )
             raise StorageError("Unable to delete stored document.") from exc
+
+        logger.info(
+            "Deleted a stored document",
+            extra={"event": "stored_document_deleted", "provider": "s3"},
+        )
 
     def exists(self, key: str) -> bool:
         """Return whether a key identifies a stored object."""

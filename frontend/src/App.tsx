@@ -24,12 +24,24 @@ import { ProfileKnowledgeSection } from './features/account/ProfileKnowledgeSect
 import AccountSecurityPage from './features/account/AccountSecurityPage'
 import AccountApiKeysPage from './features/account/AccountApiKeysPage'
 import AdminPage from './features/admin/AdminPage'
+import AdminLogsPage from './features/admin/AdminLogsPage'
 import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
 import VerifyEmailPage from './features/auth/VerifyEmailPage'
 import ForgotPasswordPage from './features/auth/ForgotPasswordPage'
 import ResetPasswordPage from './features/auth/ResetPasswordPage'
 import LandingPage from './features/marketing/LandingPage'
+import { LegalGate } from './features/legal/LegalGate'
+import { LegalPage } from './features/legal/LegalPage'
+import {
+  acceptableUsePolicy,
+  aiDisclosure,
+  cookiePolicy,
+  openSourcePolicy,
+  privacyPolicy,
+  securityPolicy,
+  termsOfService,
+} from './features/legal/legalDocuments'
 import { AppShell } from './app/AppShell'
 import { ThemeProvider } from './app/ThemeProvider'
 import { ToastProvider } from './ui/ToastProvider'
@@ -345,6 +357,13 @@ function App() {
           <Route path="/verify-email" element={<VerifyEmailPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/legal/privacy" element={<LegalGate><LegalPage document={privacyPolicy} /></LegalGate>} />
+          <Route path="/legal/terms" element={<LegalGate><LegalPage document={termsOfService} /></LegalGate>} />
+          <Route path="/legal/acceptable-use" element={<LegalGate><LegalPage document={acceptableUsePolicy} /></LegalGate>} />
+          <Route path="/legal/cookies" element={<LegalGate><LegalPage document={cookiePolicy} /></LegalGate>} />
+          <Route path="/legal/ai-disclosure" element={<LegalGate><LegalPage document={aiDisclosure} /></LegalGate>} />
+          <Route path="/legal/security" element={<LegalGate><LegalPage document={securityPolicy} /></LegalGate>} />
+          <Route path="/legal/open-source" element={<LegalGate><LegalPage document={openSourcePolicy} /></LegalGate>} />
 
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
@@ -505,6 +524,7 @@ function App() {
         </Route>
         <Route element={<ProtectedRoute requiredRole="admin" />}>
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/admin/logs" element={<AdminLogsPage />} />
         </Route>
             </Route>
           </Route>

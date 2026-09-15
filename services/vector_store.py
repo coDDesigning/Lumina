@@ -661,7 +661,14 @@ class ChromaVectorStore:
             return operation(collection)
         except VectorStoreError:
             raise
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Reopening the vector store after a failed operation",
+                extra={
+                    "event": "vector_store_reopened",
+                    "exception_type": type(exc).__name__,
+                },
+            )
             self._discard_client()
         try:
             collection = self._get_collection()
@@ -675,7 +682,14 @@ class ChromaVectorStore:
             return operation(collection)
         except VectorStoreError:
             raise
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Reopening the vector store after a failed operation",
+                extra={
+                    "event": "vector_store_reopened",
+                    "exception_type": type(exc).__name__,
+                },
+            )
             self._discard_client()
         try:
             collection = self._get_profile_collection()

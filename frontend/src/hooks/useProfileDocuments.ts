@@ -153,11 +153,12 @@ export function useProfileDocuments(): UseProfileDocumentsResult {
           const nextDocument = isNewer(status.document, entry.document)
             ? status.document
             : entry.document;
+          const moved = nextDocument.status !== entry.document.status;
           return {
             ...entry,
             document: nextDocument,
             job: status.processing_job ?? entry.job,
-            error: null,
+            error: moved ? null : entry.error,
           };
         }),
       );

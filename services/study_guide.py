@@ -311,19 +311,16 @@ class StudyGuideService:
             resolved_user_id = course.owner_id
 
         def log_failure(category: ErrorCategory, **extra) -> None:
+            AiUsageLogger.log_failure(
+                db,
+                user_id=resolved_user_id,
+                course_id=course_id,
+                generation_type=GenerationType.STUDY_GUIDE,
+                error_category=category,
+                **extra,
+            )
             if resolved_user_id:
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=resolved_user_id,
-                    course_id=course_id,
-                    generation_type=GenerationType.STUDY_GUIDE,
-                    error_category=category,
-                    **extra,
-                )
-                try:
-                    db.commit()
-                except Exception:
-                    db.rollback()
+                AiUsageLogger.commit(db)
 
         if count_available_chunks(db, course_id) == 0:
             log_failure(ErrorCategory.NO_READY_MATERIAL)
@@ -406,7 +403,8 @@ class StudyGuideService:
                 if resolved_user_id:
                     CreditService.refund(db, refundable)
                 log_failure(
-                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR),
+                    exc=exc,
                 )
                 raise StudyGuideGenerationError(
                     "Text generation provider failed."
@@ -426,7 +424,9 @@ class StudyGuideService:
                     CreditService.refund(db, refundable)
                 log_failure(
                     ErrorCategory.INVALID_STRUCTURE,
-                    latency_ms=metadata.latency_ms if metadata else None,
+                    metadata=metadata,
+                    response=result,
+                    exc=exc,
                 )
                 raise InvalidStudyGuideStructureError(
                     "Generated study guide has an invalid structure."

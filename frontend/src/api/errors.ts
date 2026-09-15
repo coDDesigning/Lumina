@@ -71,8 +71,65 @@ export function describeUploadError(error: unknown): DescribedError {
   return described;
 }
 
+interface DocumentFailureCopy {
+  message: string;
+  retryable: boolean;
+}
+
+const DOCUMENT_FAILURES: Record<string, DocumentFailureCopy> = {
+  document_not_found: {
+    message: 'This source is no longer available.',
+    retryable: false,
+  },
+  document_processing_active: {
+    message:
+      'This source is still being read. Wait for it to finish, or cancel the processing to remove it now.',
+    retryable: true,
+  },
+  document_generation_in_progress: {
+    message:
+      'Something is reading this source right now. It can be removed once that finishes.',
+    retryable: true,
+  },
+  document_not_retryable: {
+    message: 'This source cannot be tried again from the state it is in.',
+    retryable: false,
+  },
+  document_storage_provider_mismatch: {
+    message:
+      'This source was stored by a different storage backend than this deployment uses, so it cannot be removed. An administrator needs to look at it.',
+    retryable: false,
+  },
+};
+
+function describeGenerationHold(retryAfterSeconds: number | null): string {
+  const base = 'Something is reading this source right now.';
+  if (retryAfterSeconds === null) {
+    return `${base} It can be removed once that finishes.`;
+  }
+  if (retryAfterSeconds < 60) {
+    return `${base} Try again in about ${retryAfterSeconds} seconds.`;
+  }
+  const minutes = Math.ceil(retryAfterSeconds / 60);
+  return `${base} Try again in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.`;
+}
+
 export function describeDocumentError(error: unknown, fallback: string): DescribedError {
   const described = describeError(error, fallback);
+  const known = described.code ? DOCUMENT_FAILURES[described.code] : undefined;
+
+  if (known) {
+    return {
+      ...described,
+      message:
+        described.code === 'document_generation_in_progress'
+          ? describeGenerationHold(
+              error instanceof APIError ? error.retryAfterSeconds : null,
+            )
+          : known.message,
+      retryable: known.retryable,
+    };
+  }
 
   if (described.status === 404) {
     return {

@@ -95,7 +95,7 @@ def _authorized_course(
     """
     course = db.scalar(select(Course).where(Course.id == course_id, *criteria))
     if course is None:
-        raise NotFoundException(detail=COURSE_NOT_FOUND)
+        raise NotFoundException(detail=COURSE_NOT_FOUND, error_code="course_not_found")
     return CourseResponse.model_validate(course)
 
 

@@ -1,3 +1,4 @@
+import inspect
 import json
 import threading
 import time
@@ -26,6 +27,7 @@ from services.text_generation import (
     TextGenerationTimeoutError,
     get_text_generation_provider,
     is_transient_generation_error,
+    with_template_temperature,
 )
 
 OLLAMA_SETTINGS = SimpleNamespace(
@@ -47,6 +49,7 @@ OLLAMA_SETTINGS = SimpleNamespace(
     ollama_num_ctx=8192,
     ollama_num_predict=4096,
     ollama_repeat_penalty=1.1,
+    ollama_think=False,
 )
 
 
@@ -375,6 +378,24 @@ def test_ollama_provider_sends_sampling_options_on_json_requests(monkeypatch) ->
     assert payload["format"] == "json"
     assert payload["options"]["temperature"] == 0.2
     assert payload["options"]["num_ctx"] == 8192
+
+
+def test_ollama_provider_sends_the_configured_think_flag(monkeypatch) -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=_ollama_envelope('{"title": "Test Guide"}'))
+
+    provider = _ollama_provider(monkeypatch, handler)
+
+    provider.generate_json("Build a study guide")
+    provider.generate_text("Explain photosynthesis")
+
+    assert [json.loads(request.content)["think"] for request in captured] == [
+        False,
+        False,
+    ]
 
 
 def test_ollama_provider_requests_json_format(monkeypatch) -> None:
@@ -1005,6 +1026,7 @@ def test_every_implemented_provider_is_constructible(monkeypatch) -> None:
                 ollama_num_ctx=8192,
                 ollama_num_predict=4096,
                 ollama_repeat_penalty=1.1,
+                ollama_think=False,
             ),
         )
 
@@ -1266,6 +1288,73 @@ def test_claude_text_generation_provider_json() -> None:
     assert "output_config" in captured
 
 
+def _claude_provider_with_recorder() -> tuple[ClaudeTextGenerationProvider, list[dict]]:
+    """A Claude provider whose every ``messages.create`` call is recorded."""
+    calls: list[dict] = []
+
+    class RecordingMessages:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text='{"ok": true}')],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+    provider = ClaudeTextGenerationProvider(
+        api_key="test-key",
+        model="claude-sonnet-5",
+        client=SimpleNamespace(messages=RecordingMessages()),
+    )
+    return provider, calls
+
+
+def test_claude_provider_call_kwargs_bind_to_the_installed_sdk_signature() -> None:
+    """Every keyword the provider sends must exist on the real ``messages.create``.
+
+    The other Claude tests drive a stub client that accepts any keyword, so a
+    parameter the installed SDK does not take reaches production untouched: the
+    request fails with ``TypeError`` before it is ever sent, and the provider
+    reports it as a generic ``TextGenerationProviderError``. Binding the captured
+    kwargs against the real signature is what turns that into a test failure.
+    """
+    anthropic = pytest.importorskip("anthropic")
+    signature = inspect.signature(anthropic.resources.messages.Messages.create)
+
+    provider, calls = _claude_provider_with_recorder()
+    # Every feature binds its template's declared temperature before it generates,
+    # so qualify the provider the way production does or the call recorded here is
+    # not the call production makes.
+    provider = with_template_temperature(provider, 0.2)
+    provider.generate_text_with_metadata("Hello Claude")
+    provider.generate_json_with_metadata("Generate JSON guide")
+    assert len(calls) == 2
+
+    for kwargs in calls:
+        # ``bind`` raises TypeError for a keyword the SDK does not accept.
+        signature.bind(provider, **kwargs)
+
+
+def test_claude_provider_ignores_a_template_temperature() -> None:
+    """A template's declared temperature must never reach the Anthropic client.
+
+    The Messages API dropped the sampling knobs for the current model family, so
+    ``with_template_temperature`` has to leave this provider alone rather than
+    bind a value that ``messages.create`` would reject.
+    """
+    provider, calls = _claude_provider_with_recorder()
+
+    bound = with_template_temperature(provider, 0.2)
+    assert bound is provider
+
+    bound.generate_text_with_metadata("Hello Claude")
+    bound.generate_json_with_metadata("Generate JSON guide")
+
+    for kwargs in calls:
+        assert "temperature" not in kwargs
+        assert "top_p" not in kwargs
+        assert "top_k" not in kwargs
+
+
 def test_claude_text_generation_provider_errors() -> None:
     req = httpx.Request("POST", "http://test")
 
@@ -1462,3 +1551,47 @@ def test_reliable_provider_binds_the_temperature_to_every_fallback() -> None:
     assert result == {"temperature": 0.0}
     assert [provider._temperature for provider in reliable.providers] == [None, None]
     assert bound._semaphore is reliable._semaphore
+
+
+def test_invalid_json_carries_the_fence_stripped_text() -> None:
+    """SCRUM-206: the prose a model answered with must reach the failure log."""
+    with pytest.raises(TextGenerationError) as exc_info:
+        text_generation._parse_json_object(
+            "```json\nSure! Here is your quiz:\n```", "Ollama"
+        )
+
+    assert exc_info.value.error_category == ErrorCategory.INVALID_STRUCTURE.value
+    assert exc_info.value.raw_response == "Sure! Here is your quiz:"
+
+
+def test_a_non_object_json_response_carries_what_it_returned() -> None:
+    """SCRUM-206: valid JSON of the wrong shape is still worth naming."""
+    with pytest.raises(TextGenerationError) as exc_info:
+        text_generation._parse_json_object("[1, 2, 3]", "Ollama")
+
+    assert exc_info.value.raw_response == "[1, 2, 3]"
+
+
+def test_an_off_protocol_provider_result_is_recorded_by_repr() -> None:
+    """SCRUM-206: here the rejected value is an object, not a wire response."""
+
+    class ListReturningProvider:
+        PROVIDER_NAME = "listy"
+        MODEL = "listy-model"
+
+        def generate_json_with_metadata(self, prompt: str):
+            return ["not", "a", "dict"], GenerationMetadata(
+                provider="listy", model="listy-model"
+            )
+
+    reliable = ReliableTextGenerationProvider(
+        [ListReturningProvider()],
+        max_attempts=1,
+        backoff_base_seconds=0.001,
+        backoff_max_seconds=0.01,
+    )
+
+    with pytest.raises(TextGenerationError) as exc_info:
+        reliable.generate_json_with_metadata("Generate JSON")
+
+    assert exc_info.value.raw_response == "['not', 'a', 'dict']"

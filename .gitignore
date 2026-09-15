@@ -68,3 +68,9 @@ override.tf.json
 /fix_worker_command.py
 /set_env_and_roll.py
 .claude/
+.opencode/
+opencode/
+graphify-out/
+graphiy-out/
+.playwright-mcp/
+network-dump*.txt

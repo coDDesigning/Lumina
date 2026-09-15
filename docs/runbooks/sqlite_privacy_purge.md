@@ -31,7 +31,7 @@ test -z "$(docker compose ps --status running --services lumina lumina-worker)"
 3. Checkpoint, compact, and verify the database in the mounted data volume:
 
 ```bash
-docker compose run --rm --no-deps migrate python -c "import sqlite3; c=sqlite3.connect('/data/lumina.db'); c.execute('PRAGMA secure_delete=ON'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.execute('VACUUM'); assert c.execute('PRAGMA quick_check').fetchone()==('ok',); assert c.execute('PRAGMA foreign_key_check').fetchall()==[]; assert c.execute('PRAGMA freelist_count').fetchone()==(0,); c.close()"
+docker compose run --rm --no-deps lumina python -c "import sqlite3; c=sqlite3.connect('/data/lumina.db'); c.execute('PRAGMA secure_delete=ON'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.execute('VACUUM'); assert c.execute('PRAGMA quick_check').fetchone()==('ok',); assert c.execute('PRAGMA foreign_key_check').fetchall()==[]; assert c.execute('PRAGMA freelist_count').fetchone()==(0,); c.close()"
 ```
 
 4. Start the services and verify readiness:

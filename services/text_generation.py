@@ -267,6 +267,7 @@ class TextGenerationError(RuntimeError):
         message: str,
         *,
         error_category: str | ErrorCategory = ErrorCategory.PROVIDER_ERROR,
+        raw_response: str | None = None,
     ) -> None:
         super().__init__(message)
         self.error_category = (
@@ -274,6 +275,7 @@ class TextGenerationError(RuntimeError):
             if isinstance(error_category, ErrorCategory)
             else str(error_category)
         )
+        self.raw_response = raw_response
 
 
 class TextGenerationTimeoutError(TextGenerationError):
@@ -476,18 +478,21 @@ def _strip_markdown_fence(text: str) -> str:
 
 
 def _parse_json_object(text: str, provider_label: str) -> dict[str, object]:
+    stripped = _strip_markdown_fence(text)
     try:
-        result = json.loads(_strip_markdown_fence(text))
+        result = json.loads(stripped)
     except json.JSONDecodeError as exc:
         raise TextGenerationError(
             f"{provider_label} returned invalid JSON.",
             error_category=ErrorCategory.INVALID_STRUCTURE,
+            raw_response=stripped,
         ) from exc
 
     if not isinstance(result, dict):
         raise TextGenerationError(
             f"{provider_label} response must be a JSON object.",
             error_category=ErrorCategory.INVALID_STRUCTURE,
+            raw_response=stripped,
         )
 
     return result
@@ -646,6 +651,7 @@ class OllamaTextGenerationProvider(TemperatureBindingMixin):
             "num_predict": settings.ollama_num_predict,
             "repeat_penalty": settings.ollama_repeat_penalty,
         }
+        self._think = settings.ollama_think
         self._client = client or _get_shared_http_client()
 
     def _request(self, prompt: str, *, as_json: bool) -> tuple[str, dict[str, object]]:
@@ -656,6 +662,7 @@ class OllamaTextGenerationProvider(TemperatureBindingMixin):
             "model": self._model,
             "prompt": prompt,
             "stream": False,
+            "think": self._think,
             "options": options,
         }
         if as_json:
@@ -932,7 +939,18 @@ class OpenAITextGenerationProvider(TemperatureBindingMixin):
         return result
 
 
-class ClaudeTextGenerationProvider(TemperatureBindingMixin):
+class ClaudeTextGenerationProvider:
+    """Claude text generation over the Anthropic Messages API.
+
+    Deliberately not a :class:`TemperatureBindingMixin`. The Anthropic Messages
+    API dropped ``temperature`` along with the rest of the sampling knobs for the
+    current model family, and ``anthropic>=1`` removed it from the
+    ``messages.create`` signature, so forwarding a template's declared
+    temperature raises ``TypeError`` before the request is ever sent.
+    ``with_template_temperature`` leaves a provider that has no
+    ``with_temperature`` untouched, which is exactly what this provider needs.
+    """
+
     MODEL = DEFAULT_CLAUDE_MODEL
     PROVIDER_NAME = "claude"
 
@@ -1054,7 +1072,6 @@ class ClaudeTextGenerationProvider(TemperatureBindingMixin):
                 model=self._model,
                 max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
-                **self._sampling_kwargs(),
             )
         except Exception as exc:
             self._handle_client_error(exc)
@@ -1097,7 +1114,6 @@ class ClaudeTextGenerationProvider(TemperatureBindingMixin):
                         "schema": schema,
                     }
                 },
-                **self._sampling_kwargs(),
             )
         except Exception as exc:
             self._handle_client_error(exc)
@@ -1422,6 +1438,7 @@ class ReliableTextGenerationProvider:
         raise TextGenerationError(
             "Expected dict response from JSON generation.",
             error_category=ErrorCategory.INVALID_STRUCTURE,
+            raw_response=repr(result)[:2000],
         )
 
     def generate_json(self, prompt: str) -> dict[str, object]:

@@ -10,7 +10,10 @@ export interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (token: string) => Promise<void>;
-  logout: () => Promise<void>;
+  logout: {
+    (): Promise<void>;
+    (options: { remote: false }): Promise<void>;
+  };
   refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
   sessionEndReason: SessionEndReason | null;
@@ -80,7 +83,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     
     window.addEventListener('auth:unauthorized', handleUnauthorized);
-    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+    const handleAdminAccessRemoved = () => {
+      queryCache.remove(['admin']);
+      void fetchUser();
+    };
+    window.addEventListener('auth:admin-access-removed', handleAdminAccessRemoved);
+    return () => {
+      window.removeEventListener('auth:unauthorized', handleUnauthorized);
+      window.removeEventListener('auth:admin-access-removed', handleAdminAccessRemoved);
+    };
   }, []);
 
   const login = async (token: string) => {
@@ -91,21 +102,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await fetchUser();
   };
 
-  const logout = async () => {
+  const clearSession = () => {
     requestGeneration.current += 1;
-    try {
-      if (localStorage.getItem('token')) {
-        await authAPI.logout();
-      }
-    } catch {
-      // Ignore network errors during logout
-    }
     localStorage.removeItem('token');
     queryCache.clear();
     setUser(null);
     setSessionEndReason(null);
     setIsLoading(false);
   };
+
+  async function logout(): Promise<void>;
+  async function logout(options: { remote: false }): Promise<void>;
+  async function logout(options?: { remote?: boolean }) {
+    try {
+      if (options?.remote !== false && localStorage.getItem('token')) {
+        await authAPI.logout();
+      }
+    } catch {
+      // Ignore network errors during logout
+    }
+    clearSession();
+  }
 
   return (
     <AuthContext.Provider value={{

@@ -24,6 +24,7 @@ variables {
   worker_service_name            = "lumina-production-worker"
   task_definition_families       = ["lumina-production-api", "lumina-production-worker", "lumina-production-migrate"]
   ecs_task_role_arn              = "arn:aws:iam::123456789012:role/lumina-production-task"
+  api_task_role_arn              = "arn:aws:iam::123456789012:role/lumina-production-api-task"
   ecs_execution_role_arn         = "arn:aws:iam::123456789012:role/lumina-production-execution"
   restore_task_definition_family = "lumina-production-hosted-restore"
   restore_task_role_arn          = "arn:aws:iam::123456789012:role/lumina-production-restore-task"

@@ -1,4 +1,5 @@
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -700,7 +701,7 @@ def test_generate_wraps_a_text_generation_error(
 
 
 def test_generate_rejects_an_invalid_quiz_structure(
-    db_session, model_graph, retrieval_env
+    db_session, model_graph, retrieval_env, caplog
 ) -> None:
     _add_ready_material(
         db_session,
@@ -711,8 +712,23 @@ def test_generate_rejects_an_invalid_quiz_structure(
     )
     provider = CountingProvider({"title": "Quiz", "questions": "lots"})
 
-    with pytest.raises(InvalidQuizStructureError):
-        QuizService.generate(db_session, model_graph.course.id, _request(), provider)
+    with caplog.at_level(logging.WARNING, logger="services.ai_usage_logger"):
+        with pytest.raises(InvalidQuizStructureError):
+            QuizService.generate(
+                db_session, model_graph.course.id, _request(), provider
+            )
+
+    # SCRUM-206: the failure names itself even without a user to bill.
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].generation_type == "quiz"
+    assert failures[0].error_category == "invalid_structure"
+    assert failures[0].ai_response_keys == ["title", "questions"]
+    assert failures[0].ai_validation_errors == ["questions: list_type"]
 
 
 def test_generate_rejects_a_question_count_mismatch(

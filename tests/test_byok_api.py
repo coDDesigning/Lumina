@@ -278,6 +278,7 @@ def test_dynamic_ai_models_and_routing_for_admin_keys(api_context, monkeypatch) 
         ollama_num_ctx=8192,
         ollama_num_predict=4096,
         ollama_repeat_penalty=1.1,
+        ollama_think=False,
     )
     import services.text_generation as tg
 
@@ -413,6 +414,7 @@ def test_personal_key_auth_error_disables_silent_fallback(
         ollama_num_ctx=8192,
         ollama_num_predict=4096,
         ollama_repeat_penalty=1.1,
+        ollama_think=False,
     )
     import services.text_generation as tg
 

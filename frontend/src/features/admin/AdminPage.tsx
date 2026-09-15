@@ -295,7 +295,12 @@ export default function AdminPage() {
       <PageHeader
         crumbs={[{ label: 'Admin' }]}
         badges={<Badge tone="accent">Administrator</Badge>}
-        actions={<span className="tabular">{users.length} accounts</span>}
+        actions={
+          <>
+            <span className="tabular">{users.length} accounts</span>
+            <LinkButton to="/admin/logs" size="sm">Investigate logs</LinkButton>
+          </>
+        }
       />
 
       <div className={styles.body}>

@@ -43,10 +43,11 @@ from backend.app.config import (
     settings,
 )
 from backend.app.database import SessionLocal
-from backend.app.models import Course, ProfileDocument, UploadedDocument
+from backend.app.models import Course, ProfileDocument, UploadedDocument, User
 from backend.app.observability import configure_logging, emit_emf_metrics
 from backend.app.readiness import ReadinessError, check_readiness
 from services.course import CourseDeletionError, CourseService
+from services.account_deletion import AccountDeletionError, AccountDeletionService
 from services.document import (
     DocumentActiveError,
     DocumentDeletionError,
@@ -131,6 +132,23 @@ class DocumentPurgeReport:
         )
 
 
+@dataclass
+class AccountPurgeReport:
+    accounts_examined: int = 0
+    accounts_purged: int = 0
+    accounts_failed: int = 0
+    aged_tombstones: int = 0
+    oldest_tombstone_age_seconds: float = 0.0
+
+    def summary(self) -> str:
+        return (
+            f"accounts_examined={self.accounts_examined} "
+            f"accounts_purged={self.accounts_purged} "
+            f"accounts_failed={self.accounts_failed} "
+            f"aged_tombstones={self.aged_tombstones}"
+        )
+
+
 def _tombstone_age_seconds(utc_now: datetime, marked_at: datetime | None) -> float:
     if marked_at is None:
         return 0.0
@@ -143,6 +161,17 @@ def _tombstoned_course_ids(session: Session, *, course_id: int | None) -> list[i
     statement = select(Course.id).where(Course.is_deleted.is_(True)).order_by(Course.id)
     if course_id is not None:
         statement = statement.where(Course.id == course_id)
+    return list(session.scalars(statement).all())
+
+
+def _tombstoned_account_ids(session: Session, *, user_id: int | None) -> list[int]:
+    statement = (
+        select(User.id)
+        .where(User.deletion_requested_at.is_not(None))
+        .order_by(User.deletion_requested_at, User.id)
+    )
+    if user_id is not None:
+        statement = statement.where(User.id == user_id)
     return list(session.scalars(statement).all())
 
 
@@ -197,6 +226,99 @@ def check_purge_ready(
         storage = get_storage()
     with session_factory() as session:
         check_readiness(session, storage)
+
+
+def run_account_purge(
+    *,
+    session_factory: SessionFactory = SessionLocal,
+    storage: Storage | None = None,
+    vector_store: VectorStore | None = None,
+    user_id: int | None = None,
+    dry_run: bool = False,
+    stop_event: StopEvent | None = None,
+    aged_threshold_seconds: float | None = None,
+) -> AccountPurgeReport:
+    """Finish every account erasure whose durable tombstone remains."""
+    if storage is None:
+        storage = get_storage()
+    if vector_store is None:
+        vector_store = get_vector_store()
+    if aged_threshold_seconds is None:
+        aged_threshold_seconds = settings.course_purge_interval_seconds
+
+    report = AccountPurgeReport()
+    with session_factory() as session:
+        user_ids = _tombstoned_account_ids(session, user_id=user_id)
+
+    utc_now = datetime.now(timezone.utc)
+    for identifier in user_ids:
+        if stop_event is not None and stop_event.is_set():
+            break
+        with session_factory() as session:
+            user = session.get(User, identifier)
+            if user is None or user.deletion_requested_at is None:
+                continue
+            report.accounts_examined += 1
+            age_seconds = _tombstone_age_seconds(utc_now, user.deletion_requested_at)
+            report.oldest_tombstone_age_seconds = max(
+                report.oldest_tombstone_age_seconds, age_seconds
+            )
+            if aged_threshold_seconds > 0 and age_seconds >= aged_threshold_seconds:
+                report.aged_tombstones += 1
+                logger.warning(
+                    "Aged account tombstone detected for user %s (age: %.1fs)",
+                    identifier,
+                    age_seconds,
+                    extra={
+                        "event": "aged_account_tombstone_detected",
+                        "user_id": identifier,
+                        "duration_ms": round(age_seconds * 1000, 1),
+                        "runbook": "docs/runbooks/stranded_tombstone.md",
+                    },
+                )
+            if dry_run:
+                continue
+            try:
+                purged = AccountDeletionService.purge(
+                    session,
+                    identifier,
+                    storage,
+                    vector_store,
+                    operation_timeout_seconds=(
+                        settings.course_purge_operation_timeout_seconds
+                    ),
+                )
+            except AccountDeletionError as exc:
+                logger.exception(
+                    "Account %s could not be purged; its tombstone is retained",
+                    identifier,
+                    extra={
+                        "event": "account_purge_failed",
+                        "user_id": identifier,
+                        "error_code": exc.error_code,
+                        "runbook": "docs/runbooks/stranded_tombstone.md",
+                    },
+                )
+                report.accounts_failed += 1
+                continue
+            if purged:
+                report.accounts_purged += 1
+
+    emit_emf_metrics(
+        {
+            "AccountsExamined": report.accounts_examined,
+            "AccountsPurged": report.accounts_purged,
+            "AccountsFailed": report.accounts_failed,
+            "AgedAccountTombstones": report.aged_tombstones,
+            "OldestAccountTombstoneAgeSeconds": round(
+                report.oldest_tombstone_age_seconds, 3
+            ),
+        },
+        dimensions={"Service": "account_purge", "Environment": settings.app_env},
+        units={"OldestAccountTombstoneAgeSeconds": "Seconds"},
+    )
+    logger.info("Account purge finished: %s", report.summary())
+    return report
 
 
 def run_purge(
@@ -540,6 +662,17 @@ def run_purge_worker(
     try:
         while not stop.is_set():
             try:
+                run_account_purge(
+                    session_factory=session_factory,
+                    storage=storage,
+                    vector_store=vector_store,
+                    user_id=None,
+                    dry_run=dry_run,
+                    stop_event=stop,
+                )
+            except Exception:
+                logger.exception("Account purge execution failed")
+            try:
                 run_purge(
                     session_factory=session_factory,
                     storage=storage,
@@ -584,6 +717,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--course-id", type=int, default=None)
     parser.add_argument(
+        "--user-id",
+        type=int,
+        default=None,
+        help="Scope the account tombstone pass to one account.",
+    )
+    parser.add_argument(
         "--document-id",
         type=UUID,
         default=None,
@@ -617,7 +756,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     arguments = parser.parse_args(argv)
 
-    configure_logging(service="maintenance", environment=settings.app_env)
+    configure_logging(
+        service="maintenance",
+        environment=settings.app_env,
+        persistence_path=(
+            settings.operational_log_path
+            if settings.operational_log_persistence_enabled
+            else None
+        ),
+        retention_days=settings.operational_log_retention_days,
+        max_records=settings.operational_log_max_records,
+    )
 
     if arguments.check:
         try:
@@ -646,6 +795,21 @@ def main(argv: Sequence[str] | None = None) -> None:
             raise SystemExit(1) from None
         return
 
+    if arguments.user_id is not None:
+        account_report = run_account_purge(
+            user_id=arguments.user_id,
+            dry_run=arguments.dry_run,
+        )
+        print(account_report.summary())
+        if account_report.accounts_failed:
+            raise SystemExit(1)
+        return
+
+    account_report = run_account_purge(
+        user_id=None,
+        dry_run=arguments.dry_run,
+    )
+    print(account_report.summary())
     report = run_purge(course_id=arguments.course_id, dry_run=arguments.dry_run)
     print(report.summary())
     document_report = run_document_purge(
@@ -656,7 +820,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     print(document_report.summary())
     if (
-        report.courses_failed
+        account_report.accounts_failed
+        or report.courses_failed
         or document_report.documents_failed
         or document_report.profile_documents_failed
     ):

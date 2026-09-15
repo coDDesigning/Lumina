@@ -140,6 +140,10 @@ export const queryKeys = {
   adminUsers: (): QueryKey => ['admin', 'users'],
   adminUserCourses: (email: string): QueryKey => ['admin', 'users', email, 'courses'],
   adminCosts: (days: number): QueryKey => ['admin', 'costs', days],
+  adminLogs: (query: string): QueryKey => ['admin', 'logs', query],
+  adminLogSummary: (query: string): QueryKey => ['admin', 'logs', 'summary', query],
+  adminLogEvent: (eventId: string): QueryKey => ['admin', 'logs', 'event', eventId],
+  adminLogTrace: (eventId: string): QueryKey => ['admin', 'logs', 'trace', eventId],
   adminCreditLedger: (email: string, limit: number): QueryKey => [
     'admin',
     'creditLedger',
@@ -147,5 +151,6 @@ export const queryKeys = {
     limit,
   ],
   adsConfig: (): QueryKey => ['ads', 'config'],
+  legalConfig: (): QueryKey => ['legal', 'config'],
   passwordPolicy: (): QueryKey => ['auth', 'passwordPolicy'],
 };

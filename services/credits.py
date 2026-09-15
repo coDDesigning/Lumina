@@ -17,6 +17,7 @@ transaction; a mistake is corrected by recording an opposing one.
 See docs/credits.md for the policy these mechanics implement.
 """
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -103,6 +104,9 @@ def next_grant_at() -> datetime:
     if now.month == 12:
         return datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
     return datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+
+
+logger = logging.getLogger(__name__)
 
 
 class CreditService:
@@ -247,6 +251,13 @@ class CreditService:
                 db.commit()
             return True
         except IntegrityError:
+            logger.info(
+                "A generation refund was already settled",
+                extra={
+                    "event": "credit_refund_already_settled",
+                    "user_id": receipt.user_id,
+                },
+            )
             settled = (
                 db.scalar(
                     select(CreditTransaction.id).where(
@@ -341,6 +352,13 @@ class CreditService:
             )
             db.commit()
         except IntegrityError:
+            logger.info(
+                "A periodic credit grant was already recorded",
+                extra={
+                    "event": "credit_grant_already_recorded",
+                    "user_id": user_id,
+                },
+            )
             db.rollback()
             db.expire_all()
 

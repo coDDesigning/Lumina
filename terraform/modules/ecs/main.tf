@@ -88,6 +88,7 @@ locals {
     { name = "SMTP_PORT", value = tostring(var.smtp_port) },
     { name = "SMTP_USERNAME", value = var.smtp_username },
     { name = "SMTP_USE_TLS", value = tostring(var.smtp_use_tls) },
+    { name = "LEGAL_POLICIES_ENABLED", value = tostring(var.legal_policies_enabled) },
     { name = "ENABLE_HOSTED_ADS", value = tostring(var.enable_hosted_ads) },
     { name = "HOSTED_ADS_PROVIDER", value = var.hosted_ads_provider },
     { name = "HOSTED_ADS_PUBLISHER_ID", value = var.hosted_ads_publisher_id },
@@ -126,6 +127,7 @@ locals {
   api_env = concat(local.common_env, [
     { name = "BOOTSTRAP_ADMIN_EMAIL", value = var.bootstrap_admin_email },
     { name = "CORS_ALLOWED_ORIGINS", value = join(",", var.cors_allowed_origins) },
+    { name = "OPERATIONAL_LOG_CLOUDWATCH_GROUP", value = local.log_group },
   ])
 
   worker_env = concat(local.common_env, [

@@ -53,3 +53,31 @@ describe('userAPI.changePassword', () => {
     );
   });
 });
+
+describe('userAPI.deleteAccount', () => {
+  beforeEach(() => {
+    localStorage.setItem('token', 'test-token');
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it('sends the password and fixed destructive confirmation in a DELETE body', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ success: true, message: 'Account deletion requested', data: null }, 202),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(userAPI.deleteAccount('current-password')).resolves.toBeUndefined();
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe('/api/users/me');
+    expect(init?.method).toBe('DELETE');
+    expect(JSON.parse(init?.body as string)).toEqual({
+      current_password: 'current-password',
+      confirmation: 'DELETE',
+    });
+  });
+});

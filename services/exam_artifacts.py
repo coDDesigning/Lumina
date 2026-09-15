@@ -360,10 +360,7 @@ class ExamArtifactService:
                 error_category=category,
                 **extra,
             )
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+            AiUsageLogger.commit(db)
 
         try:
             unlock = ExamEntitlementService.ensure_unlocked(
@@ -418,7 +415,8 @@ class ExamArtifactService:
             except TextGenerationError as exc:
                 ExamEntitlementService.release(db, unlock)
                 log_failure(
-                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR),
+                    exc=exc,
                 )
                 raise ExamArtifactError(spec.provider_failed_message) from exc
             except Exception:
@@ -431,7 +429,9 @@ class ExamArtifactService:
                 ExamEntitlementService.release(db, unlock)
                 log_failure(
                     ErrorCategory.INVALID_STRUCTURE,
-                    latency_ms=metadata.latency_ms if metadata else None,
+                    metadata=metadata,
+                    response=result,
+                    exc=exc,
                 )
                 raise InvalidExamArtifactStructureError(
                     spec.invalid_structure_message
@@ -486,10 +486,7 @@ class ExamArtifactService:
                 error_category=category,
                 **extra,
             )
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+            AiUsageLogger.commit(db)
 
         receipt = CreditService.charge(
             db, user_id, GENERATION_CREDIT_COSTS[price_key], source_type=price_key
@@ -550,7 +547,8 @@ class ExamArtifactService:
             except TextGenerationError as exc:
                 CreditService.refund(db, receipt)
                 log_failure(
-                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR),
+                    exc=exc,
                 )
                 raise ExamArtifactError(spec.provider_failed_message) from exc
             except Exception:
@@ -563,7 +561,9 @@ class ExamArtifactService:
                 CreditService.refund(db, receipt)
                 log_failure(
                     ErrorCategory.INVALID_STRUCTURE,
-                    latency_ms=metadata.latency_ms if metadata else None,
+                    metadata=metadata,
+                    response=result,
+                    exc=exc,
                 )
                 raise InvalidExamArtifactStructureError(
                     spec.invalid_structure_message

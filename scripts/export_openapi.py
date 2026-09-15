@@ -17,7 +17,7 @@ def export_openapi(target_path: Path = OPENAPI_SNAPSHOT_PATH) -> str:
     schema = app.openapi()
     content = json.dumps(schema, indent=2, sort_keys=True) + "\n"
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(content, encoding="utf-8")
+    target_path.write_text(content, encoding="utf-8", newline="\n")
     return content
 
 

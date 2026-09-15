@@ -27,6 +27,7 @@ from backend.app.config import (
     DEFAULT_MATERIAL_MAX_CHARACTERS,
     DEFAULT_MAX_REQUEST_SIZE_BYTES,
     DEFAULT_MAX_UPLOAD_SIZE_BYTES,
+    DEFAULT_OLLAMA_MODEL,
     DEFAULT_DOCUMENT_CHUNK_OVERLAP_CHARACTERS,
     DEFAULT_DOCUMENT_CHUNK_SIZE_CHARACTERS,
     DEFAULT_EMBEDDING_BATCH_SIZE,
@@ -93,6 +94,7 @@ CONFIGURATION_KEYS = (
     "AI_GENERATION_BACKOFF_BASE_SECONDS",
     "AI_GENERATION_BACKOFF_MAX_SECONDS",
     "AI_GENERATION_MAX_CONCURRENCY",
+    "AI_LOG_RAW_RESPONSE_ON_FAILURE",
     "OLLAMA_BASE_URL",
     "OLLAMA_MODEL",
     "OLLAMA_TEMPERATURE",
@@ -100,6 +102,7 @@ CONFIGURATION_KEYS = (
     "OLLAMA_NUM_CTX",
     "OLLAMA_NUM_PREDICT",
     "OLLAMA_REPEAT_PENALTY",
+    "OLLAMA_THINK",
     "MAX_UPLOAD_SIZE_BYTES",
     "MAX_REQUEST_SIZE_BYTES",
     "MAX_CONCURRENT_DOCUMENT_VALIDATIONS",
@@ -1814,6 +1817,18 @@ def test_ollama_sampling_defaults_target_a_single_gpu_box(
     assert settings.ollama_num_ctx == 8192
     assert settings.ollama_num_predict == 4096
     assert settings.ollama_repeat_penalty == 1.1
+    assert settings.ollama_think is False
+
+
+def test_ollama_think_is_configurable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("OLLAMA_THINK", "true")
+
+    settings = load_settings()
+
+    assert settings.ollama_think is True
 
 
 def test_ollama_sampling_settings_are_configurable(
@@ -1848,6 +1863,7 @@ def test_ollama_sampling_settings_are_configurable(
         ("OLLAMA_NUM_PREDICT", "0"),
         ("OLLAMA_REPEAT_PENALTY", "0"),
         ("OLLAMA_REPEAT_PENALTY", "3"),
+        ("OLLAMA_THINK", "maybe"),
     ],
 )
 def test_invalid_ollama_sampling_settings_are_rejected(
@@ -2259,3 +2275,81 @@ async def test_unprotected_admin_bootstrap_startup_warning_suppressed_when_prote
         getattr(r, "event", None) == "unprotected_admin_bootstrap_warning"
         for r in caplog.records
     )
+
+
+def test_image_understanding_timeout_default_clears_the_measured_provider_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("IMAGE_UNDERSTANDING_TIMEOUT_SECONDS", raising=False)
+
+    assert load_settings().image_understanding_timeout_seconds == 180
+
+
+def test_inline_visual_budget_defaults_to_a_small_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS", raising=False)
+
+    assert load_settings().image_understanding_inline_max_visuals == 2
+
+
+@pytest.mark.parametrize("value", ["0", "51", "not-a-number"])
+def test_inline_visual_budget_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS", value)
+
+    with pytest.raises(ValueError, match="IMAGE_UNDERSTANDING_INLINE_MAX_VISUALS"):
+        load_settings()
+
+
+def test_the_configured_ollama_model_is_also_the_vision_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only(monkeypatch, OLLAMA_BASE_URL="http://localhost:11434")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3.5:9b")
+
+    loaded = load_settings()
+
+    assert loaded.ai_vision_model == "ollama:qwen3.5:9b"
+    assert loaded.ai_default_model == "ollama:qwen3.5:9b"
+    assert len(loaded.ai_model_catalog["ollama"]) == 1
+
+
+def test_the_default_ollama_model_can_take_an_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only(monkeypatch, OLLAMA_BASE_URL="http://localhost:11434")
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+
+    loaded = load_settings()
+
+    entry = loaded.ai_model_catalog["ollama"][0]
+    assert entry["model"] == DEFAULT_OLLAMA_MODEL
+    assert entry["vision"] is True
+
+
+def test_a_catalog_that_declines_vision_is_honoured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _only(monkeypatch, OLLAMA_BASE_URL="http://localhost:11434")
+    monkeypatch.setenv(
+        "AI_MODEL_CATALOG",
+        json.dumps(
+            {
+                "ollama": [
+                    {
+                        "model": "llama3.1",
+                        "json_mode": True,
+                        "context_window": 8192,
+                        "vision": False,
+                    }
+                ]
+            }
+        ),
+    )
+
+    loaded = load_settings()
+
+    assert loaded.ai_vision_model is None

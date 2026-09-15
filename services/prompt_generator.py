@@ -103,32 +103,34 @@ class PromptGeneratorService:
         except TextGenerationError as exc:
             if db is not None and user_id is not None:
                 CreditService.refund(db, receipt)
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=user_id,
-                    course_id=None,
-                    generation_type=GenerationType.PROMPT_GENERATOR,
-                    error_category=getattr(
-                        exc, "error_category", ErrorCategory.PROVIDER_ERROR
-                    ),
-                    provider=getattr(exc, "provider", telemetry_provider),
-                    model=getattr(exc, "model", telemetry_model),
-                )
-                commit_usage()
+            AiUsageLogger.log_failure(
+                db,
+                user_id=user_id,
+                course_id=None,
+                generation_type=GenerationType.PROMPT_GENERATOR,
+                error_category=getattr(
+                    exc, "error_category", ErrorCategory.PROVIDER_ERROR
+                ),
+                provider=getattr(exc, "provider", telemetry_provider),
+                model=getattr(exc, "model", telemetry_model),
+                exc=exc,
+            )
+            commit_usage()
             raise PromptGenerationError("Text generation provider failed.") from exc
-        except Exception:
+        except Exception as exc:
             if db is not None and user_id is not None:
                 CreditService.refund(db, receipt)
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=user_id,
-                    course_id=None,
-                    generation_type=GenerationType.PROMPT_GENERATOR,
-                    error_category=ErrorCategory.UNKNOWN_ERROR,
-                    provider=telemetry_provider,
-                    model=telemetry_model,
-                )
-                commit_usage()
+            AiUsageLogger.log_failure(
+                db,
+                user_id=user_id,
+                course_id=None,
+                generation_type=GenerationType.PROMPT_GENERATOR,
+                error_category=ErrorCategory.UNKNOWN_ERROR,
+                provider=telemetry_provider,
+                model=telemetry_model,
+                exc=exc,
+            )
+            commit_usage()
             raise
 
         try:
@@ -136,17 +138,19 @@ class PromptGeneratorService:
         except ValidationError as exc:
             if db is not None and user_id is not None:
                 CreditService.refund(db, receipt)
-                AiUsageLogger.log_failure(
-                    db,
-                    user_id=user_id,
-                    course_id=None,
-                    generation_type=GenerationType.PROMPT_GENERATOR,
-                    error_category=ErrorCategory.INVALID_STRUCTURE,
-                    provider=metadata.provider if metadata else telemetry_provider,
-                    model=metadata.model if metadata else telemetry_model,
-                    latency_ms=metadata.latency_ms if metadata else None,
-                )
-                commit_usage()
+            AiUsageLogger.log_failure(
+                db,
+                user_id=user_id,
+                course_id=None,
+                generation_type=GenerationType.PROMPT_GENERATOR,
+                error_category=ErrorCategory.INVALID_STRUCTURE,
+                metadata=metadata,
+                provider=telemetry_provider,
+                model=telemetry_model,
+                response=result,
+                exc=exc,
+            )
+            commit_usage()
             raise PromptGenerationError(
                 "Generated prompt has an invalid structure."
             ) from exc

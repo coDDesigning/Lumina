@@ -248,6 +248,7 @@ def test_end_to_end_visual_detection_description_and_retrieval(
         expected_size=document.file_size,
         file_type="pdf",
         image_provider=vision_provider,
+        inline_visual_budget=None,
     )
 
     # Assert visual detection & description generation
@@ -398,6 +399,7 @@ def test_partial_visual_analysis_success_isolates_failures(
         expected_size=document.file_size,
         file_type="pdf",
         image_provider=vision_provider,
+        inline_visual_budget=None,
     )
 
     assert len(extraction_result.pages) == 2

@@ -11,8 +11,8 @@ There is no CSS framework, no component library and no state manager. There is n
 data-fetching *dependency* either: server state is owned by `src/lib/query/`, a small
 in-repo query cache described below. UI state stays in `useState`.
 
-Styling is **CSS Modules over a design-token layer**. Fonts are self-hosted, so a
-self-hosted deployment makes no third-party requests.
+Styling is **CSS Modules over a design-token layer**. Fonts are self-hosted, so
+loading the interface's typography makes no third-party request.
 
 ```
 cd frontend
@@ -190,6 +190,7 @@ Rules that are not negotiable:
 /account/ai                        model choice, and credits when metered
 /account/appearance                theme
 /admin                             admin (rail entry hidden unless role === 'admin')
+/admin/logs                        operational investigation (admin only)
 
   -- kept so older links still resolve --
 /workspaces/:id/**                 -> /courses/:id/**

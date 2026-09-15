@@ -5,6 +5,7 @@ import base64
 import hashlib
 import io
 import json
+import logging
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -59,6 +60,12 @@ OLLAMA_VISION_SETTINGS = SimpleNamespace(
     ollama_base_url="http://ollama.test:11434",
     image_understanding_timeout_seconds=30,
     image_understanding_max_bytes=10 * 1024 * 1024,
+    ollama_temperature=0.2,
+    ollama_top_p=0.9,
+    ollama_num_ctx=8192,
+    ollama_num_predict=4096,
+    ollama_repeat_penalty=1.1,
+    ollama_think=False,
 )
 
 GEMINI_VISION_SETTINGS = SimpleNamespace(
@@ -905,3 +912,203 @@ def test_vision_prompt_failure_is_a_per_visual_error(monkeypatch) -> None:
 
     with pytest.raises(VisualAnalysisError):
         _render_image_description_prompt(PromptContext(), VisualType.DIAGRAM)
+
+
+def test_an_unusable_ollama_response_is_logged_with_diagnostics(
+    monkeypatch, caplog
+) -> None:
+    """SCRUM-206: this provider has no session and no user, so the log is the trace."""
+    canary = "CONFIDENTIAL_SLIDE_TEXT_445566"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=f"Sorry, I cannot read that. {canary}")
+
+    provider = _ollama_vision_provider(monkeypatch, handler)
+
+    with caplog.at_level(logging.WARNING, logger="services.image_understanding"):
+        with pytest.raises(VisualAnalysisError, match="invalid JSON"):
+            provider.describe_visual(
+                VALID_PNG_BYTES,
+                page_number=1,
+                visual_index=0,
+                suggested_type=VisualType.DIAGRAM,
+            )
+
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].generation_type == "image_understanding"
+    assert failures[0].error_category == "invalid_structure"
+    assert failures[0].ai_response_type == "str"
+    assert failures[0].ai_response_bytes > 0
+    assert canary not in json.dumps(
+        {key: str(value) for key, value in vars(failures[0]).items()}, default=str
+    )
+
+
+def test_an_unexpected_ollama_envelope_shape_is_logged(monkeypatch, caplog) -> None:
+    """SCRUM-206: valid JSON of the wrong shape has no keys to report, only a type."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["not", "an", "object"])
+
+    provider = _ollama_vision_provider(monkeypatch, handler)
+
+    with caplog.at_level(logging.WARNING, logger="services.image_understanding"):
+        with pytest.raises(VisualAnalysisError, match="unexpected response structure"):
+            provider.describe_visual(
+                VALID_PNG_BYTES,
+                page_number=1,
+                visual_index=0,
+                suggested_type=VisualType.DIAGRAM,
+            )
+
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].ai_response_type == "str"
+
+
+def _ollama_show_client(monkeypatch, handler):
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(image_understanding, "_get_shared_http_client", lambda: client)
+    monkeypatch.setattr(image_understanding, "_VISION_CAPABILITY", {})
+    return client
+
+
+def _capabilities_handler(capabilities, recorder=None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if recorder is not None:
+            recorder.append(str(request.url))
+        return httpx.Response(200, json={"capabilities": capabilities})
+
+    return handler
+
+
+def test_a_multimodal_ollama_model_is_used_for_visual_analysis(monkeypatch) -> None:
+    monkeypatch.setattr(image_understanding, "settings", OLLAMA_VISION_SETTINGS)
+    _ollama_show_client(monkeypatch, _capabilities_handler(["completion", "vision"]))
+
+    provider = get_image_understanding_provider()
+
+    assert isinstance(provider, OllamaImageUnderstandingProvider)
+    assert provider.enabled is True
+
+
+def test_a_text_only_ollama_model_disables_visual_analysis(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(image_understanding, "settings", OLLAMA_VISION_SETTINGS)
+    _ollama_show_client(monkeypatch, _capabilities_handler(["completion", "tools"]))
+    caplog.set_level(logging.WARNING)
+
+    provider = get_image_understanding_provider()
+
+    assert isinstance(provider, DisabledImageUnderstandingProvider)
+    assert provider.enabled is False
+    record = next(
+        entry
+        for entry in caplog.records
+        if getattr(entry, "event", None) == "image_understanding_disabled"
+    )
+    assert record.model == "llama3.2-vision"
+    assert record.provider == AI_PROVIDER_OLLAMA
+    assert "does not support" in record.getMessage()
+
+
+def test_a_text_only_ollama_model_reports_no_configured_identity(monkeypatch) -> None:
+    monkeypatch.setattr(image_understanding, "settings", OLLAMA_VISION_SETTINGS)
+    _ollama_show_client(monkeypatch, _capabilities_handler(["completion"]))
+
+    assert configured_image_understanding_identity() == (IMAGE_PROVIDER_NONE, None)
+
+
+def test_an_unreachable_ollama_does_not_disable_visual_analysis(monkeypatch) -> None:
+    monkeypatch.setattr(image_understanding, "settings", OLLAMA_VISION_SETTINGS)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("ollama is down", request=request)
+
+    _ollama_show_client(monkeypatch, handler)
+
+    provider = get_image_understanding_provider()
+
+    assert isinstance(provider, OllamaImageUnderstandingProvider)
+
+
+def test_the_model_capability_is_asked_once(monkeypatch) -> None:
+    monkeypatch.setattr(image_understanding, "settings", OLLAMA_VISION_SETTINGS)
+    requests: list[str] = []
+    _ollama_show_client(
+        monkeypatch, _capabilities_handler(["completion", "vision"], requests)
+    )
+
+    get_image_understanding_provider()
+    get_image_understanding_provider()
+    configured_image_understanding_identity()
+
+    assert len(requests) == 1
+    assert requests[0].endswith("/api/show")
+
+
+def test_the_gemini_model_is_never_asked_about_capabilities(monkeypatch) -> None:
+    monkeypatch.setattr(image_understanding, "settings", GEMINI_VISION_SETTINGS)
+    monkeypatch.setattr(
+        image_understanding.genai,
+        "Client",
+        lambda **kwargs: _FakeGeminiClient([], []),
+    )
+    requests: list[str] = []
+    _ollama_show_client(
+        monkeypatch, _capabilities_handler(["completion", "vision"], requests)
+    )
+
+    provider = get_image_understanding_provider()
+
+    assert isinstance(provider, GeminiImageUnderstandingProvider)
+    assert requests == []
+
+
+def test_a_visual_request_bounds_the_context_window(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"response": "A described diagram."})
+
+    provider = _ollama_vision_provider(monkeypatch, handler)
+    provider.describe_visual(
+        VALID_PNG_BYTES,
+        page_number=1,
+        visual_index=0,
+        suggested_type=VisualType.DIAGRAM,
+    )
+
+    options = captured["options"]
+    assert options["num_ctx"] == OLLAMA_VISION_SETTINGS.ollama_num_ctx
+    assert options["temperature"] == OLLAMA_VISION_SETTINGS.ollama_temperature
+    assert options["top_p"] == OLLAMA_VISION_SETTINGS.ollama_top_p
+    assert options["num_predict"] == OLLAMA_VISION_SETTINGS.ollama_num_predict
+    assert options["repeat_penalty"] == OLLAMA_VISION_SETTINGS.ollama_repeat_penalty
+
+
+def test_a_visual_request_sends_the_configured_think_flag(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"response": "A described diagram."})
+
+    provider = _ollama_vision_provider(monkeypatch, handler)
+    provider.describe_visual(
+        VALID_PNG_BYTES,
+        page_number=1,
+        visual_index=0,
+        suggested_type=VisualType.DIAGRAM,
+    )
+
+    assert captured["think"] is False

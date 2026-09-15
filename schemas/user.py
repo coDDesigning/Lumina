@@ -1,5 +1,6 @@
 import re
 from enum import Enum
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -32,6 +33,7 @@ class UserCreate(UserBase):
     """Schema for user registration payload."""
 
     password: str
+    policies_acknowledged: bool = False
 
     @field_validator("name")
     @classmethod
@@ -58,6 +60,13 @@ class PasswordChangeRequest(BaseModel):
 
     current_password: str = Field(min_length=1)
     new_password: str = Field(min_length=1, max_length=255)
+
+
+class AccountDeletionRequest(BaseModel):
+    """Re-authenticate and explicitly acknowledge permanent account erasure."""
+
+    current_password: str = Field(min_length=1, max_length=255)
+    confirmation: Literal["DELETE"]
 
 
 class UserResponse(UserBase):

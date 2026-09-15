@@ -134,6 +134,7 @@ module "ecs" {
   smtp_port                           = var.smtp_port
   smtp_username                       = var.smtp_username
   smtp_use_tls                        = var.smtp_use_tls
+  legal_policies_enabled              = var.legal_policies_enabled
   enable_hosted_ads                   = var.enable_hosted_ads
   hosted_ads_provider                 = var.hosted_ads_provider
   hosted_ads_publisher_id             = var.hosted_ads_publisher_id
@@ -168,6 +169,7 @@ module "github_oidc" {
     module.ecs.hosted_restore_task_definition_family,
   ]
   ecs_task_role_arn              = module.ecs.task_role_arn
+  api_task_role_arn              = module.ecs.api_task_role_arn
   ecs_execution_role_arn         = module.ecs.execution_role_arn
   restore_task_definition_family = module.ecs.hosted_restore_task_definition_family
   restore_task_role_arn          = module.ecs.restore_task_role_arn

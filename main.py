@@ -2,6 +2,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -10,14 +11,17 @@ from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.routing import get_route_path
 
 from backend.app.config import Settings, settings
 from backend.app.database import get_db
 from backend.app.observability import (
     bind_request_id,
+    bind_operation_context,
     configure_logging,
     normalize_request_id,
     reset_request_id,
+    reset_operation_context,
 )
 from backend.app.readiness import ReadinessError, check_readiness
 from backend.app.request_size import (
@@ -25,7 +29,16 @@ from backend.app.request_size import (
     RequestSizeLimitMiddleware,
 )
 from backend.app.security_headers import SecurityHeadersMiddleware
-from backend.app.spa import SinglePageApplication
+from backend.app.spa import (
+    API_PREFIX,
+    ROUTE_KIND_STATE_KEY,
+    Scope,
+    SPA_SHELL_PATH,
+    STATIC_FILE_PATH,
+    SinglePageApplication,
+    UNMATCHED_API_PATH,
+    UNMATCHED_PATH,
+)
 from routes import (
     activity,
     admin,
@@ -33,6 +46,7 @@ from routes import (
     ai_models,
     ai_tutor,
     auth,
+    client_error,
     conversation,
     course,
     course_qa,
@@ -43,6 +57,7 @@ from routes import (
     flashcard,
     generated_output,
     generation_job,
+    legal,
     profile_document,
     profile_knowledge,
     progress,
@@ -54,6 +69,7 @@ from routes import (
 )
 from storage.base import Storage
 from storage.dependencies import get_storage
+from utils.deps import AUTH_STATE_KEY, USER_ID_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +100,17 @@ def check_admin_bootstrap_security(app_settings: Settings | None = None) -> None
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    configure_logging(service="api", environment=settings.app_env)
+    configure_logging(
+        service="api",
+        environment=settings.app_env,
+        persistence_path=(
+            settings.operational_log_path
+            if settings.operational_log_persistence_enabled
+            else None
+        ),
+        retention_days=settings.operational_log_retention_days,
+        max_records=settings.operational_log_max_records,
+    )
     check_admin_bootstrap_security(settings)
     # Every configured vendor joins the fallback chain, so an operator must be
     # able to see which ones an outage would bill without guessing.
@@ -133,6 +159,7 @@ app.include_router(course.router)
 app.include_router(course_settings.router)
 app.include_router(progress.router)
 app.include_router(activity.router)
+app.include_router(client_error.router)
 app.include_router(admin.router)
 app.include_router(user.router)
 app.include_router(ai_models.router)
@@ -152,6 +179,7 @@ app.include_router(prompt_generator.router)
 app.include_router(ai_tutor.router)
 app.include_router(course_qa.router)
 app.include_router(ads.router)
+app.include_router(legal.router)
 app.add_exception_handler(
     RequestValidationError,
     document.upload_request_validation_error,
@@ -159,11 +187,91 @@ app.add_exception_handler(
 app.add_exception_handler(StarletteHTTPException, document.upload_http_error)
 
 
+MUTATION_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+UNLOGGED_PATHS = frozenset(
+    {"/health/live", "/health/ready", "/ads.txt", SPA_SHELL_PATH, STATIC_FILE_PATH}
+)
+SLOW_REQUEST_THRESHOLD_MS = 2000.0
+DEFAULT_ERROR_CODES = {
+    400: "bad_request",
+    401: "unauthenticated",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    408: "request_timeout",
+    409: "conflict",
+    413: "payload_too_large",
+    415: "unsupported_media_type",
+    422: "validation_failed",
+    429: "rate_limited",
+}
+
+
+def _should_log_request(
+    path: str, method: str, status_code: int, duration_ms: float
+) -> bool:
+    if status_code >= 500:
+        return True
+    if path in UNLOGGED_PATHS:
+        return False
+    if status_code >= 400 or duration_ms >= SLOW_REQUEST_THRESHOLD_MS:
+        return True
+    return method in MUTATION_METHODS
+
+
+def _request_error_code(response: Response) -> str | None:
+    header = response.headers.get("X-Error-Code")
+    if header:
+        return header
+    default = DEFAULT_ERROR_CODES.get(response.status_code)
+    if default is not None:
+        return default
+    return "server_error" if response.status_code >= 500 else None
+
+
+def _request_scope_fields(scope: Scope) -> dict[str, object]:
+    state = scope.get("state") or {}
+    path_params = scope.get("path_params") or {}
+    fields: dict[str, object] = {"auth_state": state.get(AUTH_STATE_KEY, "anonymous")}
+
+    user_id = state.get(USER_ID_KEY)
+    if isinstance(user_id, int):
+        fields["user_id"] = user_id
+
+    course_id = path_params.get("course_id")
+    if isinstance(course_id, str) and course_id.isdigit():
+        fields["course_id"] = int(course_id)
+    elif isinstance(course_id, int):
+        fields["course_id"] = course_id
+
+    document_id = path_params.get("document_id")
+    if isinstance(document_id, str) and document_id:
+        fields["document_id"] = document_id
+
+    return fields
+
+
 @app.middleware("http")
 async def observe_request(request: Request, call_next):
     request_id = normalize_request_id(request.headers.get("X-Request-ID"))
-    token = bind_request_id(request_id)
+    request_token = bind_request_id(request_id)
+    operation_token = bind_operation_context(operation_id=f"api:{uuid4().hex}")
     started = time.perf_counter()
+
+    def route_template() -> str:
+        scope = request.scope
+        route = scope.get("route")
+        path = getattr(route, "path", None)
+        if isinstance(path, str) and path.startswith("/"):
+            return path
+        kind = (scope.get("state") or {}).get(ROUTE_KIND_STATE_KEY)
+        if isinstance(kind, str):
+            return kind
+        route_path = get_route_path(scope)
+        if route_path == API_PREFIX or route_path.startswith(f"{API_PREFIX}/"):
+            return UNMATCHED_API_PATH
+        return UNMATCHED_PATH
+
     try:
         response = await call_next(request)
     except Exception as exc:
@@ -173,28 +281,53 @@ async def observe_request(request: Request, call_next):
                 "event": "http_request_failed",
                 "exception_type": type(exc).__name__,
                 "http_method": request.method,
-                "http_path": request.url.path,
+                "http_path": route_template(),
                 "http_status": 500,
                 "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                **_request_scope_fields(request.scope),
             },
+            exc_info=exc,
         )
         raise
     else:
         response.headers["X-Request-ID"] = request_id
-        logger.info(
-            "HTTP request completed",
-            extra={
-                "event": "http_request_completed",
-                "http_method": request.method,
-                "http_path": request.url.path,
-                "http_status": response.status_code,
-                "error_code": response.headers.get("X-Error-Code"),
-                "duration_ms": round((time.perf_counter() - started) * 1000, 3),
-            },
-        )
+        duration_ms = round((time.perf_counter() - started) * 1000, 3)
+        path = route_template()
+        if response.status_code >= 500:
+            event, log = "http_request_failed", logger.error
+        elif response.status_code == 429:
+            event, log = "http_request_rate_limited", logger.warning
+        elif response.status_code in {401, 403}:
+            event, log = "http_authorization_denied", logger.warning
+        elif response.status_code == 404:
+            event, log = "http_not_found", logger.info
+        elif response.status_code >= 400:
+            event, log = "http_validation_rejected", logger.info
+        elif duration_ms >= SLOW_REQUEST_THRESHOLD_MS:
+            event, log = "http_request_slow", logger.warning
+        else:
+            event, log = "http_request_completed", logger.info
+        if not _should_log_request(
+            path, request.method, response.status_code, duration_ms
+        ):
+            return response
+        content_length = response.headers.get("content-length")
+        extra: dict[str, object] = {
+            "event": event,
+            "http_method": request.method,
+            "http_path": path,
+            "http_status": response.status_code,
+            "error_code": _request_error_code(response),
+            "duration_ms": duration_ms,
+            **_request_scope_fields(request.scope),
+        }
+        if content_length is not None and content_length.isdigit():
+            extra["response_bytes"] = int(content_length)
+        log("HTTP request completed", extra=extra)
         return response
     finally:
-        reset_request_id(token)
+        reset_operation_context(operation_token)
+        reset_request_id(request_token)
 
 
 @app.get("/ads.txt", response_class=PlainTextResponse)
@@ -239,5 +372,11 @@ if settings.cors_allowed_origins:
         allow_credentials=False,
         allow_methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
         allow_headers=("Authorization", "Content-Type"),
-        expose_headers=("Retry-After", "X-Error-Code", "X-Request-ID"),
+        expose_headers=(
+            "Retry-After",
+            "X-Error-Code",
+            "X-Export-Record-Limit",
+            "X-Export-Truncated",
+            "X-Request-ID",
+        ),
     )

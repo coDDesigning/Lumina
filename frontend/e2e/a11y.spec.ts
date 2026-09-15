@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
-import { open } from './support'
+import { open, visit } from './support'
 
 /**
  * jsdom has no layout engine, so no component test can catch a contrast,
@@ -39,6 +39,7 @@ const ROUTES = [
   { name: 'account appearance', path: '/account/appearance' },
   { name: 'account security', path: '/account/security' },
   { name: 'the admin screen', path: '/admin' },
+  { name: 'the admin log center', path: '/admin/logs' },
   { name: 'Exam Mode', path: '/courses/1/exam-mode' },
   { name: 'an exam plan', path: '/courses/1/exam-mode/plans/601' },
   { name: 'an exam topic', path: '/courses/1/exam-mode/plans/601/topics/graph-traversal-algorithms' },
@@ -78,6 +79,24 @@ for (const route of ROUTES) {
     await open(page, route.path)
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
     await assertNoBlockingViolations(page, route.path)
+  })
+}
+
+const PUBLIC_LEGAL_ROUTES = [
+  '/legal/privacy',
+  '/legal/terms',
+  '/legal/acceptable-use',
+  '/legal/cookies',
+  '/legal/ai-disclosure',
+  '/legal/security',
+  '/legal/open-source',
+]
+
+for (const route of PUBLIC_LEGAL_ROUTES) {
+  test(`${route} has no serious accessibility violation while signed out`, async ({ page }) => {
+    await visit(page, route)
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+    await assertNoBlockingViolations(page, route)
   })
 }
 
@@ -153,6 +172,14 @@ const MODAL_FLOWS = [
     },
   },
   {
+    name: 'the operational event dialog',
+    path: '/admin/logs',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: 'http_request_failed', exact: true }).click()
+      await expect(page.getByRole('dialog', { name: 'Operational event' })).toBeVisible()
+    },
+  },
+  {
     name: 'the knowledge topic dialog',
     path: '/account/background',
     openModal: async (page: Page) => {
@@ -177,6 +204,14 @@ const MODAL_FLOWS = [
         .getByRole('button', { name: /^Remove / })
         .click()
       await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
+  {
+    name: 'the delete account confirmation dialog',
+    path: '/account/security',
+    openModal: async (page: Page) => {
+      await page.getByRole('button', { name: /^delete my account$/i }).click()
+      await expect(page.getByRole('dialog', { name: /permanently delete your account/i })).toBeVisible()
     },
   },
 ]

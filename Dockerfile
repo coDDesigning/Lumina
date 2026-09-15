@@ -29,7 +29,9 @@ COPY frontend/src ./src
 # the API. The application validates this at module scope and throws on a bad
 # value, which shows as a blank page.
 ARG VITE_API_BASE_URL=/api
-ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+ARG VITE_APP_VERSION=development
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} \
+    VITE_APP_VERSION=${VITE_APP_VERSION}
 
 # vite build rather than `npm run build`: the package script is `tsc -b && vite
 # build`, and tsc -b would follow the project reference above and drag the
@@ -40,6 +42,8 @@ RUN npx --no-install vite build \
 
 
 FROM python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -64,6 +68,9 @@ RUN apt-get update \
     && chmod 0750 /data /data/uploads /data/chroma
 
 WORKDIR /app
+
+COPY LICENSE SECURITY.md THIRD_PARTY_NOTICES.md /usr/share/doc/lumina/
+COPY THIRD_PARTY_LICENSES /usr/share/doc/lumina/THIRD_PARTY_LICENSES
 
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install \

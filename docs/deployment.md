@@ -31,11 +31,14 @@ Its first build stage compiles the interface with Vite and the second copies
 the result to `/opt/lumina/web`, outside `/app`, so one image carries both
 halves and there is no second image to keep in step.
 
-Compose runs three roles from that image in both topologies:
+Compose runs two runtime roles from that image. The self-hosted `lumina`
+service applies `alembic upgrade head`, `current --check-heads`, and `check`
+before it starts uvicorn, so there is no separate migrator service to wait on;
+the hosted topology keeps one, because several application containers share one
+PostgreSQL instance there.
 
 | Service | Responsibility | Expected state |
 | --- | --- | --- |
-| `migrate` | Apply `alembic upgrade head` once before runtime roles start | Exited with code 0 |
 | `lumina` | Serve the interface, the API, and the readiness probes | Running and healthy |
 | `lumina-worker` | Claim and process durable document jobs | Running and healthy |
 
@@ -128,15 +131,23 @@ docker compose ps --all
 curl --fail "http://127.0.0.1:${LUMINA_PORT:-10312}/health/ready"
 ```
 
-`up` rebuilds before starting, so a `git pull` cannot leave the previous image
-running; `--no-build` opts out. An operator deploying a prebuilt image tags it
-`lumina` and starts with `docker compose up --detach --no-build`.
+`up` runs the image named by `LUMINA_IMAGE`, which defaults to
+`ghcr.io/coddesigning/lumina:latest`, and does not pull it again once it is on
+the host. Run `docker compose pull lumina` before `up` to take a new release.
+Pin a release by setting `LUMINA_IMAGE` to
+`ghcr.io/coddesigning/lumina:<full commit SHA>`; the tag is the same release ID
+production uses. To run a build of the checkout instead, start with
+`docker compose up --build --detach --wait --wait-timeout 600`, and repeat
+`--build` after every `git pull` so the image cannot fall behind the code.
 
-Migration failure prevents dependent runtime roles from starting. A readiness
-failure makes `docker compose up --wait` return nonzero, but leaves containers
-available for inspection. Keep ingress closed until the command succeeds and
-`migrate` is exited with code 0 while both `lumina` and `lumina-worker` are
-healthy.
+Migration failure stops `lumina` before it serves, and `lumina-worker` waits on
+`lumina` being healthy, so it never starts against a schema that is behind. The
+service restart policy retries the whole startup, so a migration that cannot
+succeed leaves `lumina` restarting rather than exiting once; read
+`docker compose logs lumina` before retrying. A readiness failure makes
+`docker compose up --wait` return nonzero, but leaves containers available for
+inspection. Keep ingress closed until the command succeeds and both `lumina`
+and `lumina-worker` are healthy.
 Register `BOOTSTRAP_ADMIN_EMAIL` with the configured token in the
 `X-Bootstrap-Token` header over a trusted route before opening public ingress.
 
@@ -335,6 +346,10 @@ Application and worker logs are single-line privacy-safe JSON in CloudWatch
 Logs. Request IDs correlate API events; worker queue and outcome metrics use
 CloudWatch Embedded Metric Format. Terraform provisions the operations
 dashboard, SNS alarm topic, and baseline ALB/ECS/RDS/RDS Proxy/queue alarms.
+The API task receives the exact `/ecs/<project>-<environment>` group as
+`OPERATIONAL_LOG_CLOUDWATCH_GROUP` and a dedicated task role that can call
+`logs:FilterLogEvents` only against that group; workers do not receive the log
+read permission. This is the hosted source behind the administrator log center.
 Set the optional `alarm_email` Terraform variable and confirm the SNS
 subscription before launch. See `docs/observability.md` for the field contract,
 thresholds, and required staging alarm exercise.
@@ -346,6 +361,10 @@ push to `main` or through manual dispatch from `main`. The workflow authenticate
 GitHub OIDC role created by the `github-oidc` module, never with stored
 long-lived keys. It requires these repository environment variables and
 secrets on the `production` environment:
+
+Both the directly published frontend archive and the interface baked into the
+application image receive the same full commit SHA as `VITE_APP_VERSION`, so a
+sanitized browser error report identifies the release that produced it.
 
 | Setting | Source |
 | --- | --- |
@@ -432,14 +451,14 @@ plus 45 seconds.
 ```bash
 set -euo pipefail
 docker compose stop lumina lumina-worker
-docker compose run --rm --no-deps --entrypoint sh migrate -c 'test -s /data/lumina.db'
-docker compose run --rm --no-deps migrate
-docker compose up --detach --no-deps --wait --wait-timeout 600 lumina lumina-worker
+docker compose run --rm --no-deps --entrypoint sh lumina -c 'test -s /data/lumina.db'
+docker compose up --detach --wait --wait-timeout 600 lumina lumina-worker
 curl --fail "http://127.0.0.1:${LUMINA_PORT:-10312}/health/ready"
 ```
 
-Do not place migration commands in the API or worker startup path and do not run
-multiple migrators concurrently. If migration fails, keep the runtime roles
+`lumina` migrates on the way up and `lumina-worker` waits for it, so exactly one
+process applies the schema; do not add migration commands to the worker path or
+start a second migrator alongside. If migration fails, keep the runtime roles
 stopped and investigate before starting either role.
 
 ## Persistent state
@@ -464,13 +483,13 @@ longer exist, which `python -m workers.embedding_backfill --prune-orphans`
 resolves.
 
 After a storage or vector-store outage, `python -m workers.course_purge` finishes
-course deletions that answered `500` while it was down, and `python -m workers.embedding_backfill`
+account and course deletions that answered `500` while it was down, and `python -m workers.embedding_backfill`
 re-indexes missing vectors. In production, the background worker automatically executes
 both reconciliation tasks periodically on configured intervals (`COURSE_PURGE_INTERVAL_SECONDS`
 and `EMBEDDING_BACKFILL_INTERVAL_SECONDS`, defaulting to 1 hour), and rerunning them is always safe.
-On PostgreSQL, deleting one course (its documents, chunks, and vectors) runs under a
+On PostgreSQL, deleting one account or course (its documents, chunks, and vectors) runs under a
 transaction-local lock/statement timeout of `COURSE_PURGE_OPERATION_TIMEOUT_SECONDS`
-(default 300s) instead of the API request path's 5s cap, so a large course is not
+(default 300s) instead of the API request path's 5s cap, so a large purge is not
 aborted mid-delete by `QueryCanceled`.
 
 A hosted PostgreSQL deployment sets `VECTOR_BACKEND=pgvector` instead and stores

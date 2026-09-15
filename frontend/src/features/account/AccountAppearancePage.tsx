@@ -36,11 +36,12 @@ export default function AccountAppearancePage() {
         <section className={styles.section}>
           <h2 className={styles.sectionHeading}>Privacy & Advertising</h2>
           <p className={styles.sectionLede}>
-            Manage your preference for privacy-preserving, non-personalized advertising.
+            Choose whether the advertising provider may load in your browser. Declining keeps every
+            account and study feature available.
           </p>
           <Select
             label="Advertising preference"
-            value={consent === 'granted' ? 'allowed' : 'declined'}
+            value={consent === 'granted' ? 'allowed' : consent === 'denied' ? 'declined' : 'pending'}
             onChange={(event) => {
               if (event.target.value === 'allowed') {
                 grantConsent();
@@ -49,7 +50,10 @@ export default function AccountAppearancePage() {
               }
             }}
           >
-            <option value="allowed">Allow privacy-first ads</option>
+            <option value="pending" disabled>
+              Not chosen yet
+            </option>
+            <option value="allowed">Allow ads</option>
             <option value="declined">Decline ads</option>
           </Select>
         </section>

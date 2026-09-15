@@ -3,6 +3,7 @@ import type { ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/ui/Button';
 import { EmptyState } from '@/ui/EmptyState';
+import { reportClientError } from './clientErrorReporter';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -21,6 +22,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('Unhandled interface error', error, info.componentStack);
+    void reportClientError(error);
   }
 
   private handleReload = () => {

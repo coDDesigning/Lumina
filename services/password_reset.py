@@ -166,7 +166,12 @@ class PasswordResetService:
                 "Invalid or expired password reset link."
             )
 
-        user = db.scalar(select(User).where(User.id == user_id))
+        user = db.scalar(
+            select(User).where(
+                User.id == user_id,
+                User.deletion_requested_at.is_(None),
+            )
+        )
         if user is None:
             raise InvalidPasswordResetTokenError(
                 "Invalid or expired password reset link."
@@ -198,7 +203,14 @@ class PasswordResetService:
                 "Invalid or expired password reset link."
             )
 
-        user = db.scalar(select(User).where(User.id == claimed).with_for_update())
+        user = db.scalar(
+            select(User)
+            .where(
+                User.id == claimed,
+                User.deletion_requested_at.is_(None),
+            )
+            .with_for_update()
+        )
         if user is None:
             db.rollback()
             raise InvalidPasswordResetTokenError(

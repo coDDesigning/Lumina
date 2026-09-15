@@ -956,3 +956,26 @@ def test_syllabus_extraction_accepts_bodies_above_the_plain_request_limit(
 
     assert response.status_code == 200
     assert response.json()["data"]["text"].startswith("Week 1: Limits")
+
+
+def test_every_upload_refusal_carries_its_code_in_the_header_too(upload_api) -> None:
+    from services.document_validation import UPLOAD_ERRORS, upload_error_response
+
+    assert UPLOAD_ERRORS
+
+    for error_key, error in UPLOAD_ERRORS.items():
+        response = upload_error_response(error_key)
+        assert response.headers["X-Error-Code"] == error["code"], error_key
+        assert response.status_code == error["status_code"], error_key
+
+
+def test_a_rejected_upload_reaches_the_client_with_its_code(upload_api) -> None:
+    response = upload_api.client.post(
+        f"/api/courses/{upload_api.course_id}/documents",
+        headers=upload_api.authorization,
+        files={"document": ("notes.exe", b"MZ binary", "application/octet-stream")},
+    )
+
+    assert response.status_code == 415
+    assert response.headers["X-Error-Code"] == "UPLOAD_UNSUPPORTED_FILE_TYPE"
+    assert response.json()["data"]["code"] == "UPLOAD_UNSUPPORTED_FILE_TYPE"

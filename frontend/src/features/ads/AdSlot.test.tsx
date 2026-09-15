@@ -52,6 +52,32 @@ describe('AdSlot component & privacy boundaries', () => {
     expect(mockRecordTelemetry).not.toHaveBeenCalled();
   });
 
+  it('loads no AdSense script before consent is granted', async () => {
+    mockGetConfig.mockResolvedValue({
+      enabled: true,
+      provider: 'adsense',
+      publisher_id: 'ca-pub-0000000000000000',
+    });
+
+    render(<AdSlot placement="sidebar" />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockGetConfig).toHaveBeenCalled();
+    expect(document.querySelector('script[src*="googlesyndication"]')).toBeNull();
+    expect(document.querySelector('ins.adsbygoogle')).toBeNull();
+    expect(mockRecordTelemetry).not.toHaveBeenCalled();
+  });
+
+  it('ships no advertising script in the HTML shell', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const shell = readFileSync(resolve(__dirname, '../../../index.html'), 'utf-8');
+
+    expect(shell).not.toMatch(/googlesyndication|adsbygoogle|ethicalads/i);
+  });
+
   it('injects allowed provider script and mounts ad slot when consent is granted', async () => {
     localStorage.setItem(AD_CONSENT_STORAGE_KEY, 'granted');
     mockGetConfig.mockResolvedValue({

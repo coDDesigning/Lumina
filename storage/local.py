@@ -1,5 +1,6 @@
 """Local filesystem document storage."""
 
+import logging
 import os
 import stat
 import tempfile
@@ -15,6 +16,8 @@ from storage.base import (
     generate_portable_key,
     validate_portable_key,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CHUNK_SIZE = 1024 * 1024
 DIRECTORY_CREATE_ATTEMPTS = 3
@@ -173,8 +176,16 @@ class LocalStorage(Storage):
         except StorageError:
             raise
         except OSError as exc:
+            logger.exception(
+                "Failed to delete a stored document",
+                extra={"event": "stored_document_delete_failed", "provider": "local"},
+            )
             raise StorageError("Unable to delete stored document.") from exc
 
+        logger.info(
+            "Deleted a stored document",
+            extra={"event": "stored_document_deleted", "provider": "local"},
+        )
         self._prune_document_directory(path.parent)
 
     def _prune_document_directory(self, directory: Path) -> None:

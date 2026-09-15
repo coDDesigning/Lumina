@@ -7,6 +7,8 @@ import { BrandLockup } from '@/ui/Brandmark';
 import { Breath } from '@/ui/Breath';
 import { CourseChip, CourseLight } from '@/ui/CourseLight';
 import { ExternalLinkButton, LinkButton } from '@/ui/LinkButton';
+import { LegalFooter } from '@/features/legal/LegalFooter';
+import { useLegalPolicies } from '@/features/legal/useLegalPolicies';
 import styles from './LandingPage.module.css';
 
 const PIPELINE = [
@@ -61,6 +63,7 @@ const CAPABILITIES = [
 
 export default function LandingPage() {
   const { isAuthenticated, isLoading } = useAuth();
+  const legalPolicies = useLegalPolicies();
   useDocumentTitle(undefined);
 
   if (isLoading) {
@@ -207,22 +210,38 @@ export default function LandingPage() {
         <p className={styles.eyebrow}>Privacy & Data Protection</p>
         <h2 className={styles.sectionTitle}>Your data stays yours.</h2>
         <p className={styles.sectionLede}>
-          Lumina is designed with strict privacy boundaries: your course material is isolated per course,
-          never shared across accounts, and never used to train third-party AI models. When self-hosted,
-          everything stays completely on your own machine.
+          Lumina isolates course material by account and course. Hosted AI requests can send relevant
+          material to the configured provider. A self-hosted deployment can keep inference local when it
+          uses a local model without an external fallback.
+          {legalPolicies.enabled ? (
+            <>
+              {' '}Read the <Link to="/legal/privacy">Privacy Notice</Link> for the exact data flow.
+            </>
+          ) : null}
+        </p>
+        <p className={styles.sectionLede}>
+          You can permanently delete your account from Account &gt; Security. Access is revoked
+          immediately, while database records, source files, and search vectors are removed by a
+          retrying cleanup process. Privacy-safe operational records and backups expire under bounded
+          deployment retention policies rather than being erased immediately; hosted noncurrent object
+          versions can remain for up to 90 days, and self-hosted operators control their backup copies.
         </p>
       </section>
 
-      <footer className={styles.footer}>
-        <div className={styles.footerInner}>
-          <span>Lumina</span>
-          <span className={styles.footerLinks}>
-            <a href="https://github.com/coDDesigning/Lumina" target="_blank" rel="noopener noreferrer">
-              GitHub
-            </a>
-          </span>
-        </div>
-      </footer>
+      {legalPolicies.enabled ? (
+        <LegalFooter />
+      ) : (
+        <footer className={styles.footer}>
+          <div className={styles.footerInner}>
+            <span>Lumina</span>
+            <span className={styles.footerLinks}>
+              <a href="https://github.com/coDDesigning/Lumina" target="_blank" rel="noopener noreferrer">
+                GitHub
+              </a>
+            </span>
+          </div>
+        </footer>
+      )}
     </div>
   );
 }

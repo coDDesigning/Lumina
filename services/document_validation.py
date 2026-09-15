@@ -183,6 +183,7 @@ def upload_error_response(error_key: str) -> JSONResponse:
             "message": error["message"],
             "data": {"code": error["code"]},
         },
+        headers={"X-Error-Code": error["code"]},
     )
 
 

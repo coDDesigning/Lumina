@@ -14,7 +14,7 @@ export const VISUAL_STATUS_LABELS: Record<DocumentVisualAnalysisStatus, string> 
   not_applicable: '',
   pending: 'Analyzing visuals',
   not_configured: 'Visual analysis disabled',
-  completed: 'Visuals indexed',
+  completed: '',
   partial: 'Partial visuals',
   failed: 'Visual analysis failed',
 };
@@ -22,7 +22,7 @@ export const VISUAL_STATUS_LABELS: Record<DocumentVisualAnalysisStatus, string> 
 export function visualAnalysisStatusLabel(
   status: string | null | undefined,
 ): string | null {
-  if (!status || status === 'not_applicable') {
+  if (!status || status === 'not_applicable' || status === 'completed') {
     return null;
   }
   return VISUAL_STATUS_LABELS[status as DocumentVisualAnalysisStatus] ?? humanizeToken(status);

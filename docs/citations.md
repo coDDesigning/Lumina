@@ -118,7 +118,11 @@ Citation keys, labels, and text never reach logs or usage telemetry.
 `resolve_citations` logs a **count** of dropped keys and nothing else, the
 `AiUsageLog` column set is unchanged, and `_ALLOWED_FIELDS` in
 `backend/app/observability.py` is pinned by a test so a citation cannot reach a
-log record through a new structured field. `tests/test_privacy_telemetry.py`
+log record through a new structured field. The AI failure diagnostics added for
+SCRUM-206 report a rejected response's top-level key names and pydantic `loc`
+components, both of which are model output; `utils/ai_diagnostics.py` emits them
+only when they match `^[a-z][a-z0-9_]{0,39}$` and masks anything else as `*`, so
+a citation key or label cannot reach a log through that route either. `tests/test_privacy_telemetry.py`
 embeds a marker in the file name as well as the chunk, because the label is
 derived from the file name.
 

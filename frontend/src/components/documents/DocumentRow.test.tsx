@@ -237,7 +237,6 @@ describe('DocumentRow', () => {
   });
 
   it.each([
-    ['completed', 'Visuals indexed'],
     ['not_configured', 'Visual analysis disabled'],
     ['pending', 'Analyzing visuals'],
     ['partial', 'Partial visuals'],
@@ -250,6 +249,16 @@ describe('DocumentRow', () => {
     });
 
     expect(screen.getByText(expectedLabel)).toBeInTheDocument();
+  });
+
+  it('says nothing once every visual has been described', () => {
+    const row = entry('ready');
+    renderRow({
+      ...row,
+      document: { ...row.document, visual_analysis_status: 'completed' },
+    });
+
+    expect(screen.queryByText(/visual/i)).toBeNull();
   });
 
   it('keeps not_applicable visually quiet for text-only documents', () => {

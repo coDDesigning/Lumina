@@ -8,8 +8,10 @@ import { useQuery } from '@/lib/query/useQuery';
 import { useAuth } from '@/context/AuthContext';
 import { Alert } from '@/ui/Alert';
 import { Button } from '@/ui/Button';
+import { Checkbox } from '@/ui/Checkbox';
 import { Input } from '@/ui/Input';
 import { PasswordInput } from '@/ui/PasswordInput';
+import { useLegalPolicies } from '@/features/legal/useLegalPolicies';
 import { AuthLayout } from './AuthLayout';
 import { ResendVerification } from './ResendVerification';
 import styles from './AuthLayout.module.css';
@@ -23,6 +25,7 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [policiesAcknowledged, setPoliciesAcknowledged] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -35,6 +38,7 @@ export default function RegisterPage() {
   } | null>(null);
 
   const { login } = useAuth();
+  const legalPolicies = useLegalPolicies();
   const navigate = useNavigate();
   // The rule is configurable, so it is read rather than assumed. Until it
   // arrives the form states no rule and imposes no length of its own: the
@@ -68,7 +72,12 @@ export default function RegisterPage() {
     setIsSubmitting(true);
 
     try {
-      const registration = await authAPI.register(name.trim(), email.trim(), password);
+      const registration = await authAPI.register(
+        name.trim(),
+        email.trim(),
+        password,
+        legalPolicies.enabled && policiesAcknowledged,
+      );
       const session = await authAPI.login(email.trim(), password);
       await login(session.access_token);
 
@@ -171,6 +180,24 @@ export default function RegisterPage() {
           disabled={isSubmitting}
           error={passwordError ?? undefined}
         />
+
+        {legalPolicies.enabled ? (
+          <Checkbox
+          required
+          name="legal-acknowledgement"
+          checked={policiesAcknowledged}
+          onChange={(event) => setPoliciesAcknowledged(event.target.checked)}
+          disabled={isSubmitting}
+          label={
+            <>
+              By creating an account, you agree to the{' '}
+              <Link to="/legal/terms">Terms of Service</Link> and acknowledge the{' '}
+              <Link to="/legal/privacy">Privacy Notice</Link>.
+            </>
+          }
+          description="This is not consent to optional advertising or analytics."
+          />
+        ) : null}
 
         <Button
           type="submit"

@@ -18,10 +18,11 @@ import os
 import socket
 from collections.abc import Generator, Iterable
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -187,20 +188,38 @@ def acquire_generation_locks(
             )
 
 
+@dataclass(frozen=True, slots=True)
+class GenerationLockHold:
+    holder: str
+    acquired_at: datetime
+    expires_at: datetime
+
+
+def active_generation_lock(db: Session, document_id: UUID) -> GenerationLockHold | None:
+    now = datetime.now(timezone.utc)
+    row = db.execute(
+        select(
+            DocumentGenerationLock.holder,
+            DocumentGenerationLock.acquired_at,
+            DocumentGenerationLock.expires_at,
+        )
+        .where(
+            DocumentGenerationLock.document_id == document_id,
+            DocumentGenerationLock.expires_at > now,
+        )
+        .order_by(DocumentGenerationLock.expires_at.desc())
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    return GenerationLockHold(
+        holder=row.holder, acquired_at=row.acquired_at, expires_at=row.expires_at
+    )
+
+
 def is_document_locked_for_generation(db: Session, document_id: UUID) -> bool:
     """Report whether any live generation, in any process, is reading the document."""
-    now = datetime.now(timezone.utc)
-    return (
-        db.scalar(
-            select(func.count())
-            .select_from(DocumentGenerationLock)
-            .where(
-                DocumentGenerationLock.document_id == document_id,
-                DocumentGenerationLock.expires_at > now,
-            )
-        )
-        or 0
-    ) > 0
+    return active_generation_lock(db, document_id) is not None
 
 
 def release_expired_generation_locks(db: Session) -> int:

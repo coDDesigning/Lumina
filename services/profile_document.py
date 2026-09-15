@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from backend.app.database import begin_serialized_write
 from backend.app.models import (
@@ -56,7 +56,12 @@ class ProfileDocumentService:
         user_id: int,
     ) -> ProfileDocumentUploadResult:
         try:
-            user_exists = db.scalar(select(User.id).where(User.id == user_id))
+            user_exists = db.scalar(
+                select(User.id).where(
+                    User.id == user_id,
+                    User.deletion_requested_at.is_(None),
+                )
+            )
         except SQLAlchemyError as exc:
             raise ProfileDocumentRegistrationError from exc
 
@@ -132,7 +137,12 @@ class ProfileDocumentService:
         try:
             begin_serialized_write(db)
             user_exists = db.scalar(
-                select(User.id).where(User.id == user_id).with_for_update()
+                select(User.id)
+                .where(
+                    User.id == user_id,
+                    User.deletion_requested_at.is_(None),
+                )
+                .with_for_update()
             )
         except SQLAlchemyError as exc:
             ProfileDocumentService._rollback_and_remove(db, storage, storage_key)
@@ -157,9 +167,20 @@ class ProfileDocumentService:
 
         try:
             db.add(document)
-            enqueue_profile_document_job(db, document)
+            job = enqueue_profile_document_job(db, document)
             db.commit()
             db.refresh(document)
+            logger.info(
+                "Profile document processing job enqueued",
+                extra={
+                    "event": "processing_job_enqueued",
+                    "job_id": job.id,
+                    "job_type": "profile_document_processing",
+                    "job_status": "queued",
+                    "document_id": str(document.id),
+                    "user_id": user_id,
+                },
+            )
             return ProfileDocumentUploadResult(document=document, duplicate=False)
         except IntegrityError:
             ProfileDocumentService._rollback_and_remove(db, storage, storage_key)
@@ -197,6 +218,7 @@ class ProfileDocumentService:
     def list_user_documents(db: Session, user_id: int) -> Sequence[ProfileDocument]:
         return db.scalars(
             select(ProfileDocument)
+            .options(selectinload(ProfileDocument.pages))
             .where(
                 ProfileDocument.user_id == user_id,
                 ProfileDocument.status != "deleting",

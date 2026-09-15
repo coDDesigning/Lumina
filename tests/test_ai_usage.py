@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 
 from sqlalchemy import select
@@ -191,6 +192,7 @@ def test_failed_event_with_token_counts_is_left_unpriced(
 def test_log_failure_persists_categorical_error(
     session_factory: sessionmaker[Session],
 ) -> None:
+    """Called without metadata, so the token counts stay empty by construction."""
     with session_factory() as session:
         user, course = _create_user_and_course(session)
 
@@ -309,3 +311,95 @@ def test_explicit_provider_overrides_configured_identity(
         assert log is not None
         assert log.provider == "gemini"
         assert log.model == "gemini-2.5-flash"
+
+
+def test_log_failure_unpacks_metadata_like_log_success(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """SCRUM-206: a billed generation that then failed still reports its tokens."""
+    with session_factory() as session:
+        user, course = _create_user_and_course(session)
+
+        log = AiUsageLogger.log_failure(
+            session,
+            user_id=user.id,
+            course_id=course.id,
+            generation_type=GenerationType.QUIZ,
+            error_category=ErrorCategory.INVALID_STRUCTURE,
+            metadata=GenerationMetadata(
+                provider="ollama",
+                model="llama3",
+                prompt_tokens=42,
+                completion_tokens=84,
+                total_tokens=126,
+                latency_ms=250,
+            ),
+        )
+        session.commit()
+
+        assert log is not None
+        log_id = log.id
+
+    with session_factory() as session:
+        persisted = session.get(AiUsageLog, log_id)
+        assert persisted is not None
+        assert persisted.provider == "ollama"
+        assert persisted.model == "llama3"
+        assert persisted.prompt_tokens == 42
+        assert persisted.completion_tokens == 84
+        assert persisted.total_tokens == 126
+        assert persisted.latency_ms == 250
+        assert persisted.success is False
+
+
+def test_a_failure_without_a_user_is_logged_but_not_persisted(
+    session_factory: sessionmaker[Session],
+    caplog,
+) -> None:
+    """SCRUM-206: an anonymous failure is still diagnosable; only the row needs a user."""
+    with session_factory() as session:
+        rows_before = len(session.scalars(select(AiUsageLog)).all())
+
+    with caplog.at_level(logging.WARNING, logger="services.ai_usage_logger"):
+        with session_factory() as session:
+            result = AiUsageLogger.log_failure(
+                session,
+                user_id=None,
+                generation_type=GenerationType.PROMPT_GENERATOR,
+                error_category=ErrorCategory.INVALID_STRUCTURE,
+                response={"unexpected": 1},
+            )
+            session.commit()
+
+    assert result is None
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].generation_type == "prompt_generator"
+    assert failures[0].ai_response_keys == ["unexpected"]
+    assert not any(
+        "Skipping AI usage log" in record.getMessage() for record in caplog.records
+    )
+
+    with session_factory() as session:
+        assert len(session.scalars(select(AiUsageLog)).all()) == rows_before
+
+
+def test_a_failure_without_a_session_is_still_logged(caplog) -> None:
+    """SCRUM-206: prompt generation runs with db=None and must not lose its failures."""
+    with caplog.at_level(logging.WARNING, logger="services.ai_usage_logger"):
+        result = AiUsageLogger.log_failure(
+            None,
+            user_id=7,
+            generation_type=GenerationType.PROMPT_GENERATOR,
+            error_category=ErrorCategory.PROVIDER_ERROR,
+        )
+
+    assert result is None
+    assert any(
+        getattr(record, "event", None) == "ai_generation_failed"
+        for record in caplog.records
+    )

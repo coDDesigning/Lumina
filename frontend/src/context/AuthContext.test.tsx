@@ -127,6 +127,21 @@ describe('AuthContext', () => {
     expect(result.current.user).toBeNull();
   });
 
+  it('clears a deleted account locally without calling the logout endpoint', async () => {
+    localStorage.setItem('token', 'account-being-deleted');
+    mockMe.mockResolvedValueOnce(createMockUser());
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }) => <AuthProvider>{children}</AuthProvider>,
+    });
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+
+    await act(async () => result.current.logout({ remote: false }));
+
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(result.current.user).toBeNull();
+    expect(authAPI.logout).not.toHaveBeenCalled();
+  });
+
   it('does not restore a stale account after a newer login completes', async () => {
     const firstUser = createMockUser({ id: 1, name: 'First account' });
     const secondUser = createMockUser({ id: 2, name: 'Second account' });

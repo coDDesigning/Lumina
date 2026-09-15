@@ -10,6 +10,7 @@ import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';
 import { Dialog } from '@/ui/Dialog';
 import { GenerationError, NoMaterialNotice, SetupPanel } from './GenerationStates';
+import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 
 export interface FlashcardModalProps {
   courseId: number;
@@ -94,12 +95,15 @@ export function FlashcardModal({
     >
       <SetupPanel lede="A deck of question-and-answer cards drawn from the material you have uploaded. Flip through them, shuffle, and go again.">
         {hasMaterial ? (
-          <Checkbox
-            label="Use my study profile"
-            description="Adds your background as supporting context. Your course material stays primary."
-            checked={includeProfileContext}
-            onChange={(event) => setIncludeProfileContext(event.target.checked)}
-          />
+          <>
+            <Checkbox
+              label="Use my study profile"
+              description="Adds your background as supporting context. Your course material stays primary."
+              checked={includeProfileContext}
+              onChange={(event) => setIncludeProfileContext(event.target.checked)}
+            />
+            <AiDisclosureNotice />
+          </>
         ) : (
           <NoMaterialNotice what="A deck" />
         )}

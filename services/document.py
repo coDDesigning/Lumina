@@ -4,6 +4,7 @@ import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
@@ -18,11 +19,12 @@ from backend.app.models import (
     Course,
     ProcessingJob,
     UploadedDocument,
+    User,
 )
 from backend.app.repositories.document import DocumentRepository
 from schemas.prompt_context import DocumentMaterialKind
 from services.document_hash import calculate_file_hash
-from services.document_lock import is_document_locked_for_generation
+from services.document_lock import active_generation_lock
 from services.document_pipeline import extract_raw_document
 from services.document_validation import (
     DocumentValidationError,
@@ -58,6 +60,13 @@ class CourseDocumentLimitError(Exception):
 class DocumentActiveError(Exception):
     """An active document cannot be deleted."""
 
+    def __init__(
+        self, reason: str, *, lease_expires_at: datetime | None = None
+    ) -> None:
+        self.reason = reason
+        self.lease_expires_at = lease_expires_at
+        super().__init__(reason)
+
 
 class DocumentDeletionInProgressError(Exception):
     """A matching document is already being deleted."""
@@ -65,6 +74,10 @@ class DocumentDeletionInProgressError(Exception):
 
 class DocumentDeletionError(Exception):
     """A document could not be deleted safely."""
+
+
+class DocumentStorageProviderMismatchError(DocumentDeletionError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,9 +131,11 @@ class DocumentService:
             begin_serialized_write(db)
             active_course = db.scalar(
                 select(Course.id)
+                .join(User, User.id == Course.owner_id)
                 .where(
                     Course.id == course_id,
                     Course.is_deleted.is_(False),
+                    User.deletion_requested_at.is_(None),
                 )
                 .with_for_update()
             )
@@ -183,9 +198,11 @@ class DocumentService:
             begin_serialized_write(db)
             active_course = db.scalar(
                 select(Course.id)
+                .join(User, User.id == Course.owner_id)
                 .where(
                     Course.id == course_id,
                     Course.is_deleted.is_(False),
+                    User.deletion_requested_at.is_(None),
                 )
                 .with_for_update()
             )
@@ -231,7 +248,7 @@ class DocumentService:
                 status="uploaded",
                 material_kind=DocumentMaterialKind(material_kind).value,
             )
-            enqueue_document_job(db, document)
+            job = enqueue_document_job(db, document)
             db.refresh(document)
         except (IntegrityError, OperationalError) as exc:
             DocumentService._rollback_and_remove(db, storage, storage_key)
@@ -258,6 +275,18 @@ class DocumentService:
                 file_hash,
                 exc,
             )
+        logger.info(
+            "Document processing job enqueued",
+            extra={
+                "event": "processing_job_enqueued",
+                "job_id": job.id,
+                "job_type": "course_document_processing",
+                "job_status": "queued",
+                "document_id": str(document.id),
+                "course_id": course_id,
+                "user_id": user_id,
+            },
+        )
         return DocumentUploadResult(document=document, duplicate=False)
 
     @staticmethod
@@ -332,7 +361,9 @@ class DocumentService:
             )
         ).one_or_none()
         if row is None:
-            raise NotFoundException("Document not found")
+            raise NotFoundException(
+                "Document not found", error_code="document_not_found"
+            )
         return row
 
     @staticmethod
@@ -344,9 +375,13 @@ class DocumentService:
         try:
             result = retry_failed_job(db, document_id, course_id)
         except ProcessingJobStateError as exc:
-            raise ConflictException(str(exc)) from exc
+            raise ConflictException(
+                str(exc), error_code="document_not_retryable"
+            ) from exc
         if result is None:
-            raise NotFoundException("Document not found")
+            raise NotFoundException(
+                "Document not found", error_code="document_not_found"
+            )
         return result
 
     @staticmethod
@@ -376,7 +411,9 @@ class DocumentService:
                 course_statement = course_statement.with_for_update(of=Course)
             if db.scalar(course_statement) is None:
                 db.rollback()
-                raise NotFoundException("Document not found")
+                raise NotFoundException(
+                    "Document not found", error_code="document_not_found"
+                )
 
             statement = (
                 select(UploadedDocument, ProcessingJob)
@@ -388,28 +425,40 @@ class DocumentService:
                 .where(
                     UploadedDocument.id == document_id,
                     UploadedDocument.course_id == course_id,
-                    ProcessingJob.job_type == JOB_TYPE_EXTRACT_DOCUMENT,
                 )
             )
             if db.get_bind().dialect.name == "postgresql":
                 statement = statement.with_for_update(
                     of=(ProcessingJob, UploadedDocument)
                 )
-            row = db.execute(statement).one_or_none()
+            rows = db.execute(statement).all()
         except SQLAlchemyError as exc:
             raise DocumentDeletionError from exc
 
-        if row is None:
+        if not rows:
             db.rollback()
-            raise NotFoundException("Document not found")
-        document, job = row
-        job_is_active = (job.status in {"queued", "running"}) if not force else False
-        if job_is_active or is_document_locked_for_generation(db, document_id):
+            raise NotFoundException(
+                "Document not found", error_code="document_not_found"
+            )
+        document = rows[0][0]
+        jobs = [job for _, job in rows]
+        job_is_active = (
+            any(job.status in {"queued", "running"} for job in jobs)
+            if not force
+            else False
+        )
+        if job_is_active:
             db.rollback()
-            raise DocumentActiveError
+            raise DocumentActiveError("processing_job_active")
+        hold = active_generation_lock(db, document_id)
+        if hold is not None:
+            db.rollback()
+            raise DocumentActiveError(
+                "generation_in_progress", lease_expires_at=hold.expires_at
+            )
         if document.storage_provider != storage.provider:
             db.rollback()
-            raise DocumentDeletionError
+            raise DocumentStorageProviderMismatchError
 
         storage_provider = document.storage_provider
         storage_key = document.storage_key

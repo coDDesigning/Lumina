@@ -441,10 +441,7 @@ class ExamSourceAnalysisService:
                 error_category=category,
                 **extra,
             )
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+            AiUsageLogger.commit(db)
 
         selected = cls.resolve_selected_documents(db, course_id, request.document_ids)
 
@@ -531,7 +528,8 @@ class ExamSourceAnalysisService:
             except TextGenerationError as exc:
                 CreditService.refund(db, receipt)
                 log_failure(
-                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
+                    getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR),
+                    exc=exc,
                 )
                 raise ExamModeError("Text generation provider failed.") from exc
             except Exception:
@@ -544,7 +542,9 @@ class ExamSourceAnalysisService:
                 CreditService.refund(db, receipt)
                 log_failure(
                     ErrorCategory.INVALID_STRUCTURE,
-                    latency_ms=metadata.latency_ms if metadata else None,
+                    metadata=metadata,
+                    response=result,
+                    exc=exc,
                 )
                 raise InvalidExamAnalysisStructureError(
                     "Generated exam analysis has an invalid structure."

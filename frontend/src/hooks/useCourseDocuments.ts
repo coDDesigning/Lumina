@@ -150,11 +150,12 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
         previous.map((entry) => {
           if (entry.document.id !== documentId) return entry;
           if (!isNewer(status.document, entry.document)) return entry;
+          const moved = status.document.status !== entry.document.status;
           return {
             ...entry,
             document: status.document,
             job: status.processing_job,
-            error: null,
+            error: moved ? null : entry.error,
           };
         }),
       );

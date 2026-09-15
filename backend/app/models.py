@@ -42,6 +42,9 @@ _CONVERSATION_TYPES_SQL = ", ".join(f"'{kind}'" for kind in CONVERSATION_TYPES)
 # Image uploads are transcoded to a one-page PDF by the processing pipeline;
 # kept in sync with `_VISUAL_CAPABLE_FILE_TYPES` in services/document_pipeline.py.
 VISUAL_CAPABLE_FILE_TYPES = ("pdf", "png", "jpg", "jpeg")
+# An image upload is transcoded into a one-page PDF before extraction, so it
+# carries page numbers and chunk page ranges exactly as a PDF does.
+IMAGE_UPLOAD_FILE_TYPES = ("png", "jpg", "jpeg")
 
 EDUCATION_LEVELS = (
     "high_school",
@@ -150,6 +153,12 @@ _EXAM_QUESTION_DIFFICULTIES_SQL = ", ".join(
 )
 
 JOB_TYPE_EXTRACT_DOCUMENT = "extract_document"
+JOB_TYPE_DESCRIBE_VISUALS = "describe_visuals"
+DOCUMENT_JOB_TYPES = (
+    JOB_TYPE_EXTRACT_DOCUMENT,
+    JOB_TYPE_DESCRIBE_VISUALS,
+)
+_DOCUMENT_JOB_TYPES_SQL = ", ".join(f"'{kind}'" for kind in DOCUMENT_JOB_TYPES)
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_RUNNING = "running"
 JOB_STATUS_SUCCEEDED = "succeeded"
@@ -286,6 +295,18 @@ class User(Base):
     tokens_valid_after: Mapped[datetime | None] = mapped_column(
         UTCDateTime(), nullable=True
     )
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True, index=True
+    )
+    deletion_attempt_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    deletion_last_attempt_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime(), nullable=True
+    )
+    deletion_last_error_code: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
     education_level: Mapped[str] = mapped_column(
         String(20), default="unspecified", server_default="unspecified"
     )
@@ -376,6 +397,36 @@ class User(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+    policy_acknowledgements: Mapped[list["PolicyAcknowledgement"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class PolicyAcknowledgement(Base):
+    __tablename__ = "policy_acknowledgements"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "policy_key",
+            "policy_version",
+            name="uq_policy_acknowledgements_user_policy_version",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    policy_key: Mapped[str] = mapped_column(String(50))
+    policy_version: Mapped[str] = mapped_column(String(20))
+    acknowledged_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="policy_acknowledgements")
 
 
 class EmailVerificationToken(Base):
@@ -1054,7 +1105,7 @@ class ProcessingJob(Base):
             "document_id", "job_type", name="uq_processing_jobs_document_type"
         ),
         CheckConstraint(
-            f"job_type = '{JOB_TYPE_EXTRACT_DOCUMENT}'", name="job_type_valid"
+            f"job_type IN ({_DOCUMENT_JOB_TYPES_SQL})", name="job_type_valid"
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed')",
@@ -1122,6 +1173,7 @@ class ProcessingJob(Base):
         Index("ix_processing_jobs_claimable", "status", "available_at", "id"),
         Index("ix_processing_jobs_recoverable", "status", "lease_expires_at", "id"),
         Index("ix_processing_jobs_course_created", "course_id", "created_at"),
+        Index("ix_processing_jobs_parent_operation", "parent_operation_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -1129,6 +1181,7 @@ class ProcessingJob(Base):
     course_id: Mapped[int] = mapped_column(Integer)
     job_type: Mapped[str] = mapped_column(String(50))
     correlation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parent_operation_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), default=JOB_STATUS_QUEUED, server_default=JOB_STATUS_QUEUED
     )
@@ -1367,6 +1420,7 @@ class GenerationJob(Base):
         Index("ix_generation_jobs_recoverable", "status", "lease_expires_at", "id"),
         Index("ix_generation_jobs_course_created", "course_id", "created_at", "id"),
         Index("ix_generation_jobs_user_status", "user_id", "status"),
+        Index("ix_generation_jobs_parent_operation", "parent_operation_id"),
         UniqueConstraint("retry_of_job_id", name="uq_generation_jobs_retry_of_job_id"),
     )
 
@@ -1384,6 +1438,7 @@ class GenerationJob(Base):
 
     job_type: Mapped[str] = mapped_column(String(50))
     correlation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parent_operation_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     # The validated request, serialised by the feature's own schema, so the
     # worker rebuilds exactly what the caller asked for.
@@ -2469,6 +2524,7 @@ class AiUsageLog(Base):
         Index("ix_ai_usage_logs_course_created", "course_id", "created_at"),
         Index("ix_ai_usage_logs_type_created", "generation_type", "created_at"),
         Index("ix_ai_usage_logs_success_created", "success", "created_at"),
+        Index("ix_ai_usage_logs_operation_created", "operation_id", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -2487,6 +2543,11 @@ class AiUsageLog(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     success: Mapped[bool] = mapped_column(Boolean)
     error_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    operation_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    job_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    attempt_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     estimated_cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     pricing_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -2720,6 +2781,40 @@ class ProfileDocument(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+    @property
+    def visual_analysis_status(self) -> str:
+        pages = None
+        try:
+            insp = inspect(self)
+            if insp is not None and "pages" not in insp.unloaded:
+                pages = self.pages
+        except Exception:
+            pages = getattr(self, "__dict__", {}).get("pages")
+
+        if not pages:
+            if self.file_type not in VISUAL_CAPABLE_FILE_TYPES:
+                return "not_applicable"
+            if self.status in ("uploaded", "processing"):
+                return "pending"
+            return "not_applicable"
+
+        visual_pages = [p for p in pages if getattr(p, "has_visual_content", False)]
+        if not visual_pages:
+            return "not_applicable"
+
+        statuses = {
+            getattr(p, "visual_analysis_status", "not_applicable") for p in visual_pages
+        }
+        if "pending" in statuses:
+            return "pending"
+        if statuses == {"completed"}:
+            return "completed"
+        if statuses == {"not_configured"}:
+            return "not_configured"
+        if statuses == {"failed"}:
+            return "failed"
+        return "partial"
 
 
 class ProfileDocumentChunk(Base):
@@ -3014,7 +3109,7 @@ class ProfileProcessingJob(Base):
             "document_id", "job_type", name="uq_profile_processing_jobs_doc_type"
         ),
         CheckConstraint(
-            f"job_type = '{JOB_TYPE_EXTRACT_DOCUMENT}'", name="profile_job_type_valid"
+            f"job_type IN ({_DOCUMENT_JOB_TYPES_SQL})", name="profile_job_type_valid"
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed')",
@@ -3076,6 +3171,7 @@ class ProfileProcessingJob(Base):
             "lease_expires_at",
             "id",
         ),
+        Index("ix_profile_processing_jobs_parent_operation", "parent_operation_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -3090,6 +3186,7 @@ class ProfileProcessingJob(Base):
         server_default=JOB_TYPE_EXTRACT_DOCUMENT,
     )
     correlation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parent_operation_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20),
         default=JOB_STATUS_QUEUED,

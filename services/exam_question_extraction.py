@@ -50,6 +50,7 @@ from services.exam_topics import canonical_topic_key
 from services.prompt_context import resolve_prompt_context
 from services.prompt_loader import PromptLoader
 from services.text_generation import (
+    GenerationMetadata,
     TextGenerationError,
     TextGenerationProvider,
     get_text_generation_provider,
@@ -164,7 +165,7 @@ class PastExamExtractionService:
                 result = provider.generate_json(prompt)
         except TextGenerationError as exc:
             category = getattr(exc, "error_category", ErrorCategory.PROVIDER_ERROR)
-            cls._log_failure(db, document, category)
+            cls._log_failure(db, document, category, exc=exc)
             return ExtractionOutcome(
                 status=EXAM_EXTRACTION_FAILED,
                 error_code=_category_value(category),
@@ -173,8 +174,15 @@ class PastExamExtractionService:
 
         try:
             validated = GeneratedPastExamExtraction.model_validate(result)
-        except ValidationError:
-            cls._log_failure(db, document, ErrorCategory.INVALID_STRUCTURE)
+        except ValidationError as exc:
+            cls._log_failure(
+                db,
+                document,
+                ErrorCategory.INVALID_STRUCTURE,
+                metadata=metadata,
+                response=result,
+                exc=exc,
+            )
             return ExtractionOutcome(
                 status=EXAM_EXTRACTION_FAILED,
                 error_code=_category_value(ErrorCategory.INVALID_STRUCTURE),
@@ -217,7 +225,13 @@ class PastExamExtractionService:
 
     @staticmethod
     def _log_failure(
-        db: Session, document: UploadedDocument, category: ErrorCategory | str
+        db: Session,
+        document: UploadedDocument,
+        category: ErrorCategory | str,
+        *,
+        metadata: GenerationMetadata | None = None,
+        response: object = None,
+        exc: BaseException | None = None,
     ) -> None:
         AiUsageLogger.log_failure(
             db,
@@ -225,6 +239,9 @@ class PastExamExtractionService:
             course_id=document.course_id,
             generation_type=GenerationType.PAST_EXAM_EXTRACTION,
             error_category=category,
+            metadata=metadata,
+            response=response,
+            exc=exc,
         )
 
     @classmethod

@@ -5,12 +5,17 @@ from sqlalchemy.orm import Session
 
 from backend.app.config import MAX_AI_EVENT_ESTIMATED_COST_USD, settings
 from backend.app.models import AiUsageLog
-from backend.app.observability import emit_emf_metrics
+from backend.app.observability import (
+    emit_emf_metrics,
+    get_operation_context,
+    get_request_id,
+)
 from schemas.ai_usage import ErrorCategory, GenerationType
 from services.text_generation import (
     GenerationMetadata,
     configured_provider_identity,
 )
+from utils.ai_diagnostics import ai_failure_fields
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +122,7 @@ class AiUsageLogger:
                     },
                 )
 
+        operation_context = get_operation_context()
         log_entry = AiUsageLog(
             user_id=user_id,
             course_id=course_id,
@@ -129,6 +135,11 @@ class AiUsageLogger:
             latency_ms=latency_ms,
             success=success,
             error_category=err_cat_str,
+            request_id=get_request_id(),
+            operation_id=operation_context.get("operation_id"),
+            job_id=operation_context.get("job_id"),
+            job_type=operation_context.get("job_type"),
+            attempt_number=operation_context.get("attempt_number"),
             estimated_cost_usd=estimated_cost_usd,
             pricing_version=pricing_version,
         )
@@ -193,6 +204,22 @@ class AiUsageLogger:
             return None
 
     @classmethod
+    def commit(cls, db: Session) -> bool:
+        try:
+            db.commit()
+            return True
+        except Exception as exc:
+            db.rollback()
+            logger.warning(
+                "Failed to commit AI usage telemetry",
+                extra={
+                    "event": "ai_usage_write_failed",
+                    "exception_type": type(exc).__name__,
+                },
+            )
+            return False
+
+    @classmethod
     def log_success(
         cls,
         db: Session,
@@ -249,17 +276,65 @@ class AiUsageLogger:
     @classmethod
     def log_failure(
         cls,
-        db: Session,
+        db: Session | None,
         *,
-        user_id: int,
+        user_id: int | None,
         generation_type: str | GenerationType,
         error_category: str | ErrorCategory,
+        metadata: GenerationMetadata | None = None,
         course_id: int | None = None,
         provider: str | None = None,
         model: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
         latency_ms: int | None = None,
+        response: object = None,
+        exc: BaseException | None = None,
     ) -> AiUsageLog | None:
-        """Helper to record a failed AI generation event with a stable error category."""
+        """Record a failed AI generation, in the logs always and in the table when it can.
+
+        The log line is emitted before the telemetry row, and without either a
+        session or a user, so an anonymous or database-less failure is still
+        diagnosable. Only the row needs both.
+        """
+        if metadata is not None:
+            provider = metadata.provider or provider
+            model = metadata.model or model
+            prompt_tokens = (
+                metadata.prompt_tokens
+                if metadata.prompt_tokens is not None
+                else prompt_tokens
+            )
+            completion_tokens = (
+                metadata.completion_tokens
+                if metadata.completion_tokens is not None
+                else completion_tokens
+            )
+            total_tokens = (
+                metadata.total_tokens
+                if metadata.total_tokens is not None
+                else total_tokens
+            )
+            latency_ms = (
+                metadata.latency_ms if metadata.latency_ms is not None else latency_ms
+            )
+
+        logger.warning(
+            "AI generation failed",
+            extra=ai_failure_fields(
+                generation_type=generation_type,
+                provider=provider,
+                model=model,
+                error_category=error_category,
+                response=response,
+                exc=exc,
+            ),
+        )
+
+        if db is None or not user_id:
+            return None
+
         return cls.log_usage(
             db,
             user_id=user_id,
@@ -267,9 +342,9 @@ class AiUsageLogger:
             provider=provider,
             model=model,
             course_id=course_id,
-            prompt_tokens=None,
-            completion_tokens=None,
-            total_tokens=None,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
             latency_ms=latency_ms,
             success=False,
             error_category=error_category,

@@ -337,6 +337,12 @@ variable "alarm_email" {
   default     = ""
 }
 
+variable "legal_policies_enabled" {
+  description = "Whether the deployment publishes the legal policy pages, footer, AI disclosure notices, and registration acknowledgement."
+  type        = bool
+  default     = false
+}
+
 variable "enable_hosted_ads" {
   description = "Whether the hosted deployment serves advertising. False keeps /api/ads/config reporting disabled and every ad slot unrendered."
   type        = bool

@@ -43,7 +43,7 @@ Search for `exception_type` matching `TextGenerationConnectionError`, `TextGener
 2. **Verify Required Models are Installed on the Ollama Host:**
    ```bash
    ollama list
-   ollama pull llama3.1
+   ollama pull qwen3.5:9b
    ```
    Only the generation model is needed. Embeddings are computed in-process and
    do not depend on Ollama.

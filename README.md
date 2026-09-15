@@ -5,8 +5,10 @@ yourself. You add your course material, and Lumina extracts and indexes it, then
 answers questions, writes study guides, generates and grades quizzes, and tracks
 what you have actually learned — all grounded in your own documents.
 
-Because you run it, your material never has to leave your machine: paired with a
-local Ollama model, Lumina makes no third-party request at all.
+With local storage and Ollama, and with no external provider or fallback
+configured, document processing and AI inference can remain on the self-hosted
+operator's infrastructure. External providers receive relevant content when
+they are configured.
 
 ## What you can do
 
@@ -20,14 +22,14 @@ local Ollama model, Lumina makes no third-party request at all.
 
 ## Quickstart
 
-This is the complete path from a clean clone to your first generated quiz. It
-needs no Node.js, no separate development server, and no CORS configuration.
+This is the complete path from an empty directory to your first generated quiz.
+It needs no clone, no build, no Node.js, and no CORS configuration: Compose pulls
+the prebuilt image from `ghcr.io/coddesigning/lumina`.
 
 ### Prerequisites
 
 | Requirement | Notes |
 | --- | --- |
-| Git | To clone the repository. |
 | Docker Engine or Docker Desktop | Supplies the whole stack. |
 | Docker Compose v2.20 or newer | `docker compose version` must succeed. |
 | [Ollama](https://ollama.com) | Runs the AI models locally. |
@@ -38,19 +40,36 @@ Generation speed depends heavily on RAM and VRAM. The profile below targets
 16 GB of system RAM and 8 GB of VRAM; a smaller machine still works, but answers
 arrive more slowly.
 
-### 1. Clone the repository
+### 1. Download the Compose file
+
+Lumina runs from a directory holding two files. Keep this directory: it is
+where every later `docker compose` command runs.
+
+**Linux / macOS**
 
 ```bash
-git clone https://github.com/coDDesigning/Lumina.git
-cd Lumina
+mkdir lumina && cd lumina
+curl -fsSLO https://raw.githubusercontent.com/coDDesigning/Lumina/main/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/coDDesigning/Lumina/main/.env.example
 ```
+
+**Windows PowerShell**
+
+```powershell
+New-Item -ItemType Directory lumina | Out-Null; Set-Location lumina
+Invoke-WebRequest https://raw.githubusercontent.com/coDDesigning/Lumina/main/docker-compose.yml -OutFile docker-compose.yml
+Invoke-WebRequest https://raw.githubusercontent.com/coDDesigning/Lumina/main/.env.example -OutFile .env.example
+```
+
+To work on Lumina itself, clone the repository instead; see
+[Development and tests](#development-and-tests).
 
 ### 2. Install and configure Ollama
 
 Lumina needs one model from Ollama, for generation:
 
 ```bash
-ollama pull llama3.1          # generates study guides, quizzes, and answers
+ollama pull qwen3.5:9b        # generates study guides and quizzes, and reads diagrams
 ```
 
 Semantic search needs nothing from Ollama. Embeddings are computed inside the
@@ -86,7 +105,7 @@ install -m 0600 .env.example .env
 Copy-Item .env.example .env
 ```
 
-Never commit `.env`; it is already ignored by Git.
+`.env` holds your secrets. Keep it private, and never commit it.
 
 ### 4. Set the values that have no safe default
 
@@ -125,7 +144,7 @@ survived. Set these in `.env`:
 
 ```bash
 OLLAMA_BASE_URL=http://host.docker.internal:11434
-OLLAMA_MODEL=llama3.1
+OLLAMA_MODEL=qwen3.5:9b
 OLLAMA_NUM_CTX=8192
 
 # Local models are far slower than a hosted API. A twenty-question quiz does not
@@ -151,12 +170,15 @@ docker compose up --detach --wait --wait-timeout 600
 docker compose ps --all
 ```
 
-The first run builds the image and takes around ten minutes, most of it
-downloading the embedding model that is baked in so the running container never
-needs the network for it. Later runs reuse the cache and take seconds.
+The first run pulls the prebuilt image, `ghcr.io/coddesigning/lumina:latest`,
+for `linux/amd64` or `linux/arm64`. It carries the embedding model baked in, so
+the running container never needs the network for it. Later runs reuse the
+pulled image and take seconds.
 
-`migrate` should be exited with code 0, and `lumina` and `lumina-worker`
-should both be healthy. Confirm the stack is serving:
+To build the image from your checkout instead, add `--build`. That takes around
+ten minutes the first time, most of it downloading the embedding model.
+
+`lumina` and `lumina-worker` should both be healthy. Confirm the stack is serving:
 
 ```bash
 curl --fail http://127.0.0.1:10312/health/ready
@@ -237,7 +259,7 @@ normally through the sign-up form.
 | A source reaches failed | The PDF is encrypted, corrupt, or beyond the configured page and size limits. |
 | Generation says the provider is unreachable | Ollama is not running, or `OLLAMA_BASE_URL` is wrong for your platform. Check from inside the stack with `docker compose exec lumina python -c "import os, urllib.request; print(urllib.request.urlopen(os.environ['OLLAMA_BASE_URL'] + '/api/tags', timeout=5).status)"`. |
 | Generation says the model is missing | Run the `ollama pull` command from step 2, then `ollama list` to confirm. |
-| Material is not indexed | Chunks exist but their vectors do not. Run `docker compose run --rm lumina-worker python -m workers.embedding_backfill`. |
+| Material is not indexed | Chunks exist but their vectors do not. Run `docker compose run --rm --no-deps lumina-worker python -m workers.embedding_backfill`. |
 | No relevant material | Retrieval found nothing above the similarity floor. Widen the topic, or add a source that covers it. |
 | Generation times out | Raise `AI_GENERATION_TIMEOUT_SECONDS` and `AI_GENERATION_OVERALL_TIMEOUT_SECONDS`, or ask for fewer questions. A model that does not fit entirely in VRAM runs roughly five times slower. |
 
@@ -249,9 +271,20 @@ docker compose down                 # remove containers; named volumes are kept
 docker compose up --detach --wait --wait-timeout 600
 ```
 
-`up` rebuilds before it starts, so after a `git pull` there is no separate
-build step and no way to leave yesterday's code running by accident. Add
-`--no-build` to start without rebuilding.
+`up` starts whatever image is already on the machine. To update, fetch the
+Compose file and the image together, so the two cannot disagree:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/coDDesigning/Lumina/main/docker-compose.yml
+docker compose pull lumina
+docker compose up --detach --wait --wait-timeout 600
+```
+
+`latest` follows `main`. To stay on one release, set `LUMINA_IMAGE` in `.env` to
+`ghcr.io/coddesigning/lumina:<full commit SHA>`, and download the Compose file
+from that same commit. If you run a build of your own clone instead, use
+`docker compose up --build` after every `git pull` so the image matches the
+code.
 
 > `docker compose down --volumes` **permanently deletes your database, uploaded
 > documents, and search index.** There is no undo. Use it only when you intend
@@ -277,9 +310,11 @@ database, your uploaded documents, and the Chroma vector index.
 
 All three must be captured as a single consistent set. Copying a live SQLite
 file or Chroma directory is not a supported backup — the supported wrapper stops
-the writing services first:
+the writing services first. Run it from the directory that holds
+`docker-compose.yml`:
 
 ```bash
+curl -fsSL --create-dirs -o ops/self_hosted_backup.sh https://raw.githubusercontent.com/coDDesigning/Lumina/main/ops/self_hosted_backup.sh
 export LUMINA_BACKUP_DIRECTORY=/mnt/lumina-backups
 sudo install -d -o 10001 -g 10001 -m 0700 "${LUMINA_BACKUP_DIRECTORY}"
 sh ops/self_hosted_backup.sh
@@ -291,7 +326,14 @@ encrypted, off-host storage. The complete restore and rollback procedure is in
 
 ## Development and tests
 
-These mirror [`.github/workflows/ci.yml`](.github/workflows/ci.yml), which is
+Working on Lumina itself needs the repository:
+
+```bash
+git clone https://github.com/coDDesigning/Lumina.git
+cd Lumina
+```
+
+The commands below mirror [`.github/workflows/ci.yml`](.github/workflows/ci.yml), which is
 the executable source of truth.
 
 ### Backend
@@ -328,12 +370,19 @@ type-checks the test and browser suites. Run both.
 ```bash
 docker compose config --quiet
 docker compose -f docker-compose.hosted.yml config --quiet
-docker compose up --detach --wait --wait-timeout 600
+docker compose up --build --detach --wait --wait-timeout 600
 ```
+
+Without `--build`, Compose runs the published image instead of your changes.
 
 One image carries both halves: its first build stage compiles the interface,
 and the API serves the result beside `/api` from a single port. `docker build`
 alone builds it; `VITE_API_BASE_URL` is a `--build-arg`, not a runtime setting.
+The published image is built with `/api`.
+
+`.github/workflows/publish-image.yml` publishes that image to
+`ghcr.io/coddesigning/lumina` on every push to `main`, for `linux/amd64` and
+`linux/arm64`, tagged `latest` and with the full commit SHA.
 
 ## Deployment modes
 
@@ -366,6 +415,18 @@ contract, and production configuration.
 | Observability | [`docs/observability.md`](docs/observability.md) |
 | AI usage telemetry | [`docs/ai_usage_telemetry.md`](docs/ai_usage_telemetry.md) |
 | Dependencies | [`docs/dependencies.md`](docs/dependencies.md) |
+| Legal policy sources and update process | [`docs/legal/README.md`](docs/legal/README.md) |
 | Operational runbooks | [`docs/runbooks/`](docs/runbooks/) |
 | Branch protection and status checks | [`docs/branch_protection.md`](docs/branch_protection.md) |
 | PR-Agent | [`docs/pr-agent.md`](docs/pr-agent.md) |
+
+## Licence and security
+
+Copyright © 2026 coDDesigning contributors. Lumina is licensed under the
+[GNU Affero General Public License version 3 only](LICENSE) (`AGPL-3.0-only`).
+Third-party components retain their own terms; see
+[Third-Party Notices](THIRD_PARTY_NOTICES.md).
+
+Report suspected vulnerabilities privately as described in the
+[Security Policy](SECURITY.md). Do not open a public issue for an exploitable
+weakness.

@@ -23,6 +23,12 @@ API_PREFIX = "/api"
 ASSET_PREFIX = "/assets/"
 INDEX_FILENAME = "index.html"
 
+ROUTE_KIND_STATE_KEY = "lumina_route_kind"
+SPA_SHELL_PATH = "/spa"
+STATIC_FILE_PATH = "/static"
+UNMATCHED_API_PATH = "/api/unmatched"
+UNMATCHED_PATH = "/unmatched"
+
 # Build output is content-hashed, so a name can never describe different bytes
 # and is held for a year. Everything else revalidates: the shell names the
 # current hashes, and a cached stale shell would pin a browser to a bundle
@@ -75,17 +81,22 @@ class SinglePageApplication:
             await self._fallback(scope, receive, send)
             return
 
+        state = scope.setdefault("state", {})
+
         if route_path.startswith(ASSET_PREFIX):
+            state[ROUTE_KIND_STATE_KEY] = STATIC_FILE_PATH
             response = await self._files.get_response(
                 self._files.get_path(scope), scope
             )
             response.headers["cache-control"] = IMMUTABLE_CACHE_CONTROL
         elif has_extension(route_path):
+            state[ROUTE_KIND_STATE_KEY] = STATIC_FILE_PATH
             response = await self._files.get_response(
                 self._files.get_path(scope), scope
             )
             response.headers["cache-control"] = REVALIDATE_CACHE_CONTROL
         else:
+            state[ROUTE_KIND_STATE_KEY] = SPA_SHELL_PATH
             # Served unconditionally, without testing whether the path exists,
             # exactly as the CloudFront viewer function rewrites. There is no
             # 404-to-shell fallback anywhere: that would turn an API failure

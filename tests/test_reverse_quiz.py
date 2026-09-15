@@ -1,4 +1,5 @@
 import json
+import logging
 
 import pytest
 from sqlalchemy import select
@@ -738,3 +739,43 @@ def test_reverse_quiz_questions_prompt_strips_citation_markers_from_history(
     prompt = stub.prompts[0]
     assert "It shifts every larger element on each pass." in prompt
     assert "[S2]" not in prompt
+
+
+def test_an_invalid_evaluation_structure_keeps_its_cause_and_is_logged(
+    upload_api, retrieval_env, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """SCRUM-206: the bare `raise ValueError` used to sever the pydantic cause."""
+    with upload_api.session_factory() as session:
+        seed_ready_material(
+            session,
+            upload_api.course_id,
+            ["Plants build sugars from sunlight and CO2 in photosynthesis."],
+            file_hash="c" * 64,
+            retrieval_env=retrieval_env,
+        )
+
+    _install_provider(monkeypatch, _EvalStub({"feedback": 5, "misconceptions": "lots"}))
+
+    with caplog.at_level(logging.WARNING, logger="services.ai_usage_logger"):
+        response = upload_api.client.post(
+            f"/api/courses/{upload_api.course_id}/reverse-quiz",
+            json={
+                "topic": "Photosynthesis",
+                "explanation": "Plants take their food from the soil.",
+            },
+            headers=upload_api.authorization,
+        )
+
+    assert response.status_code == 500, response.text
+    assert response.headers["X-Error-Code"] == "generation_failed"
+
+    failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_generation_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].generation_type == "reverse_quiz"
+    assert failures[0].error_category == "invalid_structure"
+    assert failures[0].ai_response_keys == ["feedback", "misconceptions"]
+    assert failures[0].ai_validation_errors

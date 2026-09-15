@@ -66,7 +66,11 @@ DOCUMENT_GENERATION_LOCKS_REVISION = "b6d21f4c8a37"
 MISSING_CHECK_CONSTRAINTS_REVISION = "3317a08487dd"
 PROFILE_PROCESSING_JOB_INDEXES_REVISION = "d8a2b4c6e901"
 DROP_LEGACY_AI_USAGE_INDEX_REVISION = "e4c7a1b90d52"
-HEAD_REVISION = DROP_LEGACY_AI_USAGE_INDEX_REVISION
+OPERATIONAL_CORRELATION_REVISION = "a9d4e2f7c601"
+DESCRIBE_VISUALS_JOBS_REVISION = "c1d7e94b3a20"
+ACCOUNT_DELETION_REVISION = "a2e8c6f14b90"
+POLICY_ACKNOWLEDGEMENTS_REVISION = "6f2a9c4d1e73"
+HEAD_REVISION = POLICY_ACKNOWLEDGEMENTS_REVISION
 
 
 def test_alembic_uses_only_canonical_script_directory() -> None:
@@ -114,6 +118,10 @@ def test_migration_graph_has_one_canonical_base_and_head() -> None:
     assert scripts.get_bases() == [BASE_REVISION]
     assert scripts.get_heads() == [HEAD_REVISION]
     assert revisions == {
+        POLICY_ACKNOWLEDGEMENTS_REVISION: ACCOUNT_DELETION_REVISION,
+        ACCOUNT_DELETION_REVISION: DESCRIBE_VISUALS_JOBS_REVISION,
+        DESCRIBE_VISUALS_JOBS_REVISION: OPERATIONAL_CORRELATION_REVISION,
+        OPERATIONAL_CORRELATION_REVISION: DROP_LEGACY_AI_USAGE_INDEX_REVISION,
         DROP_LEGACY_AI_USAGE_INDEX_REVISION: PROFILE_PROCESSING_JOB_INDEXES_REVISION,
         PROFILE_PROCESSING_JOB_INDEXES_REVISION: MISSING_CHECK_CONSTRAINTS_REVISION,
         MISSING_CHECK_CONSTRAINTS_REVISION: DOCUMENT_GENERATION_LOCKS_REVISION,
@@ -338,6 +346,7 @@ def assert_upgraded_schema(database_path: Path) -> None:
         assert "processing_jobs" in tables
         assert "ai_usage_logs" in tables
         assert "credit_transactions" in tables
+        assert "policy_acknowledgements" in tables
         assert "conversations" in tables
         assert "conversation_messages" in tables
 
@@ -3473,3 +3482,227 @@ def test_profile_processing_jobs_queue_composite_indexes(tmp_path: Path) -> None
         index_names = {row[1] for row in index_list}
         assert "ix_profile_processing_jobs_claimable" not in index_names
         assert "ix_profile_processing_jobs_recoverable" not in index_names
+
+
+def test_legacy_ai_usage_created_index_is_dropped_on_databases_that_kept_it(
+    tmp_path: Path,
+) -> None:
+    """A database stamped before a6e2c8f41b90 was rewritten still carries the index.
+
+    That revision first created ``ix_ai_usage_logs_created_id`` and was later
+    edited in place to drop it, so it never runs again on databases that already
+    applied it and ``alembic check`` reports the index as drift forever.
+    """
+    database_path = tmp_path / "legacy-ai-usage-index.sqlite3"
+    run_alembic(
+        database_path, tmp_path, "upgrade", PROFILE_PROCESSING_JOB_INDEXES_REVISION
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS ix_ai_usage_logs_created_id "
+            "ON ai_usage_logs (created_at, id)"
+        )
+        index_names = {
+            row[1] for row in connection.execute("PRAGMA index_list(ai_usage_logs)")
+        }
+        assert "ix_ai_usage_logs_created_id" in index_names
+
+    run_alembic(database_path, tmp_path, "upgrade", HEAD_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        index_names = {
+            row[1] for row in connection.execute("PRAGMA index_list(ai_usage_logs)")
+        }
+        assert "ix_ai_usage_logs_created_id" not in index_names
+        assert "ix_ai_usage_logs_success_created" in index_names
+
+    check = run_alembic(database_path, tmp_path, "check")
+    assert "No new upgrade operations detected" in check.stdout + check.stderr
+
+
+def test_operational_correlation_metadata_migrates_in_both_directions(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "operational-correlation.sqlite3"
+    run_alembic(database_path, tmp_path, "upgrade", DROP_LEGACY_AI_USAGE_INDEX_REVISION)
+
+    run_alembic(database_path, tmp_path, "upgrade", OPERATIONAL_CORRELATION_REVISION)
+
+    with sqlite3.connect(database_path) as connection:
+        for table in ("processing_jobs", "profile_processing_jobs", "generation_jobs"):
+            columns = {
+                row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            assert "parent_operation_id" in columns
+            indexes = {
+                row[1] for row in connection.execute(f"PRAGMA index_list({table})")
+            }
+            assert f"ix_{table}_parent_operation" in indexes
+
+        ai_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(ai_usage_logs)")
+        }
+        assert {
+            "request_id",
+            "operation_id",
+            "job_id",
+            "job_type",
+            "attempt_number",
+        }.issubset(ai_columns)
+        ai_indexes = {
+            row[1] for row in connection.execute("PRAGMA index_list(ai_usage_logs)")
+        }
+        assert "ix_ai_usage_logs_operation_created" in ai_indexes
+
+    run_alembic(
+        database_path, tmp_path, "downgrade", DROP_LEGACY_AI_USAGE_INDEX_REVISION
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        for table in ("processing_jobs", "profile_processing_jobs", "generation_jobs"):
+            columns = {
+                row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            assert "parent_operation_id" not in columns
+        ai_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(ai_usage_logs)")
+        }
+        assert "operation_id" not in ai_columns
+
+
+def test_describe_visuals_migration_widens_both_job_types_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "describe-visuals.db"
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        suffix = uuid4().hex
+        role_id = connection.execute(
+            "SELECT id FROM roles WHERE name = 'user'"
+        ).fetchone()[0]
+        user_id = connection.execute(
+            "INSERT INTO users (name, email, password_hash, role_id) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                "Describe migration user",
+                f"describe-{suffix}@example.com",
+                "hash",
+                role_id,
+            ),
+        ).lastrowid
+        course_id = connection.execute(
+            "INSERT INTO courses (title, owner_id) VALUES (?, ?)",
+            (f"Describe course {suffix}", user_id),
+        ).lastrowid
+        document_id = uuid4().hex
+        connection.execute(
+            "INSERT INTO uploaded_documents "
+            "(id, original_file_name, file_type, mime_type, file_size, file_hash, "
+            "user_id, course_id, storage_provider, storage_key, status) "
+            "VALUES (?, ?, 'pdf', 'application/pdf', 7, ?, ?, ?, 'local:test', ?, "
+            "'ready')",
+            (
+                document_id,
+                f"describe-{suffix}.pdf",
+                uuid4().hex * 2,
+                user_id,
+                course_id,
+                f"local:test/describe-{suffix}",
+            ),
+        )
+        for job_type in ("extract_document", "describe_visuals"):
+            connection.execute(
+                "INSERT INTO processing_jobs "
+                "(document_id, course_id, job_type, status, attempt_count, "
+                "max_attempts, available_at) "
+                "VALUES (?, ?, ?, 'queued', 0, 3, CURRENT_TIMESTAMP)",
+                (document_id, course_id, job_type),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO processing_jobs "
+                "(document_id, course_id, job_type, status, attempt_count, "
+                "max_attempts, available_at) "
+                "VALUES (?, ?, 'summarise_document', 'queued', 0, 3, "
+                "CURRENT_TIMESTAMP)",
+                (document_id, course_id),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO processing_jobs "
+                "(document_id, course_id, job_type, status, attempt_count, "
+                "max_attempts, available_at) "
+                "VALUES (?, ?, 'describe_visuals', 'queued', 0, 3, "
+                "CURRENT_TIMESTAMP)",
+                (document_id, course_id),
+            )
+
+        profile_document_id = uuid4().hex
+        connection.execute(
+            "INSERT INTO profile_documents "
+            "(id, user_id, original_file_name, file_type, mime_type, file_size, "
+            "file_hash, storage_provider, storage_key, status) "
+            "VALUES (?, ?, 'cv.txt', 'txt', 'text/plain', 7, ?, 'local:test', ?, "
+            "'ready')",
+            (profile_document_id, user_id, uuid4().hex * 2, "local:test/profile-cv"),
+        )
+        for job_type in ("extract_document", "describe_visuals"):
+            connection.execute(
+                "INSERT INTO profile_processing_jobs "
+                "(document_id, user_id, job_type, status, attempt_count, "
+                "max_attempts, available_at) "
+                "VALUES (?, ?, ?, 'queued', 0, 3, CURRENT_TIMESTAMP)",
+                (profile_document_id, user_id, job_type),
+            )
+        connection.commit()
+
+    # A later head may add unrelated revisions. Target the parent of the
+    # describe-visuals migration explicitly so this test keeps exercising the
+    # migration it names rather than whichever revision happens to be newest.
+    run_alembic(
+        database_path,
+        tmp_path,
+        "downgrade",
+        OPERATIONAL_CORRELATION_REVISION,
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        remaining = connection.execute(
+            "SELECT COUNT(*) FROM processing_jobs WHERE job_type = 'describe_visuals'"
+        ).fetchone()[0]
+        profile_remaining = connection.execute(
+            "SELECT COUNT(*) FROM profile_processing_jobs "
+            "WHERE job_type = 'describe_visuals'"
+        ).fetchone()[0]
+        surviving = connection.execute(
+            "SELECT COUNT(*) FROM processing_jobs WHERE job_type = 'extract_document'"
+        ).fetchone()[0]
+        assert remaining == 0
+        assert profile_remaining == 0
+        assert surviving == 1
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO processing_jobs "
+                "(document_id, course_id, job_type, status, attempt_count, "
+                "max_attempts, available_at) "
+                "VALUES (?, ?, 'describe_visuals', 'queued', 0, 3, "
+                "CURRENT_TIMESTAMP)",
+                (document_id, course_id),
+            )
+        connection.commit()
+
+    run_alembic(database_path, tmp_path, "upgrade", "head")
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            "INSERT INTO processing_jobs "
+            "(document_id, course_id, job_type, status, attempt_count, "
+            "max_attempts, available_at) "
+            "VALUES (?, ?, 'describe_visuals', 'queued', 0, 3, CURRENT_TIMESTAMP)",
+            (document_id, course_id),
+        )
+        connection.commit()

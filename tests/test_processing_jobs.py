@@ -2268,7 +2268,7 @@ def _multi_visual_pdf(page_count: int) -> bytes:
     pdf = pymupdf.open()
     for number in range(page_count):
         page = pdf.new_page(width=300, height=300)
-        page.insert_text((30, 30), f"Page {number + 1} body text.")
+        page.insert_text((30, 30), f"Page {number + 1} carries searchable body text.")
         pixel = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 2, 2), False)
         pixel.clear_with(255)
         page.insert_image(pymupdf.Rect(30, 50, 270, 270), stream=pixel.tobytes("png"))

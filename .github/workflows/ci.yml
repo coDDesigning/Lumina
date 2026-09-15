@@ -160,7 +160,7 @@ jobs:
   backend-quality:
     name: Backend quality and tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       DEPLOYMENT_MODE: self_hosted
       OLLAMA_BASE_URL: http://localhost:11434

@@ -627,7 +627,7 @@ jobs:
           grep -iq "^referrer-policy: strict-origin-when-cross-origin" /tmp/root.head
           grep -iq "^referrer-policy: no-referrer" /tmp/missing.head
 
-          curl --fail --silent --show-error --max-time 30 -H "Accept-Encoding: gzip"             -D /tmp/gzip.head -o /dev/null "$edge/"
+          curl --fail --silent --show-error --max-time 30 -H "Accept-Encoding: gzip"             -D /tmp/gzip.head -o /dev/null "$edge$asset_path"
           grep -iq "^content-encoding: gzip" /tmp/gzip.head
 
           # Request correlation.

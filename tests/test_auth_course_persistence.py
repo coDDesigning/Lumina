@@ -701,6 +701,46 @@ def test_production_self_hosted_admin_requires_bootstrap_credentials(
         assert bootstrap.is_initial_admin is True
 
 
+def test_production_self_hosted_without_bootstrap_credentials_promotes_first_user(
+    session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        user_service_module,
+        "settings",
+        replace(
+            settings,
+            app_env=APP_ENV_PRODUCTION,
+            deployment_mode=MODE_SELF_HOSTED,
+            bootstrap_admin_email=None,
+            bootstrap_admin_token=None,
+        ),
+    )
+
+    with session_factory() as session:
+        first = UserService.create_user(
+            session,
+            UserCreate(
+                name="Owner",
+                email="owner@example.com",
+                password="Strong-password!",
+            ),
+        )
+        second = UserService.create_user(
+            session,
+            UserCreate(
+                name="Guest",
+                email="guest@example.com",
+                password="Strong-password!",
+            ),
+        )
+
+        assert first.role.name == "admin"
+        assert first.is_initial_admin is True
+        assert second.role.name == "user"
+        assert second.is_initial_admin is None
+
+
 def test_admin_cannot_self_lock_and_role_changes_keep_credit_invariant(
     api_context,
 ) -> None:

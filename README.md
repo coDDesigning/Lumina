@@ -113,10 +113,8 @@ Copy-Item .env.example .env
 | --- | --- |
 | `COMPOSE_PROJECT_NAME` | Names the durable data volume. **Keep it stable forever** — changing it points Lumina at a new, empty volume. |
 | `JWT_SECRET_KEY` | Signs login tokens. At least 32 characters. |
-| `BOOTSTRAP_ADMIN_EMAIL` | The address that becomes the first administrator. |
-| `BOOTSTRAP_ADMIN_TOKEN` | One-time proof for registering that address. At least 32 visible ASCII characters. |
 
-Generate the two secrets rather than inventing them:
+Generate the secret rather than inventing it:
 
 **Linux / macOS**
 
@@ -130,9 +128,8 @@ python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Run it twice, once for each secret. `token_urlsafe` avoids `$`, which Compose
-would otherwise try to interpolate; if a value you choose does contain `$`,
-single-quote it in `.env`.
+`token_urlsafe` avoids `$`, which Compose would otherwise try to interpolate; if
+a value you choose does contain `$`, single-quote it in `.env`.
 
 ### 5. Configure the local model profile
 
@@ -188,54 +185,25 @@ curl --fail http://127.0.0.1:10312/health/ready
 {"status":"ready"}
 ```
 
-### 7. Bootstrap the first administrator
+### 7. Open Lumina and create the administrator
 
-The address in `BOOTSTRAP_ADMIN_EMAIL` cannot be registered through the sign-up
-form: it requires the bootstrap token, sent once as a request header. Replace
-all three placeholders below.
+<http://127.0.0.1:10312>
 
-**Linux / macOS**
-
-```bash
-curl --fail-with-body \
-  --request POST \
-  http://127.0.0.1:10312/api/auth/register \
-  --header 'Content-Type: application/json' \
-  --header 'X-Bootstrap-Token: REPLACE_WITH_BOOTSTRAP_ADMIN_TOKEN' \
-  --data '{
-    "name": "Administrator",
-    "email": "REPLACE_WITH_BOOTSTRAP_ADMIN_EMAIL",
-    "password": "REPLACE_WITH_A_STRONG_PASSWORD"
-  }'
-```
-
-**Windows PowerShell**
-
-```powershell
-$body = @{
-  name     = 'Administrator'
-  email    = 'REPLACE_WITH_BOOTSTRAP_ADMIN_EMAIL'
-  password = 'REPLACE_WITH_A_STRONG_PASSWORD'
-} | ConvertTo-Json
-
-Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:10312/api/auth/register' -ContentType 'application/json' -Headers @{ 'X-Bootstrap-Token' = 'REPLACE_WITH_BOOTSTRAP_ADMIN_TOKEN' } -Body $body
-```
+Register through the sign-up form. The first account created on a fresh
+deployment becomes the administrator; everyone who registers after it is an
+ordinary user.
 
 The password must be at least 8 characters and at most 72 bytes, must not be a
 common password or a simple repeated or sequential pattern, and must not contain
 your name or the local part of your email address.
 
-Send the token only as a header. In a URL it would be recorded in shell history
-and server logs.
+> Create the administrator before you let anyone else reach Lumina. If you set
+> `LUMINA_BIND_ADDRESS=0.0.0.0` before registering, whoever registers first
+> becomes the administrator. To reserve that account for one address instead,
+> set `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_TOKEN` together; see
+> [`docs/deployment.md`](docs/deployment.md#protected-administrator-bootstrap).
 
-### 8. Open Lumina
-
-<http://127.0.0.1:10312>
-
-Sign in as the administrator you just created. Everyone else can register
-normally through the sign-up form.
-
-### 9. Create your first course and quiz
+### 8. Create your first course and quiz
 
 1. Select **New course** and give it a name.
 2. Open the course.

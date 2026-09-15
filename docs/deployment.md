@@ -118,8 +118,7 @@ host. Create a host-owner-only configuration file:
 install -m 0600 .env.example .env
 ```
 
-Replace at least `JWT_SECRET_KEY`, `BOOTSTRAP_ADMIN_EMAIL`, and
-`BOOTSTRAP_ADMIN_TOKEN` with production values. Keep `COMPOSE_PROJECT_NAME`
+Replace at least `JWT_SECRET_KEY` with a production value. Keep `COMPOSE_PROJECT_NAME`
 stable across release directories because it identifies the persistent volume.
 Prefer URL-safe generated secrets; single-quote any Compose `.env` value that
 contains `$` to prevent interpolation. Never commit `.env`. Then run:
@@ -148,8 +147,45 @@ succeed leaves `lumina` restarting rather than exiting once; read
 `docker compose up --wait` return nonzero, but leaves containers available for
 inspection. Keep ingress closed until the command succeeds and both `lumina`
 and `lumina-worker` are healthy.
-Register `BOOTSTRAP_ADMIN_EMAIL` with the configured token in the
-`X-Bootstrap-Token` header over a trusted route before opening public ingress.
+
+### Protected administrator bootstrap
+
+With `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_TOKEN` both unset, the first
+account registered on a self-hosted deployment becomes the administrator, and
+the API logs `unprotected_admin_bootstrap_warning` at every start as a reminder.
+Register it before opening ingress.
+
+To reserve the administrator for one address, set both variables; setting only
+one fails at startup. The token must be at least 32 visible ASCII characters.
+That address can then register only with the token in the `X-Bootstrap-Token`
+header, and no other account becomes an administrator. Hosted mode always
+requires both.
+
+```bash
+curl --fail-with-body \
+  --request POST \
+  "http://127.0.0.1:${LUMINA_PORT:-10312}/api/auth/register" \
+  --header 'Content-Type: application/json' \
+  --header 'X-Bootstrap-Token: REPLACE_WITH_BOOTSTRAP_ADMIN_TOKEN' \
+  --data '{
+    "name": "Administrator",
+    "email": "REPLACE_WITH_BOOTSTRAP_ADMIN_EMAIL",
+    "password": "REPLACE_WITH_A_STRONG_PASSWORD"
+  }'
+```
+
+```powershell
+$body = @{
+  name     = 'Administrator'
+  email    = 'REPLACE_WITH_BOOTSTRAP_ADMIN_EMAIL'
+  password = 'REPLACE_WITH_A_STRONG_PASSWORD'
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:10312/api/auth/register' -ContentType 'application/json' -Headers @{ 'X-Bootstrap-Token' = 'REPLACE_WITH_BOOTSTRAP_ADMIN_TOKEN' } -Body $body
+```
+
+Send the token only as a header. In a URL it would be recorded in shell history
+and server logs.
 
 ## Hosted topology
 

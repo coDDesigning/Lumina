@@ -84,13 +84,13 @@ def check_admin_bootstrap_security(app_settings: Settings | None = None) -> None
             "Self-hosted instance is running without protected administrator bootstrap.\n"
             "The first account to register will automatically become an administrator without\n"
             "token verification. To secure bootstrap, configure BOOTSTRAP_ADMIN_EMAIL and\n"
-            "BOOTSTRAP_ADMIN_TOKEN, or set APP_ENV=production.\n"
+            "BOOTSTRAP_ADMIN_TOKEN.\n"
             "==============================================================================="
         )
         logger.warning(
             "Unprotected administrator bootstrap is active: first registered user will "
             "automatically become an administrator without token verification. To secure bootstrap, "
-            "configure BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_TOKEN or set APP_ENV=production.\n%s",
+            "configure BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_TOKEN.\n%s",
             banner,
             extra={
                 "event": "unprotected_admin_bootstrap_warning",

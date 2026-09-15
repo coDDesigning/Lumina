@@ -2863,9 +2863,7 @@ def _slide_pdf(*, body_characters: int) -> bytes:
     if body_characters:
         sentence = "Balanced binary search trees keep their height logarithmic. "
         body = (sentence * ((body_characters // len(sentence)) + 1))[:body_characters]
-        page.insert_textbox(
-            pymupdf.Rect(30, 80, 690, 520), body, fontsize=11
-        )
+        page.insert_textbox(pymupdf.Rect(30, 80, 690, 520), body, fontsize=11)
     content = pdf.tobytes()
     pdf.close()
     return content

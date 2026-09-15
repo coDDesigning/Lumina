@@ -692,9 +692,7 @@ def test_an_unknown_api_path_is_told_apart_from_a_missing_record(
     assert records[0].error_code == "not_found"
 
 
-def test_a_missing_course_names_the_course_not_found_code(
-    upload_api, caplog
-) -> None:
+def test_a_missing_course_names_the_course_not_found_code(upload_api, caplog) -> None:
     with caplog.at_level(logging.INFO):
         response = upload_api.client.get(
             "/api/courses/98765/documents", headers=upload_api.authorization

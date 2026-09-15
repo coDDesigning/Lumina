@@ -321,9 +321,7 @@ def test_delete_document_http_409_when_locked_for_generation(authz_api):
                 headers=authz_api.authorization_a,
             )
             assert response.status_code == 409
-            assert (
-                response.headers["X-Error-Code"] == "document_generation_in_progress"
-            )
+            assert response.headers["X-Error-Code"] == "document_generation_in_progress"
             assert int(response.headers["Retry-After"]) > 0
             detail = response.json()["detail"]
             assert "reading this document" in detail
@@ -401,9 +399,7 @@ def test_the_delete_refusal_says_which_reason_stopped_it(db_session, tmp_path):
 
     with acquire_generation_locks(db_session, [document.id]):
         with pytest.raises(DocumentActiveError) as held:
-            DocumentService.delete_document(
-                db_session, storage, document.id, course.id
-            )
+            DocumentService.delete_document(db_session, storage, document.id, course.id)
 
     assert held.value.reason == "generation_in_progress"
     assert held.value.lease_expires_at is not None

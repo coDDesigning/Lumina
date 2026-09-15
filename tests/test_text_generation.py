@@ -392,7 +392,10 @@ def test_ollama_provider_sends_the_configured_think_flag(monkeypatch) -> None:
     provider.generate_json("Build a study guide")
     provider.generate_text("Explain photosynthesis")
 
-    assert [json.loads(request.content)["think"] for request in captured] == [False, False]
+    assert [json.loads(request.content)["think"] for request in captured] == [
+        False,
+        False,
+    ]
 
 
 def test_ollama_provider_requests_json_format(monkeypatch) -> None:

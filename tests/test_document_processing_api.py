@@ -733,9 +733,7 @@ def test_a_storage_provider_mismatch_stops_promising_a_retry(upload_api):
     )
 
     assert response.status_code == 500
-    assert (
-        response.headers["X-Error-Code"] == "document_storage_provider_mismatch"
-    )
+    assert response.headers["X-Error-Code"] == "document_storage_provider_mismatch"
     detail = response.json()["detail"]
     assert "retry" not in detail.lower()
     assert "administrator" in detail

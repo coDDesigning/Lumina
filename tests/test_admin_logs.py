@@ -133,6 +133,41 @@ def test_cursor_is_bound_to_the_fixed_filter_window(tmp_path: Path, db_session) 
         service.list(changed, limit=1, cursor=first.next_cursor)
 
 
+def test_cursor_keeps_events_written_within_one_millisecond(
+    tmp_path: Path, db_session
+) -> None:
+    path = tmp_path / "operational.db"
+    handler = OperationalEventHandler(
+        str(path),
+        service="api",
+        environment="test",
+        retention_days=30,
+        max_records=10_000,
+    )
+    now = datetime.now(timezone.utc)
+    millisecond = now.replace(microsecond=now.microsecond // 1000 * 1000)
+    earlier = _emit(
+        handler,
+        "http_request_completed",
+        _lumina_timestamp=(millisecond + timedelta(microseconds=200)).isoformat(),
+        _lumina_event_id="f" * 32,
+    )
+    later = _emit(
+        handler,
+        "http_request_completed",
+        _lumina_timestamp=(millisecond + timedelta(microseconds=800)).isoformat(),
+        _lumina_event_id="0" * 32,
+    )
+    service = LogReadService(db_session, app_settings=_local_settings(path))
+    filters = replace(_window(), sources=("operational",))
+
+    first = service.list(filters, limit=1)
+    second = service.list(filters, limit=1, cursor=first.next_cursor)
+
+    assert [record.id for record in first.records] == [later]
+    assert [record.id for record in second.records] == [earlier]
+
+
 def test_trace_follows_parent_and_child_operations(tmp_path: Path, db_session) -> None:
     path = tmp_path / "operational.db"
     handler = OperationalEventHandler(

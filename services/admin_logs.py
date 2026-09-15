@@ -334,12 +334,21 @@ def _sql_conditions(filters: LogFilters, *, include_source: bool = True):
         )
         params.append(f"%{escaped}%")
     if filters.before_timestamp is not None and filters.before_id is not None:
-        before_ms = int(filters.before_timestamp.timestamp() * 1000)
+        before = filters.before_timestamp.astimezone(timezone.utc)
+        before_ms = int(before.timestamp() * 1000)
         conditions.append(
-            "(timestamp_ms < ? OR (timestamp_ms = ? AND "
-            "(source || ':' || event_id) < ?))"
+            "(timestamp_ms < ? OR (timestamp_ms = ? AND (timestamp < ? OR "
+            "(timestamp = ? AND (source || ':' || event_id) < ?))))"
         )
-        params.extend((before_ms, before_ms, filters.before_id))
+        params.extend(
+            (
+                before_ms,
+                before_ms,
+                before.isoformat(),
+                before.isoformat(),
+                filters.before_id,
+            )
+        )
     return conditions, params
 
 
@@ -386,7 +395,8 @@ class LocalOperationalSource:
                 rows = connection.execute(
                     "SELECT payload_json FROM operational_events WHERE "
                     + " AND ".join(conditions)
-                    + " ORDER BY timestamp_ms DESC, source DESC, event_id DESC LIMIT ?",
+                    + " ORDER BY timestamp_ms DESC, timestamp DESC, source DESC,"
+                    + " event_id DESC LIMIT ?",
                     (*params, limit),
                 ).fetchall()
                 range_row = connection.execute(

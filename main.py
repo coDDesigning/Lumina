@@ -351,7 +351,17 @@ def health_ready(
 ) -> dict[str, str]:
     try:
         check_readiness(db, storage)
-    except ReadinessError:
+    except ReadinessError as exc:
+        cause = exc.__cause__
+        logger.warning(
+            "Readiness check failed: %s",
+            exc.check,
+            extra={
+                "event": "readiness_check_failed",
+                "failed_stage": exc.check,
+                "exception_type": type(cause).__name__ if cause else "ReadinessError",
+            },
+        )
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "not_ready"}
     return {"status": "ready"}

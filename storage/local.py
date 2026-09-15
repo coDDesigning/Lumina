@@ -51,8 +51,11 @@ class LocalStorage(Storage):
         try:
             if not self.root.is_dir():
                 if self._require_existing_root:
-                    raise OSError("document storage root does not exist")
-                self.root.mkdir(parents=True, exist_ok=True)
+                    if not self.root.parent.is_dir():
+                        raise OSError("document storage mount does not exist")
+                    self.root.mkdir(exist_ok=True)
+                else:
+                    self.root.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(
                 mode="w+b",
                 dir=self.root,

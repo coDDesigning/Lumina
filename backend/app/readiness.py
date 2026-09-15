@@ -20,6 +20,10 @@ REQUIRED_ROLE_NAMES = frozenset(role.value for role in Role)
 class ReadinessError(RuntimeError):
     """A required runtime dependency is unavailable or incorrectly prepared."""
 
+    def __init__(self, message: str, check: str = "unknown") -> None:
+        super().__init__(message)
+        self.check = check
+
 
 @lru_cache(maxsize=1)
 def _expected_migration_heads() -> frozenset[str]:
@@ -33,13 +37,15 @@ def _expected_migration_heads() -> frozenset[str]:
 
 def check_readiness(db: Session, storage: Storage) -> None:
     """Verify database schema, seed data, and document storage availability."""
+    check = "migrations"
     try:
         current_heads = frozenset(
             MigrationContext.configure(db.connection()).get_current_heads()
         )
         if current_heads != _expected_migration_heads():
-            raise ReadinessError("Database migrations are not current.")
+            raise ReadinessError("Database migrations are not current.", check)
 
+        check = "roles"
         role_names = frozenset(
             db.scalars(
                 select(DatabaseRole.name).where(
@@ -48,10 +54,11 @@ def check_readiness(db: Session, storage: Storage) -> None:
             ).all()
         )
         if role_names != REQUIRED_ROLE_NAMES:
-            raise ReadinessError("Required database roles are missing.")
+            raise ReadinessError("Required database roles are missing.", check)
 
         # Updating a guaranteed seed row to its current value forces SQLite to
         # open its journal and proves that the runtime identity has DML access.
+        check = "database_write"
         try:
             result = db.execute(
                 update(DatabaseRole)
@@ -59,12 +66,15 @@ def check_readiness(db: Session, storage: Storage) -> None:
                 .values(name=DatabaseRole.name)
             )
             if result.rowcount != 1:
-                raise ReadinessError("Database write probe did not find its seed row.")
+                raise ReadinessError(
+                    "Database write probe did not find its seed row.", check
+                )
         finally:
             db.rollback()
 
+        check = "storage"
         storage.check_ready()
     except ReadinessError:
         raise
     except Exception as exc:
-        raise ReadinessError("A runtime dependency is not ready.") from exc
+        raise ReadinessError("A runtime dependency is not ready.", check) from exc

@@ -111,6 +111,20 @@ def test_readiness_probe_rejects_missing_storage_root(tmp_path: Path) -> None:
     assert not root.exists()
 
 
+def test_readiness_probe_creates_missing_root_inside_an_existing_mount(
+    tmp_path: Path,
+) -> None:
+    mount = tmp_path / "data"
+    mount.mkdir()
+    root = mount / "uploads"
+    storage = LocalStorage(root, require_existing_root=True)
+
+    storage.check_ready()
+
+    assert root.is_dir()
+    assert list(root.iterdir()) == []
+
+
 def test_strict_save_does_not_recreate_missing_storage_root(tmp_path: Path) -> None:
     root = tmp_path / "missing" / "uploads"
     storage = LocalStorage(root, require_existing_root=True)

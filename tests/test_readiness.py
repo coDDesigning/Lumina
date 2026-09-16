@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from alembic.config import Config
@@ -167,6 +168,45 @@ def test_storage_failure_returns_generic_not_ready_response(
     assert response.status_code == 503
     assert response.json() == {"status": "not_ready"}
     assert "secret" not in response.text
+
+
+def test_readiness_failure_logs_the_failed_check_without_its_detail(
+    api_context,
+    monkeypatch,
+    caplog,
+) -> None:
+    _prepare_ready_dependencies(api_context)
+
+    def fail_storage() -> None:
+        raise StorageError("secret provider path")
+
+    monkeypatch.setattr(api_context.storage, "check_ready", fail_storage)
+
+    with caplog.at_level(logging.WARNING):
+        response = api_context.client.get("/health/ready")
+
+    assert response.status_code == 503
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "readiness_check_failed"
+    ]
+    assert len(records) == 1
+    assert records[0].failed_stage == "storage"
+    assert records[0].exception_type == "StorageError"
+    assert "secret" not in records[0].getMessage()
+
+
+def test_unversioned_database_logs_the_migration_check(api_context, caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        response = api_context.client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert [
+        record.failed_stage
+        for record in caplog.records
+        if getattr(record, "event", None) == "readiness_check_failed"
+    ] == ["migrations"]
 
 
 def test_readiness_openapi_documents_failure_without_authentication() -> None:

@@ -418,7 +418,10 @@ class Settings:
 
     @property
     def requires_protected_admin_bootstrap(self) -> bool:
-        return self.is_hosted or self.app_env == APP_ENV_PRODUCTION
+        return self.is_hosted or (
+            self.app_env == APP_ENV_PRODUCTION
+            and bool(self.bootstrap_admin_email or self.bootstrap_admin_token)
+        )
 
     @property
     def allows_unprotected_admin_bootstrap(self) -> bool:
@@ -584,15 +587,17 @@ def load_settings() -> Settings:
             raise ValueError(
                 "BOOTSTRAP_ADMIN_EMAIL must be a valid email address."
             ) from exc
-    requires_protected_admin_bootstrap = (
-        mode == MODE_HOSTED or app_env == APP_ENV_PRODUCTION
+    bootstrap_admin_token = os.getenv("BOOTSTRAP_ADMIN_TOKEN", "").strip()
+    requires_protected_admin_bootstrap = mode == MODE_HOSTED or (
+        app_env == APP_ENV_PRODUCTION
+        and bool(bootstrap_admin_email or bootstrap_admin_token)
     )
     if requires_protected_admin_bootstrap and not bootstrap_admin_email:
         raise ValueError(
-            "Hosted mode and production require BOOTSTRAP_ADMIN_EMAIL to be set."
+            "BOOTSTRAP_ADMIN_EMAIL is required when BOOTSTRAP_ADMIN_TOKEN is set, "
+            "and always in hosted mode."
         )
 
-    bootstrap_admin_token = os.getenv("BOOTSTRAP_ADMIN_TOKEN", "").strip()
     token_is_header_safe = all(
         "!" <= character <= "~" for character in bootstrap_admin_token
     )
@@ -604,7 +609,8 @@ def load_settings() -> Settings:
         )
     if requires_protected_admin_bootstrap and not bootstrap_admin_token:
         raise ValueError(
-            "Hosted mode and production require BOOTSTRAP_ADMIN_TOKEN to be set."
+            "BOOTSTRAP_ADMIN_TOKEN is required when BOOTSTRAP_ADMIN_EMAIL is set, "
+            "and always in hosted mode."
         )
 
     gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip() or None

@@ -2189,6 +2189,76 @@ def test_allows_unprotected_admin_bootstrap_property(
     assert hosted_loaded.allows_unprotected_admin_bootstrap is False
 
 
+def test_self_hosted_production_bootstrap_credentials_are_optional(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("DEPLOYMENT_MODE", MODE_SELF_HOSTED)
+    monkeypatch.delenv("BOOTSTRAP_ADMIN_EMAIL")
+    monkeypatch.delenv("BOOTSTRAP_ADMIN_TOKEN")
+
+    loaded = load_settings()
+
+    assert loaded.bootstrap_admin_email is None
+    assert loaded.bootstrap_admin_token is None
+    assert loaded.requires_protected_admin_bootstrap is False
+    assert loaded.allows_unprotected_admin_bootstrap is True
+
+
+def test_self_hosted_production_bootstrap_credentials_come_as_a_pair(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_production(monkeypatch, tmp_path)
+    monkeypatch.setenv("DEPLOYMENT_MODE", MODE_SELF_HOSTED)
+
+    monkeypatch.delenv("BOOTSTRAP_ADMIN_TOKEN")
+    with pytest.raises(ValueError, match="BOOTSTRAP_ADMIN_TOKEN"):
+        load_settings()
+
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "y" * 32)
+    monkeypatch.delenv("BOOTSTRAP_ADMIN_EMAIL")
+    with pytest.raises(ValueError, match="BOOTSTRAP_ADMIN_EMAIL"):
+        load_settings()
+
+
+@pytest.mark.anyio
+async def test_unprotected_admin_bootstrap_warning_covers_production_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from dataclasses import replace
+    import logging
+    import main as main_module
+    from main import app, lifespan
+
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        replace(
+            main_module.settings,
+            deployment_mode=MODE_SELF_HOSTED,
+            app_env=APP_ENV_PRODUCTION,
+            bootstrap_admin_email=None,
+            bootstrap_admin_token=None,
+        ),
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        async with lifespan(app):
+            pass
+
+    records = [
+        r
+        for r in caplog.records
+        if getattr(r, "event", None) == "unprotected_admin_bootstrap_warning"
+    ]
+    assert len(records) == 1
+    assert "APP_ENV=production" not in records[0].getMessage()
+
+
 @pytest.mark.anyio
 async def test_unprotected_admin_bootstrap_startup_warning_emitted(
     monkeypatch: pytest.MonkeyPatch,
@@ -2234,7 +2304,7 @@ async def test_unprotected_admin_bootstrap_startup_warning_suppressed_when_prote
     import main as main_module
     from main import app, lifespan
 
-    # Case A: Self-hosted in production
+    # Case A: Self-hosted in production with bootstrap credentials
     monkeypatch.setattr(
         main_module,
         "settings",
@@ -2242,6 +2312,8 @@ async def test_unprotected_admin_bootstrap_startup_warning_suppressed_when_prote
             main_module.settings,
             deployment_mode=MODE_SELF_HOSTED,
             app_env=APP_ENV_PRODUCTION,
+            bootstrap_admin_email="admin@example.com",
+            bootstrap_admin_token="b" * 32,
         ),
     )
 

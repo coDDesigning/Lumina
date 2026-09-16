@@ -84,13 +84,13 @@ def check_admin_bootstrap_security(app_settings: Settings | None = None) -> None
             "Self-hosted instance is running without protected administrator bootstrap.\n"
             "The first account to register will automatically become an administrator without\n"
             "token verification. To secure bootstrap, configure BOOTSTRAP_ADMIN_EMAIL and\n"
-            "BOOTSTRAP_ADMIN_TOKEN, or set APP_ENV=production.\n"
+            "BOOTSTRAP_ADMIN_TOKEN.\n"
             "==============================================================================="
         )
         logger.warning(
             "Unprotected administrator bootstrap is active: first registered user will "
             "automatically become an administrator without token verification. To secure bootstrap, "
-            "configure BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_TOKEN or set APP_ENV=production.\n%s",
+            "configure BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_TOKEN.\n%s",
             banner,
             extra={
                 "event": "unprotected_admin_bootstrap_warning",
@@ -351,7 +351,17 @@ def health_ready(
 ) -> dict[str, str]:
     try:
         check_readiness(db, storage)
-    except ReadinessError:
+    except ReadinessError as exc:
+        cause = exc.__cause__
+        logger.warning(
+            "Readiness check failed: %s",
+            exc.check,
+            extra={
+                "event": "readiness_check_failed",
+                "failed_stage": exc.check,
+                "exception_type": type(cause).__name__ if cause else "ReadinessError",
+            },
+        )
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "not_ready"}
     return {"status": "ready"}

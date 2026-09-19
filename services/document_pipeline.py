@@ -787,7 +787,13 @@ def _extract_raw_document(
         raise
     except Exception:
         logger.exception(
-            "Unexpected raw extraction failure at stage %s", current_stage.value
+            "Unexpected raw extraction failure at stage %s",
+            current_stage.value,
+            extra={
+                "event": "document_pipeline_stage_failed",
+                "failed_stage": current_stage.value,
+                "error_code": ProcessingErrorCode.PROCESSING_FAILED.value,
+            },
         )
         raise _failure(
             ProcessingErrorCode.PROCESSING_FAILED,
@@ -850,7 +856,15 @@ def _process_document(
                 # An image upload's primary content is its visual description;
                 # a missing or failing local OCR engine must not fail the whole
                 # upload the way it does for a scanned PDF.
-                logger.warning("OCR skipped for image upload: %s", exc.safe_message)
+                logger.warning(
+                    "OCR skipped for image upload: %s",
+                    exc.safe_message,
+                    extra={
+                        "event": "image_upload_ocr_skipped",
+                        "stage": PipelineStage.RUNNING_OCR.value,
+                        "error_code": exc.code.value,
+                    },
+                )
                 pages = tuple(
                     replace(page, needs_ocr=False, ocr_status=OCRStatus.NO_TEXT)
                     if page.needs_ocr
@@ -874,7 +888,14 @@ def _process_document(
         try:
             pages = _clean_and_merge_pages(pages, file_type=render_file_type)
         except Exception:
-            logger.exception("Document text cleaning failed")
+            logger.exception(
+                "Document text cleaning failed",
+                extra={
+                    "event": "document_pipeline_stage_failed",
+                    "failed_stage": current_stage.value,
+                    "error_code": ProcessingErrorCode.TEXT_CLEANING_FAILED.value,
+                },
+            )
             raise _failure(
                 ProcessingErrorCode.TEXT_CLEANING_FAILED,
                 current_stage,
@@ -913,7 +934,13 @@ def _process_document(
         raise
     except Exception:
         logger.exception(
-            "Unexpected document processing failure at stage %s", current_stage.value
+            "Unexpected document processing failure at stage %s",
+            current_stage.value,
+            extra={
+                "event": "document_pipeline_stage_failed",
+                "failed_stage": current_stage.value,
+                "error_code": ProcessingErrorCode.PROCESSING_FAILED.value,
+            },
         )
         raise _failure(
             ProcessingErrorCode.PROCESSING_FAILED,
@@ -931,7 +958,15 @@ def _emit_stage(
     try:
         callback(stage)
     except Exception:
-        logger.error("Document stage callback failed at stage %s", stage.value)
+        logger.error(
+            "Document stage callback failed at stage %s",
+            stage.value,
+            extra={
+                "event": "document_pipeline_callback_failed",
+                "failed_stage": stage.value,
+                "error_code": ProcessingErrorCode.STAGE_CALLBACK_FAILED.value,
+            },
+        )
         raise _failure(
             ProcessingErrorCode.STAGE_CALLBACK_FAILED,
             stage,
@@ -948,7 +983,14 @@ def _emit_extraction(
     try:
         callback(document)
     except Exception:
-        logger.error("Raw extraction callback failed")
+        logger.error(
+            "Raw extraction callback failed",
+            extra={
+                "event": "document_pipeline_callback_failed",
+                "failed_stage": PipelineStage.EXTRACTING_TEXT.value,
+                "error_code": ProcessingErrorCode.EXTRACTION_CALLBACK_FAILED.value,
+            },
+        )
         raise _failure(
             ProcessingErrorCode.EXTRACTION_CALLBACK_FAILED,
             PipelineStage.EXTRACTING_TEXT,
@@ -1147,7 +1189,14 @@ def _pdf_preflight_locked(content: bytes, options: PipelineOptions) -> _PDFPrefl
     except DocumentProcessingError:
         raise
     except Exception:
-        logger.exception("PDF validation failed")
+        logger.exception(
+            "PDF validation failed",
+            extra={
+                "event": "pdf_validation_failed",
+                "failed_stage": PipelineStage.VALIDATING.value,
+                "error_code": ProcessingErrorCode.CORRUPTED_PDF.value,
+            },
+        )
         raise _failure(
             ProcessingErrorCode.CORRUPTED_PDF,
             PipelineStage.VALIDATING,
@@ -1376,7 +1425,13 @@ def _collect_page_work(
             content, pdf.page_count, preflight, options, workers
         )
     except Exception:
-        logger.warning("PDF page pool unavailable; extracting pages serially")
+        logger.warning(
+            "PDF page pool unavailable; extracting pages serially",
+            extra={
+                "event": "pdf_page_pool_unavailable",
+                "stage": PipelineStage.EXTRACTING_TEXT.value,
+            },
+        )
         pymupdf.TOOLS.reset_mupdf_warnings()
         return _collect_page_work_serially(pdf, preflight, options), False
 
@@ -1436,7 +1491,14 @@ def _validate_and_decode_text(content: bytes) -> str:
     try:
         detected = from_bytes(content, enable_fallback=False).best()
     except Exception:
-        logger.exception("Text document decoding failed")
+        logger.exception(
+            "Text document decoding failed",
+            extra={
+                "event": "text_document_decode_failed",
+                "failed_stage": PipelineStage.VALIDATING.value,
+                "error_code": ProcessingErrorCode.CORRUPTED_TEXT.value,
+            },
+        )
         raise _failure(
             ProcessingErrorCode.CORRUPTED_TEXT,
             PipelineStage.VALIDATING,
@@ -1573,7 +1635,14 @@ def _image_to_single_page_pdf(content: bytes, options: PipelineOptions) -> bytes
         except DocumentProcessingError:
             raise
         except Exception:
-            logger.exception("Image-to-PDF transcode failed")
+            logger.exception(
+                "Image-to-PDF transcode failed",
+                extra={
+                    "event": "image_transcode_failed",
+                    "failed_stage": PipelineStage.EXTRACTING_TEXT.value,
+                    "error_code": ProcessingErrorCode.CORRUPTED_IMAGE.value,
+                },
+            )
             raise _failure(
                 ProcessingErrorCode.CORRUPTED_IMAGE,
                 PipelineStage.EXTRACTING_TEXT,
@@ -1696,7 +1765,14 @@ def _extract_pdf_document(
         except DocumentProcessingError:
             raise
         except Exception:
-            logger.exception("PDF text extraction failed")
+            logger.exception(
+                "PDF text extraction failed",
+                extra={
+                    "event": "pdf_text_extraction_failed",
+                    "failed_stage": PipelineStage.EXTRACTING_TEXT.value,
+                    "error_code": ProcessingErrorCode.CORRUPTED_PDF.value,
+                },
+            )
             raise _failure(
                 ProcessingErrorCode.CORRUPTED_PDF,
                 PipelineStage.EXTRACTING_TEXT,
@@ -2111,7 +2187,13 @@ def _recognize_pages_in_parallel(
     except (OCRUnavailableError, OCRExecutionError):
         raise
     except Exception:
-        logger.warning("PDF page pool unavailable; recognizing pages serially")
+        logger.warning(
+            "PDF page pool unavailable; recognizing pages serially",
+            extra={
+                "event": "pdf_page_pool_unavailable",
+                "stage": PipelineStage.RUNNING_OCR.value,
+            },
+        )
         pymupdf.TOOLS.reset_mupdf_warnings()
         return _recognize_pages_serially(content, page_numbers, options)
     if warnings_seen or not _recognized_pages_are_complete(recognized, page_numbers):
@@ -2227,6 +2309,13 @@ def _apply_visual_understanding(
                     "Visual analysis failed for PDF page %s visual %s",
                     page.page_number,
                     visual.visual_index,
+                    extra={
+                        "event": "visual_analysis_failed",
+                        "stage": PipelineStage.UNDERSTANDING_IMAGES.value,
+                        "page_number": page.page_number,
+                        "visual_index": visual.visual_index,
+                        "error_code": "VISUAL_ANALYSIS_FAILED",
+                    },
                 )
                 analyzed_visuals.append(
                     replace(
@@ -2252,6 +2341,13 @@ def _apply_visual_understanding(
                     "Visual analysis temporarily unavailable for PDF page %s visual %s",
                     page.page_number,
                     visual.visual_index,
+                    extra={
+                        "event": "visual_analysis_temporarily_unavailable",
+                        "stage": PipelineStage.UNDERSTANDING_IMAGES.value,
+                        "page_number": page.page_number,
+                        "visual_index": visual.visual_index,
+                        "error_code": "VISUAL_SERVICE_TEMPORARY",
+                    },
                 )
                 analyzed_visuals.append(
                     replace(
@@ -2266,6 +2362,13 @@ def _apply_visual_understanding(
                     "Unexpected visual provider failure on PDF page %s visual %s",
                     page.page_number,
                     visual.visual_index,
+                    extra={
+                        "event": "visual_provider_failed",
+                        "failed_stage": PipelineStage.UNDERSTANDING_IMAGES.value,
+                        "page_number": page.page_number,
+                        "visual_index": visual.visual_index,
+                        "error_code": "image_understanding_failed",
+                    },
                 )
                 raise _failure(
                     ProcessingErrorCode.IMAGE_UNDERSTANDING_FAILED,
@@ -2937,10 +3040,22 @@ def _chunk_pages_with_retry(
                 "Chunking attempt %d failed with retryable error (%s); retrying chunking stage once",
                 attempt + 1,
                 exc.code.value,
+                extra={
+                    "event": "document_chunking_retried",
+                    "stage": PipelineStage.CHUNKING.value,
+                    "error_code": exc.code.value,
+                },
             )
         except Exception as exc:
             if attempt == 1:
-                logger.exception("Chunking failed after retry")
+                logger.exception(
+                    "Chunking failed after retry",
+                    extra={
+                        "event": "document_pipeline_stage_failed",
+                        "failed_stage": PipelineStage.CHUNKING.value,
+                        "error_code": ProcessingErrorCode.PROCESSING_FAILED.value,
+                    },
+                )
                 raise _failure(
                     ProcessingErrorCode.PROCESSING_FAILED,
                     PipelineStage.CHUNKING,
@@ -2950,6 +3065,11 @@ def _chunk_pages_with_retry(
                 "Chunking attempt %d failed with unexpected error (%s); retrying chunking stage once",
                 attempt + 1,
                 type(exc).__name__,
+                extra={
+                    "event": "document_chunking_retried",
+                    "stage": PipelineStage.CHUNKING.value,
+                    "reason": "unexpected_error",
+                },
             )
     return _chunk_pages(pages, options)
 

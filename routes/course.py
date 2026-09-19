@@ -121,7 +121,10 @@ def delete_course(
     try:
         CourseService.hard_delete_course(db, course.id, storage)
     except CourseDeletionError as exc:
-        logger.exception("Course cleanup failed; metadata retained")
+        logger.exception(
+            "Course cleanup failed; metadata retained",
+            extra={"event": "course_cleanup_failed", "course_id": course.id},
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Course cleanup failed; retry hard deletion",

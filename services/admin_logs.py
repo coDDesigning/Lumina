@@ -330,7 +330,10 @@ def _sql_conditions(filters: LogFilters, *, include_source: bool = True):
             "lower(description || ' ' || event || ' ' || coalesce(error_code, '') || "
             "' ' || coalesce(error_category, '') || ' ' || coalesce(exception_type, '') || "
             "' ' || coalesce(http_path, '') || "
-            "' ' || service || ' ' || logger) LIKE ? ESCAPE '\\'"
+            "' ' || service || ' ' || logger || ' ' || "
+            "coalesce(json_extract(payload_json, '$.message'), '') || ' ' || "
+            "coalesce(json_extract(payload_json, '$.exception_message'), '')) "
+            "LIKE ? ESCAPE '\\'"
         )
         params.append(f"%{escaped}%")
     if filters.before_timestamp is not None and filters.before_id is not None:
@@ -897,6 +900,8 @@ def _record_matches(record: AdminLogRecord, filters: LogFilters) -> bool:
             value
             for value in (
                 record.description,
+                record.message,
+                record.exception_message,
                 record.event,
                 record.error_code,
                 record.error_category,

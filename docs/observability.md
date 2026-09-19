@@ -18,14 +18,22 @@ Every line contains:
 - bounded operational fields such as `http_method`, `http_path`,
   `http_status`, `duration_ms`, `job_id`, `worker_id`, `error_code`, and
   `exception_type`; and
+- `exception_message` on records logged with an exception: each message in the
+  cause chain, secret-redacted and capped at 500 characters; and
 - `stack` on records logged at ERROR with an exception: project-relative frames
   (`services/quiz.py:524 in generate`) taken from the innermost cause, capped at
-  twelve. Never a rendered traceback, a source line, or an exception message.
+  twelve. Never a rendered traceback or a source line.
+
+Every log call in project code names an `event` described in
+`EVENT_DESCRIPTIONS` (`backend/app/operational_events.py`) and passes the ids it
+has in scope (`document_id`, `course_id`, `owner_id`, `job_id`, `stage`,
+`reason`, ...). `tests/test_log_events.py` fails on a call that does not. Lines
+from third-party loggers are stored as `library_log`.
 
 The API accepts a safe `X-Request-ID` (1-64 letters, digits, dots, dashes, or
 underscores), generates one otherwise, and returns it on the response. Query
-strings, request bodies, uploaded content, prompts, credentials, and raw
-exception text are not structured fields. Model output is described but never
+strings, request bodies, uploaded content, prompts, and credentials are not
+structured fields. Model output is described but never
 quoted: a failed generation reports its size, digest, sanitised top-level key
 names and the fields validation rejected, and the response text itself appears
 only when an operator turns on `AI_LOG_RAW_RESPONSE_ON_FAILURE`. See
@@ -91,7 +99,8 @@ and carry explicit truncation and partial-result metadata.
 
 The read model combines three source names without merging their storage:
 
-- `operational` contains server and worker events;
+- `operational` contains server and worker events, including their redacted
+  message, exception message, and stack;
 - `client_report` contains sanitized browser failures emitted into the
   operational stream; and
 - `ai_telemetry` projects privacy-safe `ai_usage_logs` rows.

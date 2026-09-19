@@ -15,6 +15,7 @@ from uuid import uuid4
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _MAX_STACK_FRAMES = 12
+_MAX_EXCEPTION_MESSAGE = 500
 
 _REQUEST_ID: ContextVar[str | None] = ContextVar("request_id", default=None)
 _OPERATION_CONTEXT: ContextVar[dict[str, Any]] = ContextVar(
@@ -54,18 +55,24 @@ _ALLOWED_FIELDS = (
     "http_method",
     "http_path",
     "http_status",
+    "item_count",
     "job_id",
     "job_status",
     "job_type",
+    "lock_holder",
+    "maintenance_task",
     "model",
     "operation_id",
     "owner_id",
+    "page_number",
     "parent_operation_id",
     "pricing_version",
+    "profile_document_id",
     "prompt_tokens",
     "provider",
     "rate_limit_control",
     "rate_limit_feature",
+    "reason",
     "related_request_id",
     "response_bytes",
     "retry_after_seconds",
@@ -74,6 +81,7 @@ _ALLOWED_FIELDS = (
     "success",
     "stack",
     "user_id",
+    "visual_index",
     "worker_id",
 )
 
@@ -105,6 +113,22 @@ def _exception_type_chain(exc: BaseException | None) -> list[str]:
     return names
 
 
+def _exception_message(exc: BaseException | None) -> str | None:
+    parts: list[str] = []
+    seen: set[int] = set()
+    current = exc
+    while current is not None and id(current) not in seen and len(parts) < 10:
+        seen.add(id(current))
+        text = str(current).strip()
+        parts.append(
+            f"{type(current).__name__}: {text}" if text else type(current).__name__
+        )
+        current = current.__cause__ or current.__context__
+    if not parts:
+        return None
+    return redact(" <- ".join(parts))[:_MAX_EXCEPTION_MESSAGE]
+
+
 def _innermost_exception(exc: BaseException) -> BaseException:
     seen: set[int] = set()
     current = exc
@@ -130,10 +154,10 @@ def _stack_frames(exc: BaseException) -> list[str]:
 
 
 class JsonFormatter(logging.Formatter):
-    """Render one JSON object per record without request content.
+    """Render one JSON object per record with secrets redacted.
 
-    Records logged at ERROR with an exception also carry `stack`: project
-    relative frames only, never a traceback rendering or an exception message.
+    Records logged with an exception carry its redacted, truncated message
+    chain, and at WARNING or above also `stack`: project relative frames.
     """
 
     def __init__(self, *, service: str, environment: str) -> None:
@@ -175,6 +199,10 @@ class JsonFormatter(logging.Formatter):
             chain = _exception_type_chain(record.exc_info[1])
             if len(chain) > 1:
                 payload["exception_chain"] = chain
+        if record.exc_info and "exception_message" not in payload:
+            message = _exception_message(record.exc_info[1])
+            if message:
+                payload["exception_message"] = message
         if (
             record.levelno >= logging.ERROR
             and record.exc_info

@@ -161,14 +161,20 @@ def upload_document(
     except DocumentValidationError as exc:
         return _error_response(exc.error_key)
     except FileHashError:
-        logger.exception("Failed to hash uploaded document")
+        logger.exception(
+            "Failed to hash uploaded document",
+            extra={"event": "document_upload_hash_failed", "course_id": course.id},
+        )
         return _error_response("upload_failed")
     except CourseDocumentLimitError:
         return _error_response("course_document_limit")
     except DocumentDeletionInProgressError:
         return _error_response("document_deletion_in_progress")
     except DocumentRegistrationError:
-        logger.exception("Failed to register uploaded document")
+        logger.exception(
+            "Failed to register uploaded document",
+            extra={"event": "document_registration_failed", "course_id": course.id},
+        )
         return _error_response("upload_failed")
 
     response.status_code = (
@@ -374,7 +380,15 @@ def delete_document(
             headers={"X-Error-Code": "document_storage_provider_mismatch"},
         ) from exc
     except DocumentDeletionError as exc:
-        logger.exception("Document deletion failed for %s", document_id)
+        logger.exception(
+            "Document deletion failed for %s",
+            document_id,
+            extra={
+                "event": "document_delete_failed",
+                "document_id": str(document_id),
+                "course_id": course.id,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="The document could not be deleted; retry the operation.",

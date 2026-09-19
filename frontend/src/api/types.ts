@@ -110,11 +110,14 @@ export interface AdminLogRecord {
   logger: string;
   event: string;
   description: string;
+  message: string | null;
+  exception_message: string | null;
   error_code: string | null;
   error_category: string | null;
   exception_type: string | null;
   exception_chain: string[];
   source_location: string | null;
+  stack: string[];
   error_signature: string | null;
   http_method: string | null;
   http_path: string | null;

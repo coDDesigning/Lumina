@@ -90,7 +90,14 @@ def run_cleanup(
         {"AiUsageRowsDeleted": report.rows_deleted},
         dimensions={"Service": "ai_usage_cleanup", "Environment": settings.app_env},
     )
-    logger.info("AI usage cleanup finished: %s", report.summary())
+    logger.info(
+        "AI usage cleanup finished: %s",
+        report.summary(),
+        extra={
+            "event": "ai_usage_cleanup_completed",
+            "maintenance_task": "ai_usage_cleanup",
+        },
+    )
     return report
 
 

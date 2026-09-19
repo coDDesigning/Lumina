@@ -100,9 +100,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         try:
             check_worker_ready()
         except ReadinessError as exc:
-            logger.error("Worker readiness check failed: %s", exc)
+            logger.error(
+                "Worker readiness check failed: %s",
+                exc,
+                extra={
+                    "event": "worker_readiness_check_failed",
+                    "failed_stage": exc.check,
+                },
+            )
             raise SystemExit(1) from None
-        logger.info("Worker readiness check succeeded")
+        logger.info(
+            "Worker readiness check succeeded",
+            extra={"event": "worker_readiness_check_succeeded"},
+        )
         return
 
     stop = threading.Event()
@@ -110,7 +120,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         run_worker(once=args.once, stop_event=stop)
     except ReadinessError as exc:
-        logger.error("Worker readiness check failed: %s", exc)
+        logger.error(
+            "Worker readiness check failed: %s",
+            exc,
+            extra={
+                "event": "worker_readiness_check_failed",
+                "failed_stage": exc.check,
+            },
+        )
         raise SystemExit(1) from None
 
 

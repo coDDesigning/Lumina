@@ -84,7 +84,16 @@ class AiUsageLogger:
         """Persist a single structured AI usage telemetry event."""
         if not user_id:
             logger.warning(
-                "Skipping AI usage log: user_id is required but was not provided."
+                "Skipping AI usage log: user_id is required but was not provided.",
+                extra={
+                    "event": "ai_usage_owner_missing",
+                    "generation_type": getattr(
+                        generation_type, "value", generation_type
+                    ),
+                    "course_id": course_id,
+                    "provider": provider,
+                    "model": model,
+                },
             )
             return None
 
@@ -322,14 +331,19 @@ class AiUsageLogger:
 
         logger.warning(
             "AI generation failed",
-            extra=ai_failure_fields(
-                generation_type=generation_type,
-                provider=provider,
-                model=model,
-                error_category=error_category,
-                response=response,
-                exc=exc,
-            ),
+            extra={
+                "event": "ai_generation_failed",
+                "user_id": user_id,
+                "course_id": course_id,
+                **ai_failure_fields(
+                    generation_type=generation_type,
+                    provider=provider,
+                    model=model,
+                    error_category=error_category,
+                    response=response,
+                    exc=exc,
+                ),
+            },
         )
 
         if db is None or not user_id:

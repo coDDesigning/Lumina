@@ -411,6 +411,17 @@
             "title": "Exception Chain",
             "type": "array"
           },
+          "exception_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exception Message"
+          },
           "exception_type": {
             "anyOf": [
               {
@@ -527,6 +538,17 @@
           "logger": {
             "title": "Logger",
             "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
           },
           "model": {
             "anyOf": [
@@ -650,6 +672,13 @@
               }
             ],
             "title": "Source Location"
+          },
+          "stack": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stack",
+            "type": "array"
           },
           "stage": {
             "anyOf": [

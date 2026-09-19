@@ -458,6 +458,36 @@ def test_purge_continues_past_a_course_it_cannot_finish(
         assert session.get(Course, stuck) is None
 
 
+def test_purge_logs_a_failed_course_without_reloading_it(
+    session_factory, storage, store, monkeypatch, caplog
+) -> None:
+    with session_factory() as session:
+        course_id = _seed_course(
+            session, storage, store, email="purge-detached@example.com", tombstoned=True
+        )
+        owner_id = session.get(Course, course_id).owner_id
+
+    def fail_after_rollback(session, *_args, **_kwargs) -> None:
+        session.expire_all()
+        session.expunge_all()
+        raise CourseDeletionError
+
+    monkeypatch.setattr(
+        CourseService, "hard_delete_course", staticmethod(fail_after_rollback)
+    )
+    with caplog.at_level("ERROR", logger="workers.course_purge"):
+        report = _purge(session_factory, storage, store)
+
+    assert report.courses_failed == 1
+    failure = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "course_purge_failed"
+    )
+    assert failure.course_id == course_id
+    assert failure.owner_id == owner_id
+
+
 def test_purge_dry_run_changes_nothing(session_factory, storage, store) -> None:
     with session_factory() as session:
         course_id = _seed_course(

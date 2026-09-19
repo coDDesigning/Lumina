@@ -34,11 +34,14 @@ const RECORD: AdminLogRecord = {
   logger: 'main',
   event: 'request.failed',
   description: 'The request failed during persistence.',
+  message: 'Quiz generation failed for course 9',
+  exception_message: 'OperationalError: database is locked',
   error_code: 'database_unavailable',
   error_category: 'database',
   exception_type: 'OperationalError',
   exception_chain: ['OperationalError'],
   source_location: 'main.py:240',
+  stack: ['routes/quiz.py:88 in create_quiz', 'main.py:240 in dispatch'],
   error_signature: 'v1:request-failed',
   http_method: 'POST',
   http_path: '/api/courses/{course_id}/quiz',
@@ -165,11 +168,16 @@ describe('AdminLogsPage', () => {
     expect(await screen.findByText('The request failed during persistence.')).toBeInTheDocument();
     expect(screen.getAllByText('12')).not.toHaveLength(0);
     expect(screen.getAllByText('database_unavailable')).not.toHaveLength(0);
+    expect(screen.getByText('Quiz generation failed for course 9')).toBeInTheDocument();
+    expect(screen.getByText('main')).toBeInTheDocument();
+    expect(screen.getByText('user:7')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'request.failed' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Operational event' });
     expect(within(dialog).getAllByText('OperationalError')).toHaveLength(2);
+    expect(within(dialog).getByText('OperationalError: database is locked')).toBeInTheDocument();
+    expect(within(dialog).getByText('routes/quiz.py:88 in create_quiz main.py:240 in dispatch')).toBeInTheDocument();
     expect(within(dialog).getByRole('heading', { name: 'Operation timeline' })).toBeInTheDocument();
     expect(await within(dialog).findByText('request.started')).toBeInTheDocument();
     expect(mocked.getLogEvent).toHaveBeenCalledWith(

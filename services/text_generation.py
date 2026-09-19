@@ -1628,6 +1628,12 @@ def resolve_user_api_key(
                 "Failed to decrypt BYOK API key for provider '%s': %s. Falling back to default.",
                 clean_name,
                 exc,
+                extra={
+                    "event": "byok_key_decrypt_failed",
+                    "provider": clean_name,
+                    "user_id": getattr(user, "id", None),
+                    "error_code": type(exc).__name__,
+                },
             )
 
     return None

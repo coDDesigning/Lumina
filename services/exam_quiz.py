@@ -288,6 +288,15 @@ def _assert_types_allowed(
             logger.warning(
                 "Exam quiz refused: question type %s was not requested",
                 question.question_type.value,
+                extra={
+                    "event": "exam_artifact_rejected",
+                    "generation_type": (
+                        GenerationType.EXAM_TOPIC_PRACTICE.value
+                        if kind is PRACTICE
+                        else GenerationType.EXAM_TOPIC_EXAM.value
+                    ),
+                    "reason": "question_type_not_requested",
+                },
             )
             raise InvalidExamArtifactStructureError(
                 PRACTICE_INVALID_MESSAGE if kind is PRACTICE else EXAM_INVALID_MESSAGE

@@ -273,7 +273,7 @@ def test_spawn_child_logs_are_json_redacted_and_correlated(tmp_path: Path) -> No
     context = multiprocessing.get_context("spawn")
     process = context.Process(
         target=_spawn_child_that_logs_an_exception,
-        args=(str(stderr_path), "SECRET-CANARY"),
+        args=(str(stderr_path), "api_key=SECRET-CANARY"),
     )
     process.start()
     process.join(timeout=30)
@@ -294,6 +294,10 @@ def test_spawn_child_logs_are_json_redacted_and_correlated(tmp_path: Path) -> No
     # The INFO breadcrumb survives because the child's root level is INFO.
     assert any(json.loads(line)["level"] == "INFO" for line in lines)
     assert any(json.loads(line).get("exception_type") == "ValueError" for line in lines)
+    assert any(
+        json.loads(line).get("exception_message") == "ValueError: api_key=[REDACTED]"
+        for line in lines
+    )
     # SCRUM-206: the child emits frames, and they are still canary-free.
     assert any("stack" in json.loads(line) for line in lines)
 
@@ -472,9 +476,9 @@ def _formatted(record) -> dict:
 
 
 def test_stack_frames_are_project_relative_and_carry_no_message() -> None:
-    """SCRUM-206: an ERROR names where it came from without quoting the failure."""
+    """SCRUM-206: an ERROR names where it came from; its message is redacted."""
     try:
-        _raise_here("SECRET-CANARY")
+        _raise_here("token=SECRET-CANARY")
     except ValueError as exc:
         payload = _formatted(_record_with_exception(exc))
 
@@ -484,6 +488,7 @@ def test_stack_frames_are_project_relative_and_carry_no_message() -> None:
     assert any(frame.startswith("tests/test_observability.py:") for frame in frames)
     assert "SECRET-CANARY" not in json.dumps(payload)
     assert "Traceback" not in json.dumps(payload)
+    assert payload["exception_message"] == "ValueError: token=[REDACTED]"
 
 
 def test_stack_frames_never_carry_an_absolute_path() -> None:

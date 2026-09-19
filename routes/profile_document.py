@@ -98,7 +98,10 @@ def upload_profile_document(
             detail=exc.detail,
         ) from exc
     except ProfileDocumentRegistrationError as exc:
-        logger.exception("Failed to register profile document")
+        logger.exception(
+            "Failed to register profile document",
+            extra={"event": "profile_document_registration_failed"},
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="The profile document could not be registered.",
@@ -211,7 +214,14 @@ def delete_profile_document(
             detail=exc.detail,
         ) from exc
     except ProfileDocumentDeletionError as exc:
-        logger.exception("Failed to delete profile document %s", document_id)
+        logger.exception(
+            "Failed to delete profile document %s",
+            document_id,
+            extra={
+                "event": "profile_document_delete_failed",
+                "document_id": str(document_id),
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="The profile document could not be deleted.",

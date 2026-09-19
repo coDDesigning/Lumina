@@ -604,7 +604,10 @@ class DocumentService:
         try:
             db.rollback()
         except Exception as exc:
-            logger.exception("Failed to roll back document transaction")
+            logger.exception(
+                "Failed to roll back document transaction",
+                extra={"event": "document_registration_rollback_failed"},
+            )
             DocumentService._remove_failed_upload(storage, storage_key)
             raise DocumentRegistrationError from exc
         DocumentService._remove_failed_upload(storage, storage_key)
@@ -622,7 +625,13 @@ class DocumentService:
         try:
             db.rollback()
         except Exception:
-            logger.exception("Failed to reset session after document commit error")
+            logger.exception(
+                "Failed to reset session after document commit error",
+                extra={
+                    "event": "document_registration_rollback_failed",
+                    "course_id": course_id,
+                },
+            )
 
         try:
             persisted = None
@@ -642,12 +651,22 @@ class DocumentService:
                     time.sleep(COMMIT_RECONCILIATION_DELAY_SECONDS)
         except Exception:
             # Preserve storage when the database cannot tell us whether it committed.
-            logger.exception("Could not determine document commit outcome")
+            logger.exception(
+                "Could not determine document commit outcome",
+                extra={
+                    "event": "document_commit_outcome_unknown",
+                    "course_id": course_id,
+                },
+            )
             raise DocumentRegistrationError from commit_error
 
         if persisted is None:
             logger.error(
-                "Document commit outcome remains unknown; preserving stored content"
+                "Document commit outcome remains unknown; preserving stored content",
+                extra={
+                    "event": "document_commit_outcome_unknown",
+                    "course_id": course_id,
+                },
             )
             raise DocumentRegistrationError from commit_error
 
@@ -655,7 +674,14 @@ class DocumentService:
             DocumentService._remove_failed_upload(storage, storage_key)
             return DocumentUploadResult(document=persisted, duplicate=True)
 
-        logger.warning("Recovered document after an uncertain commit acknowledgement")
+        logger.warning(
+            "Recovered document after an uncertain commit acknowledgement",
+            extra={
+                "event": "document_commit_recovered",
+                "course_id": course_id,
+                "document_id": str(persisted.id),
+            },
+        )
         return DocumentUploadResult(document=persisted, duplicate=False)
 
     @staticmethod
@@ -663,5 +689,8 @@ class DocumentService:
         try:
             storage.delete(storage_key)
         except StorageError as exc:
-            logger.exception("Failed to clean up unregistered document")
+            logger.exception(
+                "Failed to clean up unregistered document",
+                extra={"event": "document_upload_cleanup_failed"},
+            )
             raise DocumentRegistrationError from exc

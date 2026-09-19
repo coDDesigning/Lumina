@@ -351,6 +351,16 @@
   line-clamp: 2;
 }
 
+.message {
+  min-width: 18rem;
+  max-width: 36rem;
+  overflow-wrap: anywhere;
+}
+
+.message small {
+  font-family: var(--font-mono);
+}
+
 .compactCode {
   display: block;
   max-width: 14rem;

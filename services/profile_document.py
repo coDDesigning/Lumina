@@ -212,6 +212,7 @@ class ProfileDocumentService:
             logger.warning(
                 "Could not delete orphan storage key %s after registration error",
                 storage_key,
+                extra={"event": "profile_document_upload_cleanup_failed"},
             )
 
     @staticmethod

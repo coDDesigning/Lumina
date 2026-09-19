@@ -177,14 +177,26 @@ def _heartbeat_loop(
                 logger.exception(
                     "Failed to heartbeat generation job %s",
                     job.id,
-                    extra={"job_id": job.id, "attempt_number": consecutive_failures},
+                    extra={
+                        "event": "generation_heartbeat_failed",
+                        "job_id": job.id,
+                        "job_type": job.job_type,
+                        "course_id": job.course_id,
+                        "attempt_number": consecutive_failures,
+                    },
                 )
             else:
                 logger.warning(
                     "Still failing to heartbeat generation job %s (%s in a row)",
                     job.id,
                     consecutive_failures,
-                    extra={"job_id": job.id, "attempt_number": consecutive_failures},
+                    extra={
+                        "event": "generation_heartbeat_failed",
+                        "job_id": job.id,
+                        "job_type": job.job_type,
+                        "course_id": job.course_id,
+                        "attempt_number": consecutive_failures,
+                    },
                 )
             if stop.wait(interval):
                 return
@@ -194,7 +206,13 @@ def _heartbeat_loop(
                 "Heartbeat for generation job %s recovered after %s failures",
                 job.id,
                 consecutive_failures,
-                extra={"job_id": job.id, "attempt_number": consecutive_failures},
+                extra={
+                    "event": "generation_heartbeat_recovered",
+                    "job_id": job.id,
+                    "job_type": job.job_type,
+                    "course_id": job.course_id,
+                    "attempt_number": consecutive_failures,
+                },
             )
             consecutive_failures = 0
         if not current:
@@ -412,23 +430,29 @@ def _record_failure(
             exc_info=exc,
         )
     if resulting_status is not None:
-        logger.warning(
-            "Generation attempt ended",
-            extra={
-                "event": (
-                    "generation_job_retried"
-                    if resulting_status == "queued"
-                    else "generation_job_failed"
-                ),
-                "job_id": job.id,
-                "job_type": job.job_type,
-                "job_status": resulting_status,
-                "attempt_number": job.attempt_count,
-                "course_id": job.course_id,
-                "user_id": job.user_id,
-                "error_code": code.value,
-            },
-        )
+        attempt_fields = {
+            "job_id": job.id,
+            "job_type": job.job_type,
+            "job_status": resulting_status,
+            "attempt_number": job.attempt_count,
+            "course_id": job.course_id,
+            "user_id": job.user_id,
+            "error_code": code.value,
+        }
+        if resulting_status == "queued":
+            logger.warning(
+                "Generation job %s failed with %s and was queued for another attempt",
+                job.id,
+                code.value,
+                extra={"event": "generation_job_retried", **attempt_fields},
+            )
+        else:
+            logger.warning(
+                "Generation job %s attempt failed with %s",
+                job.id,
+                code.value,
+                extra={"event": "generation_job_failed", **attempt_fields},
+            )
     return resulting_status
 
 
@@ -493,7 +517,19 @@ def process_next_generation_job(
                     error_message=PUBLIC_MESSAGES[AiErrorCode.GENERATION_FAILED],
                     retryable=False,
                 )
-            logger.error("Generation job %s has unknown type %s", job.id, job.job_type)
+            logger.error(
+                "Generation job %s has unknown type %s",
+                job.id,
+                job.job_type,
+                extra={
+                    "event": "generation_job_type_unknown",
+                    "job_id": job.id,
+                    "job_type": job.job_type,
+                    "course_id": job.course_id,
+                    "user_id": job.user_id,
+                    "error_code": AiErrorCode.GENERATION_FAILED.value,
+                },
+            )
             return True
 
         started = time.monotonic()
@@ -532,7 +568,17 @@ def process_next_generation_job(
             # already requeued, most often. Whoever holds it now owns the
             # outcome, so this attempt says nothing further about it.
             logger.warning(
-                "Generation job %s was no longer held by this worker", job.id
+                "Generation job %s was no longer held by this worker",
+                job.id,
+                extra={
+                    "event": "generation_lease_lost",
+                    "job_id": job.id,
+                    "job_type": job.job_type,
+                    "course_id": job.course_id,
+                    "user_id": job.user_id,
+                    "worker_id": worker_id,
+                    "reason": "lease_lost",
+                },
             )
         except Exception as exc:
             if claim_lost.is_set():
@@ -540,6 +586,15 @@ def process_next_generation_job(
                     "Generation job %s failed after its lease was released",
                     job.id,
                     exc_info=exc,
+                    extra={
+                        "event": "generation_failed_after_lease_lost",
+                        "job_id": job.id,
+                        "job_type": job.job_type,
+                        "course_id": job.course_id,
+                        "user_id": job.user_id,
+                        "worker_id": worker_id,
+                        "reason": "lease_lost",
+                    },
                 )
             else:
                 try:
@@ -548,6 +603,15 @@ def process_next_generation_job(
                     logger.warning(
                         "Generation job %s could not be failed under this claim",
                         job.id,
+                        extra={
+                            "event": "generation_lease_lost",
+                            "job_id": job.id,
+                            "job_type": job.job_type,
+                            "course_id": job.course_id,
+                            "user_id": job.user_id,
+                            "worker_id": worker_id,
+                            "reason": "lease_lost",
+                        },
                     )
         else:
             logger.info(
@@ -640,7 +704,14 @@ def _maintenance_cycle(
         else:
             recovery_saturated = True
         if recovered_total:
-            logger.info("Recovered %s expired generation jobs", recovered_total)
+            logger.info(
+                "Recovered %s expired generation jobs",
+                recovered_total,
+                extra={
+                    "event": "generation_jobs_recovered",
+                    "maintenance_task": "generation_job_recovery",
+                },
+            )
         with session_factory() as session:
             queue = generation_queue_metrics(session)
         emit_emf_metrics(
@@ -657,7 +728,13 @@ def _maintenance_cycle(
             units={"OldestQueuedGenerationAgeSeconds": "Seconds"},
         )
     except Exception:
-        logger.exception("Failed to recover expired generation jobs")
+        logger.exception(
+            "Failed to recover expired generation jobs",
+            extra={
+                "event": "generation_recovery_failed",
+                "maintenance_task": "generation_job_recovery",
+            },
+        )
     schedule.next_recovery = (
         monotonic_now
         if recovery_saturated
@@ -678,7 +755,14 @@ def _claim_once(
             shutdown_requested=stop.is_set,
         )
     except Exception:
-        logger.exception("Generation worker iteration failed")
+        logger.exception(
+            "Generation worker %s failed while claiming or running a job",
+            worker_id,
+            extra={
+                "event": "generation_worker_iteration_failed",
+                "worker_id": worker_id,
+            },
+        )
         return False
 
 
@@ -695,6 +779,10 @@ def _run_worker_serially(
             logger.info(
                 "Shutdown requested; generation worker %s will not claim another job",
                 worker_id,
+                extra={
+                    "event": "generation_worker_shutdown_requested",
+                    "worker_id": worker_id,
+                },
             )
             return
         _maintenance_cycle(schedule, session_factory=session_factory, stop=stop)
@@ -750,6 +838,10 @@ def _run_worker_slots(
         logger.info(
             "Shutdown requested; generation worker %s will not claim another job",
             slot_worker_id,
+            extra={
+                "event": "generation_worker_shutdown_requested",
+                "worker_id": slot_worker_id,
+            },
         )
 
     threads = [threading.Thread(target=coordinate, daemon=True)]
@@ -805,7 +897,11 @@ def run_worker(
     if once:
         concurrency = 1
 
-    logger.info("Generation worker %s started", worker_id)
+    logger.info(
+        "Generation worker %s started",
+        worker_id,
+        extra={"event": "generation_worker_started", "worker_id": worker_id},
+    )
     if concurrency > 1:
         _run_worker_slots(
             worker_id=worker_id,
@@ -820,7 +916,11 @@ def run_worker(
             session_factory=session_factory,
             stop=stop,
         )
-    logger.info("Generation worker %s stopped", worker_id)
+    logger.info(
+        "Generation worker %s stopped",
+        worker_id,
+        extra={"event": "generation_worker_stopped", "worker_id": worker_id},
+    )
 
 
 def _install_shutdown_handlers(stop_event: _SignalStopEvent) -> None:
@@ -857,9 +957,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         try:
             check_worker_ready()
         except ReadinessError as exc:
-            logger.error("Generation worker readiness check failed: %s", exc)
+            logger.error(
+                "Generation worker readiness check failed: %s",
+                exc,
+                extra={
+                    "event": "worker_readiness_check_failed",
+                    "failed_stage": exc.check,
+                },
+            )
             raise SystemExit(1) from None
-        logger.info("Generation worker readiness check succeeded")
+        logger.info(
+            "Generation worker readiness check succeeded",
+            extra={"event": "worker_readiness_check_succeeded"},
+        )
         return
 
     stop_event = _SignalStopEvent()
@@ -872,7 +982,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             concurrency=settings.generation_job_concurrency,
         )
     except ReadinessError as exc:
-        logger.error("Generation worker readiness check failed: %s", exc)
+        logger.error(
+            "Generation worker readiness check failed: %s",
+            exc,
+            extra={
+                "event": "worker_readiness_check_failed",
+                "failed_stage": exc.check,
+            },
+        )
         raise SystemExit(1) from None
 
 

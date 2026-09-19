@@ -271,7 +271,14 @@ def _spec(
 
 
 def _reject(reason: str) -> None:
-    logger.warning("Similar question set refused: %s", reason)
+    logger.warning(
+        "Similar question set refused: %s",
+        reason,
+        extra={
+            "event": "exam_artifact_rejected",
+            "generation_type": GenerationType.EXAM_SIMILAR_QUESTIONS.value,
+        },
+    )
     raise InvalidExamArtifactStructureError(INVALID_MESSAGE)
 
 

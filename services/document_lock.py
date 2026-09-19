@@ -184,7 +184,12 @@ def acquire_generation_locks(
         except SQLAlchemyError:
             # The lease bounds the damage: the hold expires on its own.
             logger.exception(
-                "Could not release generation locks for holder %s", holder_token
+                "Could not release generation locks for holder %s",
+                holder_token,
+                extra={
+                    "event": "document_lock_release_failed",
+                    "lock_holder": str(holder_token),
+                },
             )
 
 

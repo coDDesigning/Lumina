@@ -365,14 +365,17 @@ class OllamaImageUnderstandingProvider:
     def _log_unusable_response(self, raw_text: str, exc: BaseException | None) -> None:
         logger.warning(
             "AI generation failed",
-            extra=ai_failure_fields(
-                generation_type=GenerationType.IMAGE_UNDERSTANDING,
-                provider=self.PROVIDER_NAME,
-                model=self._model,
-                error_category=ErrorCategory.INVALID_STRUCTURE,
-                raw_text=raw_text,
-                exc=exc,
-            ),
+            extra={
+                "event": "ai_generation_failed",
+                **ai_failure_fields(
+                    generation_type=GenerationType.IMAGE_UNDERSTANDING,
+                    provider=self.PROVIDER_NAME,
+                    model=self._model,
+                    error_category=ErrorCategory.INVALID_STRUCTURE,
+                    raw_text=raw_text,
+                    exc=exc,
+                ),
+            },
         )
 
     def describe_visual(

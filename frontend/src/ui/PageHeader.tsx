@@ -20,7 +20,7 @@ export interface PageHeaderProps {
 
 export function PageHeader({ crumbs, badges, actions, courseId, className }: PageHeaderProps) {
   const content = (
-    <div className={cx(styles.header, className)}>
+    <div className={cx(styles.header, courseId === undefined && styles.frame, className)}>
       {courseId !== undefined ? <CourseChip courseId={courseId} /> : null}
 
       <nav className={styles.crumbs} aria-label="Breadcrumb">
@@ -55,5 +55,9 @@ export function PageHeader({ crumbs, badges, actions, courseId, className }: Pag
     return content;
   }
 
-  return <CourseLight courseId={courseId}>{content}</CourseLight>;
+  return (
+    <CourseLight courseId={courseId} className={styles.frame}>
+      {content}
+    </CourseLight>
+  );
 }

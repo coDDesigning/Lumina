@@ -403,5 +403,132 @@ describe('StudyHistoryModal', () => {
     expect(screen.getByText('Understand working memory')).toBeInTheDocument();
     expect(screen.queryByText(/This result was saved in a shape/)).not.toBeInTheDocument();
   });
+
+  it('keeps the exam source analysis out and names exam outputs in words', async () => {
+    mockList.mockResolvedValue([
+      { ...SUMMARY, id: 40, output_type: 'exam_topic_analysis', generation_settings: null },
+      { ...SUMMARY, id: 41, output_type: 'exam_plan', generation_settings: null },
+      { ...SUMMARY, id: 42, output_type: 'exam_mock_exam', generation_settings: null },
+      { ...SUMMARY, id: 43, output_type: 'exam_review_sheet', generation_settings: null },
+    ]);
+
+    renderModal();
+
+    expect(await screen.findByText('Exam plan')).toBeInTheDocument();
+    expect(screen.getByText('Mock exam')).toBeInTheDocument();
+    expect(screen.getByText('Review sheet')).toBeInTheDocument();
+    expect(screen.queryByText(/exam_/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Exam source analysis')).not.toBeInTheDocument();
+  });
+
+  it('opens a stored mock exam as a quiz instead of raw JSON', async () => {
+    mockList.mockResolvedValue([
+      { ...SUMMARY, id: 44, output_type: 'exam_mock_exam', generation_settings: null },
+    ]);
+    mockGet.mockResolvedValue({
+      ...SUMMARY,
+      id: 44,
+      output_type: 'exam_mock_exam',
+      content: {
+        quiz_id: 4,
+        course_id: 7,
+        title: 'Mock Examination',
+        quiz_purpose: 'exam_mock_exam',
+        answers_hidden: true,
+        questions: [
+          {
+            question_id: 201,
+            question_number: 1,
+            question_type: 'multiple_choice',
+            question: 'Which traversal uses a queue?',
+            options: ['BFS', 'DFS'],
+            correct_option_index: null,
+            correct_answer: null,
+            explanation: null,
+          },
+        ],
+      },
+    } as unknown as GeneratedOutputDetail);
+
+    renderModal();
+    await userEvent.click(await screen.findByRole('button', { name: /Mock exam/ }));
+
+    expect(await screen.findByText('Mock Examination')).toBeInTheDocument();
+    expect(screen.getByText('Which traversal uses a queue?')).toBeInTheDocument();
+    expect(screen.queryByText(/This result was saved in a shape/)).not.toBeInTheDocument();
+  });
+
+  it('opens a stored review sheet instead of raw JSON', async () => {
+    mockList.mockResolvedValue([
+      { ...SUMMARY, id: 45, output_type: 'exam_review_sheet', generation_settings: null },
+    ]);
+    mockGet.mockResolvedValue({
+      ...SUMMARY,
+      id: 45,
+      output_type: 'exam_review_sheet',
+      content: {
+        version: 1,
+        output_type: 'exam_review_sheet',
+        plan_output_id: 16,
+        exam_date: '2026-09-15',
+        days_until_exam: 2,
+        title: 'Last-Hour Exam Revision Sheet',
+        topics: [
+          {
+            topic_key: 'graph-terminology',
+            topic_label: 'Graph Fundamentals',
+            must_remember: ['A graph is a set of vertices and edges.'],
+            traps: [],
+          },
+        ],
+        final_checks: [],
+        confidence_notes: '',
+      },
+    } as unknown as GeneratedOutputDetail);
+
+    renderModal();
+    await userEvent.click(await screen.findByRole('button', { name: /Review sheet/ }));
+
+    expect(await screen.findByText('Last-Hour Exam Revision Sheet')).toBeInTheDocument();
+    expect(screen.getByText('A graph is a set of vertices and edges.')).toBeInTheDocument();
+    expect(screen.queryByText(/This result was saved in a shape/)).not.toBeInTheDocument();
+  });
+
+  it('opens a stored exam plan as its ranked topics', async () => {
+    mockList.mockResolvedValue([
+      { ...SUMMARY, id: 46, output_type: 'exam_plan', generation_settings: null },
+    ]);
+    mockGet.mockResolvedValue({
+      ...SUMMARY,
+      id: 46,
+      output_type: 'exam_plan',
+      content: {
+        version: 1,
+        output_type: 'exam_plan',
+        topics: [
+          {
+            topic_key: 'avl-tree',
+            display_label: 'AVL trees',
+            rank: 1,
+            is_high_priority: true,
+            priority_score: 80,
+            priority_band: 'critical',
+            has_any_evidence: true,
+            is_unattempted: true,
+            mastery_percentage: null,
+            signals: {},
+            reason_codes: [],
+            explanation: 'Your course material covers it in depth.',
+          },
+        ],
+      },
+    } as unknown as GeneratedOutputDetail);
+
+    renderModal();
+    await userEvent.click(await screen.findByRole('button', { name: /Exam plan/ }));
+
+    expect(await screen.findByText('AVL trees')).toBeInTheDocument();
+    expect(screen.queryByText(/This result was saved in a shape/)).not.toBeInTheDocument();
+  });
 });
 

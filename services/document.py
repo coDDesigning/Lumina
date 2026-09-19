@@ -17,6 +17,7 @@ from backend.app.database import begin_serialized_write
 from backend.app.models import (
     JOB_TYPE_EXTRACT_DOCUMENT,
     Course,
+    DocumentPage,
     ProcessingJob,
     UploadedDocument,
     User,
@@ -47,6 +48,10 @@ COMMIT_RECONCILIATION_DELAY_SECONDS = 0.05
 SYLLABUS_FILE_TYPES = frozenset({"pdf", "txt", "md", "markdown"})
 SYLLABUS_MAX_CHARACTERS = 20_000
 PAGE_SEPARATOR = "\n\n"
+_VISUAL_ANALYSIS_LOADS = (
+    selectinload(UploadedDocument.pages).selectinload(DocumentPage.visuals),
+    selectinload(UploadedDocument.processing_jobs),
+)
 
 
 class DocumentRegistrationError(Exception):
@@ -329,7 +334,7 @@ class DocumentService:
         """
         return db.scalars(
             select(UploadedDocument)
-            .options(selectinload(UploadedDocument.pages))
+            .options(*_VISUAL_ANALYSIS_LOADS)
             .where(
                 UploadedDocument.course_id == course_id,
                 UploadedDocument.status != "deleting",
@@ -345,7 +350,7 @@ class DocumentService:
     ) -> tuple[UploadedDocument, ProcessingJob]:
         row = db.execute(
             select(UploadedDocument, ProcessingJob)
-            .options(selectinload(UploadedDocument.pages))
+            .options(*_VISUAL_ANALYSIS_LOADS)
             .join(
                 ProcessingJob,
                 (ProcessingJob.document_id == UploadedDocument.id)

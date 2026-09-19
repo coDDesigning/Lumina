@@ -416,6 +416,16 @@ export type DocumentVisualAnalysisStatus =
   | 'partial'
   | 'failed';
 
+export interface VisualAnalysisSummary {
+  total: number;
+  described: number;
+  pending: number;
+  failed: number;
+  failure_reason: string | null;
+  crowded_pages: number;
+  stopped_error_code: string | null;
+}
+
 export interface DocumentResponse {
   id: string;
   original_file_name: string;
@@ -426,6 +436,7 @@ export interface DocumentResponse {
   course_id: number;
   status: LooseUnion<DocumentStatus>;
   visual_analysis_status?: LooseUnion<DocumentVisualAnalysisStatus>;
+  visual_analysis?: VisualAnalysisSummary | null;
   created_at: string;
   updated_at: string;
 }

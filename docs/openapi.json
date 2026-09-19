@@ -4897,6 +4897,16 @@
             "title": "Updated At",
             "type": "string"
           },
+          "visual_analysis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VisualAnalysisSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "visual_analysis_status": {
             "default": "not_applicable",
             "title": "Visual Analysis Status",
@@ -11199,6 +11209,63 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VisualAnalysisSummary": {
+        "properties": {
+          "crowded_pages": {
+            "title": "Crowded Pages",
+            "type": "integer"
+          },
+          "described": {
+            "title": "Described",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "integer"
+          },
+          "stopped_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped Error Code"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "described",
+          "pending",
+          "failed",
+          "failure_reason",
+          "crowded_pages",
+          "stopped_error_code"
+        ],
+        "title": "VisualAnalysisSummary",
         "type": "object"
       }
     },

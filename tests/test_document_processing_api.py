@@ -5,19 +5,24 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.app.models import (
     DocumentChunk,
     DocumentPage,
+    DocumentVisual,
     ProcessingJob,
     UploadedDocument,
 )
 from main import app
 from services.document import DocumentService
 import services.document as document_service
-from services.processing_jobs import claim_next_job, fail_job
+from services.processing_jobs import (
+    claim_next_job,
+    enqueue_describe_visuals_job,
+    fail_job,
+)
 from services.vector_store import PgVectorStore
 from utils.exceptions import ConflictException
 from workers.course_purge import run_document_purge
@@ -697,6 +702,195 @@ def test_visual_analysis_status_backward_compatibility_legacy_documents(upload_a
     )
     assert response.status_code == 200
     assert response.json()["document"]["visual_analysis_status"] == "not_applicable"
+
+
+def _ready_pdf(context, content: bytes, pages) -> UUID:
+    uploaded = _upload(context, content)
+    document_id = UUID(uploaded.json()["document"]["id"])
+    with context.session_factory() as session:
+        document = session.get(UploadedDocument, document_id)
+        assert document is not None
+        document.file_type = "pdf"
+        document.status = "ready"
+        for index, (has_visual, page_status, visuals) in enumerate(pages):
+            page = DocumentPage(
+                document_id=document_id,
+                course_id=context.course_id,
+                content_index=index,
+                page_number=index + 1,
+                raw_text=f"Page {index + 1}",
+                text=f"Page {index + 1}",
+                has_visual_content=has_visual,
+                visual_analysis_status=page_status,
+            )
+            page.visuals = [
+                DocumentVisual(
+                    visual_index=visual_index,
+                    visual_type="diagram",
+                    source="image",
+                    bbox_x0=0.0,
+                    bbox_y0=0.0,
+                    bbox_x1=10.0,
+                    bbox_y1=10.0,
+                    analysis_status=visual_status,
+                    error_code=error_code,
+                )
+                for visual_index, (visual_status, error_code) in enumerate(visuals)
+            ]
+            session.add(page)
+        session.commit()
+    return document_id
+
+
+def _visual_analysis(context, document_id: UUID):
+    status_response = context.client.get(
+        f"/api/courses/{context.course_id}/documents/{document_id}",
+        headers=context.authorization,
+    )
+    assert status_response.status_code == 200
+    list_response = context.client.get(
+        f"/api/courses/{context.course_id}/documents",
+        headers=context.authorization,
+    )
+    assert list_response.status_code == 200
+    listed = next(
+        row for row in list_response.json()["data"] if row["id"] == str(document_id)
+    )
+    return (
+        status_response.json()["document"]["visual_analysis"],
+        listed["visual_analysis"],
+    )
+
+
+def test_visual_analysis_summary_counts_each_visual_and_names_the_commonest_failure(
+    upload_api,
+):
+    document_id = _ready_pdf(
+        upload_api,
+        b"%PDF-1.4 partial visuals",
+        [
+            (
+                True,
+                "partial",
+                [
+                    ("succeeded", None),
+                    ("failed", "VISUAL_SERVICE_TEMPORARY"),
+                    ("failed", "VISUAL_ANALYSIS_FAILED"),
+                    ("failed", "VISUAL_ANALYSIS_FAILED"),
+                ],
+            ),
+            (True, "completed", [("succeeded", None), ("skipped", None)]),
+            (True, "partial", []),
+            (True, "not_configured", []),
+            (False, "not_applicable", []),
+        ],
+    )
+
+    expected = {
+        "total": 6,
+        "described": 2,
+        "pending": 0,
+        "failed": 3,
+        "failure_reason": "VISUAL_ANALYSIS_FAILED",
+        "crowded_pages": 1,
+        "stopped_error_code": None,
+    }
+    assert _visual_analysis(upload_api, document_id) == (expected, expected)
+
+
+def test_visual_analysis_summary_names_the_code_of_a_describe_job_that_gave_up(
+    upload_api,
+):
+    document_id = _ready_pdf(
+        upload_api,
+        b"%PDF-1.4 stopped visuals",
+        [
+            (
+                True,
+                "pending",
+                [("succeeded", None), ("pending", None), ("pending", None)],
+            )
+        ],
+    )
+    with upload_api.session_factory() as session:
+        document = session.get(UploadedDocument, document_id)
+        assert document is not None
+        job = enqueue_describe_visuals_job(session, document)
+        job.attempt_count = 1
+        job.last_error_code = "IMAGE_UNDERSTANDING_FAILED"
+        job.last_error_message = "Image understanding failed."
+        session.commit()
+        job_id = job.id
+
+    retrying = {
+        "total": 3,
+        "described": 1,
+        "pending": 2,
+        "failed": 0,
+        "failure_reason": None,
+        "crowded_pages": 0,
+        "stopped_error_code": None,
+    }
+    assert _visual_analysis(upload_api, document_id) == (retrying, retrying)
+
+    with upload_api.session_factory() as session:
+        job = session.get(ProcessingJob, job_id)
+        assert job is not None
+        job.status = "failed"
+        job.attempt_count = job.max_attempts
+        job.finished_at = datetime.now(timezone.utc)
+        session.commit()
+
+    stopped = {**retrying, "stopped_error_code": "IMAGE_UNDERSTANDING_FAILED"}
+    assert _visual_analysis(upload_api, document_id) == (stopped, stopped)
+
+
+def test_visual_analysis_summary_is_absent_rather_than_zero_without_visual_pages(
+    upload_api,
+):
+    document_id = _ready_pdf(
+        upload_api,
+        b"%PDF-1.4 text only",
+        [(False, "not_applicable", []), (False, "not_applicable", [])],
+    )
+
+    assert _visual_analysis(upload_api, document_id) == (None, None)
+
+
+def test_listing_documents_reads_visual_summaries_without_a_query_per_document(
+    upload_api,
+    database_engine,
+):
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany) -> None:
+        statements.append(statement)
+
+    def list_documents():
+        statements.clear()
+        event.listen(database_engine, "before_cursor_execute", record)
+        try:
+            response = upload_api.client.get(
+                f"/api/courses/{upload_api.course_id}/documents",
+                headers=upload_api.authorization,
+            )
+        finally:
+            event.remove(database_engine, "before_cursor_execute", record)
+        assert response.status_code == 200
+        return response.json()["data"], len(statements)
+
+    visual_page = [
+        (True, "partial", [("succeeded", None), ("failed", "VISUAL_ANALYSIS_FAILED")])
+    ]
+    _ready_pdf(upload_api, b"%PDF-1.4 first", visual_page)
+    _, statements_for_one = list_documents()
+    _ready_pdf(upload_api, b"%PDF-1.4 second", visual_page)
+    _ready_pdf(upload_api, b"%PDF-1.4 third", visual_page)
+
+    listed, statements_for_three = list_documents()
+
+    assert [row["visual_analysis"]["described"] for row in listed] == [1, 1, 1]
+    assert statements_for_three == statements_for_one
 
 
 def test_a_queued_document_refusal_names_the_reason_and_the_remedy(upload_api):

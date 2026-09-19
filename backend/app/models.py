@@ -1,5 +1,6 @@
 import math
 import struct
+from collections import Counter
 from datetime import date, datetime, timezone
 from uuid import UUID, uuid4
 
@@ -187,6 +188,16 @@ _DOCUMENT_PROCESSING_STAGES_SQL = ", ".join(
 _ASCII_WHITESPACE = " \t\n\r\v\f"
 
 EMBEDDING_DIMENSIONS = SCHEMA_EMBEDDING_DIMENSIONS
+
+
+def _loaded_relationship(instance: object, name: str) -> list | None:
+    try:
+        state = inspect(instance)
+    except Exception:
+        return getattr(instance, "__dict__", {}).get(name)
+    if state is None or name in state.unloaded:
+        return None
+    return getattr(instance, name)
 
 
 class UTCDateTime(TypeDecorator[datetime]):
@@ -798,6 +809,49 @@ class UploadedDocument(Base):
         if statuses == {"failed"}:
             return "failed"
         return "partial"
+
+    @property
+    def visual_analysis(self) -> dict[str, int | str | None] | None:
+        pages = _loaded_relationship(self, "pages")
+        jobs = _loaded_relationship(self, "processing_jobs")
+        if not pages or jobs is None:
+            return None
+        visual_pages = [page for page in pages if page.has_visual_content]
+        page_visuals = [_loaded_relationship(page, "visuals") for page in visual_pages]
+        if not visual_pages or any(loaded is None for loaded in page_visuals):
+            return None
+
+        visuals = [visual for loaded in page_visuals for visual in loaded]
+        statuses = Counter(visual.analysis_status for visual in visuals)
+        failure_codes = Counter(
+            visual.error_code
+            for visual in visuals
+            if visual.analysis_status == "failed"
+        )
+        describe_job = next(
+            (job for job in jobs if job.job_type == JOB_TYPE_DESCRIBE_VISUALS), None
+        )
+        return {
+            "total": len(visuals),
+            "described": statuses["succeeded"],
+            "pending": statuses["pending"],
+            "failed": statuses["failed"],
+            "failure_reason": min(
+                failure_codes,
+                key=lambda code: (-failure_codes[code], code),
+                default=None,
+            ),
+            "crowded_pages": sum(
+                1
+                for page, loaded in zip(visual_pages, page_visuals, strict=True)
+                if not loaded and page.visual_analysis_status == "partial"
+            ),
+            "stopped_error_code": (
+                describe_job.last_error_code
+                if describe_job is not None and describe_job.status == JOB_STATUS_FAILED
+                else None
+            ),
+        }
 
 
 class DocumentChunk(Base):

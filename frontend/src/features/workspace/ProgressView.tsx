@@ -24,6 +24,15 @@ export interface ProgressViewProps {
 }
 
 const UNTAGGED_TOPIC = 'Untagged';
+const WEAK_TOPICS_PER_COLUMN = 7;
+
+function columnsOf<T>(items: T[], size: number): T[][] {
+  const columns: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    columns.push(items.slice(index, index + size));
+  }
+  return columns;
+}
 
 const MASTERY_TONE: Record<MasteryStatus, BadgeTone> = {
   Mastered: 'success',
@@ -139,25 +148,30 @@ export function ProgressView({
           <h2 id="weak-topics-heading" className={styles.heading}>
             Worth another look
           </h2>
-          <ul className={styles.weakList}>
-            {weakTopics.map((topic) => (
-              <li key={topic} className={styles.weakItem}>
-                <Badge tone="warning" icon={<CircleDot aria-hidden="true" />}>
-                  {topic}
-                </Badge>
-                {onPractice && topic !== UNTAGGED_TOPIC ? (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    icon={<Target aria-hidden="true" />}
-                    onClick={() => onPractice(topic)}
-                  >
-                    Practice {topic}
-                  </Button>
-                ) : null}
-              </li>
+          <div className={styles.weakColumns}>
+            {columnsOf(weakTopics, WEAK_TOPICS_PER_COLUMN).map((column) => (
+              <ul key={column[0]} className={styles.weakList}>
+                {column.map((topic) => (
+                  <li key={topic} className={styles.weakItem}>
+                    <Badge tone="warning" icon={<CircleDot aria-hidden="true" />}>
+                      {topic}
+                    </Badge>
+                    {onPractice && topic !== UNTAGGED_TOPIC ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        icon={<Target aria-hidden="true" />}
+                        aria-label={`Practice ${topic}`}
+                        onClick={() => onPractice(topic)}
+                      >
+                        Practice
+                      </Button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
             ))}
-          </ul>
+          </div>
         </section>
       ) : null}
 

@@ -1,14 +1,14 @@
 import { Link } from 'react-router-dom';
 import { CircleDot, Target, TrendingUp } from 'lucide-react';
-import type { CourseProgressResponse, MasteryStatus } from '@/api/types';
+import type { CourseProgressResponse } from '@/api/types';
 import { cx } from '@/lib/cx';
 import { formatStudyTime } from '@/lib/formatStudyTime';
 import { Badge } from '@/ui/Badge';
-import type { BadgeTone } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
 import { EmptyState } from '@/ui/EmptyState';
 import { ErrorState } from '@/ui/ErrorState';
 import { Skeleton } from '@/ui/Skeleton';
+import { TopicMasteryList } from './TopicMasteryList';
 import styles from './ProgressView.module.css';
 
 export interface ProgressViewProps {
@@ -34,15 +34,6 @@ function columnsOf<T>(items: T[], size: number): T[][] {
   return columns;
 }
 
-const MASTERY_TONE: Record<MasteryStatus, BadgeTone> = {
-  Mastered: 'success',
-  'In Progress': 'processing',
-  'Needs Review': 'warning',
-};
-
-function masteryTone(status: string): BadgeTone {
-  return MASTERY_TONE[status as MasteryStatus] ?? 'neutral';
-}
 
 function formatDate(value: string): string {
   const parsed = new Date(value);
@@ -185,30 +176,7 @@ export function ProgressView({
             No topic breakdown yet. It appears once a quiz has covered named topics.
           </p>
         ) : (
-          <ul className={styles.masteryList}>
-            {topicMastery.map((topic) => (
-              <li key={topic.topic} className={styles.masteryRow}>
-                <div className={styles.masteryHead}>
-                  <span className={styles.masteryName}>{topic.topic}</span>
-                  <Badge tone={masteryTone(topic.status)}>{topic.status}</Badge>
-                </div>
-                <div
-                  className={styles.bar}
-                  role="meter"
-                  aria-valuenow={topic.mastery_percentage}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-label={`${topic.topic} mastery`}
-                >
-                  <div className={styles.barFill} style={{ width: `${topic.mastery_percentage}%` }} />
-                </div>
-                <p className={cx(styles.masteryDetail, 'tabular')}>
-                  {topic.questions_correct} of {topic.questions_answered} correct ·{' '}
-                  {topic.mastery_percentage}%
-                </p>
-              </li>
-            ))}
-          </ul>
+          <TopicMasteryList topics={topicMastery} />
         )}
 
         <p className={styles.note}>

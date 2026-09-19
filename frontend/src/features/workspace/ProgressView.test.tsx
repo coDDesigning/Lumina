@@ -87,7 +87,7 @@ describe('ProgressView', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('75%')).toBeInTheDocument();
+    expect(screen.getAllByText('75%')).toHaveLength(2);
     expect(screen.getByText('Algebra')).toBeInTheDocument();
     expect(screen.getByText('Every attempt')).toBeInTheDocument();
 
@@ -202,6 +202,29 @@ describe('ProgressView', () => {
     expect(within(columns[0]).getByRole('button', { name: 'Practice Topic 1' })).toHaveTextContent(
       /^Practice$/,
     );
+  });
+
+  it('lays topic mastery out as a table, weakest first', () => {
+    render(
+      <MemoryRouter>
+        <ProgressView
+          courseId="10"
+          documentCount={3}
+          readyDocumentCount={3}
+          progress={SAMPLE_PROGRESS}
+          isLoading={false}
+          error={null}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('meter', { name: 'Algebra mastery' })).toHaveAttribute(
+      'aria-valuenow',
+      '75',
+    );
+    expect(screen.getByRole('rowheader', { name: 'Algebra' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '3 of 4' })).toBeInTheDocument();
   });
 
   it('offers no practice for questions that carried no topic', () => {

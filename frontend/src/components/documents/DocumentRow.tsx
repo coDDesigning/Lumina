@@ -5,6 +5,7 @@ import { cx } from '@/lib/cx';
 import { Breath } from '@/ui/Breath';
 import { Button } from '@/ui/Button';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
+import { Tooltip } from '@/ui/Tooltip';
 import {
   TOTAL_STAGES,
   attemptsLabel,
@@ -17,7 +18,9 @@ import {
   progressLabel,
   stageNumber,
   stageReason,
+  visualAnalysisDetail,
   visualAnalysisStatusLabel,
+  type VisualAnalysisDetail,
 } from './documentLabels';
 import styles from './DocumentRow.module.css';
 
@@ -30,13 +33,38 @@ export interface DocumentRowProps {
 
 function readyFacts(entry: DocumentEntry): string[] {
   const { document } = entry;
-  const visualStatus = visualAnalysisStatusLabel(document.visual_analysis_status);
   return [
     materialKindLabel(document.material_kind),
     document.file_type.toUpperCase(),
     formatFileSize(document.file_size),
-    visualStatus ?? '',
   ].filter(Boolean);
+}
+
+function VisualDetail({ detail }: { detail: VisualAnalysisDetail }) {
+  return (
+    <>
+      {detail.lines.map((line) => (
+        <span key={line} className={styles.detailLine}>
+          {line}
+        </span>
+      ))}
+      {detail.progress ? (
+        <span
+          className={styles.detailBar}
+          role="progressbar"
+          aria-valuenow={detail.progress.value}
+          aria-valuemin={0}
+          aria-valuemax={detail.progress.max}
+          aria-label="Figures described"
+        >
+          <span
+            className={styles.barFill}
+            style={{ width: `${(detail.progress.value / detail.progress.max) * 100}%` }}
+          />
+        </span>
+      ) : null}
+    </>
+  );
 }
 
 export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: DocumentRowProps) {
@@ -54,6 +82,15 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
   const why = stageReason(job?.processing_stage);
   const failure = failed ? describeFailure(job) : null;
   const attempts = failed ? attemptsLabel(job) : null;
+  const facts = readyFacts(entry);
+  const visualLabel = visualAnalysisStatusLabel(
+    document.visual_analysis_status,
+    document.visual_analysis,
+  );
+  const visualDetail = visualAnalysisDetail(
+    document.visual_analysis_status,
+    document.visual_analysis,
+  );
 
   return (
     <article
@@ -74,12 +111,22 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
 
       {ready ? (
         <p className={styles.facts}>
-          {readyFacts(entry).map((fact, index) => (
+          {facts.map((fact, index) => (
             <span key={fact}>
               {index > 0 ? <span className={styles.dot}>·</span> : null}
               <span className={index > 0 ? 'tabular' : undefined}>{fact}</span>
             </span>
           ))}
+          {visualLabel ? (
+            <span>
+              {facts.length > 0 ? <span className={styles.dot}>·</span> : null}
+              {visualDetail ? (
+                <Tooltip content={<VisualDetail detail={visualDetail} />}>{visualLabel}</Tooltip>
+              ) : (
+                <span>{visualLabel}</span>
+              )}
+            </span>
+          ) : null}
         </p>
       ) : null}
 

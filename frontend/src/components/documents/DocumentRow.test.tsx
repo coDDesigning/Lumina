@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import type { DocumentResponse, DocumentStatus } from '@/api/types';
+import type { DocumentResponse, DocumentStatus, VisualAnalysisSummary } from '@/api/types';
 import type { DocumentEntry } from '@/hooks/useCourseDocuments';
 import { DocumentRow } from './DocumentRow';
 
@@ -281,5 +281,72 @@ describe('DocumentRow', () => {
     });
 
     expect(screen.queryByText(/visual/i)).toBeNull();
+  });
+
+  function visualRow(visualStatus: string, visualAnalysis: VisualAnalysisSummary | null): DocumentEntry {
+    const row = entry('ready');
+    return {
+      ...row,
+      document: { ...row.document, visual_analysis_status: visualStatus, visual_analysis: visualAnalysis },
+    };
+  }
+
+  function summary(overrides: Partial<VisualAnalysisSummary>): VisualAnalysisSummary {
+    return {
+      total: 12,
+      described: 0,
+      pending: 0,
+      failed: 0,
+      failure_reason: null,
+      crowded_pages: 0,
+      stopped_error_code: null,
+      ...overrides,
+    };
+  }
+
+  it('explains a partial visual status in a small box on hover', async () => {
+    const user = userEvent.setup();
+    renderRow(
+      visualRow('partial', summary({ described: 9, failed: 3, failure_reason: 'VISUAL_ANALYSIS_FAILED' })),
+    );
+
+    await user.hover(screen.getByRole('button', { name: 'Partial visuals' }));
+
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toHaveTextContent('9 of 12 figures described');
+    expect(tooltip).toHaveTextContent("3 couldn't be described: the vision model's answer couldn't be used");
+  });
+
+  it('shows how far describing has come while figures are analysed', async () => {
+    const user = userEvent.setup();
+    renderRow(visualRow('pending', summary({ described: 3, pending: 9 })));
+
+    await user.hover(screen.getByRole('button', { name: 'Analyzing visuals' }));
+
+    const progress = within(screen.getByRole('tooltip')).getByRole('progressbar');
+    expect(progress).toHaveAttribute('aria-valuenow', '3');
+    expect(progress).toHaveAttribute('aria-valuemax', '12');
+  });
+
+  it('says visual analysis stopped when describing gave up, and why', async () => {
+    const user = userEvent.setup();
+    renderRow(
+      visualRow(
+        'pending',
+        summary({ described: 4, pending: 8, stopped_error_code: 'image_understanding_failed' }),
+      ),
+    );
+
+    expect(screen.queryByText('Analyzing visuals')).toBeNull();
+    await user.hover(screen.getByRole('button', { name: 'Visual analysis stopped' }));
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Stopped: the vision service kept failing');
+  });
+
+  it('keeps a visual status it cannot explain as plain text', () => {
+    renderRow(visualRow('something_new', null));
+
+    expect(screen.getByText('Something new')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Something new' })).toBeNull();
   });
 });

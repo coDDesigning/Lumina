@@ -550,6 +550,7 @@ export default function CoursesPage({
         <AdSlot placement="dashboard" className={styles.adSlot} />
 
         <RecentActivity
+          className={styles.recentActivity}
           limit={5}
           footer={
             <LinkButton variant="ghost" size="sm" to="/activity">

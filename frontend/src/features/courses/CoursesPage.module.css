@@ -239,3 +239,8 @@
   margin-top: var(--space-5);
   margin-bottom: var(--space-5);
 }
+
+.recentActivity {
+  margin-top: var(--space-7);
+  max-width: 56rem;
+}

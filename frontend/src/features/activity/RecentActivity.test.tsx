@@ -47,7 +47,7 @@ describe('RecentActivity', () => {
 
     expect(await screen.findByText('Study guide')).toBeInTheDocument();
     expect(screen.getByText('Computer Architecture')).toBeInTheDocument();
-    expect(screen.getByText('today')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Today' })).toBeInTheDocument();
   });
 
   it('opens the stored guide a generation produced', async () => {
@@ -100,6 +100,20 @@ describe('RecentActivity', () => {
     renderActivity();
 
     expect(await screen.findByText('Nothing studied yet')).toBeInTheDocument();
+  });
+
+  it('groups what happened under the day it happened', async () => {
+    const earlier = new Date();
+    earlier.setDate(earlier.getDate() - 1);
+    list.mockResolvedValue([
+      item({ output_id: 1 }),
+      item({ output_id: 2, occurred_at: earlier.toISOString() }),
+    ]);
+
+    renderActivity();
+
+    expect(await screen.findByRole('heading', { name: 'Today' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Yesterday' })).toBeInTheDocument();
   });
 
   it('reports a failed read instead of an empty list', async () => {

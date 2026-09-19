@@ -10,7 +10,10 @@ import type {
   DocumentStatusResponse,
   ProcessingJobResponse,
 } from '../api/types';
-import { isTerminalDocumentStatus } from '../components/documents/documentLabels';
+import {
+  isDescribingVisuals,
+  isTerminalDocumentStatus,
+} from '../components/documents/documentLabels';
 
 export type DocumentPendingAction = 'retry' | 'delete';
 
@@ -39,6 +42,7 @@ interface PollControl {
 }
 
 const POLL_DELAYS_MS = [1500, 2000, 2000, 3000, 4000, 5000, 8000] as const;
+const VISUAL_POLL_DELAY_MS = 15_000;
 const ERROR_DELAYS_MS = [3000, 6000, 12000, 20000] as const;
 const MAX_CONSECUTIVE_FAILURES = 5;
 const SEED_STAGGER_MS = 150;
@@ -192,6 +196,9 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
 
         if (isTerminalDocumentStatus(status.document.status)) {
           attempts.delete(documentId);
+          if (isDescribingVisuals(status.document)) {
+            schedule(documentId, VISUAL_POLL_DELAY_MS);
+          }
           return;
         }
 
@@ -236,7 +243,7 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
       if (cancelled) return;
       setEntries((previous) => mergeListing(previous, documents));
       documents
-        .filter((document) => document.status !== 'ready')
+        .filter((document) => document.status !== 'ready' || isDescribingVisuals(document))
         .forEach((document, index) => {
           schedule(document.id, index * SEED_STAGGER_MS);
         });

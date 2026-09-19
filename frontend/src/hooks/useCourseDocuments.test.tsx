@@ -2,7 +2,11 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '../api/client';
 import { coursesAPI } from '../api/courses';
-import type { DocumentResponse, DocumentStatusResponse } from '../api/types';
+import type {
+  DocumentResponse,
+  DocumentStatusResponse,
+  VisualAnalysisSummary,
+} from '../api/types';
 import { useCourseDocuments } from './useCourseDocuments';
 
 vi.mock('../api/courses', () => ({
@@ -190,6 +194,85 @@ describe('useCourseDocuments polling lifecycle', () => {
     const callsAtTerminal = getDocumentStatus.mock.calls.length;
     await advance(60_000);
     expect(getDocumentStatus).toHaveBeenCalledTimes(callsAtTerminal);
+  });
+
+  function describingDocument(
+    summary: Partial<VisualAnalysisSummary>,
+    visualStatus = 'pending',
+  ): DocumentResponse {
+    return {
+      ...document('ready', '2026-08-19T10:00:00Z'),
+      visual_analysis_status: visualStatus,
+      visual_analysis: {
+        total: 3,
+        described: 0,
+        pending: 0,
+        failed: 0,
+        failure_reason: null,
+        crowded_pages: 0,
+        stopped_error_code: null,
+        ...summary,
+      },
+    };
+  }
+
+  function settled(settledDocument: DocumentResponse): DocumentStatusResponse {
+    return {
+      ...status('ready', settledDocument.updated_at, {
+        status: 'succeeded',
+        processing_stage: null,
+        finished_at: settledDocument.updated_at,
+      }),
+      document: settledDocument,
+    };
+  }
+
+  it('keeps checking a ready source while its figures are described, then stops', async () => {
+    listDocuments.mockResolvedValue([describingDocument({ described: 1, pending: 2 })]);
+    getDocumentStatus
+      .mockResolvedValueOnce(settled(describingDocument({ described: 2, pending: 1 })))
+      .mockResolvedValueOnce(settled(describingDocument({ described: 3 }, 'completed')));
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+    expect(result.current.entries[0].document.visual_analysis?.described).toBe(2);
+
+    await advance(60_000);
+    expect(result.current.entries[0].document.visual_analysis_status).toBe('completed');
+
+    const callsWhenSettled = getDocumentStatus.mock.calls.length;
+    await advance(120_000);
+    expect(getDocumentStatus).toHaveBeenCalledTimes(callsWhenSettled);
+  });
+
+  it('stops checking once describing the figures has stopped', async () => {
+    listDocuments.mockResolvedValue([describingDocument({ described: 1, pending: 2 })]);
+    getDocumentStatus.mockResolvedValue(
+      settled(
+        describingDocument({
+          described: 1,
+          pending: 2,
+          stopped_error_code: 'image_understanding_failed',
+        }),
+      ),
+    );
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+    await advance(120_000);
+
+    expect(getDocumentStatus).toHaveBeenCalledTimes(1);
+    expect(result.current.entries[0].document.visual_analysis?.stopped_error_code).toBe(
+      'image_understanding_failed',
+    );
   });
 
   it('leaves no timer running after unmount', async () => {

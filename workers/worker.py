@@ -1,5 +1,6 @@
 """Run document processing and background AI generation in one worker task."""
 
+import backend.app.boot_attempt  # noqa: F401
 import argparse
 import logging
 import os

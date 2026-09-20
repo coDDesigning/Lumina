@@ -1,3 +1,4 @@
+import backend.app.boot_attempt  # noqa: F401
 import logging
 import os
 import signal

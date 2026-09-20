@@ -662,12 +662,18 @@ the page says so rather than offering a button that would take the site down.
 ### Recovery
 
 If a saved revision cannot start, the process dies before any HTTP surface
-exists, so recovery happens at boot. `apply_overrides()` counts boot attempts for
-an unpromoted revision; after three it restores the last-known-good revision,
+exists, so recovery happens at boot. The API and the worker each record one boot
+attempt for a revision that has not yet reached readiness, by importing
+`backend/app/boot_attempt.py` before anything that could fail on a bad value.
+After three attempts `apply_overrides()` restores the last-known-good revision,
 records the restart as `rolled_back`, and the deployment comes back on
 configuration that is known to work. If the last-known-good also fails, startup
 fails loudly, which means the deployment's own `.env` is broken rather than the
 override.
+
+Only serving processes count. The container command runs `alembic` three times
+before uvicorn, and those runs read nothing but container-managed keys, so an
+override cannot break them and they must not spend an attempt.
 
 See [System settings restart](runbooks/system_settings_restart.md) for the
 operator procedure, including break-glass recovery.

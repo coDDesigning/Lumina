@@ -290,8 +290,10 @@ def test_a_revision_that_never_promotes_is_rolled_back(
     )
 
     for _ in range(MAX_BOOT_ATTEMPTS):
+        settings_overrides.record_boot_attempt()
         assert settings_overrides.apply_overrides() == bad.revision
 
+    settings_overrides.record_boot_attempt()
     assert settings_overrides.apply_overrides() == good.revision
     assert os.environ["OCR_DPI"] == "150"
     assert settings_overrides.rolled_back_from() == bad.revision
@@ -308,8 +310,10 @@ def test_rollback_without_a_last_known_good_falls_back_to_no_overrides() -> None
     )
 
     for _ in range(MAX_BOOT_ATTEMPTS):
+        settings_overrides.record_boot_attempt()
         settings_overrides.apply_overrides()
 
+    settings_overrides.record_boot_attempt()
     assert settings_overrides.apply_overrides() == BASE_REVISION
     assert dict(settings_overrides.load_overrides().values) == {}
     assert settings_overrides.rolled_back_from() == bad.revision
@@ -323,6 +327,7 @@ def test_a_promoted_revision_never_counts_boot_attempts() -> None:
     settings_overrides.promote_active_revision()
 
     for _ in range(MAX_BOOT_ATTEMPTS * 3):
+        settings_overrides.record_boot_attempt()
         assert settings_overrides.apply_overrides() == saved.revision
 
 
@@ -431,3 +436,53 @@ def test_apply_overrides_runs_at_module_scope() -> None:
     ]
 
     assert "apply_overrides" in module_level_calls
+
+
+def test_applying_overrides_alone_never_counts_a_boot_attempt() -> None:
+    saved = settings_overrides.save_overrides(
+        {"OCR_DPI": "150"}, expected_revision=BASE_REVISION
+    )
+
+    for _ in range(MAX_BOOT_ATTEMPTS * 4):
+        assert settings_overrides.apply_overrides() == saved.revision
+
+    assert dict(settings_overrides.load_overrides().values) == {"OCR_DPI": "150"}
+
+
+def test_a_promoted_revision_is_never_counted() -> None:
+    settings_overrides.save_overrides(
+        {"OCR_DPI": "150"}, expected_revision=BASE_REVISION
+    )
+    settings_overrides.apply_overrides()
+    settings_overrides.promote_active_revision()
+
+    assert settings_overrides.record_boot_attempt() == 0
+
+
+def test_the_serving_entry_points_record_a_boot_attempt() -> None:
+    for name in ("main.py", Path("workers") / "worker.py"):
+        source = (PROJECT_ROOT / name).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        imports = [
+            alias.name
+            for node in tree.body
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        ]
+        assert "backend.app.boot_attempt" in imports, (
+            f"{name} must import backend.app.boot_attempt so a revision that "
+            "cannot start is counted and eventually rolled back."
+        )
+        assert imports[0] == "backend.app.boot_attempt", (
+            f"{name} must record the boot attempt before any import that could "
+            "fail on a bad configuration."
+        )
+
+
+def test_alembic_does_not_record_a_boot_attempt() -> None:
+    source = (PROJECT_ROOT / "alembic" / "env.py").read_text(encoding="utf-8")
+
+    assert "boot_attempt" not in source, (
+        "Alembic runs three times before uvicorn in the container command and "
+        "reads only container-managed keys, so it must never spend an attempt."
+    )

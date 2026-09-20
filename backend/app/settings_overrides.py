@@ -373,6 +373,24 @@ def _restore_baseline(keys: tuple[str, ...], baseline: Mapping[str, str]) -> Non
             os.environ.pop(key, None)
 
 
+def record_boot_attempt() -> int:
+    try:
+        state = load_overrides()
+    except SettingsStoreUnavailable:
+        return 0
+    if state.revision == BASE_REVISION:
+        return 0
+    good = load_last_known_good()
+    if good is not None and good.revision == state.revision:
+        return 0
+    try:
+        attempts = _read_boot_attempts(state.revision) + 1
+        _write_boot_attempts(state.revision, attempts)
+    except SettingsStoreUnavailable:
+        return 0
+    return attempts
+
+
 def apply_overrides() -> int:
     global _active_revision, _applied_keys, _rolled_back_from, _baseline
 
@@ -400,7 +418,7 @@ def apply_overrides() -> int:
     rollback_from: int | None = None
     if state.revision != BASE_REVISION:
         try:
-            state, rollback_from = _record_boot_attempt(state)
+            state, rollback_from = _roll_back_if_exhausted(state)
         except SettingsStoreUnavailable:
             pass
 
@@ -413,14 +431,12 @@ def apply_overrides() -> int:
     return state.revision
 
 
-def _record_boot_attempt(state: OverrideState) -> tuple[OverrideState, int | None]:
+def _roll_back_if_exhausted(state: OverrideState) -> tuple[OverrideState, int | None]:
     good = load_last_known_good()
     if good is not None and good.revision == state.revision:
         return state, None
 
-    attempts = _read_boot_attempts(state.revision) + 1
-    if attempts <= MAX_BOOT_ATTEMPTS:
-        _write_boot_attempts(state.revision, attempts)
+    if _read_boot_attempts(state.revision) <= MAX_BOOT_ATTEMPTS:
         return state, None
 
     fallback = good if good is not None else OverrideState()

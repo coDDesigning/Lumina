@@ -33,7 +33,7 @@ docker compose logs --tail 100 lumina
 
 An unhealthy `lumina` container that keeps restarting means the saved
 configuration cannot start. Lumina rolls this back on its own after three boot
-attempts, which usually takes seconds. Watch for it:
+attempts by a serving process, which usually takes seconds. Watch for it:
 
 ```bash
 docker compose logs lumina | grep -E "system_restart|rolled_back"

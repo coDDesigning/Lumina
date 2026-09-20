@@ -40,6 +40,7 @@ const ROUTES = [
   { name: 'account security', path: '/account/security' },
   { name: 'the admin screen', path: '/admin' },
   { name: 'the admin log center', path: '/admin/logs' },
+  { name: 'admin system settings', path: '/admin/system-settings' },
   { name: 'Exam Mode', path: '/courses/1/exam-mode' },
   { name: 'an exam plan', path: '/courses/1/exam-mode/plans/601' },
   { name: 'an exam topic', path: '/courses/1/exam-mode/plans/601/topics/graph-traversal-algorithms' },
@@ -101,6 +102,16 @@ for (const route of PUBLIC_LEGAL_ROUTES) {
 }
 
 const MODAL_FLOWS = [
+  {
+    name: 'the restart Lumina dialog',
+    path: '/admin/system-settings',
+    openModal: async (page: Page) => {
+      await page.getByLabel('Retrieval chunk limit value').fill('48')
+      await page.getByRole('button', { name: 'Save 1 change' }).click()
+      await page.getByRole('button', { name: 'Restart Lumina' }).click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+    },
+  },
   {
     name: 'the create course dialog',
     path: '/dashboard',

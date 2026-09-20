@@ -224,3 +224,66 @@ def test_in_flight_work_counts_all_three_queues(
 class _FakeSession:
     def close(self) -> None:
         return None
+
+
+def test_the_worker_stops_when_a_new_revision_is_targeted(monkeypatch) -> None:
+    import threading
+
+    from workers import worker as worker_module
+
+    stop = threading.Event()
+    settings_overrides.write_restart_request(
+        RestartRequest(
+            request_id="req-1",
+            state=RESTART_RESTARTING,
+            target_revision=9,
+            requested_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_supervise(threads, stop_event, *, mode, session_factory):
+        captured["watcher_saw"] = _drain_watcher(stop_event)
+        return False
+
+    monkeypatch.setattr(worker_module.shutdown, "supervise", fake_supervise)
+    monkeypatch.setattr(
+        worker_module, "run_document_worker", lambda **kwargs: stop.wait(0.01)
+    )
+    monkeypatch.setattr(
+        worker_module, "run_generation_worker", lambda **kwargs: stop.wait(0.01)
+    )
+
+    worker_module.run_worker(session_factory=lambda: _FakeSession())
+
+    assert captured["watcher_saw"] is True
+
+
+def _drain_watcher(stop_event) -> bool:
+    import time
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if stop_event.is_set():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_readiness_promotes_the_active_revision(monkeypatch, tmp_path) -> None:
+    saved = settings_overrides.save_overrides(
+        {"OCR_DPI": "150"}, expected_revision=BASE_REVISION
+    )
+    settings_overrides.apply_overrides()
+
+    assert settings_overrides.load_last_known_good() is None
+
+    import main
+
+    main.promote_active_revision()
+
+    good = settings_overrides.load_last_known_good()
+    assert good is not None
+    assert good.revision == saved.revision

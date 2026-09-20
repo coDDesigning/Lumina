@@ -189,13 +189,13 @@ export function RestartSection({
           Nothing is configured to restart Lumina automatically, so it will not stop
           itself. Apply saved settings by restarting the container yourself.
         </p>
-      ) : !inventory.pending_restart ? (
-        <p className={styles.unavailable}>
-          The saved configuration is already active, so there is nothing to apply.
-        </p>
       ) : hasUnsavedChanges ? (
         <p className={styles.unavailable}>
           Save or discard your edits before restarting.
+        </p>
+      ) : !inventory.pending_restart ? (
+        <p className={styles.unavailable}>
+          The saved configuration is already active, so there is nothing to apply.
         </p>
       ) : (
         <div className={styles.actions}>

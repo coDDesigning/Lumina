@@ -462,3 +462,30 @@ def test_an_unknown_restart_request_is_a_404(authz_api):
     )
 
     assert response.status_code == 404
+
+
+def test_an_audit_event_records_key_names_and_never_a_value() -> None:
+    from backend.app.operational_events import sanitize_operational_payload
+
+    record = sanitize_operational_payload(
+        {
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "level": "INFO",
+            "service": "api",
+            "environment": "production",
+            "logger": "routes.admin_system_settings",
+            "event": "system_settings_saved",
+            "event_id": "abc123",
+            "user_id": 1,
+            "settings_revision": 7,
+            "item_count": 2,
+            "settings_keys": ["OCR_DPI", "GEMINI_API_KEY", "sk-live-not-a-key-name"],
+            "success": True,
+        }
+    )
+
+    assert record is not None
+    details = record["details"]
+    assert details["settings_keys"] == ["OCR_DPI", "GEMINI_API_KEY", "*"]
+    assert details["settings_revision"] == 7
+    assert "sk-live-not-a-key-name" not in json.dumps(record)

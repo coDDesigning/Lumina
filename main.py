@@ -1,4 +1,6 @@
 import logging
+import os
+import signal
 import time
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -29,6 +31,7 @@ from backend.app.request_size import (
     RequestSizeLimitMiddleware,
 )
 from backend.app.security_headers import SecurityHeadersMiddleware
+from backend.app.settings_overrides import RevisionWatcher, promote_active_revision
 from backend.app.spa import (
     API_PREFIX,
     ROUTE_KIND_STATE_KEY,
@@ -99,6 +102,18 @@ def check_admin_bootstrap_security(app_settings: Settings | None = None) -> None
         )
 
 
+def _stop_for_new_revision(request) -> None:
+    logger.info(
+        "Stopping the API to adopt a new configuration revision",
+        extra={
+            "event": "system_restart_process_stopping",
+            "settings_revision": request.target_revision,
+            "success": True,
+        },
+    )
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     configure_logging(
@@ -113,6 +128,8 @@ async def lifespan(_app: FastAPI):
         max_records=settings.operational_log_max_records,
     )
     check_admin_bootstrap_security(settings)
+    restart_watcher = RevisionWatcher(_stop_for_new_revision)
+    restart_watcher.start()
     # Every configured vendor joins the fallback chain, so an operator must be
     # able to see which ones an outage would bill without guessing.
     logger.info(
@@ -124,7 +141,10 @@ async def lifespan(_app: FastAPI):
             "ai_vision_model": settings.ai_vision_model,
         },
     )
-    yield
+    try:
+        yield
+    finally:
+        restart_watcher.stop()
 
 
 app = FastAPI(
@@ -366,6 +386,7 @@ def health_ready(
         )
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "not_ready"}
+    promote_active_revision()
     return {"status": "ready"}
 
 

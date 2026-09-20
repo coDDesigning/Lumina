@@ -30,6 +30,7 @@ interface Store {
   profileDocuments: Record<string, unknown>[]
   adminUsers: Record<string, unknown>[]
   creditTransactions: Record<string, unknown>[]
+  systemSettings: Record<string, unknown>
 }
 
 let state: Store
@@ -43,6 +44,7 @@ function seed(): Store {
     profileDocuments: PROFILE_DOCUMENTS,
     adminUsers: ADMIN_USERS,
     creditTransactions: [],
+    systemSettings: SYSTEM_SETTINGS,
   }) as Store
 }
 
@@ -52,6 +54,83 @@ function adminUser(email: string): Record<string, unknown> {
     throw new Error(`No fixture account for ${email}`)
   }
   return account
+}
+
+const SYSTEM_SETTING_ROWS = [
+  {
+    key: 'RETRIEVAL_CHUNK_LIMIT',
+    section: 'Semantic retrieval',
+    label: 'Retrieval chunk limit',
+    help: 'How many of a course chunks semantic retrieval ranks for one request.',
+    kind: 'integer',
+    scope: 'overridable',
+    risk: 'low',
+    secret: false,
+    choices: [],
+    minimum: 1,
+    maximum: 200,
+    requires_confirmation: false,
+    editable: true,
+    source: 'default',
+    has_override: false,
+    configured: true,
+    value: '24',
+    default: '24',
+  },
+  {
+    key: 'GEMINI_API_KEY',
+    section: 'AI providers',
+    label: 'Gemini API key',
+    help: 'Credential that makes the Gemini provider available to this deployment.',
+    kind: 'text',
+    scope: 'overridable',
+    risk: 'high',
+    secret: true,
+    choices: [],
+    minimum: null,
+    maximum: null,
+    requires_confirmation: false,
+    editable: true,
+    source: 'environment',
+    has_override: false,
+    configured: true,
+    value: null,
+    default: null,
+  },
+  {
+    key: 'LUMINA_PORT',
+    section: 'Application',
+    label: 'Published port',
+    help: 'The only published port, and the whole address of this installation.',
+    kind: 'integer',
+    scope: 'compose_managed',
+    risk: 'high',
+    secret: false,
+    choices: [],
+    minimum: null,
+    maximum: null,
+    requires_confirmation: false,
+    editable: false,
+    source: 'environment',
+    has_override: false,
+    configured: true,
+    value: '10312',
+    default: '10312',
+  },
+]
+
+const SYSTEM_SETTINGS = {
+  sections: ['Application', 'Semantic retrieval', 'AI providers'],
+  settings: SYSTEM_SETTING_ROWS,
+  active_revision: 0,
+  saved_revision: 0,
+  pending_restart: false,
+  pending_keys: [] as string[],
+  override_count: 0,
+  saved_at: null,
+  supervised_restart: true,
+  restart: null as Record<string, unknown> | null,
+  rolled_back_from: null,
 }
 
 export const USER = {
@@ -776,6 +855,91 @@ let nextDocumentId = 100
  */
 const WRITES: Write[] = [
   [
+    'PATCH',
+    /^\/api\/admin\/system-settings$/,
+    (_match, sent) => {
+      const body = (sent.json ?? {}) as { values?: Record<string, string> }
+      const values = body.values ?? {}
+      const settings = state.systemSettings as Record<string, unknown>
+      const rows = (settings.settings as Record<string, unknown>[]).map((row) => {
+        const next = values[row.key as string]
+        if (next === undefined || next === '') return row
+        return { ...row, value: next, source: 'override', has_override: true }
+      })
+      settings.settings = rows
+      settings.saved_revision = (settings.saved_revision as number) + 1
+      settings.pending_restart = true
+      settings.pending_keys = Object.keys(values).filter((key) => values[key] !== '')
+      settings.override_count = rows.filter((row) => row.has_override).length
+      return envelope(settings)
+    },
+  ],
+  [
+    'DELETE',
+    /^\/api\/admin\/system-settings\/([^/]+)$/,
+    (match) => {
+      const settings = state.systemSettings as Record<string, unknown>
+      const key = decodeURIComponent(match[1])
+      settings.settings = (settings.settings as Record<string, unknown>[]).map((row) =>
+        row.key === key
+          ? { ...row, has_override: false, source: 'default', value: row.default }
+          : row,
+      )
+      settings.saved_revision = (settings.saved_revision as number) + 1
+      settings.pending_restart = true
+      settings.pending_keys = [key]
+      settings.override_count = (settings.settings as Record<string, unknown>[]).filter(
+        (row) => row.has_override,
+      ).length
+      return envelope(settings)
+    },
+  ],
+  [
+    'DELETE',
+    /^\/api\/admin\/system-settings$/,
+    () => {
+      const settings = state.systemSettings as Record<string, unknown>
+      settings.settings = (settings.settings as Record<string, unknown>[]).map((row) => ({
+        ...row,
+        has_override: false,
+        source: row.default === null ? 'environment' : 'default',
+        value: row.default,
+      }))
+      settings.saved_revision = (settings.saved_revision as number) + 1
+      settings.pending_restart = true
+      settings.override_count = 0
+      return envelope(settings)
+    },
+  ],
+  [
+    'POST',
+    /^\/api\/admin\/system-settings\/restarts$/,
+    () => {
+      const settings = state.systemSettings as Record<string, unknown>
+      const target = settings.saved_revision as number
+      settings.active_revision = target
+      settings.pending_restart = false
+      settings.pending_keys = []
+      settings.restart = {
+        request_id: 'restart-1',
+        state: 'ready',
+        target_revision: target,
+        requested_at: '2026-09-20T10:00:00Z',
+        updated_at: '2026-09-20T10:00:05Z',
+        drain_deadline: null,
+        detail: null,
+        actor_id: 1,
+        changed_keys: [],
+      }
+      return envelope({
+        request_id: 'restart-1',
+        target_revision: target,
+        state: 'queued',
+        in_flight: { documents: 0, profile_documents: 0, generations: 0, total: 0 },
+      })
+    },
+  ],
+  [
     'POST',
     /^\/api\/courses\/(\d+)\/documents$/,
     (match, sent) => {
@@ -969,6 +1133,11 @@ const WRITES: Write[] = [
 ]
 
 const ROUTES: Answer[] = [
+  [
+    /^\/api\/admin\/system-settings\/restarts\/([^/]+)$/,
+    () => envelope(state.systemSettings),
+  ],
+  [/^\/api\/admin\/system-settings$/, () => envelope(state.systemSettings)],
   [/^\/api\/auth\/me$/, () => USER],
   [/^\/api\/auth\/login$/, () => ({ access_token: 'stub', token_type: 'bearer', user: USER })],
   [/^\/api\/auth\/register$/, () => envelope(USER)],

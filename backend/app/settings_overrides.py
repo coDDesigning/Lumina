@@ -394,6 +394,7 @@ def apply_overrides() -> int:
         with _state_lock:
             _baseline = baseline
             _applied_keys = ()
+            _active_revision = BASE_REVISION
         return BASE_REVISION
 
     rollback_from: int | None = None

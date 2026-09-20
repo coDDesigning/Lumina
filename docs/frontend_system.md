@@ -191,6 +191,7 @@ Rules that are not negotiable:
 /account/appearance                theme
 /admin                             admin (rail entry hidden unless role === 'admin')
 /admin/logs                        operational investigation (admin only)
+/admin/system-settings             installation configuration and restart (admin only)
 
   -- kept so older links still resolve --
 /workspaces/:id/**                 -> /courses/:id/**

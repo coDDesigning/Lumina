@@ -218,7 +218,7 @@ export default function SystemSettingsPage() {
 
         {inventory ? (
           <>
-            {inventory.pending_restart ? (
+            {inventory.pending_restart && inventory.pending_keys.length > 0 ? (
               <Alert tone="warning" title="Changes are waiting for a restart" live="status">
                 {inventory.pending_keys.length} saved change
                 {inventory.pending_keys.length === 1 ? '' : 's'} will apply the next

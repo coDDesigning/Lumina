@@ -283,6 +283,7 @@ def create_backup(
     upload_directory: Path,
     chroma_directory: Path,
     include_chroma_offline: bool,
+    system_settings_directory: Path | None = None,
 ) -> dict[str, Any]:
     """Create a verified archive; SQLite remains online during its snapshot."""
     archive_path = archive_path.resolve()
@@ -318,6 +319,12 @@ def create_backup(
             if include_chroma_offline
             else []
         )
+        system_settings = (
+            _copy_tree(system_settings_directory, staging / "system-settings")
+            if system_settings_directory is not None
+            and system_settings_directory.is_dir()
+            else []
+        )
         if include_chroma_offline:
             _verify_chroma_snapshot(staging / "chroma")
         manifest: dict[str, Any] = {
@@ -331,6 +338,7 @@ def create_backup(
             },
             "uploads": uploads,
             "chroma": chroma,
+            "system_settings": system_settings,
             "vectors_included": include_chroma_offline,
         }
         manifest_path = staging / "manifest.json"
@@ -351,7 +359,13 @@ def create_backup(
             )
             os.close(descriptor)
             with tarfile.open(temporary_archive, "w:gz") as archive:
-                for name in ("manifest.json", "lumina.db", "uploads", "chroma"):
+                for name in (
+                    "manifest.json",
+                    "lumina.db",
+                    "uploads",
+                    "chroma",
+                    "system-settings",
+                ):
                     path = staging / name
                     if path.exists():
                         archive.add(path, arcname=name, recursive=True)
@@ -367,7 +381,13 @@ def create_backup(
 
 def _safe_extract(archive_path: Path, destination: Path) -> None:
     root = destination.resolve()
-    allowed_roots = {"manifest.json", "lumina.db", "uploads", "chroma"}
+    allowed_roots = {
+        "manifest.json",
+        "lumina.db",
+        "uploads",
+        "chroma",
+        "system-settings",
+    }
     names: set[str] = set()
     with tarfile.open(archive_path, "r:gz") as archive:
         for member in archive.getmembers():
@@ -437,6 +457,7 @@ def restore_backup(
     database_path: Path,
     upload_directory: Path,
     chroma_directory: Path,
+    system_settings_directory: Path | None = None,
 ) -> dict[str, Any]:
     """Restore a verified archive into an empty, stopped self-hosted stack."""
     database_path = database_path.resolve()
@@ -446,6 +467,10 @@ def restore_backup(
         raise BackupError(f"Restore target must be absent: {database_path}")
     _require_empty_directory(upload_directory)
     _require_empty_directory(chroma_directory)
+    if system_settings_directory is not None:
+        system_settings_directory = system_settings_directory.resolve()
+        _require_empty_directory(system_settings_directory)
+        system_settings_directory.parent.mkdir(parents=True, exist_ok=True)
     upload_directory.parent.mkdir(parents=True, exist_ok=True)
     chroma_directory.parent.mkdir(parents=True, exist_ok=True)
     database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -503,6 +528,10 @@ def restore_backup(
         if upload_entries != _upload_references(database):
             raise BackupError("Backup uploads do not match database references.")
         _verify_entries(staging / "chroma", manifest.get("chroma", []))
+        _verify_entries(
+            staging / "system-settings",
+            manifest.get("system_settings", []),
+        )
         if vectors_included:
             _verify_chroma_snapshot(staging / "chroma")
 
@@ -521,6 +550,14 @@ def restore_backup(
             chroma_directory.rmdir()
         os.replace(restored_uploads, upload_directory)
         os.replace(restored_chroma, chroma_directory)
+        if system_settings_directory is not None:
+            restored_settings = staging / "system-settings"
+            if not restored_settings.exists():
+                restored_settings.mkdir()
+            restored_settings.chmod(0o700)
+            if system_settings_directory.exists():
+                system_settings_directory.rmdir()
+            os.replace(restored_settings, system_settings_directory)
         if database_path.exists():
             raise BackupError(
                 f"Restore target appeared during restore: {database_path}"
@@ -530,7 +567,7 @@ def restore_backup(
     return manifest
 
 
-def _configured_paths() -> tuple[Path, Path, Path]:
+def _configured_paths() -> tuple[Path, Path, Path, Path]:
     url = make_url(settings.database_url)
     if not settings.is_self_hosted or url.get_backend_name() != "sqlite":
         raise BackupError("Self-hosted backup requires SQLite deployment mode.")
@@ -544,6 +581,7 @@ def _configured_paths() -> tuple[Path, Path, Path]:
         Path(url.database),
         Path(settings.upload_directory),
         Path(settings.chroma_persist_directory),
+        Path(settings.system_settings_directory),
     )
 
 
@@ -585,7 +623,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         retention_days=settings.operational_log_retention_days,
         max_records=settings.operational_log_max_records,
     )
-    database, uploads, chroma = _configured_paths()
+    database, uploads, chroma, system_settings = _configured_paths()
     archive = (
         _archive_below_root(args.archive, args.archive_root)
         if args.archive_root is not None
@@ -598,6 +636,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             upload_directory=uploads,
             chroma_directory=chroma,
             include_chroma_offline=args.include_chroma_offline,
+            system_settings_directory=system_settings,
         )
         logger.info(
             "Self-hosted backup completed",
@@ -613,6 +652,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         database_path=database,
         upload_directory=uploads,
         chroma_directory=chroma,
+        system_settings_directory=system_settings,
     )
     if not manifest.get("vectors_included"):
         logger.warning(

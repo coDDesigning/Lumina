@@ -298,7 +298,9 @@ describe('DocumentRow', () => {
       pending: 0,
       failed: 0,
       failure_reason: null,
+      failed_page_numbers: [],
       crowded_pages: 0,
+      crowded_page_numbers: [],
       stopped_error_code: null,
       ...overrides,
     };
@@ -307,14 +309,24 @@ describe('DocumentRow', () => {
   it('explains a partial visual status in a small box on hover', async () => {
     const user = userEvent.setup();
     renderRow(
-      visualRow('partial', summary({ described: 9, failed: 3, failure_reason: 'VISUAL_ANALYSIS_FAILED' })),
+      visualRow(
+        'partial',
+        summary({
+          described: 9,
+          failed: 3,
+          failure_reason: 'VISUAL_ANALYSIS_FAILED',
+          failed_page_numbers: [2, 5, 9],
+        }),
+      ),
     );
 
     await user.hover(screen.getByRole('button', { name: 'Partial visuals' }));
 
     const tooltip = screen.getByRole('tooltip');
     expect(tooltip).toHaveTextContent('9 of 12 figures described');
-    expect(tooltip).toHaveTextContent("3 couldn't be described: the vision model's answer couldn't be used");
+    expect(tooltip).toHaveTextContent(
+      "3 couldn't be described (pages 2, 5 and 9): the vision model's answer couldn't be used",
+    );
   });
 
   it('shows how far describing has come while figures are analysed', async () => {

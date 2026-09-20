@@ -425,7 +425,9 @@ export interface VisualAnalysisSummary {
   pending: number;
   failed: number;
   failure_reason: string | null;
+  failed_page_numbers: number[];
   crowded_pages: number;
+  crowded_page_numbers: number[];
   stopped_error_code: string | null;
 }
 

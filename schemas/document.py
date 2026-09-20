@@ -14,7 +14,9 @@ class VisualAnalysisSummary(BaseModel):
     pending: int
     failed: int
     failure_reason: str | None
+    failed_page_numbers: list[int]
     crowded_pages: int
+    crowded_page_numbers: list[int]
     stopped_error_code: str | None
 
 

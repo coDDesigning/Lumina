@@ -11242,6 +11242,13 @@
       },
       "VisualAnalysisSummary": {
         "properties": {
+          "crowded_page_numbers": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Crowded Page Numbers",
+            "type": "array"
+          },
           "crowded_pages": {
             "title": "Crowded Pages",
             "type": "integer"
@@ -11253,6 +11260,13 @@
           "failed": {
             "title": "Failed",
             "type": "integer"
+          },
+          "failed_page_numbers": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Failed Page Numbers",
+            "type": "array"
           },
           "failure_reason": {
             "anyOf": [
@@ -11291,7 +11305,9 @@
           "pending",
           "failed",
           "failure_reason",
+          "failed_page_numbers",
           "crowded_pages",
+          "crowded_page_numbers",
           "stopped_error_code"
         ],
         "title": "VisualAnalysisSummary",

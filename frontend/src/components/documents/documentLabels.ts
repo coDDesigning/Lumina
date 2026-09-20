@@ -59,6 +59,30 @@ function counted(count: number, singular: string, plural: string): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+const PAGE_LIST_MAX = 6;
+
+export function pageList(numbers: readonly number[]): string {
+  if (numbers.length === 0) {
+    return '';
+  }
+  if (numbers.length === 1) {
+    return `page ${numbers[0]}`;
+  }
+  if (numbers.length <= PAGE_LIST_MAX) {
+    const allButLast = numbers.slice(0, -1).join(', ');
+    const last = numbers[numbers.length - 1];
+    return `pages ${allButLast} and ${last}`;
+  }
+  const shown = numbers.slice(0, PAGE_LIST_MAX).join(', ');
+  const more = numbers.length - PAGE_LIST_MAX;
+  return `pages ${shown} and ${more} more`;
+}
+
+function pagesSuffix(numbers: readonly number[]): string {
+  const formatted = pageList(numbers);
+  return formatted ? ` (${formatted})` : '';
+}
+
 export function visualAnalysisDetail(
   status: string | null | undefined,
   summary: VisualAnalysisSummary | null | undefined,
@@ -83,12 +107,12 @@ export function visualAnalysisDetail(
   ];
   if (summary.failed > 0) {
     lines.push(
-      `${summary.failed} couldn't be described: ${visualFailureReason(summary.failure_reason)}`,
+      `${summary.failed} couldn't be described${pagesSuffix(summary.failed_page_numbers)}: ${visualFailureReason(summary.failure_reason)}`,
     );
   }
   if (summary.crowded_pages > 0) {
     lines.push(
-      `${counted(summary.crowded_pages, 'page', 'pages')} had too many images to pick figures from`,
+      `${counted(summary.crowded_pages, 'page', 'pages')} had too many images to pick figures from${pagesSuffix(summary.crowded_page_numbers)}`,
     );
   }
   if (status !== 'pending') {

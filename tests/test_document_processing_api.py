@@ -792,7 +792,9 @@ def test_visual_analysis_summary_counts_each_visual_and_names_the_commonest_fail
         "pending": 0,
         "failed": 3,
         "failure_reason": "VISUAL_ANALYSIS_FAILED",
+        "failed_page_numbers": [1],
         "crowded_pages": 1,
+        "crowded_page_numbers": [3],
         "stopped_error_code": None,
     }
     assert _visual_analysis(upload_api, document_id) == (expected, expected)
@@ -828,7 +830,9 @@ def test_visual_analysis_summary_names_the_code_of_a_describe_job_that_gave_up(
         "pending": 2,
         "failed": 0,
         "failure_reason": None,
+        "failed_page_numbers": [],
         "crowded_pages": 0,
+        "crowded_page_numbers": [],
         "stopped_error_code": None,
     }
     assert _visual_analysis(upload_api, document_id) == (retrying, retrying)
@@ -855,6 +859,35 @@ def test_visual_analysis_summary_is_absent_rather_than_zero_without_visual_pages
     )
 
     assert _visual_analysis(upload_api, document_id) == (None, None)
+
+
+def test_visual_analysis_summary_names_the_pages_it_could_not_describe(upload_api):
+    document_id = _ready_pdf(
+        upload_api,
+        b"%PDF-1.4 named pages",
+        [
+            (True, "completed", [("succeeded", None)]),
+            (
+                True,
+                "partial",
+                [("succeeded", None), ("failed", "VISUAL_ANALYSIS_FAILED")],
+            ),
+            (True, "partial", []),
+        ],
+    )
+
+    expected = {
+        "total": 3,
+        "described": 2,
+        "pending": 0,
+        "failed": 1,
+        "failure_reason": "VISUAL_ANALYSIS_FAILED",
+        "failed_page_numbers": [2],
+        "crowded_pages": 1,
+        "crowded_page_numbers": [3],
+        "stopped_error_code": None,
+    }
+    assert _visual_analysis(upload_api, document_id) == (expected, expected)
 
 
 def test_listing_documents_reads_visual_summaries_without_a_query_per_document(

@@ -3,6 +3,7 @@ import type { DocumentResponse, VisualAnalysisSummary } from '@/api/types';
 import {
   displayFileName,
   isDescribingVisuals,
+  pageList,
   visualAnalysisDetail,
   visualAnalysisStatusLabel,
 } from './documentLabels';
@@ -14,7 +15,9 @@ function summary(overrides: Partial<VisualAnalysisSummary> = {}): VisualAnalysis
     pending: 0,
     failed: 0,
     failure_reason: null,
+    failed_page_numbers: [],
     crowded_pages: 0,
+    crowded_page_numbers: [],
     stopped_error_code: null,
     ...overrides,
   };
@@ -80,6 +83,47 @@ describe('visualAnalysisDetail', () => {
       },
     ],
     [
+      'the page behind a single failure',
+      'partial',
+      summary({ described: 11, failed: 1, failure_reason: 'VISUAL_ANALYSIS_FAILED', failed_page_numbers: [2] }),
+      {
+        lines: [
+          '11 of 12 figures described',
+          "1 couldn't be described (page 2): the vision model's answer couldn't be used",
+        ],
+        progress: null,
+      },
+    ],
+    [
+      'the pages behind a crowded result',
+      'partial',
+      summary({ total: 5, described: 5, crowded_pages: 2, crowded_page_numbers: [3, 9] }),
+      {
+        lines: [
+          '5 of 5 figures described',
+          '2 pages had too many images to pick figures from (pages 3 and 9)',
+        ],
+        progress: null,
+      },
+    ],
+    [
+      'a long page list, truncated',
+      'partial',
+      summary({
+        described: 3,
+        failed: 9,
+        failure_reason: 'VISUAL_ANALYSIS_FAILED',
+        failed_page_numbers: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      }),
+      {
+        lines: [
+          '3 of 12 figures described',
+          "9 couldn't be described (pages 1, 2, 3, 4, 5, 6 and 3 more): the vision model's answer couldn't be used",
+        ],
+        progress: null,
+      },
+    ],
+    [
       'every figure failing',
       'failed',
       summary({ failed: 12, failure_reason: 'VISUAL_SERVICE_TEMPORARY' }),
@@ -139,6 +183,24 @@ describe('visualAnalysisDetail', () => {
     [undefined, null],
   ] as const)('has nothing to explain for %s', (status, detailSummary) => {
     expect(visualAnalysisDetail(status, detailSummary)).toBeNull();
+  });
+});
+
+describe('pageList', () => {
+  it.each([
+    ['no pages', [], ''],
+    ['a single page', [3], 'page 3'],
+    ['two pages', [3, 7], 'pages 3 and 7'],
+    ['three pages', [3, 7, 12], 'pages 3, 7 and 12'],
+    ['exactly six pages', [1, 2, 3, 4, 5, 6], 'pages 1, 2, 3, 4, 5 and 6'],
+    ['seven pages, truncated to six plus a count', [1, 2, 3, 4, 5, 6, 7], 'pages 1, 2, 3, 4, 5, 6 and 1 more'],
+    [
+      'nine pages, truncated to six plus a count',
+      [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      'pages 1, 2, 3, 4, 5, 6 and 3 more',
+    ],
+  ] as const)('formats %s', (_case, numbers, expected) => {
+    expect(pageList(numbers)).toBe(expected);
   });
 });
 

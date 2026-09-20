@@ -811,7 +811,7 @@ class UploadedDocument(Base):
         return "partial"
 
     @property
-    def visual_analysis(self) -> dict[str, int | str | None] | None:
+    def visual_analysis(self) -> dict[str, int | str | list[int] | None] | None:
         pages = _loaded_relationship(self, "pages")
         jobs = _loaded_relationship(self, "processing_jobs")
         if not pages or jobs is None:
@@ -831,6 +831,15 @@ class UploadedDocument(Base):
         describe_job = next(
             (job for job in jobs if job.job_type == JOB_TYPE_DESCRIBE_VISUALS), None
         )
+        failed_page_numbers: set[int] = set()
+        crowded_page_numbers: set[int] = set()
+        for page, loaded in zip(visual_pages, page_visuals, strict=True):
+            if page.page_number is None:
+                continue
+            if any(visual.analysis_status == "failed" for visual in loaded):
+                failed_page_numbers.add(page.page_number)
+            if not loaded and page.visual_analysis_status == "partial":
+                crowded_page_numbers.add(page.page_number)
         return {
             "total": len(visuals),
             "described": statuses["succeeded"],
@@ -841,11 +850,13 @@ class UploadedDocument(Base):
                 key=lambda code: (-failure_codes[code], code),
                 default=None,
             ),
+            "failed_page_numbers": sorted(failed_page_numbers),
             "crowded_pages": sum(
                 1
                 for page, loaded in zip(visual_pages, page_visuals, strict=True)
                 if not loaded and page.visual_analysis_status == "partial"
             ),
+            "crowded_page_numbers": sorted(crowded_page_numbers),
             "stopped_error_code": (
                 describe_job.last_error_code
                 if describe_job is not None and describe_job.status == JOB_STATUS_FAILED

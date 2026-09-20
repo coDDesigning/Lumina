@@ -388,6 +388,15 @@ describe('DocumentRow', () => {
       expect(screen.queryByRole('button', { name: 'Retry figures' })).toBeNull();
     });
 
+    it('stays hidden while a describe job is still running even after an inline failure', () => {
+      renderRow(
+        visualRow('pending', summary({ described: 1, pending: 2, failed: 1 })),
+        { retryVisuals: vi.fn() },
+      );
+
+      expect(screen.queryByRole('button', { name: 'Retry figures' })).toBeNull();
+    });
+
     it('stays hidden once every figure has been described', () => {
       renderRow(entry('ready'), { retryVisuals: vi.fn() });
 

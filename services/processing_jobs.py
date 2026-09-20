@@ -2158,7 +2158,9 @@ def retry_failed_visuals(
         )
         .limit(1)
     )
-    if retryable_visual is None:
+    if retryable_visual is None and not (
+        job is not None and job.status == JOB_STATUS_FAILED
+    ):
         session.rollback()
         raise NoRetryableVisualsError("Nothing to retry: every figure is described.")
 

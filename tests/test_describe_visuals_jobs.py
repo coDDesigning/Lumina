@@ -1814,6 +1814,143 @@ def test_figures_cannot_be_retried_when_none_failed(session_factory, tmp_path):
     assert all(visual.analysis_status == "succeeded" for visual in visuals)
 
 
+def _seed_describe_job_that_gave_up_with_every_visual_described(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory, tmp_path, pending_visuals=0, described_visuals=2
+    )
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        job = enqueue_describe_visuals_job(session, document)
+        job.status = JOB_STATUS_FAILED
+        job.attempt_count = job.max_attempts
+        job.finished_at = datetime.now(timezone.utc)
+        job.last_error_code = "IMAGE_UNDERSTANDING_FAILED"
+        job.last_error_message = "The vision provider is unavailable."
+        session.commit()
+        job_id = job.id
+    return ready, job_id
+
+
+def test_retrying_figures_requeues_a_failed_describe_job_when_every_visual_already_succeeded(
+    session_factory, tmp_path
+):
+    ready, job_id = _seed_describe_job_that_gave_up_with_every_visual_described(
+        session_factory, tmp_path
+    )
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+
+    assert retried is not None
+    assert retried.id == ready.document_id
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.id == job_id
+    assert job.status == JOB_STATUS_QUEUED
+    assert job.attempt_count == 0
+    assert job.last_error_code is None
+    assert job.last_error_message is None
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert all(visual.analysis_status == "succeeded" for visual in visuals)
+    pages = _document_pages(session_factory, ready.document_id)
+    assert all(page.visual_analysis_status == "completed" for page in pages)
+
+
+def test_figures_cannot_be_retried_when_the_describe_job_succeeded_and_nothing_failed(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory, tmp_path, pending_visuals=0, described_visuals=2
+    )
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        job = enqueue_describe_visuals_job(session, document)
+        job.status = "succeeded"
+        job.attempt_count = 1
+        job.finished_at = datetime.now(timezone.utc)
+        session.commit()
+
+    with session_factory() as session:
+        with pytest.raises(NoRetryableVisualsError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=True,
+            )
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.status == "succeeded"
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert all(visual.analysis_status == "succeeded" for visual in visuals)
+
+
+def test_vision_off_refusal_still_wins_after_the_describe_job_failed(
+    session_factory, tmp_path
+):
+    ready, job_id = _seed_describe_job_that_gave_up_with_every_visual_described(
+        session_factory, tmp_path
+    )
+
+    with session_factory() as session:
+        with pytest.raises(VisualAnalysisNotConfiguredError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=False,
+            )
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.id == job_id
+    assert job.status == JOB_STATUS_FAILED
+    assert job.attempt_count == job.max_attempts
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert all(visual.analysis_status == "succeeded" for visual in visuals)
+
+
+def test_retrying_a_failed_describe_job_resumes_from_cache_without_calling_the_provider(
+    session_factory, tmp_path, monkeypatch
+):
+    ready, _ = _seed_describe_job_that_gave_up_with_every_visual_described(
+        session_factory, tmp_path
+    )
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+    assert retried is not None
+
+    with _StubVisionServer() as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=60)
+        handled = document_processor.process_next_job(
+            session_factory=session_factory,
+            storage=ready.storage,
+            worker_id="describe-worker",
+            embedding_provider=_StubEmbeddings(),
+            vector_store=PgVectorStore(),
+        )
+        assert handled is True
+        assert server.request_count == 0
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.status == "succeeded"
+    pages = _document_pages(session_factory, ready.document_id)
+    assert all(page.visual_analysis_status == "completed" for page in pages)
+
+
 def test_figures_of_a_document_that_is_not_ready_cannot_be_retried(
     session_factory, tmp_path
 ):

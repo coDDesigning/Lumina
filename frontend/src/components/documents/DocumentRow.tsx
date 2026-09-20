@@ -13,6 +13,7 @@ import {
   displayFileName,
   documentStatusLabel,
   formatFileSize,
+  isDescribingVisuals,
   isDocumentBusy,
   materialKindLabel,
   progressLabel,
@@ -87,6 +88,7 @@ export function DocumentRow({
     Boolean(onRetryVisuals) &&
     ready &&
     !readOnly &&
+    !isDescribingVisuals(document) &&
     ((document.visual_analysis?.failed ?? 0) > 0 ||
       Boolean(document.visual_analysis?.stopped_error_code));
 

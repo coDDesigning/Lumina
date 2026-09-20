@@ -547,6 +547,27 @@ export interface AiModelInfo {
   supports_json?: boolean;
 }
 
+export type ModelTestErrorCode =
+  | 'unreachable'
+  | 'timeout'
+  | 'model_not_found'
+  | 'auth'
+  | 'rate_limited'
+  | 'bad_response'
+  | 'unavailable';
+
+export interface ModelTestResult {
+  ok: boolean;
+  model_id: string;
+  provider: string;
+  latency_ms: number | null;
+  error_code: ModelTestErrorCode | null;
+  message: string;
+  supports_vision: boolean | null;
+  base_url: string | null;
+  base_url_fallback: boolean | null;
+}
+
 export interface StudyGuideRequest {
   // Required by schemas/study_guide.py (no server default); omitting either is a 422.
   summary_format: SummaryFormat;

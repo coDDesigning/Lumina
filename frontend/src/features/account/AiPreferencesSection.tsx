@@ -19,6 +19,7 @@ import { Card } from '@/ui/Card';
 import { ErrorState } from '@/ui/ErrorState';
 import { Select } from '@/ui/Input';
 import { Skeleton } from '@/ui/Skeleton';
+import { ModelTestControl } from './ModelTestControl';
 import styles from './AccountPage.module.css';
 
 function formatDate(value: string | null): string | null {
@@ -89,6 +90,7 @@ export function AiPreferencesSection() {
 
   const nextGrant = formatDate(status?.next_grant_at ?? null);
   const isUnverified = Boolean(status?.email_verification_required && !status?.is_email_verified);
+  const isAdmin = user?.role?.toLowerCase() === 'admin';
 
   return (
     <section className={styles.section}>
@@ -143,6 +145,11 @@ export function AiPreferencesSection() {
               </Badge>
             ))}
           </div>
+          {isUnverified && !isAdmin ? (
+            <p className={styles.rowBody}>Verify your email to test models.</p>
+          ) : (
+            <ModelTestControl modelId={selected.id} isAdmin={isAdmin} />
+          )}
         </Card>
       ) : null}
 

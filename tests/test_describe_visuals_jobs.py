@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import multiprocessing
 import threading
 import time
@@ -2401,12 +2402,140 @@ def test_a_failed_profile_describe_job_leaves_the_document_ready(
             now=queued_at + timedelta(seconds=5),
         )
 
-    assert requeued is True
+    assert requeued == "queued"
 
     with session_factory() as session:
         document = session.get(ProfileDocument, ready.document_id)
         assert document.status == "ready"
         assert document.processing_error is None
+
+
+def test_a_profile_describe_job_keeps_its_claim_and_completes(
+    session_factory, tmp_path, monkeypatch
+):
+    ready = seed_ready_profile_document(session_factory, tmp_path)
+
+    with session_factory() as session:
+        document = session.get(ProfileDocument, ready.document_id)
+        enqueue_profile_describe_visuals_job(session, document)
+        session.commit()
+
+    with _StubVisionServer() as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=60)
+        handled = document_processor.process_next_job(
+            session_factory=session_factory,
+            storage=ready.storage,
+            worker_id="profile-describe-worker",
+            embedding_provider=_StubEmbeddings(),
+            vector_store=PgVectorStore(),
+        )
+        assert handled is True
+        assert server.request_count == 2
+
+    with session_factory() as session:
+        pages = session.scalars(
+            select(ProfileDocumentPage)
+            .options(selectinload(ProfileDocumentPage.visuals))
+            .where(ProfileDocumentPage.document_id == ready.document_id)
+            .order_by(ProfileDocumentPage.page_number)
+        ).all()
+        assert pages[0].visual_analysis_status == "completed"
+        assert pages[0].visuals[0].analysis_status == "succeeded"
+        assert pages[0].visuals[0].description == "A stub description number 1."
+        assert pages[1].visual_analysis_status == "completed"
+        assert pages[1].visuals[0].analysis_status == "succeeded"
+
+        job = session.scalar(
+            select(ProfileProcessingJob).where(
+                ProfileProcessingJob.document_id == ready.document_id,
+                ProfileProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            )
+        )
+        assert job.status == "succeeded"
+        assert session.get(ProfileDocument, ready.document_id).status == "ready"
+
+
+def test_a_requeued_profile_job_is_logged_as_retried(session_factory, tmp_path):
+    storage = LocalStorage(tmp_path / "profile-retry-uploads", namespace="profile")
+    document_id = uuid4()
+    content = b"Profile retry notes"
+
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Profile retry owner",
+            email="profile-retry@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        session.add(user)
+        session.flush()
+
+        storage_key = storage.generate_key(user.id, document_id, "txt")
+        storage.save(storage_key, BytesIO(content))
+
+        document = ProfileDocument(
+            id=document_id,
+            user_id=user.id,
+            original_file_name="retry-notes.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=len(content),
+            file_hash=hashlib.sha256(content).hexdigest(),
+            storage_provider=storage.provider,
+            storage_key=storage_key,
+            status="uploaded",
+        )
+        session.add(document)
+        session.flush()
+        enqueue_profile_document_job(session, document)
+        session.commit()
+
+    claim_at = datetime.now(timezone.utc)
+    with session_factory() as session:
+        claim = claim_next_profile_job(
+            session, "profile-retry-worker", storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+    assert claim.attempt_count == 1
+    assert claim.max_attempts > 1
+
+    records: list[logging.LogRecord] = []
+
+    class CapturingHandler(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    logger = logging.getLogger("workers.document_processor")
+    handler = CapturingHandler()
+    logger.addHandler(handler)
+    try:
+        err = document_processor.DocumentProcessingError(
+            "TRANSIENT_ERROR",
+            "The extraction failed temporarily.",
+            retryable=True,
+            failed_stage="extracting_text",
+        )
+        result = document_processor._record_failure(session_factory, claim, err)
+    finally:
+        logger.removeHandler(handler)
+
+    assert result == "queued"
+
+    event_names = {getattr(record, "event", None) for record in records}
+    assert "processing_job_retried" in event_names
+    assert "processing_job_failed" not in event_names
+
+    with session_factory() as session:
+        job = session.scalar(
+            select(ProfileProcessingJob).where(
+                ProfileProcessingJob.document_id == document_id
+            )
+        )
+        document = session.get(ProfileDocument, document_id)
+        assert job.status == JOB_STATUS_QUEUED
+        assert document.status == "uploaded"
 
 
 def test_the_sweep_queues_profile_documents_too(session_factory, tmp_path):

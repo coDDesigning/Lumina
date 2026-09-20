@@ -2936,12 +2936,15 @@ def heartbeat_profile_job(
         return False
 
     heartbeat_at = _database_now(session, now)
+    expected_document_status = (
+        "ready" if job.job_type == JOB_TYPE_DESCRIBE_VISUALS else "processing"
+    )
     if (
         job.status != JOB_STATUS_RUNNING
         or job.claim_token != claim_token
         or job.lease_expires_at is None
         or job.lease_expires_at <= heartbeat_at
-        or document.status != "processing"
+        or document.status != expected_document_status
     ):
         session.rollback()
         return False
@@ -2971,12 +2974,15 @@ def update_profile_job_stage(
         return False
 
     updated_at = _database_now(session, now)
+    expected_document_status = (
+        "ready" if job.job_type == JOB_TYPE_DESCRIBE_VISUALS else "processing"
+    )
     if (
         job.status != JOB_STATUS_RUNNING
         or job.claim_token != claim_token
         or job.lease_expires_at is None
         or job.lease_expires_at <= updated_at
-        or document.status != "processing"
+        or document.status != expected_document_status
     ):
         session.rollback()
         return False
@@ -3336,7 +3342,7 @@ def fail_profile_job(
     retryable: bool = False,
     retry_delay_seconds: int = 60,
     now: datetime | None = None,
-) -> bool:
+) -> str | None:
     return _fail_profile_document_job(
         session,
         job_id,
@@ -3364,7 +3370,7 @@ def fail_profile_describe_job(
     retryable: bool = False,
     retry_delay_seconds: int = 60,
     now: datetime | None = None,
-) -> bool:
+) -> str | None:
     """Record a profile description failure without disturbing its ready document."""
     return _fail_profile_document_job(
         session,
@@ -3396,7 +3402,7 @@ def _fail_profile_document_job(
     requeued_document_status: str | None,
     failed_document_status: str | None,
     now: datetime | None = None,
-) -> bool:
+) -> str | None:
     error_code = error_code.strip()
     if not error_code:
         raise ValueError("error_code must not be empty")
@@ -3409,7 +3415,7 @@ def _fail_profile_document_job(
     job, document = _lock_profile_job_and_document(session, job_id)
     if job is None or document is None:
         session.rollback()
-        return False
+        return None
 
     failed_at = _database_now(session, now)
     if (
@@ -3420,7 +3426,7 @@ def _fail_profile_document_job(
         or document.status != claimed_document_status
     ):
         session.rollback()
-        return False
+        return None
 
     public_message = _public_error_message(error_message or error_code)
     stage = failed_stage or job.processing_stage
@@ -3450,7 +3456,7 @@ def _fail_profile_document_job(
             document.updated_at = failed_at
 
     session.commit()
-    return True
+    return job.status
 
 
 def release_profile_job(

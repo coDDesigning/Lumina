@@ -2566,6 +2566,34 @@
         "title": "BaseResponse[QuizView]",
         "type": "object"
       },
+      "BaseResponse_RestartAccepted_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RestartAccepted"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[RestartAccepted]",
+        "type": "object"
+      },
       "BaseResponse_ReverseQuizQuestionsResponse_": {
         "properties": {
           "data": {
@@ -2704,6 +2732,34 @@
           "message"
         ],
         "title": "BaseResponse[SyllabusTopicsResponse]",
+        "type": "object"
+      },
+      "BaseResponse_SystemSettingsInventory_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SystemSettingsInventory"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[SystemSettingsInventory]",
         "type": "object"
       },
       "BaseResponse_UploadErrorData_": {
@@ -10320,6 +10376,130 @@
         "title": "RegistrationResponse",
         "type": "object"
       },
+      "RestartAccepted": {
+        "properties": {
+          "in_flight": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "In Flight",
+            "type": "object"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "target_revision": {
+            "title": "Target Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "target_revision",
+          "state"
+        ],
+        "title": "RestartAccepted",
+        "type": "object"
+      },
+      "RestartRequestBody": {
+        "properties": {
+          "expected_revision": {
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "RestartRequestBody",
+        "type": "object"
+      },
+      "RestartStatus": {
+        "properties": {
+          "actor_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "changed_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed Keys",
+            "type": "array"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "drain_deadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drain Deadline"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "title": "Requested At",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "draining",
+              "restarting",
+              "ready",
+              "failed",
+              "rolled_back"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "target_revision": {
+            "title": "Target Revision",
+            "type": "integer"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "state",
+          "target_revision",
+          "requested_at",
+          "updated_at"
+        ],
+        "title": "RestartStatus",
+        "type": "object"
+      },
       "ReverseQuizQuestion": {
         "properties": {
           "question": {
@@ -11122,6 +11302,296 @@
           "topics"
         ],
         "title": "SyllabusTopicsResponse",
+        "type": "object"
+      },
+      "SystemSettingRow": {
+        "properties": {
+          "choices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          },
+          "editable": {
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "has_override": {
+            "title": "Has Override",
+            "type": "boolean"
+          },
+          "help": {
+            "title": "Help",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "boolean",
+              "integer",
+              "float",
+              "enum",
+              "text",
+              "json",
+              "list"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum"
+          },
+          "requires_confirmation": {
+            "default": false,
+            "title": "Requires Confirmation",
+            "type": "boolean"
+          },
+          "risk": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Risk",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "overridable",
+              "container_managed",
+              "compose_managed"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "secret": {
+            "title": "Secret",
+            "type": "boolean"
+          },
+          "section": {
+            "title": "Section",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "override",
+              "environment",
+              "default",
+              "missing"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "section",
+          "label",
+          "help",
+          "kind",
+          "scope",
+          "risk",
+          "secret",
+          "editable",
+          "source",
+          "has_override",
+          "configured"
+        ],
+        "title": "SystemSettingRow",
+        "type": "object"
+      },
+      "SystemSettingsInventory": {
+        "properties": {
+          "active_revision": {
+            "title": "Active Revision",
+            "type": "integer"
+          },
+          "override_count": {
+            "title": "Override Count",
+            "type": "integer"
+          },
+          "pending_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pending Keys",
+            "type": "array"
+          },
+          "pending_restart": {
+            "title": "Pending Restart",
+            "type": "boolean"
+          },
+          "restart": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RestartStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rolled_back_from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rolled Back From"
+          },
+          "saved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Saved At"
+          },
+          "saved_revision": {
+            "title": "Saved Revision",
+            "type": "integer"
+          },
+          "sections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "settings": {
+            "items": {
+              "$ref": "#/components/schemas/SystemSettingRow"
+            },
+            "title": "Settings",
+            "type": "array"
+          },
+          "supervised_restart": {
+            "title": "Supervised Restart",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sections",
+          "settings",
+          "active_revision",
+          "saved_revision",
+          "pending_restart",
+          "pending_keys",
+          "override_count",
+          "supervised_restart"
+        ],
+        "title": "SystemSettingsInventory",
+        "type": "object"
+      },
+      "SystemSettingsReset": {
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "SystemSettingsReset",
+        "type": "object"
+      },
+      "SystemSettingsUpdate": {
+        "properties": {
+          "expected_revision": {
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "reset": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reset",
+            "type": "array"
+          },
+          "values": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "SystemSettingsUpdate",
         "type": "object"
       },
       "Token": {
@@ -13745,6 +14215,328 @@
           }
         ],
         "summary": "Trace Log Event",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/api/admin/system-settings": {
+      "delete": {
+        "description": "Removes every administrator override. The committed .env is not touched.",
+        "operationId": "reset_all_system_settings_api_admin_system_settings_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemSettingsReset"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_SystemSettingsInventory_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The reset was not confirmed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Administrator privileges required"
+          },
+          "409": {
+            "description": "The configuration changed while you were editing"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reset All System Settings",
+        "tags": [
+          "Admin"
+        ]
+      },
+      "get": {
+        "description": "Lists every supported configuration key with its source and override state.",
+        "operationId": "read_system_settings_api_admin_system_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_SystemSettingsInventory_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Administrator privileges required"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Read System Settings",
+        "tags": [
+          "Admin"
+        ]
+      },
+      "patch": {
+        "description": "Saves administrator overrides as one atomic revision.",
+        "operationId": "update_system_settings_api_admin_system_settings_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_SystemSettingsInventory_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Administrator privileges required"
+          },
+          "409": {
+            "description": "The configuration changed while you were editing"
+          },
+          "422": {
+            "description": "The new configuration is not valid"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update System Settings",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/api/admin/system-settings/restarts": {
+      "post": {
+        "description": "Requests a controlled restart that applies the saved configuration.",
+        "operationId": "start_restart_api_admin_system_settings_restarts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestartRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_RestartAccepted_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Administrator privileges required"
+          },
+          "409": {
+            "description": "A restart is already running, or nothing to apply"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "No supervisor is configured to restart Lumina"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Start Restart",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/api/admin/system-settings/restarts/{request_id}": {
+      "get": {
+        "description": "Reports where a requested restart has got to.",
+        "operationId": "read_restart_status_api_admin_system_settings_restarts__request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_SystemSettingsInventory_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Administrator privileges required"
+          },
+          "404": {
+            "description": "Unknown restart request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Read Restart Status",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/api/admin/system-settings/{key}": {
+      "delete": {
+        "description": "Removes one administrator override so the deployment value applies again.",
+        "operationId": "reset_system_setting_api_admin_system_settings__key__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_SystemSettingsInventory_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Administrator privileges required"
+          },
+          "404": {
+            "description": "Unknown configuration key"
+          },
+          "409": {
+            "description": "The configuration changed while you were editing"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reset System Setting",
         "tags": [
           "Admin"
         ]

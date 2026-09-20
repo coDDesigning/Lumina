@@ -95,6 +95,8 @@ _ALLOWED_FIELDS = (
     "response_bytes",
     "retry_after_seconds",
     "runbook",
+    "settings_keys",
+    "settings_revision",
     "stage",
     "success",
     "stack",

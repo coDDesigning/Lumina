@@ -42,6 +42,7 @@ from backend.app.spa import (
 from routes import (
     activity,
     admin,
+    admin_system_settings,
     ads,
     ai_models,
     ai_tutor,
@@ -161,6 +162,7 @@ app.include_router(progress.router)
 app.include_router(activity.router)
 app.include_router(client_error.router)
 app.include_router(admin.router)
+app.include_router(admin_system_settings.router)
 app.include_router(user.router)
 app.include_router(ai_models.router)
 app.include_router(profile_knowledge.router)

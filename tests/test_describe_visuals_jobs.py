@@ -1,5 +1,6 @@
 import hashlib
 import json
+import multiprocessing
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +15,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from backend.app.config import WORKER_SHUTDOWN_MODE_ABORT
 from backend.app.models import (
     Course,
     DocumentChunk,
@@ -1229,6 +1231,104 @@ def test_an_interrupted_describe_attempt_keeps_what_it_already_paid_for(
             )
         )
         assert job.status == "succeeded"
+        assert session.get(UploadedDocument, ready.document_id).status == "ready"
+
+
+def test_an_aborted_describe_attempt_is_released_and_keeps_what_it_already_paid_for(
+    session_factory, tmp_path, monkeypatch
+):
+    ready = seed_ready_document(session_factory, tmp_path)
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        enqueue_describe_visuals_job(session, document)
+        session.commit()
+
+    first_visual_recorded = threading.Event()
+    record_description = document_processor.record_visual_description
+
+    def record_then_request_shutdown(*args, **kwargs):
+        recorded = record_description(*args, **kwargs)
+        first_visual_recorded.set()
+        return recorded
+
+    monkeypatch.setattr(
+        document_processor, "record_visual_description", record_then_request_shutdown
+    )
+
+    with _StubVisionServer(stall_after=1) as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=120)
+        monkeypatch.setattr(
+            document_processor,
+            "settings",
+            replace(
+                document_processor.settings,
+                worker_shutdown_mode=WORKER_SHUTDOWN_MODE_ABORT,
+            ),
+        )
+        handled = document_processor.process_next_job(
+            session_factory=session_factory,
+            storage=ready.storage,
+            worker_id="describe-worker",
+            shutdown_requested=first_visual_recorded.is_set,
+            embedding_provider=_StubEmbeddings(),
+            vector_store=PgVectorStore(),
+        )
+        assert handled is True
+
+    assert multiprocessing.active_children() == []
+    with session_factory() as session:
+        visuals = session.scalars(
+            select(DocumentVisual)
+            .join(DocumentPage, DocumentPage.id == DocumentVisual.page_id)
+            .where(DocumentPage.document_id == ready.document_id)
+            .order_by(DocumentPage.page_number)
+        ).all()
+        assert visuals[0].analysis_status == "succeeded"
+        assert visuals[0].description == "A stub description number 1."
+        assert visuals[1].analysis_status == "pending"
+        assert visuals[1].description is None
+        job = session.scalar(
+            select(ProcessingJob).where(
+                ProcessingJob.document_id == ready.document_id,
+                ProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            )
+        )
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert job.claim_token is None
+        assert job.last_error_code is None
+        assert session.get(UploadedDocument, ready.document_id).status == "ready"
+
+    with _StubVisionServer() as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=120)
+        handled = document_processor.process_next_job(
+            session_factory=session_factory,
+            storage=ready.storage,
+            worker_id="describe-worker",
+            embedding_provider=_StubEmbeddings(),
+            vector_store=PgVectorStore(),
+        )
+        assert handled is True
+        second_attempt_requests = server.request_count
+
+    assert second_attempt_requests == 1
+    with session_factory() as session:
+        visuals = session.scalars(
+            select(DocumentVisual)
+            .join(DocumentPage, DocumentPage.id == DocumentVisual.page_id)
+            .where(DocumentPage.document_id == ready.document_id)
+            .order_by(DocumentPage.page_number)
+        ).all()
+        assert visuals[0].description == "A stub description number 1."
+        assert visuals[1].analysis_status == "succeeded"
+        job = session.scalar(
+            select(ProcessingJob).where(
+                ProcessingJob.document_id == ready.document_id,
+                ProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            )
+        )
+        assert job.status == "succeeded"
+        assert job.attempt_count == 1
         assert session.get(UploadedDocument, ready.document_id).status == "ready"
 
 

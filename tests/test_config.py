@@ -56,7 +56,10 @@ from backend.app.config import (
     DEFAULT_EMBEDDING_BACKFILL_PRUNE_ORPHANS,
     DEFAULT_HSTS_MAX_AGE_SECONDS,
     DEFAULT_PASSWORD_MIN_LENGTH,
+    DEFAULT_WORKER_SHUTDOWN_MODE,
     MAX_PASSWORD_MIN_LENGTH,
+    WORKER_SHUTDOWN_MODE_ABORT,
+    WORKER_SHUTDOWN_MODE_DRAIN,
     load_settings,
 )
 from backend.app.database_config import load_database_url
@@ -119,6 +122,7 @@ CONFIGURATION_KEYS = (
     "PROCESSING_JOB_POLL_SECONDS",
     "PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS",
     "PROCESSING_JOB_CONCURRENCY",
+    "WORKER_SHUTDOWN_MODE",
     "MAX_EXTRACTED_CHARACTERS",
     "MAX_DOCUMENT_CHUNKS",
     "OCR_LANGUAGE",
@@ -2156,6 +2160,48 @@ def test_self_hosted_concurrency_is_not_gated_on_the_pool(
     monkeypatch.setenv("PROCESSING_JOB_CONCURRENCY", "6")
 
     assert load_settings().processing_job_concurrency == 6
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_worker_shutdown_mode_defaults_to_the_documented_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str | None,
+) -> None:
+    if value is not None:
+        monkeypatch.setenv("WORKER_SHUTDOWN_MODE", value)
+
+    assert DEFAULT_WORKER_SHUTDOWN_MODE == WORKER_SHUTDOWN_MODE_ABORT
+    assert load_settings().worker_shutdown_mode == WORKER_SHUTDOWN_MODE_ABORT
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("abort", WORKER_SHUTDOWN_MODE_ABORT),
+        ("ABORT", WORKER_SHUTDOWN_MODE_ABORT),
+        ("drain", WORKER_SHUTDOWN_MODE_DRAIN),
+        (" Drain ", WORKER_SHUTDOWN_MODE_DRAIN),
+    ],
+)
+def test_worker_shutdown_mode_accepts_each_mode_in_any_case(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    expected: str,
+) -> None:
+    monkeypatch.setenv("WORKER_SHUTDOWN_MODE", value)
+
+    assert load_settings().worker_shutdown_mode == expected
+
+
+@pytest.mark.parametrize("value", ["kill", "graceful", "drain-then-abort"])
+def test_worker_shutdown_mode_rejects_an_unknown_value(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("WORKER_SHUTDOWN_MODE", value)
+
+    with pytest.raises(ValueError, match="WORKER_SHUTDOWN_MODE"):
+        load_settings()
 
 
 # --- admin bootstrap security warning (BUG-044) -----------------------------

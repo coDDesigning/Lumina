@@ -68,6 +68,7 @@ from services.generation_jobs import (
     generation_queue_metrics,
     heartbeat_generation_job,
     recover_expired_generation_jobs,
+    release_generation_job,
 )
 from services.quiz import QuizService
 from services.study_guide import StudyGuideService
@@ -83,6 +84,7 @@ from utils.ai_errors import (
     AiErrorCode,
     classify_generation_error,
 )
+from workers import shutdown
 
 logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], Session]
@@ -549,6 +551,20 @@ def process_next_generation_job(
             daemon=True,
         )
         heartbeat.start()
+        tracked = shutdown.InFlightJob(
+            kind=shutdown.KIND_GENERATION,
+            job_id=job.id,
+            job_type=job.job_type,
+            claim_token=job.claim_token,
+            attempt_number=job.attempt_count,
+            worker_id=worker_id,
+            deadline=attempt_deadline,
+            releaser=release_generation_job,
+            course_id=job.course_id,
+            user_id=job.user_id,
+            document_id=None,
+        )
+        shutdown.register(tracked)
         try:
             with session_factory() as session:
                 persist_result = runner(session, job)
@@ -629,6 +645,7 @@ def process_next_generation_job(
                 },
             )
         finally:
+            shutdown.unregister(tracked)
             _stop_heartbeat(stop, heartbeat)
     finally:
         reset_operation_context(operation_token)

@@ -16,7 +16,7 @@ from uuid import uuid4
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from backend.app.config import settings
+from backend.app.config import WORKER_SHUTDOWN_MODE_ABORT, settings
 from backend.app.database import SessionLocal
 from backend.app.models import Course, JOB_TYPE_DESCRIBE_VISUALS
 from backend.app.observability import (
@@ -74,6 +74,10 @@ from services.processing_jobs import (
     heartbeat_profile_job,
     processing_queue_metrics,
     recover_expired_jobs,
+    release_describe_job,
+    release_job,
+    release_profile_describe_job,
+    release_profile_job,
     replace_document_pages,
     replace_profile_document_pages,
     record_profile_visual_description,
@@ -90,6 +94,7 @@ from services.vector_store import VectorStore, VectorStoreError
 from storage.base import Storage
 from storage.dependencies import get_storage
 from services.document_lock import release_expired_generation_locks
+from workers import shutdown
 from workers.ai_usage_cleanup import run_cleanup as run_ai_usage_cleanup
 from workers.course_purge import run_account_purge, run_document_purge, run_purge
 from workers.embedding_backfill import run_backfill
@@ -127,6 +132,40 @@ def _job_log_fields(job: ClaimedJob | ClaimedProfileJob) -> dict[str, object]:
     return fields
 
 
+def _in_flight_job(
+    job: ClaimedJob | ClaimedProfileJob, worker_id: str
+) -> shutdown.InFlightJob:
+    describing_visuals = job.job_type == JOB_TYPE_DESCRIBE_VISUALS
+    if isinstance(job, ClaimedProfileJob):
+        kind = shutdown.KIND_PROFILE_DOCUMENT
+        releaser = (
+            release_profile_describe_job if describing_visuals else release_profile_job
+        )
+    else:
+        kind = shutdown.KIND_COURSE_DOCUMENT
+        releaser = release_describe_job if describing_visuals else release_job
+    attempt_seconds = (
+        settings.describe_visuals_attempt_timeout_seconds
+        if describing_visuals
+        else settings.processing_job_attempt_timeout_seconds
+    )
+    return shutdown.InFlightJob(
+        kind=kind,
+        job_id=job.id,
+        job_type=(
+            _describe_job_type(job) if describing_visuals else _processing_job_type(job)
+        ),
+        claim_token=job.claim_token,
+        attempt_number=job.attempt_count,
+        worker_id=worker_id,
+        deadline=time.monotonic() + attempt_seconds,
+        releaser=releaser,
+        course_id=job.course_id if isinstance(job, ClaimedJob) else None,
+        user_id=job.user_id,
+        document_id=str(job.document_id),
+    )
+
+
 SessionFactory = Callable[[], Session]
 RECOVERY_BATCH_SIZE = 100
 MAX_RECOVERY_BATCHES_PER_PASS = 10
@@ -136,6 +175,10 @@ WORKER_SHUTDOWN_SIGNALS = {signal.SIGTERM, signal.SIGINT}
 
 class WorkerProcessFatalError(RuntimeError):
     """The worker process must exit so its supervisor can recycle it."""
+
+
+class ExtractionAbortedError(RuntimeError):
+    pass
 
 
 class StopEvent(Protocol):
@@ -618,7 +661,10 @@ def _extract_with_timeout(
     prompt_context: PromptContext | None = None,
     visual_callback: Callable[[int, int, str, str], None] | None = None,
     resume_cache: dict[tuple[int, int], tuple[str, str]] | None = None,
+    abort_requested: Callable[[], bool] | None = None,
 ):
+    if abort_requested is not None and abort_requested():
+        raise ExtractionAbortedError("Shutdown aborted the attempt before it started")
     context = multiprocessing.get_context("spawn")
     parent_connection, child_connection = context.Pipe(duplex=True)
     if resume_cache is None:
@@ -635,6 +681,7 @@ def _extract_with_timeout(
     started = False
     result = None
     timed_out = False
+    aborted = False
     reaped = True
     try:
         _start_extraction_process(process)
@@ -642,6 +689,9 @@ def _extract_with_timeout(
         child_connection.close()
         deadline = time.monotonic() + timeout_seconds
         while True:
+            if abort_requested is not None and abort_requested():
+                aborted = True
+                break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
@@ -716,6 +766,8 @@ def _extract_with_timeout(
             except (EOFError, OSError):
                 break
     finally:
+        if started and aborted:
+            process.kill()
         parent_connection.close()
         child_connection.close()
         if started:
@@ -723,6 +775,8 @@ def _extract_with_timeout(
 
     if not reaped:
         raise WorkerProcessFatalError("Unable to terminate extraction subprocess")
+    if aborted:
+        raise ExtractionAbortedError("Shutdown aborted the extraction attempt")
     if timed_out and result is None:
         raise DocumentProcessingError(
             "PROCESSING_TIMEOUT",
@@ -927,6 +981,8 @@ def process_next_job(
         parent_operation_id=job.parent_operation_id,
         **_job_log_fields(job),
     )
+    tracked = _in_flight_job(job, worker_id)
+    shutdown.register(tracked)
     try:
         processing_started = time.monotonic()
         logger.info(
@@ -942,6 +998,11 @@ def process_next_job(
         )
 
         describing_visuals = job.job_type == JOB_TYPE_DESCRIBE_VISUALS
+        abort_requested = (
+            shutdown_requested
+            if settings.worker_shutdown_mode == WORKER_SHUTDOWN_MODE_ABORT
+            else None
+        )
         stop = threading.Event()
         claim_lost = threading.Event()
         current_stage = "reading_file"
@@ -1084,6 +1145,7 @@ def process_next_job(
                     prompt_context=prompt_context,
                     visual_callback=persist_visual,
                     resume_cache=resume_cache,
+                    abort_requested=abort_requested,
                 )
             else:
                 pages, chunks = _extract_with_timeout(
@@ -1096,6 +1158,7 @@ def process_next_job(
                         session_factory, job, usage
                     ),
                     prompt_context=prompt_context,
+                    abort_requested=abort_requested,
                 )
             persist_stage(EMBEDDING_STAGE)
             embeddings = embed_document_chunks(
@@ -1114,6 +1177,10 @@ def process_next_job(
                 },
             )
             raise
+        except ExtractionAbortedError:
+            _stop_heartbeat(stop, heartbeat, claim_lost)
+            shutdown.release(tracked, session_factory)
+            return True
         except DocumentProcessingError as exc:
             heartbeat_stopped = _stop_heartbeat(stop, heartbeat, claim_lost)
             stage = getattr(exc, "failed_stage", None) or current_stage
@@ -1423,6 +1490,7 @@ def process_next_job(
             )
         return True
     finally:
+        shutdown.unregister(tracked)
         reset_operation_context(operation_token)
         reset_request_id(request_token)
 
@@ -1666,7 +1734,7 @@ def _maintenance_cycle(
                 # Enforces AI_USAGE_RETENTION_DAYS on every deployment that runs a
                 # worker, so per-user AI-usage telemetry does not accumulate without
                 # bound (P2-024). The job is idempotent and bounded per batch.
-                run_ai_usage_cleanup(session_factory=session_factory)
+                run_ai_usage_cleanup(session_factory=session_factory, stop_event=stop)
             except Exception:
                 logger.exception(
                     "Periodic AI usage retention cleanup failed",

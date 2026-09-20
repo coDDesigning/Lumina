@@ -196,8 +196,16 @@ EVENT_DESCRIPTIONS = {
     "visual_detection_degraded": "Table or drawing detection failed on some pages of a document.",
     "visual_provider_failed": "The visual description provider failed unexpectedly.",
     "web_root_missing": "The configured interface build directory does not exist.",
+    "worker_child_processes_killed": "A stopping worker killed the document subprocesses it was still running.",
+    "worker_generation_locks_released": "A stopping worker released the document generation locks its aborted generations held.",
     "worker_readiness_check_failed": "A worker found a required dependency unavailable during its readiness check.",
     "worker_readiness_check_succeeded": "A worker readiness check passed.",
+    "worker_shutdown_aborting_job": "A stopping worker is aborting a running job so it can return it to the queue.",
+    "worker_shutdown_deadline_exceeded": "Worker threads were still running at the shutdown deadline, so their jobs were released and the worker exited.",
+    "worker_shutdown_job_not_released": "A stopping worker no longer held a running job, so it left the job as it was.",
+    "worker_shutdown_job_released": "A stopping worker returned a job to the queue without spending its attempt.",
+    "worker_shutdown_release_failed": "A stopping worker could not return a job to the queue, so lease recovery will requeue it.",
+    "worker_shutdown_waiting_for_job": "A stopping worker is waiting for a running job to finish.",
 }
 
 RUNBOOKS = {

@@ -758,9 +758,10 @@ That job is resumable, which is the point of splitting it out:
 
 - Every description is written to its own `document_visuals` row the moment it
   arrives, under the claim that produced it.
-- An attempt that times out or dies loses at most the one call in flight. The
-  next attempt reads the stored descriptions and charges the model only for the
-  visuals still missing.
+- An attempt that times out or dies loses at most the one call in flight. So
+  does one a stopping worker aborts, which is handed back to the queue without
+  spending an attempt. The next attempt reads the stored descriptions and
+  charges the model only for the visuals still missing.
 - When the last visual is described, the job re-derives the document's page text,
   re-chunks it and replaces the chunks and vectors in one transaction. The
   document is `ready` throughout; only its text improves.

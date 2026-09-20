@@ -1,4 +1,5 @@
 import hashlib
+import multiprocessing
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -12,6 +13,7 @@ import pymupdf
 import pytest
 from sqlalchemy import func, select
 
+from backend.app.config import WORKER_SHUTDOWN_MODE_ABORT, WORKER_SHUTDOWN_MODE_DRAIN
 from backend.app.database_engine import SQLITE_BUSY_TIMEOUT_MILLISECONDS
 from backend.app.models import (
     EMBEDDING_DIMENSIONS,
@@ -94,6 +96,19 @@ class ImmediateStorage:
 
     def open(self, _key: str):
         return BytesIO(self.content)
+
+
+class SignalingStorage:
+    def __init__(self, storage, reading, delay_seconds: float) -> None:
+        self.provider = storage.provider
+        self.storage = storage
+        self.reading = reading
+        self.delay_seconds = delay_seconds
+
+    def open(self, key: str):
+        self.reading.set()
+        time.sleep(self.delay_seconds)
+        return self.storage.open(key)
 
 
 class StubEmbeddingProvider:
@@ -2366,6 +2381,111 @@ def test_extraction_process_crash_is_reaped_as_safe_failure():
     with pytest.raises(DocumentProcessingError) as error:
         _extract_with_timeout(CrashingStorage(), job, timeout_seconds=15)
     assert error.value.code == "UNEXPECTED_PROCESSING_ERROR"
+
+
+def test_extract_with_timeout_kills_its_child_when_shutdown_aborts_the_attempt():
+    content = b"Never read to the end"
+    reading = multiprocessing.get_context("spawn").Event()
+    storage = SignalingStorage(ImmediateStorage(content), reading, delay_seconds=60)
+    job = ClaimedJob(
+        id=1,
+        document_id=uuid4(),
+        course_id=1,
+        claim_token=str(uuid4()),
+        attempt_count=1,
+        max_attempts=3,
+        storage_provider=storage.provider,
+        storage_key="document.txt",
+        file_hash=hashlib.sha256(content).hexdigest(),
+        file_type="txt",
+        file_size=len(content),
+    )
+    abort_requested_at: list[float] = []
+
+    def abort_requested() -> bool:
+        if reading.is_set() and not abort_requested_at:
+            abort_requested_at.append(time.monotonic())
+        return bool(abort_requested_at)
+
+    with pytest.raises(document_processor.ExtractionAbortedError):
+        _extract_with_timeout(
+            storage, job, timeout_seconds=120, abort_requested=abort_requested
+        )
+
+    assert abort_requested_at
+    assert time.monotonic() - abort_requested_at[0] < 4
+    assert multiprocessing.active_children() == []
+
+
+def test_an_aborted_extraction_returns_the_job_and_document_to_the_queue(
+    session_factory, tmp_path, monkeypatch
+):
+    queued = _queue_document(session_factory, tmp_path)
+    monkeypatch.setattr(
+        document_processor,
+        "settings",
+        replace(
+            document_processor.settings,
+            worker_shutdown_mode=WORKER_SHUTDOWN_MODE_ABORT,
+        ),
+    )
+    reading = multiprocessing.get_context("spawn").Event()
+    storage = SignalingStorage(queued.storage, reading, delay_seconds=60)
+
+    assert _process_next_job(
+        session_factory=session_factory,
+        storage=storage,
+        worker_id="stopping-worker",
+        shutdown_requested=reading.is_set,
+    )
+
+    assert reading.is_set()
+    assert multiprocessing.active_children() == []
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        document = session.get(UploadedDocument, queued.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert job.claim_token is None
+        assert job.lease_expires_at is None
+        assert job.last_error_code is None
+        assert document.status == "uploaded"
+        assert document.processing_error is None
+
+
+def test_a_draining_worker_lets_a_slow_extraction_finish(
+    session_factory, tmp_path, monkeypatch
+):
+    queued = _queue_document(session_factory, tmp_path)
+    monkeypatch.setattr(
+        document_processor,
+        "settings",
+        replace(
+            document_processor.settings,
+            worker_shutdown_mode=WORKER_SHUTDOWN_MODE_DRAIN,
+        ),
+    )
+    reading = multiprocessing.get_context("spawn").Event()
+    storage = SignalingStorage(queued.storage, reading, delay_seconds=0.5)
+
+    assert _process_next_job(
+        session_factory=session_factory,
+        storage=storage,
+        worker_id="draining-worker",
+        shutdown_requested=reading.is_set,
+    )
+
+    assert reading.is_set()
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        document = session.get(UploadedDocument, queued.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_SUCCEEDED
+        assert job.attempt_count == 1
+        assert document.status == "ready"
 
 
 @pytest.mark.parametrize(

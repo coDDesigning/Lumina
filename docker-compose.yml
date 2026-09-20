@@ -63,7 +63,7 @@ services:
     # -- nothing needs rebuilding, because the interface calls /api on whatever
     # origin served it. 8000 is inside the container and is not configurable.
     ports:
-      - "${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-10312}:8000"
+      - "${LUMINA_BIND_ADDRESS:-0.0.0.0}:${LUMINA_PORT:-10312}:8000"
     command:
       ["sh", "-c", "python -m alembic upgrade head && python -m alembic current --check-heads && python -m alembic check && exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330 --no-access-log $${FORWARDED_ALLOW_IPS:+--proxy-headers --forwarded-allow-ips \"$$FORWARDED_ALLOW_IPS\"}"]
     healthcheck:

@@ -128,7 +128,7 @@ services:
     <<: *lumina
     pull_policy: build
     ports:
-      - "${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-10312}:8000"
+      - "${LUMINA_BIND_ADDRESS:-0.0.0.0}:${LUMINA_PORT:-10312}:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -52,7 +52,7 @@ root filesystem, and a bounded temporary filesystem. Only `/data` is
 persistently writable.
 
 `lumina` publishes the only port,
-`${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-10312}:8000`, and it is the
+`${LUMINA_BIND_ADDRESS:-0.0.0.0}:${LUMINA_PORT:-10312}:8000`, and it is the
 whole address: the interface and `/api` answer on one origin, which is why the
 default `VITE_API_BASE_URL=/api` needs no CORS configuration and why changing
 `LUMINA_PORT` needs no rebuild. The container-internal port is fixed at 8000.
@@ -669,7 +669,8 @@ the published port, which is what the quickstart in `README.md` checks. There
 is deliberately no `/api/health/*` alias: the hosted distribution forwards
 `/api/*` to the ALB, so an alias there would publish readiness on the public
 hostname, and `/health/ready` writes and reads an object in document storage on
-every call. The port binds to loopback by default, so it is still a trusted
-path; an operator who changes `LUMINA_BIND_ADDRESS` or places a public ingress
-in front must restrict `/health/*` at that edge. The container probes itself
-directly.
+every call. The port binds to every interface by default, so this is a
+trusted path only as long as the machine itself is trusted: an operator whose
+machine is reachable beyond a trusted network, whether through the default
+`LUMINA_BIND_ADDRESS` or a public ingress placed in front, must restrict
+`/health/*` at that edge. The container probes itself directly.

@@ -229,6 +229,13 @@
   display: none;
 }
 
+.syllabusSuggestions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
 @media (max-width: 48rem) {
   .formGrid {
     grid-template-columns: minmax(0, 1fr);

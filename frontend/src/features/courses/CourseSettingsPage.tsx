@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload } from 'lucide-react';
+import { Sparkles, Upload } from 'lucide-react';
 import { coursesAPI } from '@/api/courses';
 import { describeError } from '@/api/errors';
 import { queryKeys } from '@/api/queryKeys';
@@ -9,6 +9,7 @@ import { settingsAPI } from '@/api/settings';
 import { useAuth } from '@/context/AuthContext';
 import { useCourseSettings } from './useCourseSettings';
 import { queryCache } from '@/lib/query/cache';
+import { cx } from '@/lib/cx';
 import { EDUCATION_LEVEL_LABELS } from '@/api/types';
 import type { EducationLevel } from '@/api/types';
 import { useDocumentTitle } from '@/app/useDocumentTitle';
@@ -23,6 +24,9 @@ import { ErrorState } from '@/ui/ErrorState';
 import { Skeleton } from '@/ui/Skeleton';
 import { TagInput } from '@/ui/TagInput';
 import { DiscoveredTopics } from './DiscoveredTopics';
+import { SyllabusTopicSuggestions } from './SyllabusTopicSuggestions';
+import { addTopics } from './topicList';
+import { useSyllabusTopicSuggestions } from './useSyllabusTopicSuggestions';
 import { useToast } from '@/ui/toastContext';
 import styles from './CourseSettingsPage.module.css';
 
@@ -77,6 +81,7 @@ export default function CourseSettingsPage({
   const [isReadingSyllabus, setIsReadingSyllabus] = useState(false);
   const [syllabusNotice, setSyllabusNotice] = useState<string | null>(null);
   const syllabusInputRef = useRef<HTMLInputElement>(null);
+  const topicSuggestions = useSyllabusTopicSuggestions(course.syllabus);
 
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const [loadedPreferences, setLoadedPreferences] = useState(DEFAULT_PREFERENCES);
@@ -141,6 +146,7 @@ export default function CourseSettingsPage({
           ? `Read ${file.name}, trimmed to the first ${extracted.text.length} characters.`
           : `Read ${file.name}.`,
       );
+      topicSuggestions.suggest(extracted.text);
     } catch (caught) {
       setSyllabusNotice(
         describeError(caught, 'That file could not be read. Try again.').message,
@@ -358,12 +364,7 @@ export default function CourseSettingsPage({
                   courseId={Number(workspace.id)}
                   declared={course.topics}
                   disabled={isSupportView}
-                  onAdd={(added) =>
-                    updateCourse('topics', [
-                      ...course.topics,
-                      ...added.filter((topic) => !course.topics.includes(topic)),
-                    ])
-                  }
+                  onAdd={(added) => updateCourse('topics', addTopics(course.topics, added))}
                 />
               </div>
 
@@ -400,6 +401,30 @@ export default function CourseSettingsPage({
                   </Button>
                 </div>
               ) : null}
+
+              {!isSupportView && course.syllabus.trim() ? (
+                <div className={cx(styles.span, styles.syllabusSuggestions)}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    icon={<Sparkles aria-hidden="true" />}
+                    isLoading={topicSuggestions.isPending}
+                    loadingLabel="Reading"
+                    onClick={() => topicSuggestions.suggest(course.syllabus)}
+                  >
+                    Suggest topics from syllabus
+                  </Button>
+                  <SyllabusTopicSuggestions
+                    suggestions={topicSuggestions.suggestions}
+                    isPending={topicSuggestions.isPending}
+                    error={topicSuggestions.error}
+                    declared={course.topics}
+                    onAdd={(added) => updateCourse('topics', addTopics(course.topics, added))}
+                    onRetry={() => topicSuggestions.suggest(course.syllabus)}
+                  />
+                </div>
+              ) : null}
             </div>
 
             {!isSupportView ? (
@@ -412,7 +437,13 @@ export default function CourseSettingsPage({
                 >
                   Save details
                 </Button>
-                <Button variant="ghost" onClick={() => setCourse(toCourseForm(workspace))}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setCourse(toCourseForm(workspace));
+                    topicSuggestions.clear();
+                  }}
+                >
                   Reset details
                 </Button>
               </div>

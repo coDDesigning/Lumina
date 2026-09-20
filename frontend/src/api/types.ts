@@ -459,6 +459,15 @@ export interface SyllabusExtraction {
   truncated: boolean;
 }
 
+export interface SuggestedTopic {
+  name: string;
+  weight_percent: number | null;
+}
+
+export interface SyllabusTopicsResponse {
+  topics: SuggestedTopic[];
+}
+
 export interface ProcessingJobResponse {
   id: number;
   status: LooseUnion<ProcessingJobStatus>;

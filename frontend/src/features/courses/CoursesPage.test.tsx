@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activityAPI } from '@/api/activity';
 import { adsAPI } from '@/api/ads';
 import { APIError } from '@/api/client';
@@ -279,6 +279,9 @@ describe('CoursesPage', () => {
     const extract = vi
       .spyOn(coursesAPI, 'extractSyllabus')
       .mockResolvedValue({ text: 'Week 1: Limits', truncated: false });
+    const suggest = vi
+      .spyOn(coursesAPI, 'suggestSyllabusTopics')
+      .mockResolvedValue([]);
     renderPage();
 
     await user.click(openCreate());
@@ -297,6 +300,178 @@ describe('CoursesPage', () => {
     expect(extract).toHaveBeenCalledWith(file);
     expect(screen.getByText('Read syllabus.pdf.')).toBeInTheDocument();
     extract.mockRestore();
+    suggest.mockRestore();
+  });
+
+  describe('suggesting topics from the syllabus', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('shows the suggest button only once the syllabus box has text', async () => {
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(openCreate());
+
+      expect(
+        screen.queryByRole('button', { name: 'Suggest topics from syllabus' }),
+      ).not.toBeInTheDocument();
+
+      await user.type(screen.getByLabelText(/^Syllabus/), 'Week 1: Graphs');
+
+      expect(
+        screen.getByRole('button', { name: 'Suggest topics from syllabus' }),
+      ).toBeInTheDocument();
+    });
+
+    it('discards suggestions for the previous syllabus text once it is edited', async () => {
+      const user = userEvent.setup();
+      const suggest = vi.spyOn(coursesAPI, 'suggestSyllabusTopics').mockResolvedValueOnce([
+        { name: 'Graph Traversal', weight_percent: 20 },
+      ]);
+      renderPage();
+      await user.click(openCreate());
+
+      await user.type(screen.getByLabelText(/^Syllabus/), 'Week 1: Graphs');
+      await user.click(screen.getByRole('button', { name: 'Suggest topics from syllabus' }));
+
+      const dialog = screen.getByRole('dialog');
+      expect(await within(dialog).findByText('Found in your syllabus')).toBeInTheDocument();
+
+      await user.type(screen.getByLabelText(/^Syllabus/), ' plus more');
+
+      expect(within(dialog).queryByText('Found in your syllabus')).not.toBeInTheDocument();
+      expect(
+        within(dialog).getByRole('button', { name: 'Suggest topics from syllabus' }),
+      ).toBeInTheDocument();
+      expect(suggest).toHaveBeenCalledTimes(1);
+    });
+
+    it('suggests topics after reading a syllabus file, and adds one on request', async () => {
+      const user = userEvent.setup();
+      vi.spyOn(coursesAPI, 'extractSyllabus').mockResolvedValue({
+        text: 'Week 1: Graph Traversal\nWeek 2: Dynamic Programming',
+        truncated: false,
+      });
+      const suggest = vi.spyOn(coursesAPI, 'suggestSyllabusTopics').mockResolvedValue([
+        { name: 'Graph Traversal', weight_percent: 20 },
+        { name: 'Dynamic Programming', weight_percent: null },
+      ]);
+      renderPage();
+      await user.click(openCreate());
+
+      const file = new File(['syllabus'], 'syllabus.pdf', { type: 'application/pdf' });
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(fileInput, file);
+
+      await waitFor(() =>
+        expect(suggest).toHaveBeenCalledWith('Week 1: Graph Traversal\nWeek 2: Dynamic Programming'),
+      );
+
+      const dialog = screen.getByRole('dialog');
+      expect(await within(dialog).findByText('Found in your syllabus')).toBeInTheDocument();
+
+      await user.click(within(dialog).getByRole('button', { name: 'Graph Traversal' }));
+
+      expect(screen.getByLabelText(/^Topics/)).toHaveValue('');
+      expect(
+        within(dialog).queryByRole('button', { name: 'Graph Traversal' }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('adds every suggested topic at once', async () => {
+      const user = userEvent.setup();
+      vi.spyOn(coursesAPI, 'suggestSyllabusTopics').mockResolvedValue([
+        { name: 'Graph Traversal', weight_percent: 20 },
+        { name: 'Dynamic Programming', weight_percent: null },
+      ]);
+      renderPage();
+      await user.click(openCreate());
+
+      await user.type(screen.getByLabelText(/^Syllabus/), 'Week 1: Graphs');
+      await user.click(screen.getByRole('button', { name: 'Suggest topics from syllabus' }));
+
+      const dialog = screen.getByRole('dialog');
+      await user.click(await within(dialog).findByRole('button', { name: 'Add all 2' }));
+
+      expect(
+        within(dialog).queryByText('Found in your syllabus'),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Remove Graph Traversal' })).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Remove Dynamic Programming' }),
+      ).toBeInTheDocument();
+    });
+
+    it('hides a suggested topic that is already in the topic list', async () => {
+      const user = userEvent.setup();
+      vi.spyOn(coursesAPI, 'suggestSyllabusTopics').mockResolvedValue([
+        { name: 'Graph Traversal', weight_percent: 20 },
+      ]);
+      renderPage();
+      await user.click(openCreate());
+
+      await user.type(screen.getByLabelText(/^Topics/), 'Graph Traversal{Enter}');
+      await user.type(screen.getByLabelText(/^Syllabus/), 'Week 1: Graphs');
+      await user.click(screen.getByRole('button', { name: 'Suggest topics from syllabus' }));
+
+      await waitFor(() =>
+        expect(screen.queryByText('Reading topics from your syllabus…')).not.toBeInTheDocument(),
+      );
+      expect(coursesAPI.suggestSyllabusTopics).toHaveBeenCalled();
+      expect(screen.queryByText('Found in your syllabus')).not.toBeInTheDocument();
+    });
+
+    it('does not create the course from adding a suggestion, only from submitting the form', async () => {
+      const user = userEvent.setup();
+      vi.spyOn(coursesAPI, 'suggestSyllabusTopics').mockResolvedValue([
+        { name: 'Graph Traversal', weight_percent: 20 },
+      ]);
+      const onCreate = vi.fn().mockResolvedValue({ ...mockWorkspaces[0], id: '9' });
+      renderPage({ onCreate });
+      await user.click(openCreate());
+
+      await user.type(screen.getByLabelText('Course name'), 'Data Structures');
+      await user.type(screen.getByLabelText(/^Syllabus/), 'Week 1: Graphs');
+      await user.click(screen.getByRole('button', { name: 'Suggest topics from syllabus' }));
+
+      const dialog = screen.getByRole('dialog');
+      await user.click(await within(dialog).findByRole('button', { name: 'Graph Traversal' }));
+
+      expect(onCreate).not.toHaveBeenCalled();
+
+      await user.click(within(dialog).getByRole('button', { name: 'Create course' }));
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ name: 'Data Structures', topics: ['Graph Traversal'] }),
+        );
+      });
+    });
+
+    it('keeps the syllabus text in the box when suggesting fails, and retries on request', async () => {
+      const user = userEvent.setup();
+      const suggest = vi
+        .spyOn(coursesAPI, 'suggestSyllabusTopics')
+        .mockRejectedValueOnce(
+          new APIError(503, { detail: 'AI provider unreachable' }, 'provider_unavailable'),
+        )
+        .mockResolvedValueOnce([{ name: 'Graph Traversal', weight_percent: 20 }]);
+      renderPage();
+      await user.click(openCreate());
+
+      await user.type(screen.getByLabelText(/^Syllabus/), 'Week 1: Graphs');
+      await user.click(screen.getByRole('button', { name: 'Suggest topics from syllabus' }));
+
+      const dialog = screen.getByRole('dialog');
+      expect(await within(dialog).findByRole('alert')).toBeInTheDocument();
+      expect(screen.getByLabelText(/^Syllabus/)).toHaveValue('Week 1: Graphs');
+
+      await user.click(within(dialog).getByRole('button', { name: 'Try again' }));
+
+      expect(await within(dialog).findByText('Found in your syllabus')).toBeInTheDocument();
+      expect(suggest).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('says so when an uploaded syllabus holds no readable text', async () => {

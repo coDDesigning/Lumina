@@ -811,14 +811,14 @@ Image understanding distinguishes between temporary infrastructure failures and 
 - **Per-Visual Failures** (`VisualAnalysisError` for unsupported images, safety filter blocks, or provider-specific rejections):
   Recorded per-visual as `analysis_status="failed"` with `error_code="VISUAL_ANALYSIS_FAILED"`. The document extraction continues so other pages and valid text/visuals remain fully processable.
 - **Partial-Success Behavior**:
-  When a document contains multiple visual pages or visual regions where some succeed and some fail, the document status rolls up truthfully to `partial`. Successful visual descriptions are indexed and retrievable, while failed visuals are isolated without failing the whole document.
+  When a document contains multiple visual pages or visual regions where some succeed and some fail, the document status rolls up truthfully to `partial`. Successful visual descriptions are indexed and retrievable, while failed visuals are isolated without failing the whole document. A visual page on which no figure region could be selected (a "crowded" page, past `max_visuals_per_document` or `max_visuals_per_page`) is marked `not_applicable` rather than `partial`, and the document rollup ignores it entirely: a document whose only gap is crowded pages rolls up to `completed`, not `partial`. Pages recorded as `partial` before this distinction existed keep reporting `partial` until a `describe_visuals` retry re-processes them.
 - **Document-Level Visual Status Rollup**:
   Exposed via API as `UploadedDocument.visual_analysis_status`:
-  - `not_applicable`: Non-PDF documents or PDFs with no detected visual elements.
+  - `not_applicable`: Non-PDF documents, PDFs with no detected visual elements, or a PDF whose visual pages are all individually `not_applicable` (for example, every one is a crowded page), leaving the rollup nothing to consider.
   - `pending`: Extraction has not run yet, or the document is `ready` and its remaining visuals are queued for the `describe_visuals` job.
   - `not_configured`: Visual elements exist, but no available vendor offers a vision-capable model.
-  - `completed`: All detected visual elements were successfully analyzed and indexed.
-  - `partial`: Mixed outcomes (e.g., some succeeded and some failed, or some succeeded and some not configured).
+  - `completed`: All visual pages considered by the rollup were successfully analyzed and indexed; pages marked `not_applicable` (including crowded ones) are ignored rather than counted against it.
+  - `partial`: Mixed outcomes among the pages the rollup considers (e.g., some succeeded and some failed, or some succeeded and some not configured).
   - `failed`: All relevant visual elements failed analysis.
 
 ### Operational Considerations: Latency, Costs, Hardware, and Privacy

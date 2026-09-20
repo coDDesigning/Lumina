@@ -892,6 +892,113 @@ def test_visual_analysis_summary_names_the_pages_it_could_not_describe(upload_ap
     assert _visual_analysis(upload_api, document_id) == (expected, expected)
 
 
+def test_visual_analysis_status_rollup_ignores_not_applicable_visual_pages(upload_api):
+    scenarios = [
+        (
+            [
+                (True, "completed", [("succeeded", None)]),
+                (True, "not_applicable", []),
+            ],
+            "completed",
+        ),
+        (
+            [
+                (True, "not_applicable", []),
+                (True, "not_applicable", []),
+            ],
+            "not_applicable",
+        ),
+        (
+            [
+                (True, "not_applicable", []),
+                (True, "pending", [("pending", None)]),
+            ],
+            "pending",
+        ),
+        (
+            [
+                (True, "not_applicable", []),
+                (True, "failed", [("failed", "VISUAL_ANALYSIS_FAILED")]),
+            ],
+            "failed",
+        ),
+    ]
+
+    for index, (pages, expected_status) in enumerate(scenarios):
+        document_id = _ready_pdf(
+            upload_api,
+            f"%PDF-1.4 rollup scenario {index}".encode(),
+            pages,
+        )
+        response = upload_api.client.get(
+            f"/api/courses/{upload_api.course_id}/documents/{document_id}",
+            headers=upload_api.authorization,
+        )
+        assert response.status_code == 200
+        assert response.json()["document"]["visual_analysis_status"] == expected_status
+
+
+def test_a_document_whose_only_gaps_are_crowded_pages_reports_completed(upload_api):
+    document_id = _ready_pdf(
+        upload_api,
+        b"%PDF-1.4 crowded gaps only",
+        [
+            (True, "completed", [("succeeded", None)]),
+            (True, "not_applicable", []),
+        ],
+    )
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/documents/{document_id}",
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200
+    assert response.json()["document"]["visual_analysis_status"] == "completed"
+
+    expected = {
+        "total": 1,
+        "described": 1,
+        "pending": 0,
+        "failed": 0,
+        "failure_reason": None,
+        "failed_page_numbers": [],
+        "crowded_pages": 1,
+        "crowded_page_numbers": [2],
+        "stopped_error_code": None,
+    }
+    assert _visual_analysis(upload_api, document_id) == (expected, expected)
+
+
+def test_a_legacy_crowded_page_is_still_counted_as_crowded(upload_api):
+    document_id = _ready_pdf(
+        upload_api,
+        b"%PDF-1.4 legacy crowded page",
+        [
+            (True, "partial", []),
+        ],
+    )
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/documents/{document_id}",
+        headers=upload_api.authorization,
+    )
+    assert response.status_code == 200
+    assert response.json()["document"]["visual_analysis_status"] == "partial"
+
+    expected = {
+        "total": 0,
+        "described": 0,
+        "pending": 0,
+        "failed": 0,
+        "failure_reason": None,
+        "failed_page_numbers": [],
+        "crowded_pages": 1,
+        "crowded_page_numbers": [1],
+        "stopped_error_code": None,
+    }
+    assert _visual_analysis(upload_api, document_id) == (expected, expected)
+
+
 def test_listing_documents_reads_visual_summaries_without_a_query_per_document(
     upload_api,
     database_engine,

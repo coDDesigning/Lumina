@@ -1253,6 +1253,79 @@ def test_enabled_provider_receives_region_crops_and_returns_typed_descriptions()
     ]
 
 
+def test_a_visual_page_with_no_selectable_figure_is_not_applicable() -> None:
+    class SucceedingProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            return VisualDescription(
+                visual_type=VisualType.FIGURE,
+                description="A described figure.",
+            )
+
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "First visual page.",
+            "Second visual page.",
+            image_pages={1, 2},
+            width=300,
+            height=300,
+        ),
+        options=pipeline_options(max_visuals_per_document=1),
+        image_provider=SucceedingProvider(),
+    )
+
+    assert [page.visual_analysis_status for page in result.pages] == [
+        PageVisualAnalysisStatus.COMPLETED,
+        PageVisualAnalysisStatus.NOT_APPLICABLE,
+    ]
+    assert result.pages[1].visuals == ()
+
+
+def test_a_text_only_page_stays_not_applicable_when_figures_are_described() -> None:
+    class SucceedingProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            return VisualDescription(
+                visual_type=VisualType.FIGURE,
+                description="A described figure.",
+            )
+
+    result = process_document(
+        "pdf",
+        pdf_bytes(
+            "First visual page.",
+            "Second page is text only.",
+            image_pages={1},
+            width=300,
+            height=300,
+        ),
+        options=pipeline_options(),
+        image_provider=SucceedingProvider(),
+    )
+
+    assert [page.visual_analysis_status for page in result.pages] == [
+        PageVisualAnalysisStatus.COMPLETED,
+        PageVisualAnalysisStatus.NOT_APPLICABLE,
+    ]
+
+
 def test_text_cleaning_normalizes_unicode_controls_and_whitespace() -> None:
     assert (
         pipeline._clean_text(

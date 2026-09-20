@@ -2286,9 +2286,15 @@ def _apply_visual_understanding(
             enriched_pages.append(page)
             continue
         if not page.visuals:
-            enriched_pages.append(
-                replace(page, visual_analysis_status=PageVisualAnalysisStatus.PARTIAL)
-            )
+            if page.has_visual_content:
+                enriched_pages.append(
+                    replace(
+                        page,
+                        visual_analysis_status=PageVisualAnalysisStatus.NOT_APPLICABLE,
+                    )
+                )
+            else:
+                enriched_pages.append(page)
             continue
         analyzed_visuals: list[VisualContent] = []
         for visual in page.visuals:

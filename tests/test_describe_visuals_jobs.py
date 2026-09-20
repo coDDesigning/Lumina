@@ -2152,6 +2152,94 @@ def test_a_profile_document_reports_its_visual_analysis_rollup(
         assert document.visual_analysis_status == "completed"
 
 
+def test_a_profile_document_ignores_crowded_pages_in_its_rollup(
+    session_factory, tmp_path
+):
+    content = visual_pdf(page_count=2)
+    storage = LocalStorage(tmp_path / "profile-uploads", namespace="profile")
+    document_id = uuid4()
+
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Profile owner",
+            email="profile-crowded@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        session.add(user)
+        session.flush()
+
+        storage_key = storage.generate_key(user.id, document_id, "pdf")
+        storage.save(storage_key, BytesIO(content))
+
+        document = ProfileDocument(
+            id=document_id,
+            user_id=user.id,
+            original_file_name="profile-crowded.pdf",
+            file_type="pdf",
+            mime_type="application/pdf",
+            file_size=len(content),
+            file_hash=hashlib.sha256(content).hexdigest(),
+            storage_provider=storage.provider,
+            storage_key=storage_key,
+            status="ready",
+        )
+        session.add(document)
+        session.flush()
+
+        completed_page = ProfileDocumentPage(
+            document_id=document_id,
+            user_id=user.id,
+            content_index=0,
+            page_number=1,
+            raw_text="Page 1 body text.",
+            text="Page 1 body text.",
+            extraction_method="native",
+            raw_extraction_method="native",
+            has_images=True,
+            has_visual_content=True,
+            visual_analysis_status="completed",
+        )
+        completed_page.visuals = [
+            ProfileDocumentVisual(
+                visual_index=0,
+                visual_type="figure",
+                source="image",
+                bbox_x0=30.0,
+                bbox_y0=50.0,
+                bbox_x1=270.0,
+                bbox_y1=270.0,
+                description="A described figure on page 1.",
+                analysis_status="succeeded",
+            )
+        ]
+        crowded_page = ProfileDocumentPage(
+            document_id=document_id,
+            user_id=user.id,
+            content_index=1,
+            page_number=2,
+            raw_text="Page 2 body text.",
+            text="Page 2 body text.",
+            extraction_method="native",
+            raw_extraction_method="native",
+            has_images=True,
+            has_visual_content=True,
+            visual_analysis_status="not_applicable",
+        )
+        session.add_all([completed_page, crowded_page])
+        session.commit()
+
+    with session_factory() as session:
+        document = session.scalar(
+            select(ProfileDocument)
+            .options(selectinload(ProfileDocument.pages))
+            .where(ProfileDocument.id == document_id)
+        )
+        assert document.visual_analysis_status == "completed"
+
+
 def test_retrying_a_failed_profile_document_rearms_its_visual_description(
     session_factory, tmp_path
 ):

@@ -14,6 +14,7 @@ vi.mock('../api/courses', () => ({
     listDocuments: vi.fn(),
     getDocumentStatus: vi.fn(),
     retryDocument: vi.fn(),
+    retryDocumentVisuals: vi.fn(),
     deleteDocument: vi.fn(),
   },
 }));
@@ -21,6 +22,7 @@ vi.mock('../api/courses', () => ({
 const listDocuments = vi.mocked(coursesAPI.listDocuments);
 const getDocumentStatus = vi.mocked(coursesAPI.getDocumentStatus);
 const retryDocument = vi.mocked(coursesAPI.retryDocument);
+const retryDocumentVisuals = vi.mocked(coursesAPI.retryDocumentVisuals);
 const deleteDocument = vi.mocked(coursesAPI.deleteDocument);
 
 const DOCUMENT_ID = '11111111-1111-1111-1111-111111111111';
@@ -391,6 +393,56 @@ describe('useCourseDocuments polling lifecycle', () => {
     await advance(2000);
     expect(getDocumentStatus).toHaveBeenCalled();
   });
+  it('replaces the document once its figures are retried and resumes polling', async () => {
+    listDocuments.mockResolvedValue([describingDocument({ failed: 2 }, 'partial')]);
+    getDocumentStatus.mockResolvedValue(settled(describingDocument({ failed: 2 }, 'partial')));
+    retryDocumentVisuals.mockResolvedValue(describingDocument({ pending: 2 }, 'pending'));
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+    expect(result.current.entries[0].document.visual_analysis_status).toBe('partial');
+
+    await act(async () => {
+      await result.current.retryVisuals(DOCUMENT_ID);
+    });
+
+    expect(result.current.entries[0].document.visual_analysis_status).toBe('pending');
+    expect(result.current.entries[0].error).toBeNull();
+    expect(result.current.entries[0].pending).toBeNull();
+
+    await advance(1500);
+    expect(getDocumentStatus).toHaveBeenCalled();
+  });
+
+  it('keeps a refused figure retry readable without disturbing the document', async () => {
+    listDocuments.mockResolvedValue([describingDocument({ failed: 2 }, 'partial')]);
+    getDocumentStatus.mockResolvedValue(settled(describingDocument({ failed: 2 }, 'partial')));
+    retryDocumentVisuals.mockRejectedValue(
+      new APIError(409, { detail: 'These figures are already being described.' }),
+    );
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+
+    await act(async () => {
+      await result.current.retryVisuals(DOCUMENT_ID);
+    });
+
+    expect(result.current.entries[0].error).toBe(
+      'These figures are already being described.',
+    );
+    expect(result.current.entries[0].pending).toBeNull();
+    expect(result.current.entries[0].document.visual_analysis_status).toBe('partial');
+  });
+
   it('keeps a refused removal readable while the source keeps being polled', async () => {
     listDocuments.mockResolvedValue([document('ready', '2026-08-19T10:00:00Z')]);
     getDocumentStatus.mockResolvedValue(

@@ -22,12 +22,16 @@ function entry(status: DocumentStatus, overrides: Partial<DocumentEntry> = {}): 
   return { document, job: null, error: null, pending: null, ...overrides };
 }
 
-function renderRow(row: DocumentEntry, handlers: Partial<{ retry: () => void; remove: () => void }> = {}) {
+function renderRow(
+  row: DocumentEntry,
+  handlers: Partial<{ retry: () => void; remove: () => void; retryVisuals: () => void }> = {},
+) {
   return render(
     <DocumentRow
       entry={row}
       onRetry={handlers.retry ?? vi.fn()}
       onDelete={handlers.remove ?? vi.fn()}
+      onRetryVisuals={handlers.retryVisuals}
     />,
   );
 }
@@ -360,5 +364,80 @@ describe('DocumentRow', () => {
 
     expect(screen.getByText('Something new')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Something new' })).toBeNull();
+  });
+
+  describe('Retry figures', () => {
+    it('offers to retry once a figure has failed on a ready source', () => {
+      renderRow(visualRow('partial', summary({ failed: 1 })), { retryVisuals: vi.fn() });
+
+      expect(screen.getByRole('button', { name: 'Retry figures' })).toBeInTheDocument();
+    });
+
+    it('offers to retry once describing has stopped, even before anything is marked failed', () => {
+      renderRow(
+        visualRow('pending', summary({ stopped_error_code: 'image_understanding_failed' })),
+        { retryVisuals: vi.fn() },
+      );
+
+      expect(screen.getByRole('button', { name: 'Retry figures' })).toBeInTheDocument();
+    });
+
+    it('stays hidden while every figure is still being described normally', () => {
+      renderRow(visualRow('pending', summary({ pending: 3 })), { retryVisuals: vi.fn() });
+
+      expect(screen.queryByRole('button', { name: 'Retry figures' })).toBeNull();
+    });
+
+    it('stays hidden once every figure has been described', () => {
+      renderRow(entry('ready'), { retryVisuals: vi.fn() });
+
+      expect(screen.queryByRole('button', { name: 'Retry figures' })).toBeNull();
+    });
+
+    it('stays hidden when the source is not ready, even with a failure on record', () => {
+      const failed = entry('failed', { job: failedJob() });
+      renderRow(
+        {
+          ...failed,
+          document: {
+            ...failed.document,
+            visual_analysis_status: 'partial',
+            visual_analysis: summary({ failed: 1 }),
+          },
+        },
+        { retryVisuals: vi.fn() },
+      );
+
+      expect(screen.queryByRole('button', { name: 'Retry figures' })).toBeNull();
+    });
+
+    it('stays hidden in readOnly mode', () => {
+      render(
+        <DocumentRow
+          entry={visualRow('partial', summary({ failed: 1 }))}
+          onRetry={vi.fn()}
+          onDelete={vi.fn()}
+          onRetryVisuals={vi.fn()}
+          readOnly
+        />,
+      );
+
+      expect(screen.queryByRole('button', { name: 'Retry figures' })).toBeNull();
+    });
+
+    it('stays hidden without a handler for it', () => {
+      renderRow(visualRow('partial', summary({ failed: 1 })));
+
+      expect(screen.queryByRole('button', { name: 'Retry figures' })).toBeNull();
+    });
+
+    it('asks its handler to retry this document once clicked', async () => {
+      const retryVisuals = vi.fn();
+      renderRow(visualRow('partial', summary({ failed: 1 })), { retryVisuals });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Retry figures' }));
+
+      expect(retryVisuals).toHaveBeenCalledWith('doc-1');
+    });
   });
 });

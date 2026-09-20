@@ -36,11 +36,14 @@ from backend.app.models import (
 )
 from services.processing_jobs import (
     ChunkData,
+    NoRetryableVisualsError,
     PageData,
     ClaimedJob,
     ClaimedProfileJob,
     ProcessingJobStateError,
+    VisualAnalysisNotConfiguredError,
     VisualData,
+    VisualDescriptionActiveError,
     complete_describe_job,
     update_job_stage,
     claim_next_describe_job,
@@ -56,6 +59,7 @@ from services.processing_jobs import (
     record_visual_description,
     record_profile_visual_description,
     retry_failed_profile_job,
+    retry_failed_visuals,
     record_visual_failure,
     recover_expired_jobs,
     stored_visual_descriptions,
@@ -100,6 +104,7 @@ def seed_ready_document(
     email: str = "describe-owner@example.com",
     pending_visuals: int = 2,
     described_visuals: int = 0,
+    failed_visuals: int = 0,
     content: bytes | None = None,
 ) -> ReadyDocument:
     content = content if content is not None else visual_pdf()
@@ -144,8 +149,17 @@ def seed_ready_document(
         session.add(document)
         session.flush()
 
-        total = pending_visuals + described_visuals
+        total = pending_visuals + described_visuals + failed_visuals
+        failed_upper_bound = described_visuals + failed_visuals
         for index in range(total):
+            is_described = index < described_visuals
+            is_failed = described_visuals <= index < failed_upper_bound
+            if is_described:
+                page_status, visual_status = "completed", "succeeded"
+            elif is_failed:
+                page_status, visual_status = "failed", "failed"
+            else:
+                page_status, visual_status = "pending", "pending"
             page = DocumentPage(
                 document_id=document_id,
                 course_id=course.id,
@@ -157,9 +171,7 @@ def seed_ready_document(
                 raw_extraction_method="native",
                 has_images=True,
                 has_visual_content=True,
-                visual_analysis_status=(
-                    "completed" if index < described_visuals else "pending"
-                ),
+                visual_analysis_status=page_status,
             )
             page.visuals = [
                 DocumentVisual(
@@ -172,12 +184,11 @@ def seed_ready_document(
                     bbox_y1=270.0,
                     description=(
                         f"A described figure on page {index + 1}."
-                        if index < described_visuals
+                        if is_described
                         else None
                     ),
-                    analysis_status=(
-                        "succeeded" if index < described_visuals else "pending"
-                    ),
+                    analysis_status=visual_status,
+                    error_code="VISUAL_ANALYSIS_FAILED" if is_failed else None,
                 )
             ]
             session.add(page)
@@ -1385,6 +1396,382 @@ def test_retrying_a_failed_document_rearms_its_visual_description(
         DocumentService.retry_document(session, ready.document_id, ready.course_id)
 
     assert describe_job_count(session_factory, ready.document_id) == 0
+
+
+def _document_visuals(session_factory, document_id):
+    with session_factory() as session:
+        return session.scalars(
+            select(DocumentVisual)
+            .join(DocumentPage, DocumentPage.id == DocumentVisual.page_id)
+            .where(DocumentPage.document_id == document_id)
+            .order_by(DocumentPage.page_number)
+        ).all()
+
+
+def _document_pages(session_factory, document_id):
+    with session_factory() as session:
+        return session.scalars(
+            select(DocumentPage)
+            .options(selectinload(DocumentPage.visuals))
+            .where(DocumentPage.document_id == document_id)
+            .order_by(DocumentPage.page_number)
+        ).all()
+
+
+def _describe_job(session_factory, document_id):
+    with session_factory() as session:
+        return session.scalar(
+            select(ProcessingJob).where(
+                ProcessingJob.document_id == document_id,
+                ProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            )
+        )
+
+
+def test_retrying_failed_figures_requeues_a_finished_describe_job_in_place(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=1,
+        failed_visuals=1,
+    )
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        job = enqueue_describe_visuals_job(session, document)
+        job.status = "succeeded"
+        job.attempt_count = 1
+        job.finished_at = datetime.now(timezone.utc)
+        session.commit()
+        job_id = job.id
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+
+    assert retried is not None
+    assert retried.id == ready.document_id
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.id == job_id
+    assert job.status == JOB_STATUS_QUEUED
+    assert job.attempt_count == 0
+    assert job.finished_at is None
+    assert job.last_error_code is None
+
+    pages = _document_pages(session_factory, ready.document_id)
+    assert pages[0].visual_analysis_status == "completed"
+    assert pages[0].visuals[0].analysis_status == "succeeded"
+    assert pages[0].visuals[0].description == "A described figure on page 1."
+    assert pages[1].visual_analysis_status == "pending"
+    assert pages[1].visuals[0].analysis_status == "pending"
+    assert pages[1].visuals[0].error_code is None
+
+
+def test_retrying_figures_after_the_describe_job_gave_up_resets_its_attempts(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(session_factory, tmp_path, pending_visuals=2)
+    queued_at = datetime.now(timezone.utc)
+    claim = claimed_describe_job(session_factory, ready, now=queued_at)
+
+    with session_factory() as session:
+        recorded = record_visual_failure(
+            session,
+            claim.id,
+            claim.claim_token,
+            page_number=1,
+            visual_index=0,
+            error_code="VISUAL_ANALYSIS_FAILED",
+        )
+    assert recorded is True
+
+    with session_factory() as session:
+        outcome = fail_describe_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            error_code="IMAGE_UNDERSTANDING_FAILED",
+            error_message="The vision provider is unavailable.",
+            retryable=False,
+            now=queued_at + timedelta(seconds=5),
+        )
+    assert outcome == JOB_STATUS_FAILED
+
+    before = _describe_job(session_factory, ready.document_id)
+    assert before.attempt_count > 0
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+    assert retried is not None
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.id == claim.id
+    assert job.status == JOB_STATUS_QUEUED
+    assert job.attempt_count == 0
+    assert job.last_error_code is None
+    assert job.last_error_message is None
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[0].analysis_status == "pending"
+    assert visuals[0].error_code is None
+    assert visuals[1].analysis_status == "pending"
+
+
+def test_retrying_a_figure_that_failed_inline_creates_the_describe_job(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=1,
+        failed_visuals=1,
+    )
+    assert describe_job_count(session_factory, ready.document_id) == 0
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+
+    assert retried is not None
+    assert describe_job_count(session_factory, ready.document_id) == 1
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.status == JOB_STATUS_QUEUED
+    assert job.attempt_count == 0
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[1].analysis_status == "pending"
+    assert visuals[1].error_code is None
+
+
+@pytest.mark.parametrize("job_status", ["queued", "running"])
+def test_figures_cannot_be_retried_while_they_are_being_described(
+    session_factory, tmp_path, job_status
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=1,
+        failed_visuals=1,
+    )
+    queued_at = datetime.now(timezone.utc)
+    if job_status == "running":
+        claimed_describe_job(session_factory, ready, now=queued_at)
+    else:
+        with session_factory() as session:
+            document = session.get(UploadedDocument, ready.document_id)
+            enqueue_describe_visuals_job(session, document, now=queued_at)
+            session.commit()
+
+    with session_factory() as session:
+        with pytest.raises(VisualDescriptionActiveError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=True,
+                now=queued_at,
+            )
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.status == job_status
+    assert job.attempt_count == (1 if job_status == "running" else 0)
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[1].analysis_status == "failed"
+
+
+def test_figures_cannot_be_retried_when_none_failed(session_factory, tmp_path):
+    ready = seed_ready_document(
+        session_factory, tmp_path, pending_visuals=0, described_visuals=2
+    )
+
+    with session_factory() as session:
+        with pytest.raises(NoRetryableVisualsError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=True,
+            )
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert all(visual.analysis_status == "succeeded" for visual in visuals)
+
+
+def test_figures_of_a_document_that_is_not_ready_cannot_be_retried(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=0,
+        failed_visuals=1,
+    )
+    with session_factory() as session:
+        session.get(UploadedDocument, ready.document_id).status = "processing"
+        session.commit()
+
+    with session_factory() as session:
+        with pytest.raises(NoRetryableVisualsError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=True,
+            )
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[0].analysis_status == "failed"
+
+
+def test_figures_cannot_be_retried_while_visual_analysis_is_not_configured(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=0,
+        failed_visuals=1,
+    )
+
+    with session_factory() as session:
+        with pytest.raises(VisualAnalysisNotConfiguredError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=False,
+            )
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[0].analysis_status == "failed"
+
+
+def test_retrying_figures_finds_nothing_in_another_course_or_a_deleting_document(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=0,
+        failed_visuals=1,
+    )
+
+    with session_factory() as session:
+        user = session.get(User, ready.user_id)
+        other_course = Course(
+            owner=user,
+            title="Another describe course",
+            description=None,
+            semester="Fall",
+            exam_date=date(2026, 6, 15),
+        )
+        session.add(other_course)
+        session.commit()
+        other_course_id = other_course.id
+
+    with session_factory() as session:
+        assert (
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                other_course_id,
+                image_understanding_available=True,
+            )
+            is None
+        )
+
+    with session_factory() as session:
+        session.get(UploadedDocument, ready.document_id).status = "deleting"
+        session.commit()
+
+    with session_factory() as session:
+        assert (
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=True,
+            )
+            is None
+        )
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[0].analysis_status == "failed"
+
+
+def test_a_retried_figure_is_described_again_and_its_completion_is_accepted(
+    session_factory, tmp_path, monkeypatch
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=1,
+        failed_visuals=1,
+    )
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+    assert retried is not None
+    assert describe_job_count(session_factory, ready.document_id) == 1
+
+    with _StubVisionServer() as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=60)
+        handled = document_processor.process_next_job(
+            session_factory=session_factory,
+            storage=ready.storage,
+            worker_id="describe-worker",
+            embedding_provider=_StubEmbeddings(),
+            vector_store=PgVectorStore(),
+        )
+        assert handled is True
+        assert server.request_count == 1
+
+    pages = _document_pages(session_factory, ready.document_id)
+    assert pages[0].visual_analysis_status == "completed"
+    assert pages[0].visuals[0].description == "A described figure on page 1."
+    assert pages[1].visual_analysis_status == "completed"
+    assert pages[1].visuals[0].analysis_status == "succeeded"
+    assert pages[1].visuals[0].description == "A stub description number 1."
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.status == "succeeded"
+
+    with session_factory() as session:
+        chunks = session.scalars(
+            select(DocumentChunk.text)
+            .where(DocumentChunk.document_id == ready.document_id)
+            .order_by(DocumentChunk.chunk_index)
+        ).all()
+    assert any("A stub description number 1." in text for text in chunks)
 
 
 class _ScriptedConnection:

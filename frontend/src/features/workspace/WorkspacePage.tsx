@@ -294,6 +294,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
     reload,
     addUploaded,
     retryDocument,
+    retryVisuals,
     deleteDocument,
   } = useCourseDocuments(courseId);
 
@@ -621,6 +622,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                   key={entry.document.id}
                   entry={entry}
                   onRetry={retryDocument}
+                  onRetryVisuals={retryVisuals}
                   onDelete={deleteDocument}
                   readOnly={isSupportView}
                 />

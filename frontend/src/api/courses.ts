@@ -104,6 +104,17 @@ export const coursesAPI = {
       options,
     ),
 
+  retryDocumentVisuals: (
+    courseId: number,
+    documentId: string,
+    options?: RequestInit,
+  ): Promise<DocumentResponse> =>
+    apiClient.post<DocumentResponse>(
+      `/courses/${courseId}/documents/${documentId}/visuals/retry`,
+      undefined,
+      options,
+    ),
+
   deleteDocument: async (
     courseId: number,
     documentId: string,

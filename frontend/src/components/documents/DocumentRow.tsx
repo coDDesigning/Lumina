@@ -28,6 +28,7 @@ export interface DocumentRowProps {
   entry: DocumentEntry;
   onRetry: (documentId: string) => void;
   onDelete: (documentId: string, options?: { force?: boolean }) => void;
+  onRetryVisuals?: (documentId: string) => void;
   readOnly?: boolean;
 }
 
@@ -67,7 +68,13 @@ function VisualDetail({ detail }: { detail: VisualAnalysisDetail }) {
   );
 }
 
-export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: DocumentRowProps) {
+export function DocumentRow({
+  entry,
+  onRetry,
+  onDelete,
+  onRetryVisuals,
+  readOnly = false,
+}: DocumentRowProps) {
   const [isConfirming, setIsConfirming] = useState(false);
   const [isForcing, setIsForcing] = useState(false);
   const { document, job } = entry;
@@ -76,6 +83,12 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
   const busy = isDocumentBusy(document.status);
   const failed = document.status === 'failed';
   const ready = document.status === 'ready';
+  const canRetryVisuals =
+    Boolean(onRetryVisuals) &&
+    ready &&
+    !readOnly &&
+    ((document.visual_analysis?.failed ?? 0) > 0 ||
+      Boolean(document.visual_analysis?.stopped_error_code));
 
   const stage = progressLabel(job);
   const step = stageNumber(job?.processing_stage);
@@ -206,6 +219,18 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
               icon={<RotateCcw aria-hidden="true" />}
             >
               Try again
+            </Button>
+          ) : null}
+          {canRetryVisuals ? (
+            <Button
+              size="sm"
+              onClick={() => onRetryVisuals?.(document.id)}
+              disabled={entry.pending !== null}
+              isLoading={entry.pending === 'retryVisuals'}
+              loadingLabel="Retrying figures"
+              icon={<RotateCcw aria-hidden="true" />}
+            >
+              Retry figures
             </Button>
           ) : null}
           <Button

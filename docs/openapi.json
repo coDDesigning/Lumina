@@ -15318,6 +15318,75 @@
         ]
       }
     },
+    "/api/courses/{course_id}/documents/{document_id}/visuals/retry": {
+      "post": {
+        "operationId": "retry_document_visuals_api_courses__course_id__documents__document_id__visuals_retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Account is not allowed to retry documents"
+          },
+          "404": {
+            "description": "Course or document not found"
+          },
+          "409": {
+            "description": "The document's figures cannot be retried right now"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Retry Document Visuals",
+        "tags": [
+          "Documents"
+        ]
+      }
+    },
     "/api/courses/{course_id}/exam-mode/analysis": {
       "get": {
         "operationId": "get_exam_analysis_api_courses__course_id__exam_mode_analysis_get",

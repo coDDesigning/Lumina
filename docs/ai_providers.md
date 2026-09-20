@@ -774,7 +774,11 @@ carrying a `pending` or `not_configured` visual — which is how documents
 processed while visual analysis was switched off are rescued without re-uploading
 them. A document is swept once; the unique `(document_id, job_type)` row is the
 record that it had its turn, so a visual no provider can describe does not
-re-enter the queue forever.
+re-enter the queue forever. The document's owner can also requeue it by hand
+through `POST /api/courses/{course_id}/documents/{document_id}/visuals/retry`,
+which requeues only the visuals still `failed` or `pending`, resetting the
+existing `describe_visuals` row in place rather than racing the unique
+constraint with a new one.
 
 A document with visuals still queued reports `status="ready"` with
 `visual_analysis_status="pending"`. Profile-knowledge documents work the same

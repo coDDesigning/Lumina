@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
-from backend.app.config import settings
+from backend.app.config import IMAGE_PROVIDER_NONE, settings
 from backend.app.database import begin_serialized_write
 from backend.app.models import (
     JOB_TYPE_EXTRACT_DOCUMENT,
@@ -31,10 +31,14 @@ from services.document_validation import (
     DocumentValidationError,
     validate_basic_upload,
 )
+from services.image_understanding import configured_image_understanding_identity
 from services.processing_jobs import (
     ProcessingJobStateError,
+    VisualAnalysisNotConfiguredError,
+    VisualDescriptionActiveError,
     enqueue_document_job,
     retry_failed_job,
+    retry_failed_visuals,
 )
 from services.vector_store import VectorStore, VectorStoreError, get_vector_store
 from storage.base import Storage, StorageError
@@ -388,6 +392,45 @@ class DocumentService:
                 "Document not found", error_code="document_not_found"
             )
         return result
+
+    @staticmethod
+    def retry_document_visuals(
+        db: Session,
+        document_id: UUID,
+        course_id: int,
+    ) -> UploadedDocument:
+        image_understanding_available = (
+            configured_image_understanding_identity()[0] != IMAGE_PROVIDER_NONE
+        )
+        try:
+            document = retry_failed_visuals(
+                db,
+                document_id,
+                course_id,
+                image_understanding_available=image_understanding_available,
+            )
+        except VisualDescriptionActiveError as exc:
+            raise ConflictException(
+                str(exc), error_code="document_visuals_in_progress"
+            ) from exc
+        except VisualAnalysisNotConfiguredError as exc:
+            raise ConflictException(
+                str(exc), error_code="visual_analysis_not_configured"
+            ) from exc
+        except ProcessingJobStateError as exc:
+            raise ConflictException(
+                str(exc), error_code="document_visuals_not_retryable"
+            ) from exc
+        if document is None:
+            raise NotFoundException(
+                "Document not found", error_code="document_not_found"
+            )
+        db.expire_all()
+        return db.execute(
+            select(UploadedDocument)
+            .options(*_VISUAL_ANALYSIS_LOADS)
+            .where(UploadedDocument.id == document_id)
+        ).scalar_one()
 
     @staticmethod
     def delete_document(

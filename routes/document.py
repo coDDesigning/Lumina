@@ -289,6 +289,27 @@ def retry_document(
     return _status_response(document, job)
 
 
+@router.post(
+    "/{course_id}/documents/{document_id}/visuals/retry",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(get_verified_user)],
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Account is not allowed to retry documents"},
+        404: {"description": "Course or document not found"},
+        409: {"description": "The document's figures cannot be retried right now"},
+    },
+)
+def retry_document_visuals(
+    document_id: UUID,
+    course: OwnedCourse,
+    db: Annotated[Session, Depends(get_db)],
+) -> DocumentResponse:
+    document = DocumentService.retry_document_visuals(db, document_id, course.id)
+    return DocumentResponse.model_validate(document)
+
+
 def _delete_conflict(exc: DocumentActiveError) -> HTTPException:
     if exc.reason == "generation_in_progress":
         headers = {"X-Error-Code": "document_generation_in_progress"}

@@ -6,6 +6,7 @@ from math import ceil, isfinite
 from uuid import UUID, uuid4
 
 from sqlalchemy import case, delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from backend.app.config import settings
@@ -140,6 +141,18 @@ class QueueMetrics:
 
 class ProcessingJobStateError(RuntimeError):
     """A requested transition is not valid for the current durable state."""
+
+
+class VisualDescriptionActiveError(ProcessingJobStateError):
+    pass
+
+
+class VisualAnalysisNotConfiguredError(ProcessingJobStateError):
+    pass
+
+
+class NoRetryableVisualsError(ProcessingJobStateError):
+    pass
 
 
 _EXPECTED_STAGES = {
@@ -1982,6 +1995,121 @@ def retry_failed_job(
     document.updated_at = available_at
     session.commit()
     return document, job
+
+
+def retry_failed_visuals(
+    session: Session,
+    document_id: UUID,
+    course_id: int,
+    *,
+    image_understanding_available: bool,
+    now: datetime | None = None,
+) -> UploadedDocument | None:
+    _start_transition(session)
+    course_statement = select(Course).where(
+        Course.id == course_id, Course.is_deleted.is_(False)
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        course_statement = course_statement.with_for_update(of=Course)
+    if session.scalar(course_statement) is None:
+        session.rollback()
+        return None
+
+    document_statement = select(UploadedDocument).where(
+        UploadedDocument.id == document_id,
+        UploadedDocument.course_id == course_id,
+        UploadedDocument.status != "deleting",
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        document_statement = document_statement.with_for_update(of=UploadedDocument)
+    document = session.scalar(document_statement)
+    if document is None:
+        session.rollback()
+        return None
+
+    job_statement = select(ProcessingJob).where(
+        ProcessingJob.document_id == document_id,
+        ProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        job_statement = job_statement.with_for_update(of=ProcessingJob)
+    job = session.scalar(job_statement)
+
+    if job is not None and job.status in (JOB_STATUS_QUEUED, JOB_STATUS_RUNNING):
+        session.rollback()
+        raise VisualDescriptionActiveError("These figures are already being described.")
+    if document.status != "ready":
+        session.rollback()
+        raise NoRetryableVisualsError("Only a ready document's figures can be retried.")
+    if not image_understanding_available:
+        session.rollback()
+        raise VisualAnalysisNotConfiguredError(
+            "Figure analysis is switched off on this server."
+        )
+
+    retryable_visual = session.scalar(
+        select(DocumentVisual.id)
+        .join(DocumentPage, DocumentPage.id == DocumentVisual.page_id)
+        .where(
+            DocumentPage.document_id == document_id,
+            DocumentVisual.analysis_status.in_(("failed", "pending")),
+        )
+        .limit(1)
+    )
+    if retryable_visual is None:
+        session.rollback()
+        raise NoRetryableVisualsError("Nothing to retry: every figure is described.")
+
+    available_at = _database_now(session, now)
+    document_page_ids = select(DocumentPage.id).where(
+        DocumentPage.document_id == document_id
+    )
+    session.execute(
+        update(DocumentVisual)
+        .where(
+            DocumentVisual.page_id.in_(document_page_ids),
+            DocumentVisual.analysis_status == "failed",
+        )
+        .values(analysis_status="pending", error_code=None)
+        .execution_options(synchronize_session=False)
+    )
+    pending_page_ids = select(DocumentVisual.page_id).where(
+        DocumentVisual.page_id.in_(document_page_ids),
+        DocumentVisual.analysis_status == "pending",
+    )
+    session.execute(
+        update(DocumentPage)
+        .where(DocumentPage.id.in_(pending_page_ids))
+        .values(visual_analysis_status="pending")
+        .execution_options(synchronize_session=False)
+    )
+
+    if job is not None:
+        job.status = JOB_STATUS_QUEUED
+        job.attempt_count = 0
+        job.available_at = available_at
+        job.started_at = None
+        job.finished_at = None
+        job.last_error_code = None
+        job.last_error_message = None
+        job.processing_stage = None
+        job.failed_stage = None
+        job.correlation_id = get_request_id()
+        job.parent_operation_id = get_operation_context().get("operation_id")
+        job.updated_at = available_at
+        _clear_lease(job)
+    else:
+        try:
+            enqueue_describe_visuals_job(session, document, now=available_at)
+        except IntegrityError:
+            session.rollback()
+            raise VisualDescriptionActiveError(
+                "These figures are already being described."
+            )
+
+    document.updated_at = available_at
+    session.commit()
+    return document
 
 
 def fence_course_jobs(

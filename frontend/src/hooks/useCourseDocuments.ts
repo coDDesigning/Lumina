@@ -15,7 +15,7 @@ import {
   isTerminalDocumentStatus,
 } from '../components/documents/documentLabels';
 
-export type DocumentPendingAction = 'retry' | 'delete';
+export type DocumentPendingAction = 'retry' | 'delete' | 'retryVisuals';
 
 export interface DocumentEntry {
   document: DocumentResponse;
@@ -32,6 +32,7 @@ export interface UseCourseDocumentsResult {
   reload: () => void;
   addUploaded: (document: DocumentResponse) => void;
   retryDocument: (documentId: string) => Promise<void>;
+  retryVisuals: (documentId: string) => Promise<void>;
   deleteDocument: (documentId: string, options?: { force?: boolean }) => Promise<void>;
 }
 
@@ -368,6 +369,55 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
     [courseId, setPending],
   );
 
+  const retryVisuals = useCallback(
+    async (documentId: string) => {
+      const control = controlRef.current;
+      const entry = entriesRef.current.find((row) => row.document.id === documentId);
+      if (!control || !entry || entry.pending) return;
+
+      setPending(documentId, 'retryVisuals');
+
+      try {
+        const document = await coursesAPI.retryDocumentVisuals(courseId, documentId, {
+          signal: control.signal,
+        });
+        setEntries((previous) =>
+          previous.map((row) =>
+            row.document.id === documentId
+              ? { ...row, document, error: null, pending: null }
+              : row,
+          ),
+        );
+        control.schedule(documentId, POLL_DELAYS_MS[0]);
+      } catch (error) {
+        if (isAbortError(error)) return;
+
+        const described = describeDocumentError(error, 'The retry could not be started.');
+
+        if (described.status === 404) {
+          setEntries((previous) =>
+            previous.filter((row) => row.document.id !== documentId),
+          );
+          control.stop(documentId);
+          return;
+        }
+
+        setEntries((previous) =>
+          previous.map((row) =>
+            row.document.id === documentId
+              ? { ...row, pending: null, error: described.message }
+              : row,
+          ),
+        );
+
+        if (described.status === 409) {
+          control.schedule(documentId, 0);
+        }
+      }
+    },
+    [courseId, setPending],
+  );
+
   const deleteDocument = useCallback(
     async (documentId: string, options?: { force?: boolean }) => {
       const control = controlRef.current;
@@ -437,6 +487,7 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
     reload,
     addUploaded,
     retryDocument,
+    retryVisuals,
     deleteDocument,
   };
 }

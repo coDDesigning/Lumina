@@ -8,10 +8,12 @@ import pytest
 from sqlalchemy import event, func, select
 from sqlalchemy.exc import SQLAlchemyError
 
+from backend.app.config import IMAGE_PROVIDER_NONE
 from backend.app.models import (
     DocumentChunk,
     DocumentPage,
     DocumentVisual,
+    JOB_TYPE_DESCRIBE_VISUALS,
     ProcessingJob,
     UploadedDocument,
 )
@@ -980,3 +982,120 @@ def test_a_missing_document_is_told_apart_from_a_missing_course(upload_api):
     assert missing_document.headers["X-Error-Code"] == "document_not_found"
     assert missing_course.status_code == 404
     assert missing_course.headers["X-Error-Code"] == "course_not_found"
+
+
+def _retry_visuals(context, document_id):
+    return context.client.post(
+        f"/api/courses/{context.course_id}/documents/{document_id}/visuals/retry",
+        headers=context.authorization,
+    )
+
+
+def test_retrying_failed_figures_answers_with_the_document_describing_them_again(
+    upload_api,
+):
+    document_id = _ready_pdf(
+        upload_api,
+        b"%PDF-1.4 retry figures",
+        [
+            (True, "completed", [("succeeded", None)]),
+            (
+                True,
+                "partial",
+                [("succeeded", None), ("failed", "VISUAL_ANALYSIS_FAILED")],
+            ),
+        ],
+    )
+
+    response = _retry_visuals(upload_api, document_id)
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["visual_analysis_status"] == "pending"
+    assert payload["visual_analysis"]["total"] == 3
+    assert payload["visual_analysis"]["described"] == 2
+    assert payload["visual_analysis"]["pending"] == 1
+    assert payload["visual_analysis"]["failed"] == 0
+
+    with upload_api.session_factory() as session:
+        job = session.scalar(
+            select(ProcessingJob).where(
+                ProcessingJob.document_id == document_id,
+                ProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            )
+        )
+        assert job is not None
+        assert job.status == "queued"
+        assert job.attempt_count == 0
+
+
+def test_retrying_figures_when_the_model_cannot_actually_see_images_is_refused(
+    upload_api, monkeypatch
+):
+    document_id = _ready_pdf(
+        upload_api,
+        b"%PDF-1.4 vision off at runtime",
+        [(True, "partial", [("failed", "VISUAL_ANALYSIS_FAILED")])],
+    )
+    monkeypatch.setattr(
+        document_service,
+        "configured_image_understanding_identity",
+        lambda: (IMAGE_PROVIDER_NONE, None),
+    )
+
+    with upload_api.session_factory() as session:
+        before_visual = session.scalar(select(DocumentVisual))
+        before_document = session.get(UploadedDocument, document_id)
+        assert before_visual.analysis_status == "failed"
+        before_updated_at = before_document.updated_at
+
+    response = _retry_visuals(upload_api, document_id)
+
+    assert response.status_code == 409
+    assert response.headers["X-Error-Code"] == "visual_analysis_not_configured"
+
+    with upload_api.session_factory() as session:
+        after_visual = session.scalar(select(DocumentVisual))
+        after_document = session.get(UploadedDocument, document_id)
+        job = session.scalar(
+            select(ProcessingJob).where(
+                ProcessingJob.document_id == document_id,
+                ProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            )
+        )
+        assert after_visual.analysis_status == "failed"
+        assert after_visual.error_code == "VISUAL_ANALYSIS_FAILED"
+        assert after_document.status == "ready"
+        assert after_document.updated_at == before_updated_at
+        assert job is None
+
+
+def test_retrying_figures_twice_is_refused_while_the_first_retry_is_queued(
+    upload_api,
+):
+    document_id = _ready_pdf(
+        upload_api,
+        b"%PDF-1.4 retry figures twice",
+        [(True, "partial", [("failed", "VISUAL_ANALYSIS_FAILED")])],
+    )
+
+    first = _retry_visuals(upload_api, document_id)
+    assert first.status_code == 202
+
+    second = _retry_visuals(upload_api, document_id)
+    assert second.status_code == 409
+    assert second.headers["X-Error-Code"] == "document_visuals_in_progress"
+
+
+def test_retrying_figures_when_none_failed_is_refused(upload_api):
+    document_id = _ready_pdf(
+        upload_api,
+        b"%PDF-1.4 nothing to retry",
+        [(True, "completed", [("succeeded", None)])],
+    )
+
+    response = _retry_visuals(upload_api, document_id)
+
+    assert response.status_code == 409
+    assert response.headers["X-Error-Code"] == "document_visuals_not_retryable"

@@ -26,9 +26,6 @@ x-lumina: &lumina
     UPLOAD_DIRECTORY: /data/uploads
     OPERATIONAL_LOG_PATH: /data/operational-logs.db
     OPERATIONAL_LOG_PERSISTENCE_ENABLED: "true"
-    # Administrator-managed configuration overrides. It lives in the volume
-    # because the rest of the filesystem is read-only, and it is read before
-    # settings exist, so it can never be moved by an override.
     SYSTEM_SETTINGS_DIRECTORY: /data/system-settings
     # Baked into the image and read offline. A relative path from .env would
     # send fastembed looking in an empty directory under HF_HUB_OFFLINE=1 and

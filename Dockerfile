@@ -63,9 +63,10 @@ RUN apt-get update \
     && useradd --uid 10001 --gid 10001 \
         --no-create-home --home-dir /nonexistent \
         --shell /usr/sbin/nologin lumina \
-    && mkdir -p /app /data/uploads /data/chroma \
+    && mkdir -p /app /data/uploads /data/chroma /data/system-settings \
     && chown -R 10001:10001 /data \
-    && chmod 0750 /data /data/uploads /data/chroma
+    && chmod 0750 /data /data/uploads /data/chroma \
+    && chmod 0700 /data/system-settings
 
 WORKDIR /app
 
@@ -98,6 +99,7 @@ RUN HF_HUB_OFFLINE=0 python scripts/fetch_embedding_model.py \
 # anything but the application. backend/app/spa.py reads this path; unset, the
 # image would serve the API alone.
 ENV LUMINA_WEB_ROOT=/opt/lumina/web
+ENV LUMINA_SUPERVISED_RESTART=true
 COPY --from=web /build/dist /opt/lumina/web
 RUN find /opt/lumina/web -type d -exec chmod 0555 {} + \
     && find /opt/lumina/web -type f -exec chmod 0444 {} +

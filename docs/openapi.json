@@ -2678,6 +2678,34 @@
         "title": "BaseResponse[SyllabusExtractionResponse]",
         "type": "object"
       },
+      "BaseResponse_SyllabusTopicsResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SyllabusTopicsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[SyllabusTopicsResponse]",
+        "type": "object"
+      },
       "BaseResponse_UploadErrorData_": {
         "properties": {
           "data": {
@@ -10994,6 +11022,30 @@
         "title": "StudyGuideResponse",
         "type": "object"
       },
+      "SuggestedTopic": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "weight_percent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight Percent"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SuggestedTopic",
+        "type": "object"
+      },
       "SummaryFormat": {
         "enum": [
           "overview",
@@ -11039,6 +11091,37 @@
           "truncated"
         ],
         "title": "SyllabusExtractionResponse",
+        "type": "object"
+      },
+      "SyllabusTopicsRequest": {
+        "properties": {
+          "text": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "SyllabusTopicsRequest",
+        "type": "object"
+      },
+      "SyllabusTopicsResponse": {
+        "properties": {
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/SuggestedTopic"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "topics"
+        ],
+        "title": "SyllabusTopicsResponse",
         "type": "object"
       },
       "Token": {
@@ -14636,6 +14719,63 @@
           }
         ],
         "summary": "Extract Syllabus",
+        "tags": [
+          "Documents"
+        ]
+      }
+    },
+    "/api/courses/syllabus/topics": {
+      "post": {
+        "operationId": "suggest_syllabus_topics_api_courses_syllabus_topics_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyllabusTopicsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_SyllabusTopicsResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Email verification required"
+          },
+          "422": {
+            "description": "Invalid request body"
+          },
+          "429": {
+            "description": "Per-user generation rate limited"
+          },
+          "500": {
+            "description": "Invalid generated structure"
+          },
+          "503": {
+            "description": "AI provider unreachable"
+          },
+          "504": {
+            "description": "AI provider timed out"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Suggest Syllabus Topics",
         "tags": [
           "Documents"
         ]

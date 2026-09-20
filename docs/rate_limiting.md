@@ -110,6 +110,13 @@ The following routes are rate-limited under this policy:
 - `POST /api/courses/{course_id}/exam-mode/mock-exam`
 - `POST /api/courses/{course_id}/exam-mode/review-sheet`
 - `POST /api/models/test`
+- `POST /api/courses/syllabus/topics`
+
+`POST /api/courses/syllabus/topics` suggests the topics a pasted syllabus covers.
+It is free (no credit charge) and is not scoped to a course, since it exists to
+help fill in a course's topics before the course itself has been created; it
+still shares the same per-user generation bucket and is logged to
+`ai_usage_logs`.
 
 `POST /api/models/test` sends one prompt straight to the selected model and
 charges exactly one attempt against the shared bucket per call, regardless of

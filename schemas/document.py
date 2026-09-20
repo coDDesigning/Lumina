@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict
 
 from schemas.prompt_context import DocumentMaterialKind
 
+SYLLABUS_MAX_CHARACTERS = 20_000
+
 
 class VisualAnalysisSummary(BaseModel):
     total: int

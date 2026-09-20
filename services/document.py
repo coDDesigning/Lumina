@@ -23,6 +23,7 @@ from backend.app.models import (
     User,
 )
 from backend.app.repositories.document import DocumentRepository
+from schemas.document import SYLLABUS_MAX_CHARACTERS
 from schemas.prompt_context import DocumentMaterialKind
 from services.document_hash import calculate_file_hash
 from services.document_lock import active_generation_lock
@@ -50,7 +51,6 @@ COMMIT_RECONCILIATION_DELAY_SECONDS = 0.05
 # Text file types a syllabus may be pasted from. Images are excluded: reading
 # one needs OCR, which belongs to the processing pipeline, not a form field.
 SYLLABUS_FILE_TYPES = frozenset({"pdf", "txt", "md", "markdown"})
-SYLLABUS_MAX_CHARACTERS = 20_000
 PAGE_SEPARATOR = "\n\n"
 _VISUAL_ANALYSIS_LOADS = (
     selectinload(UploadedDocument.pages).selectinload(DocumentPage.visuals),

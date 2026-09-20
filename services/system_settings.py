@@ -4,7 +4,7 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -48,6 +48,7 @@ class SettingRow:
     has_override: bool
     value: str | None
     configured: bool
+    editable: bool = True
 
     def as_payload(self) -> dict[str, object]:
         definition = self.definition
@@ -64,7 +65,7 @@ class SettingRow:
             "minimum": definition.minimum,
             "maximum": definition.maximum,
             "requires_confirmation": definition.requires_confirmation,
-            "editable": definition.is_overridable,
+            "editable": definition.is_overridable and self.editable,
             "source": self.source,
             "has_override": self.has_override,
             "configured": self.configured,
@@ -125,7 +126,11 @@ def _resolve(
 def build_rows() -> tuple[SettingRow, ...]:
     overrides = settings_overrides.load_overrides().values
     baseline = _baseline()
-    return tuple(_resolve(definition, overrides, baseline) for definition in SETTINGS)
+    editable = _self_hosted()
+    return tuple(
+        replace(_resolve(definition, overrides, baseline), editable=editable)
+        for definition in SETTINGS
+    )
 
 
 def build_inventory() -> dict[str, object]:
@@ -143,6 +148,7 @@ def build_inventory() -> dict[str, object]:
         "override_count": len(saved.values),
         "saved_at": saved.updated_at,
         "supervised_restart": _supervised(),
+        "self_hosted": _self_hosted(),
         "restart": request.as_payload() if request is not None else None,
         "rolled_back_from": settings_overrides.rolled_back_from(),
     }
@@ -152,6 +158,12 @@ def _supervised() -> bool:
     from backend.app.config import settings
 
     return settings.supervised_restart
+
+
+def _self_hosted() -> bool:
+    from backend.app.config import settings
+
+    return settings.is_self_hosted
 
 
 def _pending_keys(saved_values: Mapping[str, str]) -> set[str]:

@@ -184,7 +184,12 @@ export function RestartSection({
         </Alert>
       ) : null}
 
-      {!inventory.supervised_restart ? (
+      {!inventory.self_hosted ? (
+        <p className={styles.unavailable}>
+          Hosted deployments are restarted by the infrastructure that runs them,
+          not from here.
+        </p>
+      ) : !inventory.supervised_restart ? (
         <p className={styles.unavailable}>
           Nothing is configured to restart Lumina automatically, so it will not stop
           itself. Apply saved settings by restarting the container yourself.

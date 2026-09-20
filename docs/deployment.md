@@ -629,6 +629,14 @@ Secrets (`JWT_SECRET_KEY`, `ENCRYPTION_KEY`, every provider key, `SMTP_PASSWORD`
 returned, prefilled, logged or exported. A row reports only whether one is
 configured. Submitting a blank value leaves the existing secret untouched.
 
+### Hosted deployments
+
+The editable surface is self-hosted only. On a hosted deployment the inventory
+still reads, so an administrator can see what the deployment resolved, but every
+row reports itself read-only and every mutation is refused with
+`not_available_in_hosted_mode`. Hosted configuration and secrets stay with the
+infrastructure that runs the stack.
+
 ### Restarting
 
 Settings are read once at startup, so a change applies on the next start. The

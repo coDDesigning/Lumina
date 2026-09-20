@@ -489,3 +489,22 @@ def test_an_audit_event_records_key_names_and_never_a_value() -> None:
     assert details["settings_keys"] == ["OCR_DPI", "GEMINI_API_KEY", "*"]
     assert details["settings_revision"] == 7
     assert "sk-live-not-a-key-name" not in json.dumps(record)
+
+
+def test_hosted_mode_reports_every_row_as_read_only(authz_api, monkeypatch):
+    monkeypatch.setattr(type(settings), "is_hosted", property(lambda self: True))
+    monkeypatch.setattr(type(settings), "is_self_hosted", property(lambda self: False))
+
+    payload = _get(authz_api).json()["data"]
+
+    assert payload["self_hosted"] is False
+    assert all(row["editable"] is False for row in payload["settings"])
+
+
+def test_self_hosted_mode_reports_overridable_rows_as_editable(authz_api):
+    payload = _get(authz_api).json()["data"]
+
+    assert payload["self_hosted"] is True
+    editable = {row["key"] for row in payload["settings"] if row["editable"]}
+    assert "RETRIEVAL_CHUNK_LIMIT" in editable
+    assert "DATABASE_URL" not in editable

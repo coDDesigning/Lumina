@@ -129,6 +129,7 @@ const SYSTEM_SETTINGS = {
   override_count: 0,
   saved_at: null,
   supervised_restart: true,
+  self_hosted: true,
   restart: null as Record<string, unknown> | null,
   rolled_back_from: null,
 }

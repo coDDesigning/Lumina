@@ -97,6 +97,7 @@ function inventory(
     override_count: 0,
     saved_at: null,
     supervised_restart: true,
+    self_hosted: true,
     restart: null,
     rolled_back_from: null,
     ...overrides,
@@ -331,6 +332,28 @@ describe('SystemSettingsPage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+  });
+
+  it('renders read-only and says why on a hosted deployment', async () => {
+    mockGet.mockResolvedValue(
+      inventory({
+        self_hosted: false,
+        settings: [row({ editable: false }), row({ key: 'LUMINA_PORT', editable: false })],
+      }),
+    );
+    renderPage();
+
+    expect(
+      await screen.findByText('Configuration is managed by the deployment'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('Retrieval chunk limit value'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Hosted deployments are restarted by the infrastructure that runs them/,
+      ),
+    ).toBeInTheDocument();
   });
 });
 

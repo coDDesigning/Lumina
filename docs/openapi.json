@@ -11517,6 +11517,11 @@
             "title": "Sections",
             "type": "array"
           },
+          "self_hosted": {
+            "default": true,
+            "title": "Self Hosted",
+            "type": "boolean"
+          },
           "settings": {
             "items": {
               "$ref": "#/components/schemas/SystemSettingRow"

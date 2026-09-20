@@ -48,6 +48,7 @@ class SystemSettingsInventory(BaseModel):
     override_count: int
     saved_at: str | None = None
     supervised_restart: bool
+    self_hosted: bool = True
     restart: RestartStatus | None = None
     rolled_back_from: int | None = None
 

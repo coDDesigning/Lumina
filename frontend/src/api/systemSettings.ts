@@ -68,6 +68,7 @@ export interface SystemSettingsInventory {
   override_count: number;
   saved_at: string | null;
   supervised_restart: boolean;
+  self_hosted: boolean;
   restart: RestartStatus | null;
   rolled_back_from: number | null;
 }

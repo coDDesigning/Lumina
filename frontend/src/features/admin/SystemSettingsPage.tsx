@@ -218,6 +218,17 @@ export default function SystemSettingsPage() {
 
         {inventory ? (
           <>
+            {!inventory.self_hosted ? (
+              <Alert
+                tone="info"
+                title="Configuration is managed by the deployment"
+                live="status"
+              >
+                This is a hosted deployment, so its configuration comes from the
+                infrastructure that runs it. Everything below is read-only.
+              </Alert>
+            ) : null}
+
             {inventory.pending_restart && inventory.pending_keys.length > 0 ? (
               <Alert tone="warning" title="Changes are waiting for a restart" live="status">
                 {inventory.pending_keys.length} saved change

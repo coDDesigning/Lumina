@@ -12,16 +12,18 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
-from backend.app.config import settings
+from backend.app.config import IMAGE_PROVIDER_NONE, settings
 from backend.app.database import begin_serialized_write
 from backend.app.models import (
     JOB_TYPE_EXTRACT_DOCUMENT,
     Course,
+    DocumentPage,
     ProcessingJob,
     UploadedDocument,
     User,
 )
 from backend.app.repositories.document import DocumentRepository
+from schemas.document import SYLLABUS_MAX_CHARACTERS
 from schemas.prompt_context import DocumentMaterialKind
 from services.document_hash import calculate_file_hash
 from services.document_lock import active_generation_lock
@@ -30,10 +32,14 @@ from services.document_validation import (
     DocumentValidationError,
     validate_basic_upload,
 )
+from services.image_understanding import configured_image_understanding_identity
 from services.processing_jobs import (
     ProcessingJobStateError,
+    VisualAnalysisNotConfiguredError,
+    VisualDescriptionActiveError,
     enqueue_document_job,
     retry_failed_job,
+    retry_failed_visuals,
 )
 from services.vector_store import VectorStore, VectorStoreError, get_vector_store
 from storage.base import Storage, StorageError
@@ -45,8 +51,11 @@ COMMIT_RECONCILIATION_DELAY_SECONDS = 0.05
 # Text file types a syllabus may be pasted from. Images are excluded: reading
 # one needs OCR, which belongs to the processing pipeline, not a form field.
 SYLLABUS_FILE_TYPES = frozenset({"pdf", "txt", "md", "markdown"})
-SYLLABUS_MAX_CHARACTERS = 20_000
 PAGE_SEPARATOR = "\n\n"
+_VISUAL_ANALYSIS_LOADS = (
+    selectinload(UploadedDocument.pages).selectinload(DocumentPage.visuals),
+    selectinload(UploadedDocument.processing_jobs),
+)
 
 
 class DocumentRegistrationError(Exception):
@@ -321,7 +330,7 @@ class DocumentService:
         db: Session,
         course_id: int,
     ) -> Sequence[UploadedDocument]:
-        """List the documents of an already authorized course, newest first.
+        """List the documents of an already authorized course, ordered by name.
 
         Callers reach this only through the course authorization boundary, so
         the course scope here is the authorized identifier rather than the one
@@ -329,12 +338,14 @@ class DocumentService:
         """
         return db.scalars(
             select(UploadedDocument)
-            .options(selectinload(UploadedDocument.pages))
+            .options(*_VISUAL_ANALYSIS_LOADS)
             .where(
                 UploadedDocument.course_id == course_id,
                 UploadedDocument.status != "deleting",
             )
-            .order_by(UploadedDocument.created_at.desc())
+            .order_by(
+                func.lower(UploadedDocument.original_file_name), UploadedDocument.id
+            )
         ).all()
 
     @staticmethod
@@ -345,7 +356,7 @@ class DocumentService:
     ) -> tuple[UploadedDocument, ProcessingJob]:
         row = db.execute(
             select(UploadedDocument, ProcessingJob)
-            .options(selectinload(UploadedDocument.pages))
+            .options(*_VISUAL_ANALYSIS_LOADS)
             .join(
                 ProcessingJob,
                 (ProcessingJob.document_id == UploadedDocument.id)
@@ -383,6 +394,45 @@ class DocumentService:
                 "Document not found", error_code="document_not_found"
             )
         return result
+
+    @staticmethod
+    def retry_document_visuals(
+        db: Session,
+        document_id: UUID,
+        course_id: int,
+    ) -> UploadedDocument:
+        image_understanding_available = (
+            configured_image_understanding_identity()[0] != IMAGE_PROVIDER_NONE
+        )
+        try:
+            document = retry_failed_visuals(
+                db,
+                document_id,
+                course_id,
+                image_understanding_available=image_understanding_available,
+            )
+        except VisualDescriptionActiveError as exc:
+            raise ConflictException(
+                str(exc), error_code="document_visuals_in_progress"
+            ) from exc
+        except VisualAnalysisNotConfiguredError as exc:
+            raise ConflictException(
+                str(exc), error_code="visual_analysis_not_configured"
+            ) from exc
+        except ProcessingJobStateError as exc:
+            raise ConflictException(
+                str(exc), error_code="document_visuals_not_retryable"
+            ) from exc
+        if document is None:
+            raise NotFoundException(
+                "Document not found", error_code="document_not_found"
+            )
+        db.expire_all()
+        return db.execute(
+            select(UploadedDocument)
+            .options(*_VISUAL_ANALYSIS_LOADS)
+            .where(UploadedDocument.id == document_id)
+        ).scalar_one()
 
     @staticmethod
     def delete_document(
@@ -599,7 +649,10 @@ class DocumentService:
         try:
             db.rollback()
         except Exception as exc:
-            logger.exception("Failed to roll back document transaction")
+            logger.exception(
+                "Failed to roll back document transaction",
+                extra={"event": "document_registration_rollback_failed"},
+            )
             DocumentService._remove_failed_upload(storage, storage_key)
             raise DocumentRegistrationError from exc
         DocumentService._remove_failed_upload(storage, storage_key)
@@ -617,7 +670,13 @@ class DocumentService:
         try:
             db.rollback()
         except Exception:
-            logger.exception("Failed to reset session after document commit error")
+            logger.exception(
+                "Failed to reset session after document commit error",
+                extra={
+                    "event": "document_registration_rollback_failed",
+                    "course_id": course_id,
+                },
+            )
 
         try:
             persisted = None
@@ -637,12 +696,22 @@ class DocumentService:
                     time.sleep(COMMIT_RECONCILIATION_DELAY_SECONDS)
         except Exception:
             # Preserve storage when the database cannot tell us whether it committed.
-            logger.exception("Could not determine document commit outcome")
+            logger.exception(
+                "Could not determine document commit outcome",
+                extra={
+                    "event": "document_commit_outcome_unknown",
+                    "course_id": course_id,
+                },
+            )
             raise DocumentRegistrationError from commit_error
 
         if persisted is None:
             logger.error(
-                "Document commit outcome remains unknown; preserving stored content"
+                "Document commit outcome remains unknown; preserving stored content",
+                extra={
+                    "event": "document_commit_outcome_unknown",
+                    "course_id": course_id,
+                },
             )
             raise DocumentRegistrationError from commit_error
 
@@ -650,7 +719,14 @@ class DocumentService:
             DocumentService._remove_failed_upload(storage, storage_key)
             return DocumentUploadResult(document=persisted, duplicate=True)
 
-        logger.warning("Recovered document after an uncertain commit acknowledgement")
+        logger.warning(
+            "Recovered document after an uncertain commit acknowledgement",
+            extra={
+                "event": "document_commit_recovered",
+                "course_id": course_id,
+                "document_id": str(persisted.id),
+            },
+        )
         return DocumentUploadResult(document=persisted, duplicate=False)
 
     @staticmethod
@@ -658,5 +734,8 @@ class DocumentService:
         try:
             storage.delete(storage_key)
         except StorageError as exc:
-            logger.exception("Failed to clean up unregistered document")
+            logger.exception(
+                "Failed to clean up unregistered document",
+                extra={"event": "document_upload_cleanup_failed"},
+            )
             raise DocumentRegistrationError from exc

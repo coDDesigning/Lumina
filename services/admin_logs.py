@@ -21,6 +21,7 @@ from backend.app.config import Settings, settings
 from backend.app.models import (
     AiUsageLog,
     GenerationJob,
+    JOB_TYPE_DESCRIBE_VISUALS,
     ProcessingJob,
     ProfileProcessingJob,
 )
@@ -330,7 +331,10 @@ def _sql_conditions(filters: LogFilters, *, include_source: bool = True):
             "lower(description || ' ' || event || ' ' || coalesce(error_code, '') || "
             "' ' || coalesce(error_category, '') || ' ' || coalesce(exception_type, '') || "
             "' ' || coalesce(http_path, '') || "
-            "' ' || service || ' ' || logger) LIKE ? ESCAPE '\\'"
+            "' ' || service || ' ' || logger || ' ' || "
+            "coalesce(json_extract(payload_json, '$.message'), '') || ' ' || "
+            "coalesce(json_extract(payload_json, '$.exception_message'), '')) "
+            "LIKE ? ESCAPE '\\'"
         )
         params.append(f"%{escaped}%")
     if filters.before_timestamp is not None and filters.before_id is not None:
@@ -897,6 +901,8 @@ def _record_matches(record: AdminLogRecord, filters: LogFilters) -> bool:
             value
             for value in (
                 record.description,
+                record.message,
+                record.exception_message,
                 record.event,
                 record.error_code,
                 record.error_category,
@@ -1147,9 +1153,27 @@ class LogReadService:
                 values.add(f"processing_job:course:{row.id}")
                 if row.parent_operation_id:
                     values.add(row.parent_operation_id)
+                if row.job_type == JOB_TYPE_DESCRIBE_VISUALS:
+                    values.add(f"processing_job:describe:course:{row.id}")
         elif job_type == "profile_document_processing":
             row = self.db.get(ProfileProcessingJob, job_id)
             if row:
+                values.add(f"processing_job:profile:{row.id}")
+                if row.parent_operation_id:
+                    values.add(row.parent_operation_id)
+                if row.job_type == JOB_TYPE_DESCRIBE_VISUALS:
+                    values.add(f"processing_job:describe:profile:{row.id}")
+        elif job_type == "course_document_visual_description":
+            row = self.db.get(ProcessingJob, job_id)
+            if row:
+                values.add(f"processing_job:describe:course:{row.id}")
+                values.add(f"processing_job:course:{row.id}")
+                if row.parent_operation_id:
+                    values.add(row.parent_operation_id)
+        elif job_type == "profile_document_visual_description":
+            row = self.db.get(ProfileProcessingJob, job_id)
+            if row:
+                values.add(f"processing_job:describe:profile:{row.id}")
                 values.add(f"processing_job:profile:{row.id}")
                 if row.parent_operation_id:
                     values.add(row.parent_operation_id)

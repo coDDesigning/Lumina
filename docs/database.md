@@ -102,19 +102,37 @@ The worker performs this readiness check before entering its processing loop and
 exits nonzero if a dependency is not ready. `--check` and `--once` are mutually
 exclusive; unlike `--check`, `--once` may recover and process durable jobs.
 
-The worker handles `SIGTERM` and `SIGINT` as drain requests. It stops claiming
-new jobs and normally finishes and persists the active attempt before exiting.
-The process uses one stable worker identity for its lifetime so lease logs can be
-correlated across jobs. Database finalization failures leave the lease for safe
-recovery, while unrecoverable child-process failures exit nonzero for supervisor
-restart.
+The worker handles `SIGTERM` and `SIGINT` as shutdown requests and stops
+claiming new jobs. What happens to the jobs it is running depends on
+`WORKER_SHUTDOWN_MODE`:
 
-For normal operation, set the supervisor termination grace to at least
-`PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS + 45` seconds. With the defaults this is
-345 seconds. This is a minimum baseline, not a deadline for uninterruptible
-storage or operating-system I/O. A forced kill before draining completes leaves
-the lease to expire; recovery is safe, but the interrupted attempt still counts
-toward `PROCESSING_JOB_MAX_ATTEMPTS`.
+- `abort`, the default, kills every extraction and visual-description child at
+  once and hands each of their jobs back: the job returns to `queued` with the
+  attempt it spent given back, and an extraction's document returns to
+  `uploaded`. A visual-description job resumes from the descriptions it already
+  stored. Whatever is still running ten seconds later, typically a generation
+  waiting on its provider, is handed back the same way; a generation keeps its
+  prepaid charge. The worker then drops the document generation locks it held
+  and exits.
+- `drain` finishes and persists every running attempt before exiting.
+
+Either way the worker logs each job it was running when the stop arrived, with
+the time left in its attempt (`worker_shutdown_aborting_job` or
+`worker_shutdown_waiting_for_job`). The process uses one stable worker identity
+for its lifetime so lease logs can be correlated across jobs. Database
+finalization failures leave the lease for safe recovery, while unrecoverable
+child-process failures exit nonzero for supervisor restart.
+
+Set the supervisor termination grace to at least 60 seconds in `abort` mode. In
+`drain` mode it must cover the largest of
+`PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS`,
+`DESCRIBE_VISUALS_ATTEMPT_TIMEOUT_SECONDS`, and
+`GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS`, plus 45 seconds: 1845 seconds with the
+defaults. Neither is a deadline for uninterruptible storage or operating-system
+I/O. A job the worker could not hand back, because the database refused the
+write or the process was killed first, keeps its lease until it expires;
+recovery is safe, but that interrupted attempt still counts toward
+`PROCESSING_JOB_MAX_ATTEMPTS`.
 
 The API and worker must use the same `DATABASE_URL`, `STORAGE_BACKEND`,
 `STORAGE_NAMESPACE`, and storage contents. The supported self-hosted Compose
@@ -224,6 +242,7 @@ Each document has one `extract_document` job.
 queued -> running -> succeeded
    ^         |
    |         +-> queued (retryable failure or expired lease)
+   |         +-> queued (released at shutdown, attempt given back)
    |         +-> failed (permanent failure or attempts exhausted)
    +------------- manual retry from failed
 ```
@@ -245,10 +264,13 @@ therefore cannot overwrite a reclaimed attempt.
 
 The AWS worker service scales on `OldestQueuedAgeSeconds`. Every claim commits
 before extraction starts, so workers never hold queue locks during OCR,
-embedding, or storage calls. A 120-second task stop timeout allows graceful
-completion; if scale-in kills a longer attempt, lease recovery and claim-token
-fencing make the retry safe. RDS Proxy and the per-process SQLAlchemy pool
-budget must be sized before increasing replica maxima.
+embedding, or storage calls. The 120-second task stop timeout fits only the
+default `abort` shutdown, which hands running jobs back within about ten
+seconds; `drain` needs the largest attempt timeout plus 45 seconds, so keep
+`WORKER_SHUTDOWN_MODE=abort` on ECS. If a task is killed before it hands a job
+back, lease recovery and claim-token fencing make the retry safe. RDS Proxy and
+the per-process SQLAlchemy pool budget must be sized before increasing replica
+maxima.
 
 Workers recover expired leases periodically, not only at startup. Chunk
 replacement, embedding storage, document completion, and job completion commit

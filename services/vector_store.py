@@ -645,7 +645,10 @@ class ChromaVectorStore:
 
             SharedSystemClient.clear_system_cache()
         except Exception:
-            logger.warning("Chroma system cache could not be cleared")
+            logger.warning(
+                "Chroma system cache could not be cleared",
+                extra={"event": "vector_store_cache_clear_failed"},
+            )
 
     def _run(self, operation, message: str):
         """Run one collection call, reopening a handle another process invalidated.

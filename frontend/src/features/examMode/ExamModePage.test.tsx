@@ -208,6 +208,29 @@ describe('ExamModePage', () => {
     );
   });
 
+  it('lists the course sources sorted by name regardless of inventory order', async () => {
+    listSources.mockResolvedValue({
+      ...INVENTORY,
+      documents: [
+        { ...READY_DOCUMENT, id: 'doc-c', label: 'charlie.pdf' },
+        { ...READY_DOCUMENT, id: 'doc-a', label: 'Alpha.pdf' },
+        { ...READY_DOCUMENT, id: 'doc-b', label: 'bravo.pdf' },
+      ],
+      ready_document_count: 3,
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText(/Choose what to read/i)).toBeInTheDocument());
+
+    const rows = screen.getAllByRole('listitem');
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining('Alpha.pdf'),
+      expect.stringContaining('bravo.pdf'),
+      expect.stringContaining('charlie.pdf'),
+    ]);
+  });
+
   it('tells a support reader the view is read-only and offers no generation', async () => {
     renderPage(workspaceFixture({ ownerId: 99, ownerName: 'Ada' } as Partial<Workspace>));
 

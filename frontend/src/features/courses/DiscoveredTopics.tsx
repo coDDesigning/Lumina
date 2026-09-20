@@ -1,11 +1,9 @@
 import { useMemo } from 'react';
-import { Plus } from 'lucide-react';
 import { examModeAPI } from '@/api/examMode';
 import { queryKeys } from '@/api/queryKeys';
 import type { ExamAnalysisView } from '@/api/types';
 import { useQuery } from '@/lib/query/useQuery';
-import { Button } from '@/ui/Button';
-import styles from './DiscoveredTopics.module.css';
+import { TopicSuggestions } from './TopicSuggestions';
 
 export interface DiscoveredTopicsProps {
   courseId: number;
@@ -41,52 +39,23 @@ export function DiscoveredTopics({
     fallbackMessage: 'The topics Exam Mode found could not be loaded.',
   });
 
-  const missing = useMemo(() => {
-    // The flag is as of the last analysis, so anything already in the box is
-    // filtered too -- that is what makes a just-added topic vanish from here
-    // before the next scan.
-    const inBox = new Set(declared.map((topic) => topic.trim().toLowerCase()));
-    return (analysis.data?.topics ?? [])
-      .filter((topic) => !topic.in_course_topics)
-      .map((topic) => topic.display_label)
-      .filter((label) => label.trim() && !inBox.has(label.trim().toLowerCase()));
-  }, [analysis.data, declared]);
-
-  // A course that was never analysed, or whose findings are all declared
-  // already, has nothing to offer and says nothing.
-  if (disabled || missing.length === 0) {
-    return null;
-  }
+  const suggestions = useMemo(
+    () =>
+      (analysis.data?.topics ?? [])
+        .filter((topic) => !topic.in_course_topics)
+        .map((topic) => topic.display_label),
+    [analysis.data],
+  );
 
   return (
-    <section className={styles.block} aria-labelledby="discovered-topics">
-      <h3 id="discovered-topics" className={styles.label}>
-        Found by Exam Mode
-      </h3>
-      <p className={styles.lede}>
-        Read out of your material but not in your topic list. Adding one tells the ranking you
-        consider it part of this course.
-      </p>
-      <ul className={styles.list}>
-        {missing.map((label) => (
-          <li key={label}>
-            <Button
-              variant="secondary"
-              size="sm"
-              wrap
-              icon={<Plus aria-hidden="true" />}
-              onClick={() => onAdd([label])}
-            >
-              {label}
-            </Button>
-          </li>
-        ))}
-      </ul>
-      {missing.length > 1 ? (
-        <Button variant="ghost" size="sm" onClick={() => onAdd(missing)}>
-          Add all {missing.length}
-        </Button>
-      ) : null}
-    </section>
+    <TopicSuggestions
+      headingId="discovered-topics"
+      title="Found by Exam Mode"
+      lede="Read out of your material but not in your topic list. Adding one tells the ranking you consider it part of this course."
+      suggestions={suggestions}
+      declared={declared}
+      onAdd={onAdd}
+      disabled={disabled}
+    />
   );
 }

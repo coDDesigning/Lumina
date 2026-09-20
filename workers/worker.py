@@ -2,13 +2,18 @@
 
 import argparse
 import logging
+import os
 import signal
 import threading
 from collections.abc import Callable, Sequence
 
+from sqlalchemy.orm import Session
+
 from backend.app.config import settings
+from backend.app.database import SessionLocal
 from backend.app.observability import configure_logging
 from backend.app.readiness import ReadinessError
+from workers import shutdown
 from workers.document_processor import (
     check_worker_ready,
     run_worker as run_document_worker,
@@ -16,6 +21,7 @@ from workers.document_processor import (
 from workers.generation_processor import run_worker as run_generation_worker
 
 logger = logging.getLogger(__name__)
+SessionFactory = Callable[[], Session]
 
 
 def _install_shutdown_handlers(stop: threading.Event) -> None:
@@ -27,8 +33,11 @@ def _install_shutdown_handlers(stop: threading.Event) -> None:
 
 
 def run_worker(
-    *, once: bool = False, stop_event: threading.Event | None = None
-) -> None:
+    *,
+    once: bool = False,
+    stop_event: threading.Event | None = None,
+    session_factory: SessionFactory = SessionLocal,
+) -> bool:
     stop = stop_event or threading.Event()
     failures: list[BaseException] = []
     failure_lock = threading.Lock()
@@ -39,6 +48,7 @@ def run_worker(
                 once=once,
                 worker_id=name,
                 stop_event=stop,
+                session_factory=session_factory,
                 concurrency=concurrency,
             )
         except BaseException as exc:
@@ -54,6 +64,8 @@ def run_worker(
                 run_document_worker,
                 settings.processing_job_concurrency,
             ),
+            name="documents",
+            daemon=True,
         ),
         threading.Thread(
             target=run,
@@ -62,16 +74,23 @@ def run_worker(
                 run_generation_worker,
                 settings.generation_job_concurrency,
             ),
+            name="generations",
+            daemon=True,
         ),
     ]
     for thread in threads:
         thread.start()
-    for thread in threads:
-        thread.join()
+    abandoned = shutdown.supervise(
+        threads,
+        stop,
+        mode=settings.worker_shutdown_mode,
+        session_factory=session_factory,
+    )
 
     with failure_lock:
         if failures:
             raise failures[0]
+    return abandoned
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -100,18 +119,40 @@ def main(argv: Sequence[str] | None = None) -> None:
         try:
             check_worker_ready()
         except ReadinessError as exc:
-            logger.error("Worker readiness check failed: %s", exc)
+            logger.error(
+                "Worker readiness check failed: %s",
+                exc,
+                extra={
+                    "event": "worker_readiness_check_failed",
+                    "failed_stage": exc.check,
+                },
+            )
             raise SystemExit(1) from None
-        logger.info("Worker readiness check succeeded")
+        logger.info(
+            "Worker readiness check succeeded",
+            extra={"event": "worker_readiness_check_succeeded"},
+        )
         return
 
     stop = threading.Event()
     _install_shutdown_handlers(stop)
     try:
-        run_worker(once=args.once, stop_event=stop)
+        abandoned = run_worker(once=args.once, stop_event=stop)
     except ReadinessError as exc:
-        logger.error("Worker readiness check failed: %s", exc)
+        logger.error(
+            "Worker readiness check failed: %s",
+            exc,
+            extra={
+                "event": "worker_readiness_check_failed",
+                "failed_stage": exc.check,
+            },
+        )
         raise SystemExit(1) from None
+    finally:
+        shutdown.kill_child_processes()
+    if abandoned:
+        logging.shutdown()
+        os._exit(0)
 
 
 if __name__ == "__main__":

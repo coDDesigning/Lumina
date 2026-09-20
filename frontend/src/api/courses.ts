@@ -8,7 +8,9 @@ import type {
   DocumentStatusResponse,
   DocumentMaterialKind,
   DocumentUploadResponse,
+  SuggestedTopic,
   SyllabusExtraction,
+  SyllabusTopicsResponse,
 } from './types';
 
 export const coursesAPI = {
@@ -72,6 +74,18 @@ export const coursesAPI = {
     return unwrapData(res, 'Syllabus extraction');
   },
 
+  suggestSyllabusTopics: async (
+    text: string,
+    options?: RequestInit,
+  ): Promise<SuggestedTopic[]> => {
+    const res = await apiClient.post<BaseResponse<SyllabusTopicsResponse>>(
+      '/courses/syllabus/topics',
+      { text },
+      options,
+    );
+    return unwrapData(res, 'Syllabus topics').topics;
+  },
+
   listDocuments: async (
     courseId: number,
     options?: RequestInit,
@@ -100,6 +114,17 @@ export const coursesAPI = {
   ): Promise<DocumentStatusResponse> =>
     apiClient.post<DocumentStatusResponse>(
       `/courses/${courseId}/documents/${documentId}/retry`,
+      undefined,
+      options,
+    ),
+
+  retryDocumentVisuals: (
+    courseId: number,
+    documentId: string,
+    options?: RequestInit,
+  ): Promise<DocumentResponse> =>
+    apiClient.post<DocumentResponse>(
+      `/courses/${courseId}/documents/${documentId}/visuals/retry`,
       undefined,
       options,
     ),

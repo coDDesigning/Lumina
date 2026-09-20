@@ -6,7 +6,7 @@ export interface IconButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
   label: string;
   icon: ReactNode;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
   tone?: 'default' | 'accent' | 'destructive';
 }
 

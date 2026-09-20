@@ -2,7 +2,11 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '../api/client';
 import { coursesAPI } from '../api/courses';
-import type { DocumentResponse, DocumentStatusResponse } from '../api/types';
+import type {
+  DocumentResponse,
+  DocumentStatusResponse,
+  VisualAnalysisSummary,
+} from '../api/types';
 import { useCourseDocuments } from './useCourseDocuments';
 
 vi.mock('../api/courses', () => ({
@@ -10,6 +14,7 @@ vi.mock('../api/courses', () => ({
     listDocuments: vi.fn(),
     getDocumentStatus: vi.fn(),
     retryDocument: vi.fn(),
+    retryDocumentVisuals: vi.fn(),
     deleteDocument: vi.fn(),
   },
 }));
@@ -17,6 +22,7 @@ vi.mock('../api/courses', () => ({
 const listDocuments = vi.mocked(coursesAPI.listDocuments);
 const getDocumentStatus = vi.mocked(coursesAPI.getDocumentStatus);
 const retryDocument = vi.mocked(coursesAPI.retryDocument);
+const retryDocumentVisuals = vi.mocked(coursesAPI.retryDocumentVisuals);
 const deleteDocument = vi.mocked(coursesAPI.deleteDocument);
 
 const DOCUMENT_ID = '11111111-1111-1111-1111-111111111111';
@@ -25,10 +31,11 @@ function document(
   status: string,
   updatedAt: string,
   id: string = DOCUMENT_ID,
+  originalFileName: string = 'lecture.pdf',
 ): DocumentResponse {
   return {
     id,
-    original_file_name: 'lecture.pdf',
+    original_file_name: originalFileName,
     file_type: 'pdf',
     mime_type: 'application/pdf',
     material_kind: 'unspecified',
@@ -144,6 +151,66 @@ describe('useCourseDocuments polling lifecycle', () => {
     expect(result.current.readyCount).toBe(1);
   });
 
+  it('sorts entries by name even when the server list arrives out of order', async () => {
+    listDocuments.mockResolvedValue([
+      document('ready', '2026-08-19T10:00:00Z', 'c-id', 'charlie.pdf'),
+      document('ready', '2026-08-19T10:00:00Z', 'a-id', 'Alpha.pdf'),
+      document('ready', '2026-08-19T10:00:00Z', 'b-id', 'bravo.pdf'),
+    ]);
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'Alpha.pdf',
+      'bravo.pdf',
+      'charlie.pdf',
+    ]);
+  });
+
+  it('keeps a newly uploaded document on top while the refetch is pending, then sorts it into place once the server list includes it', async () => {
+    listDocuments.mockResolvedValue([
+      document('ready', '2026-08-19T10:00:00Z', 'a-id', 'Alpha.pdf'),
+    ]);
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'Alpha.pdf',
+    ]);
+
+    act(() => {
+      result.current.addUploaded(
+        document('ready', '2026-08-19T10:01:00Z', 'z-id', 'zeta.pdf'),
+      );
+    });
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'zeta.pdf',
+      'Alpha.pdf',
+    ]);
+
+    listDocuments.mockResolvedValue([
+      document('ready', '2026-08-19T10:01:00Z', 'z-id', 'zeta.pdf'),
+      document('ready', '2026-08-19T10:00:00Z', 'a-id', 'Alpha.pdf'),
+    ]);
+    act(() => {
+      result.current.reload();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'Alpha.pdf',
+      'zeta.pdf',
+    ]);
+  });
+
   it('survives a status response that carries no document', async () => {
     listDocuments.mockResolvedValue([document('processing', '2026-08-19T10:00:00Z')]);
     getDocumentStatus.mockResolvedValue({} as unknown as DocumentStatusResponse);
@@ -190,6 +257,87 @@ describe('useCourseDocuments polling lifecycle', () => {
     const callsAtTerminal = getDocumentStatus.mock.calls.length;
     await advance(60_000);
     expect(getDocumentStatus).toHaveBeenCalledTimes(callsAtTerminal);
+  });
+
+  function describingDocument(
+    summary: Partial<VisualAnalysisSummary>,
+    visualStatus = 'pending',
+  ): DocumentResponse {
+    return {
+      ...document('ready', '2026-08-19T10:00:00Z'),
+      visual_analysis_status: visualStatus,
+      visual_analysis: {
+        total: 3,
+        described: 0,
+        pending: 0,
+        failed: 0,
+        failure_reason: null,
+        failed_page_numbers: [],
+        crowded_pages: 0,
+        crowded_page_numbers: [],
+        stopped_error_code: null,
+        ...summary,
+      },
+    };
+  }
+
+  function settled(settledDocument: DocumentResponse): DocumentStatusResponse {
+    return {
+      ...status('ready', settledDocument.updated_at, {
+        status: 'succeeded',
+        processing_stage: null,
+        finished_at: settledDocument.updated_at,
+      }),
+      document: settledDocument,
+    };
+  }
+
+  it('keeps checking a ready source while its figures are described, then stops', async () => {
+    listDocuments.mockResolvedValue([describingDocument({ described: 1, pending: 2 })]);
+    getDocumentStatus
+      .mockResolvedValueOnce(settled(describingDocument({ described: 2, pending: 1 })))
+      .mockResolvedValueOnce(settled(describingDocument({ described: 3 }, 'completed')));
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+    expect(result.current.entries[0].document.visual_analysis?.described).toBe(2);
+
+    await advance(60_000);
+    expect(result.current.entries[0].document.visual_analysis_status).toBe('completed');
+
+    const callsWhenSettled = getDocumentStatus.mock.calls.length;
+    await advance(120_000);
+    expect(getDocumentStatus).toHaveBeenCalledTimes(callsWhenSettled);
+  });
+
+  it('stops checking once describing the figures has stopped', async () => {
+    listDocuments.mockResolvedValue([describingDocument({ described: 1, pending: 2 })]);
+    getDocumentStatus.mockResolvedValue(
+      settled(
+        describingDocument({
+          described: 1,
+          pending: 2,
+          stopped_error_code: 'image_understanding_failed',
+        }),
+      ),
+    );
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+    await advance(120_000);
+
+    expect(getDocumentStatus).toHaveBeenCalledTimes(1);
+    expect(result.current.entries[0].document.visual_analysis?.stopped_error_code).toBe(
+      'image_understanding_failed',
+    );
   });
 
   it('leaves no timer running after unmount', async () => {
@@ -306,6 +454,56 @@ describe('useCourseDocuments polling lifecycle', () => {
     await advance(2000);
     expect(getDocumentStatus).toHaveBeenCalled();
   });
+  it('replaces the document once its figures are retried and resumes polling', async () => {
+    listDocuments.mockResolvedValue([describingDocument({ failed: 2 }, 'partial')]);
+    getDocumentStatus.mockResolvedValue(settled(describingDocument({ failed: 2 }, 'partial')));
+    retryDocumentVisuals.mockResolvedValue(describingDocument({ pending: 2 }, 'pending'));
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+    expect(result.current.entries[0].document.visual_analysis_status).toBe('partial');
+
+    await act(async () => {
+      await result.current.retryVisuals(DOCUMENT_ID);
+    });
+
+    expect(result.current.entries[0].document.visual_analysis_status).toBe('pending');
+    expect(result.current.entries[0].error).toBeNull();
+    expect(result.current.entries[0].pending).toBeNull();
+
+    await advance(1500);
+    expect(getDocumentStatus).toHaveBeenCalled();
+  });
+
+  it('keeps a refused figure retry readable without disturbing the document', async () => {
+    listDocuments.mockResolvedValue([describingDocument({ failed: 2 }, 'partial')]);
+    getDocumentStatus.mockResolvedValue(settled(describingDocument({ failed: 2 }, 'partial')));
+    retryDocumentVisuals.mockRejectedValue(
+      new APIError(409, { detail: 'These figures are already being described.' }),
+    );
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+
+    await act(async () => {
+      await result.current.retryVisuals(DOCUMENT_ID);
+    });
+
+    expect(result.current.entries[0].error).toBe(
+      'These figures are already being described.',
+    );
+    expect(result.current.entries[0].pending).toBeNull();
+    expect(result.current.entries[0].document.visual_analysis_status).toBe('partial');
+  });
+
   it('keeps a refused removal readable while the source keeps being polled', async () => {
     listDocuments.mockResolvedValue([document('ready', '2026-08-19T10:00:00Z')]);
     getDocumentStatus.mockResolvedValue(

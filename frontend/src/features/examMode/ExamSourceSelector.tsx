@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { FileText, FileCheck2, GraduationCap } from 'lucide-react';
 import type { ExamSourceDocument } from '@/api/types';
 import {
@@ -5,6 +6,7 @@ import {
   documentStatusTone,
   materialKindLabel,
 } from '@/components/documents/documentLabels';
+import { sortByName } from '@/components/documents/documentOrder';
 import { Badge } from '@/ui/Badge';
 import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';
@@ -34,7 +36,11 @@ export function ExamSourceSelector({
   onSelectAllReady,
   disabled,
 }: ExamSourceSelectorProps) {
-  const ready = documents.filter(isReady);
+  const orderedDocuments = useMemo(
+    () => sortByName(documents, (document) => document.label),
+    [documents],
+  );
+  const ready = orderedDocuments.filter(isReady);
   const allReadySelected =
     ready.length > 0 && ready.every((document) => selected.has(document.id));
 
@@ -58,12 +64,12 @@ export function ExamSourceSelector({
         ) : null}
       </div>
 
-      {documents.length === 0 ? (
+      {orderedDocuments.length === 0 ? (
         <p className={styles.empty}>This course has no sources yet.</p>
       ) : null}
 
       <ul className={styles.list}>
-        {documents.map((document) => {
+        {orderedDocuments.map((document) => {
           const selectable = isReady(document) && !disabled;
           return (
             <li key={document.id} className={styles.row}>

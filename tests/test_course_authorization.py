@@ -99,6 +99,11 @@ def _requests_against_owner_a(context) -> list[tuple[str, str, dict]]:
         ),
         ("GET", f"/api/courses/{course_id}/documents/{document_id}", {}),
         ("POST", f"/api/courses/{course_id}/documents/{document_id}/retry", {}),
+        (
+            "POST",
+            f"/api/courses/{course_id}/documents/{document_id}/visuals/retry",
+            {},
+        ),
         ("DELETE", f"/api/courses/{course_id}/documents/{document_id}", {}),
         ("POST", f"/api/courses/{course_id}/study-guide", {}),
         ("POST", f"/api/courses/{course_id}/quiz", {}),
@@ -331,7 +336,7 @@ def test_administrator_cannot_write_to_another_owners_course(authz_api):
         entry for entry in _requests_against_owner_a(authz_api) if entry[0] != "GET"
     ]
     # Generated-output and conversation endpoints are reads, so they are absent.
-    assert len(writes) == 22
+    assert len(writes) == 23
     for method, url, kwargs in writes:
         response = authz_api.client.request(
             method, url, headers=authz_api.authorization_admin, **kwargs
@@ -375,6 +380,10 @@ def test_documents_cannot_escape_their_authorized_course(authz_api):
     for method, url in (
         ("GET", f"/api/courses/{other_course_id}/documents/{document_id}"),
         ("POST", f"/api/courses/{other_course_id}/documents/{document_id}/retry"),
+        (
+            "POST",
+            f"/api/courses/{other_course_id}/documents/{document_id}/visuals/retry",
+        ),
         ("DELETE", f"/api/courses/{other_course_id}/documents/{document_id}"),
     ):
         response = authz_api.client.request(
@@ -484,7 +493,7 @@ def test_every_course_route_requires_authentication_in_openapi():
 
     # Guards against a new course route shipping without auth; the number tracks
     # the committed docs/openapi.json snapshot.
-    assert len(operations) == 65
+    assert len(operations) == 67
     for method, path, operation in operations:
         assert operation["security"] == [{"OAuth2PasswordBearer": []}], (
             f"{method.upper()} {path} is not documented as authenticated"
@@ -554,7 +563,7 @@ def test_course_scoped_routes_cannot_bypass_the_boundary():
     course_routes = [
         route for route in api_routes(app) if route.path.startswith("/api/courses")
     ]
-    assert len(course_routes) == 65
+    assert len(course_routes) == 67
 
     for route in course_routes:
         names = dependency_names(route.dependant)

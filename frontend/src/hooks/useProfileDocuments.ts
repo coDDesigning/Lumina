@@ -11,6 +11,7 @@ import type {
   ProcessingJobResponse,
 } from '../api/types';
 import { isTerminalDocumentStatus } from '../components/documents/documentLabels';
+import { sortByName } from '../components/documents/documentOrder';
 
 export type DocumentPendingAction = 'retry' | 'delete';
 
@@ -90,7 +91,7 @@ function mergeListing(
 
   const optimistic = validPrev.filter((entry) => !serverIds.has(entry.document.id));
 
-  return [...optimistic, ...merged];
+  return [...optimistic, ...sortByName(merged, (entry) => entry.document.original_file_name)];
 }
 
 export function useProfileDocuments(): UseProfileDocumentsResult {

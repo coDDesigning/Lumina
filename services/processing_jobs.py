@@ -6,6 +6,7 @@ from math import ceil, isfinite
 from uuid import UUID, uuid4
 
 from sqlalchemy import case, delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from backend.app.config import settings
@@ -140,6 +141,18 @@ class QueueMetrics:
 
 class ProcessingJobStateError(RuntimeError):
     """A requested transition is not valid for the current durable state."""
+
+
+class VisualDescriptionActiveError(ProcessingJobStateError):
+    pass
+
+
+class VisualAnalysisNotConfiguredError(ProcessingJobStateError):
+    pass
+
+
+class NoRetryableVisualsError(ProcessingJobStateError):
+    pass
 
 
 _EXPECTED_STAGES = {
@@ -1811,6 +1824,108 @@ def _fail_document_job(
     return job.status
 
 
+def release_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    return _release_document_job(
+        session,
+        job_id,
+        claim_token,
+        job_type=JOB_TYPE_EXTRACT_DOCUMENT,
+        claimed_document_status="processing",
+        released_document_status="uploaded",
+        now=now,
+    )
+
+
+def release_describe_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    return _release_document_job(
+        session,
+        job_id,
+        claim_token,
+        job_type=JOB_TYPE_DESCRIBE_VISUALS,
+        claimed_document_status=None,
+        released_document_status=None,
+        now=now,
+    )
+
+
+def _release_document_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    job_type: str,
+    claimed_document_status: str | None,
+    released_document_status: str | None,
+    now: datetime | None = None,
+) -> bool:
+    _start_transition(session)
+    released_at = _database_now(session, now)
+    document_id = session.scalar(
+        update(ProcessingJob)
+        .where(
+            ProcessingJob.id == job_id,
+            ProcessingJob.job_type == job_type,
+            ProcessingJob.status == JOB_STATUS_RUNNING,
+            ProcessingJob.claim_token == claim_token,
+        )
+        .values(
+            status=JOB_STATUS_QUEUED,
+            attempt_count=ProcessingJob.attempt_count - 1,
+            started_at=case(
+                (ProcessingJob.attempt_count <= 1, None),
+                else_=ProcessingJob.started_at,
+            ),
+            available_at=released_at,
+            finished_at=None,
+            processing_stage=None,
+            failed_stage=None,
+            lease_owner=None,
+            claim_token=None,
+            claimed_at=None,
+            heartbeat_at=None,
+            lease_expires_at=None,
+            updated_at=released_at,
+        )
+        .returning(ProcessingJob.document_id)
+        .execution_options(synchronize_session=False)
+    )
+    if document_id is None:
+        session.rollback()
+        return False
+
+    if released_document_status is not None:
+        document_result = session.execute(
+            update(UploadedDocument)
+            .where(
+                UploadedDocument.id == document_id,
+                UploadedDocument.status == claimed_document_status,
+            )
+            .values(
+                status=released_document_status,
+                processing_error=None,
+                updated_at=released_at,
+            )
+        )
+        if document_result.rowcount != 1:
+            session.rollback()
+            return False
+
+    session.commit()
+    return True
+
+
 def recover_expired_jobs(
     session: Session,
     *,
@@ -1982,6 +2097,123 @@ def retry_failed_job(
     document.updated_at = available_at
     session.commit()
     return document, job
+
+
+def retry_failed_visuals(
+    session: Session,
+    document_id: UUID,
+    course_id: int,
+    *,
+    image_understanding_available: bool,
+    now: datetime | None = None,
+) -> UploadedDocument | None:
+    _start_transition(session)
+    course_statement = select(Course).where(
+        Course.id == course_id, Course.is_deleted.is_(False)
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        course_statement = course_statement.with_for_update(of=Course)
+    if session.scalar(course_statement) is None:
+        session.rollback()
+        return None
+
+    document_statement = select(UploadedDocument).where(
+        UploadedDocument.id == document_id,
+        UploadedDocument.course_id == course_id,
+        UploadedDocument.status != "deleting",
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        document_statement = document_statement.with_for_update(of=UploadedDocument)
+    document = session.scalar(document_statement)
+    if document is None:
+        session.rollback()
+        return None
+
+    job_statement = select(ProcessingJob).where(
+        ProcessingJob.document_id == document_id,
+        ProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        job_statement = job_statement.with_for_update(of=ProcessingJob)
+    job = session.scalar(job_statement)
+
+    if job is not None and job.status in (JOB_STATUS_QUEUED, JOB_STATUS_RUNNING):
+        session.rollback()
+        raise VisualDescriptionActiveError("These figures are already being described.")
+    if document.status != "ready":
+        session.rollback()
+        raise NoRetryableVisualsError("Only a ready document's figures can be retried.")
+    if not image_understanding_available:
+        session.rollback()
+        raise VisualAnalysisNotConfiguredError(
+            "Figure analysis is switched off on this server."
+        )
+
+    retryable_visual = session.scalar(
+        select(DocumentVisual.id)
+        .join(DocumentPage, DocumentPage.id == DocumentVisual.page_id)
+        .where(
+            DocumentPage.document_id == document_id,
+            DocumentVisual.analysis_status.in_(("failed", "pending")),
+        )
+        .limit(1)
+    )
+    if retryable_visual is None and not (
+        job is not None and job.status == JOB_STATUS_FAILED
+    ):
+        session.rollback()
+        raise NoRetryableVisualsError("Nothing to retry: every figure is described.")
+
+    available_at = _database_now(session, now)
+    document_page_ids = select(DocumentPage.id).where(
+        DocumentPage.document_id == document_id
+    )
+    session.execute(
+        update(DocumentVisual)
+        .where(
+            DocumentVisual.page_id.in_(document_page_ids),
+            DocumentVisual.analysis_status == "failed",
+        )
+        .values(analysis_status="pending", error_code=None)
+        .execution_options(synchronize_session=False)
+    )
+    pending_page_ids = select(DocumentVisual.page_id).where(
+        DocumentVisual.page_id.in_(document_page_ids),
+        DocumentVisual.analysis_status == "pending",
+    )
+    session.execute(
+        update(DocumentPage)
+        .where(DocumentPage.id.in_(pending_page_ids))
+        .values(visual_analysis_status="pending")
+        .execution_options(synchronize_session=False)
+    )
+
+    if job is not None:
+        job.status = JOB_STATUS_QUEUED
+        job.attempt_count = 0
+        job.available_at = available_at
+        job.started_at = None
+        job.finished_at = None
+        job.last_error_code = None
+        job.last_error_message = None
+        job.processing_stage = None
+        job.failed_stage = None
+        job.correlation_id = get_request_id()
+        job.parent_operation_id = get_operation_context().get("operation_id")
+        job.updated_at = available_at
+        _clear_lease(job)
+    else:
+        try:
+            enqueue_describe_visuals_job(session, document, now=available_at)
+        except IntegrityError:
+            session.rollback()
+            raise VisualDescriptionActiveError(
+                "These figures are already being described."
+            )
+
+    document.updated_at = available_at
+    session.commit()
+    return document
 
 
 def fence_course_jobs(
@@ -2706,12 +2938,15 @@ def heartbeat_profile_job(
         return False
 
     heartbeat_at = _database_now(session, now)
+    expected_document_status = (
+        "ready" if job.job_type == JOB_TYPE_DESCRIBE_VISUALS else "processing"
+    )
     if (
         job.status != JOB_STATUS_RUNNING
         or job.claim_token != claim_token
         or job.lease_expires_at is None
         or job.lease_expires_at <= heartbeat_at
-        or document.status != "processing"
+        or document.status != expected_document_status
     ):
         session.rollback()
         return False
@@ -2741,12 +2976,15 @@ def update_profile_job_stage(
         return False
 
     updated_at = _database_now(session, now)
+    expected_document_status = (
+        "ready" if job.job_type == JOB_TYPE_DESCRIBE_VISUALS else "processing"
+    )
     if (
         job.status != JOB_STATUS_RUNNING
         or job.claim_token != claim_token
         or job.lease_expires_at is None
         or job.lease_expires_at <= updated_at
-        or document.status != "processing"
+        or document.status != expected_document_status
     ):
         session.rollback()
         return False
@@ -3106,7 +3344,7 @@ def fail_profile_job(
     retryable: bool = False,
     retry_delay_seconds: int = 60,
     now: datetime | None = None,
-) -> bool:
+) -> str | None:
     return _fail_profile_document_job(
         session,
         job_id,
@@ -3134,7 +3372,7 @@ def fail_profile_describe_job(
     retryable: bool = False,
     retry_delay_seconds: int = 60,
     now: datetime | None = None,
-) -> bool:
+) -> str | None:
     """Record a profile description failure without disturbing its ready document."""
     return _fail_profile_document_job(
         session,
@@ -3166,7 +3404,7 @@ def _fail_profile_document_job(
     requeued_document_status: str | None,
     failed_document_status: str | None,
     now: datetime | None = None,
-) -> bool:
+) -> str | None:
     error_code = error_code.strip()
     if not error_code:
         raise ValueError("error_code must not be empty")
@@ -3179,7 +3417,7 @@ def _fail_profile_document_job(
     job, document = _lock_profile_job_and_document(session, job_id)
     if job is None or document is None:
         session.rollback()
-        return False
+        return None
 
     failed_at = _database_now(session, now)
     if (
@@ -3190,7 +3428,7 @@ def _fail_profile_document_job(
         or document.status != claimed_document_status
     ):
         session.rollback()
-        return False
+        return None
 
     public_message = _public_error_message(error_message or error_code)
     stage = failed_stage or job.processing_stage
@@ -3218,6 +3456,108 @@ def _fail_profile_document_job(
             document.status = failed_document_status
             document.processing_error = public_message
             document.updated_at = failed_at
+
+    session.commit()
+    return job.status
+
+
+def release_profile_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    return _release_profile_document_job(
+        session,
+        job_id,
+        claim_token,
+        job_type=JOB_TYPE_EXTRACT_DOCUMENT,
+        claimed_document_status="processing",
+        released_document_status="uploaded",
+        now=now,
+    )
+
+
+def release_profile_describe_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    return _release_profile_document_job(
+        session,
+        job_id,
+        claim_token,
+        job_type=JOB_TYPE_DESCRIBE_VISUALS,
+        claimed_document_status=None,
+        released_document_status=None,
+        now=now,
+    )
+
+
+def _release_profile_document_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    job_type: str,
+    claimed_document_status: str | None,
+    released_document_status: str | None,
+    now: datetime | None = None,
+) -> bool:
+    _start_transition(session)
+    released_at = _database_now(session, now)
+    document_id = session.scalar(
+        update(ProfileProcessingJob)
+        .where(
+            ProfileProcessingJob.id == job_id,
+            ProfileProcessingJob.job_type == job_type,
+            ProfileProcessingJob.status == JOB_STATUS_RUNNING,
+            ProfileProcessingJob.claim_token == claim_token,
+        )
+        .values(
+            status=JOB_STATUS_QUEUED,
+            attempt_count=ProfileProcessingJob.attempt_count - 1,
+            started_at=case(
+                (ProfileProcessingJob.attempt_count <= 1, None),
+                else_=ProfileProcessingJob.started_at,
+            ),
+            available_at=released_at,
+            finished_at=None,
+            processing_stage=None,
+            failed_stage=None,
+            lease_owner=None,
+            claim_token=None,
+            claimed_at=None,
+            heartbeat_at=None,
+            lease_expires_at=None,
+            updated_at=released_at,
+        )
+        .returning(ProfileProcessingJob.document_id)
+        .execution_options(synchronize_session=False)
+    )
+    if document_id is None:
+        session.rollback()
+        return False
+
+    if released_document_status is not None:
+        document_result = session.execute(
+            update(ProfileDocument)
+            .where(
+                ProfileDocument.id == document_id,
+                ProfileDocument.status == claimed_document_status,
+            )
+            .values(
+                status=released_document_status,
+                processing_error=None,
+                updated_at=released_at,
+            )
+        )
+        if document_result.rowcount != 1:
+            session.rollback()
+            return False
 
     session.commit()
     return True

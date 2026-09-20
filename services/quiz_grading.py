@@ -226,7 +226,16 @@ class QuizGradingService:
         try:
             provider = provider_factory()
         except Exception:
-            logger.warning("quiz grading provider could not be built", exc_info=True)
+            logger.warning(
+                "quiz grading provider could not be built",
+                exc_info=True,
+                extra={
+                    "event": "quiz_grading_provider_unavailable",
+                    "course_id": course_id,
+                    "user_id": user_id,
+                    "generation_type": GenerationType.QUIZ_GRADING.value,
+                },
+            )
             log_failure(ErrorCategory.PROVIDER_ERROR)
             return graded
 

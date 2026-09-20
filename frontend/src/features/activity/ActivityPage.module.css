@@ -7,9 +7,18 @@
 .body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-7);
+  gap: var(--space-6);
+  width: 100%;
+  max-width: 64rem;
   padding: 0 var(--space-5) var(--space-7);
   min-width: 0;
+}
+
+.body .historyHeading {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-normal);
+  color: var(--text);
 }
 
 .intro {

@@ -234,4 +234,5 @@ def test_a_server_side_failure_carries_frames_through_the_formatter(caplog) -> N
 
     assert with_frames
     assert any("in failing_call" in frame for frame in with_frames[0]["stack"])
-    assert "provider exploded" not in json.dumps(payloads)
+    assert all("provider exploded" not in frame for frame in with_frames[0]["stack"])
+    assert "RuntimeError: provider exploded" in with_frames[0]["exception_message"]

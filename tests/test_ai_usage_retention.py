@@ -1,4 +1,5 @@
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -87,6 +88,33 @@ def test_cleanup_commits_bounded_batches(
     assert report.batches == 3
     with session_factory() as session:
         assert session.scalar(select(AiUsageLog.id)) is None
+
+
+def test_cleanup_stops_between_batches_once_the_worker_is_stopping(
+    session_factory: sessionmaker[Session],
+) -> None:
+    now = datetime(2026, 8, 27, 12, tzinfo=timezone.utc)
+    _seed_usage(session_factory, [now - timedelta(days=100)] * 5)
+    stop = threading.Event()
+
+    @contextmanager
+    def stop_after_this_batch():
+        with session_factory() as session:
+            yield session
+        stop.set()
+
+    report = run_cleanup(
+        session_factory=stop_after_this_batch,
+        retention_days=90,
+        batch_size=2,
+        now=now,
+        stop_event=stop,
+    )
+
+    assert report.rows_deleted == 2
+    assert report.batches == 1
+    with session_factory() as session:
+        assert len(session.scalars(select(AiUsageLog.id)).all()) == 3
 
 
 def test_cleanup_dry_run_reports_without_deleting(

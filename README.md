@@ -197,10 +197,12 @@ The password must be at least 8 characters and at most 72 bytes, must not be a
 common password or a simple repeated or sequential pattern, and must not contain
 your name or the local part of your email address.
 
-> Create the administrator before you let anyone else reach Lumina. If you set
-> `LUMINA_BIND_ADDRESS=0.0.0.0` before registering, whoever registers first
-> becomes the administrator. To reserve that account for one address instead,
-> set `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_TOKEN` together; see
+> The port is open to your network from the first start, because
+> `LUMINA_BIND_ADDRESS` defaults to `0.0.0.0`. Register the administrator
+> immediately: the first account to register becomes the administrator, and
+> anyone reaching the port before you can claim it. To reserve that account
+> for one address instead, set `BOOTSTRAP_ADMIN_EMAIL` and
+> `BOOTSTRAP_ADMIN_TOKEN` together before starting; see
 > [`docs/deployment.md`](docs/deployment.md#protected-administrator-bootstrap).
 
 ### 8. Create your first course and quiz
@@ -222,6 +224,7 @@ your name or the local part of your email address.
 | `up` says the env file is not found | You skipped step 3. Lumina reads its whole configuration from `.env`; copy `.env.example` over. |
 | `lumina` exits straight away | A setting is missing or malformed. `docker compose logs lumina` names the variable. |
 | `up` says the port is already allocated | Something else holds `LUMINA_PORT`. Change it in `.env`, or stop the other program. |
+| Another device can't open Lumina | The port is published on every interface by default, so check the host firewall first: allow inbound TCP on `LUMINA_PORT`. Next check `.env` for a `LUMINA_BIND_ADDRESS` set to `127.0.0.1`, which keeps the port on this machine only; remove it or set it to `0.0.0.0` (every network this machine is on) or this machine's Tailscale address (`100.x.y.z`, reachable from your tailnet only), then run `docker compose up --detach --wait`. `docker compose ps` should now show `0.0.0.0:10312->8000/tcp` (or your address). Still nothing: you may be reaching the wrong address from the other device. Register the administrator before you open the port: the first account to register becomes the administrator unless `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_TOKEN` reserve it (step 7). |
 | The page loads but every request fails | An earlier version of this stack may still be running. `docker compose down --remove-orphans` (never `--volumes`), then `up` again. |
 | A source stays in processing | Extraction or OCR is still running. Watch `docker compose logs --follow lumina-worker`. |
 | A source reaches failed | The PDF is encrypted, corrupt, or beyond the configured page and size limits. |
@@ -262,8 +265,10 @@ code.
 
 `LUMINA_PORT` in `.env` is the whole address. Change it and run `up` again:
 nothing needs rebuilding, because the interface asks for `/api` on whatever
-origin served it. Set `LUMINA_BIND_ADDRESS=0.0.0.0` to reach Lumina from
-another machine on your network.
+origin served it. `LUMINA_BIND_ADDRESS` defaults to `0.0.0.0`, so Lumina is
+already reachable from another machine on your network. To narrow that, set
+`LUMINA_BIND_ADDRESS` to `127.0.0.1` (this machine only) or to one address,
+such as this machine's Tailscale address.
 
 If you put a TLS reverse proxy in front, set `FORWARDED_ALLOW_IPS` to that
 proxy's address and turn on `SECURITY_HSTS_ENABLED`. Leave `FORWARDED_ALLOW_IPS`

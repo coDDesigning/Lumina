@@ -95,6 +95,18 @@ const DOCUMENT_FAILURES: Record<string, DocumentFailureCopy> = {
     message: 'This source cannot be tried again from the state it is in.',
     retryable: false,
   },
+  document_visuals_in_progress: {
+    message: 'These figures are already being described.',
+    retryable: true,
+  },
+  visual_analysis_not_configured: {
+    message: 'Figure analysis is switched off on this server.',
+    retryable: false,
+  },
+  document_visuals_not_retryable: {
+    message: 'Nothing to retry: every figure is described.',
+    retryable: false,
+  },
   document_storage_provider_mismatch: {
     message:
       'This source was stored by a different storage backend than this deployment uses, so it cannot be removed. An administrator needs to look at it.',

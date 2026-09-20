@@ -5,6 +5,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Protocol
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -16,6 +17,10 @@ from backend.app.observability import configure_logging, emit_emf_metrics
 
 logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], Session]
+
+
+class StopEvent(Protocol):
+    def is_set(self) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -38,6 +43,7 @@ def run_cleanup(
     batch_size: int | None = None,
     now: datetime | None = None,
     dry_run: bool = False,
+    stop_event: StopEvent | None = None,
 ) -> CleanupReport:
     if retention_days is None:
         retention_days = settings.ai_usage_retention_days
@@ -63,6 +69,8 @@ def run_cleanup(
     deleted_total = 0
     batches = 0
     while True:
+        if stop_event is not None and stop_event.is_set():
+            break
         with session_factory() as session:
             identifiers = list(
                 session.scalars(
@@ -90,7 +98,14 @@ def run_cleanup(
         {"AiUsageRowsDeleted": report.rows_deleted},
         dimensions={"Service": "ai_usage_cleanup", "Environment": settings.app_env},
     )
-    logger.info("AI usage cleanup finished: %s", report.summary())
+    logger.info(
+        "AI usage cleanup finished: %s",
+        report.summary(),
+        extra={
+            "event": "ai_usage_cleanup_completed",
+            "maintenance_task": "ai_usage_cleanup",
+        },
+    )
     return report
 
 

@@ -15,6 +15,7 @@ from uuid import uuid4
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _MAX_STACK_FRAMES = 12
+_MAX_EXCEPTION_MESSAGE = 500
 
 _REQUEST_ID: ContextVar[str | None] = ContextVar("request_id", default=None)
 _OPERATION_CONTEXT: ContextVar[dict[str, Any]] = ContextVar(
@@ -29,6 +30,24 @@ _SECRET_PATTERN = re.compile(
     \b(?P<bearer>bearer)\s+[^\s,;\"'{}()]+
     """
 )
+_SQL_STATEMENT_PATTERN = re.compile(
+    r"\[SQL:(?:(?!\n\[|\n\(Background on this error at:).)*(?<!\[REDACTED)\]",
+    re.DOTALL,
+)
+_SQL_PARAMETERS_PATTERN = re.compile(
+    r"\[parameters:(?:(?!\n\[|\n\(Background on this error at:).)*(?<!\[REDACTED)\]",
+    re.DOTALL,
+)
+_URL_QUERY_PATTERN = re.compile(r"""https?://[^\s"'<>{}()?]+\?[^\s"'<>()]*""")
+_EMAIL_PATTERN = re.compile(
+    r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}"
+)
+_VALIDATION_INPUT_PATTERN = re.compile(
+    r"(\[type=\w+, input(?:_value)?=).*?(, input_type=\w+\])"
+)
+_MAX_REDACT_INPUT_LENGTH = 4000
+_TRUNCATION_MARKER = "[REDACTED]"
+_MAX_TRUNCATION_SETTLE_PASSES = 4
 _ALLOWED_FIELDS = (
     "action",
     "application_version",
@@ -54,18 +73,24 @@ _ALLOWED_FIELDS = (
     "http_method",
     "http_path",
     "http_status",
+    "item_count",
     "job_id",
     "job_status",
     "job_type",
+    "lock_holder",
+    "maintenance_task",
     "model",
     "operation_id",
     "owner_id",
+    "page_number",
     "parent_operation_id",
     "pricing_version",
+    "profile_document_id",
     "prompt_tokens",
     "provider",
     "rate_limit_control",
     "rate_limit_feature",
+    "reason",
     "related_request_id",
     "response_bytes",
     "retry_after_seconds",
@@ -74,18 +99,60 @@ _ALLOWED_FIELDS = (
     "success",
     "stack",
     "user_id",
+    "visual_index",
     "worker_id",
 )
 
 
+def _safe_cut(text: str, limit: int) -> str:
+    cut = max(0, min(limit, len(text)))
+    marker_len = len(_TRUNCATION_MARKER)
+    search_start = max(0, cut - marker_len + 1)
+    for start in range(search_start, cut):
+        if (
+            text[start : start + marker_len] == _TRUNCATION_MARKER
+            and start + marker_len > cut
+        ):
+            return text[:start]
+    return text[:cut]
+
+
 def redact(value: str) -> str:
-    def _replace(match: re.Match[str]) -> str:
+    def _replace_secret(match: re.Match[str]) -> str:
         if match.group("bearer"):
             return f"{match.group('bearer')} [REDACTED]"
         quote = match.group("quote") or ""
         return f"{match.group('key')}[REDACTED]{quote}"
 
-    return _SECRET_PATTERN.sub(_replace, value)
+    def _replace_url_query(match: re.Match[str]) -> str:
+        url = match.group(0)
+        return f"{url[: url.index('?') + 1]}[REDACTED]"
+
+    def _apply_patterns(text: str) -> str:
+        text = _URL_QUERY_PATTERN.sub(_replace_url_query, text)
+        text = _SECRET_PATTERN.sub(_replace_secret, text)
+        text = _SQL_STATEMENT_PATTERN.sub("[SQL: [REDACTED]]", text)
+        text = _SQL_PARAMETERS_PATTERN.sub("[parameters: [REDACTED]]", text)
+        text = _EMAIL_PATTERN.sub("[REDACTED]", text)
+        text = _VALIDATION_INPUT_PATTERN.sub(r"\1[REDACTED]\2", text)
+        return text
+
+    truncated = len(value) > _MAX_REDACT_INPUT_LENGTH
+    if truncated:
+        value = value[:_MAX_REDACT_INPUT_LENGTH]
+    value = _apply_patterns(value)
+
+    if truncated or len(value) > _MAX_REDACT_INPUT_LENGTH:
+        budget = _MAX_REDACT_INPUT_LENGTH - len(_TRUNCATION_MARKER) - 1
+        value = f"{_safe_cut(value, budget)} {_TRUNCATION_MARKER}"
+        for _ in range(_MAX_TRUNCATION_SETTLE_PASSES):
+            settled = _apply_patterns(value)
+            if len(settled) > _MAX_REDACT_INPUT_LENGTH:
+                settled = f"{_safe_cut(settled, budget)} {_TRUNCATION_MARKER}"
+            if settled == value:
+                break
+            value = settled
+    return value
 
 
 def _exception_type_chain(exc: BaseException | None) -> list[str]:
@@ -103,6 +170,22 @@ def _exception_type_chain(exc: BaseException | None) -> list[str]:
         names.append(type(current).__name__)
         current = current.__cause__ or current.__context__
     return names
+
+
+def _exception_message(exc: BaseException | None) -> str | None:
+    parts: list[str] = []
+    seen: set[int] = set()
+    current = exc
+    while current is not None and id(current) not in seen and len(parts) < 10:
+        seen.add(id(current))
+        text = str(current).strip()
+        parts.append(
+            f"{type(current).__name__}: {text}" if text else type(current).__name__
+        )
+        current = current.__cause__ or current.__context__
+    if not parts:
+        return None
+    return redact(" <- ".join(parts))[:_MAX_EXCEPTION_MESSAGE]
 
 
 def _innermost_exception(exc: BaseException) -> BaseException:
@@ -130,10 +213,10 @@ def _stack_frames(exc: BaseException) -> list[str]:
 
 
 class JsonFormatter(logging.Formatter):
-    """Render one JSON object per record without request content.
+    """Render one JSON object per record with secrets redacted.
 
-    Records logged at ERROR with an exception also carry `stack`: project
-    relative frames only, never a traceback rendering or an exception message.
+    Records logged with an exception carry its redacted, truncated message
+    chain, and at WARNING or above also `stack`: project relative frames.
     """
 
     def __init__(self, *, service: str, environment: str) -> None:
@@ -175,6 +258,10 @@ class JsonFormatter(logging.Formatter):
             chain = _exception_type_chain(record.exc_info[1])
             if len(chain) > 1:
                 payload["exception_chain"] = chain
+        if record.exc_info and "exception_message" not in payload:
+            message = _exception_message(record.exc_info[1])
+            if message:
+                payload["exception_message"] = message
         if (
             record.levelno >= logging.ERROR
             and record.exc_info
@@ -210,6 +297,7 @@ def configure_logging(
         for handler in logging.getLogger(name).handlers:
             handler.setFormatter(formatter)
     logging.getLogger("uvicorn.access").disabled = True
+    logging.getLogger("alembic").setLevel(logging.WARNING)
     if persistence_path and not any(
         getattr(handler, "_lumina_operational_handler", False)
         for handler in root.handlers

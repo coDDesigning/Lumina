@@ -134,7 +134,7 @@ Everything in `src/ui/`. Use them; do not hand-roll an equivalent.
 `Alert` · `Badge` · `Brandmark` · `Breath` · `Button` · `Card` · `Checkbox` ·
 `ConfirmDialog` · `CourseLight` · `Dialog` · `EmptyState` · `ErrorState` · `Field` ·
 `IconButton` · `Input` / `Textarea` / `Select` · `LinkButton` · `MasterDetail` ·
-`PageHeader` · `Skeleton` · `Spinner` · `Switch` · `Tabs` · `ToastProvider`
+`PageHeader` · `Skeleton` · `Spinner` · `Switch` · `Tabs` · `ToastProvider` · `Tooltip`
 
 Import them by module — `import { Button } from '@/ui/Button'`. There is no barrel;
 `src/ui/index.ts` was deleted because nothing imported it and it had already drifted

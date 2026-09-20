@@ -44,7 +44,12 @@ from backend.app.config import (
 )
 from backend.app.database import SessionLocal
 from backend.app.models import Course, ProfileDocument, UploadedDocument, User
-from backend.app.observability import configure_logging, emit_emf_metrics
+from backend.app.observability import (
+    bind_operation_context,
+    configure_logging,
+    emit_emf_metrics,
+    reset_operation_context,
+)
 from backend.app.readiness import ReadinessError, check_readiness
 from services.course import CourseDeletionError, CourseService
 from services.account_deletion import AccountDeletionError, AccountDeletionService
@@ -317,7 +322,15 @@ def run_account_purge(
         dimensions={"Service": "account_purge", "Environment": settings.app_env},
         units={"OldestAccountTombstoneAgeSeconds": "Seconds"},
     )
-    logger.info("Account purge finished: %s", report.summary())
+    logger.info(
+        "Account purge finished: %s",
+        report.summary(),
+        extra={
+            "event": "account_purge_finished",
+            "maintenance_task": "account_purge",
+            "user_id": user_id,
+        },
+    )
     return report
 
 
@@ -350,6 +363,7 @@ def run_purge(
             course = session.get(Course, identifier)
             if course is None or not course.is_deleted:
                 continue
+            owner_id = course.owner_id
             report.courses_examined += 1
 
             tombstone_time = course.updated_at or course.created_at
@@ -366,12 +380,12 @@ def run_purge(
                 logger.warning(
                     "Aged course tombstone detected for course %s (owner %s, age: %.1fs)",
                     identifier,
-                    course.owner_id,
+                    owner_id,
                     age_seconds,
                     extra={
                         "event": "aged_tombstone_detected",
                         "course_id": identifier,
-                        "owner_id": course.owner_id,
+                        "owner_id": owner_id,
                         "duration_ms": round(age_seconds * 1000, 1),
                         "runbook": "docs/runbooks/stranded_tombstone.md",
                     },
@@ -395,6 +409,12 @@ def run_purge(
                 logger.exception(
                     "Course %s could not be purged; its tombstone is retained",
                     identifier,
+                    extra={
+                        "event": "course_purge_failed",
+                        "course_id": identifier,
+                        "owner_id": owner_id,
+                        "maintenance_task": "course_purge",
+                    },
                 )
                 report.courses_failed += 1
                 continue
@@ -411,7 +431,15 @@ def run_purge(
         dimensions={"Service": "course_purge", "Environment": settings.app_env},
         units={"OldestTombstoneAgeSeconds": "Seconds"},
     )
-    logger.info("Course purge finished: %s", report.summary())
+    logger.info(
+        "Course purge finished: %s",
+        report.summary(),
+        extra={
+            "event": "course_purge_finished",
+            "maintenance_task": "course_purge",
+            "course_id": course_id,
+        },
+    )
     return report
 
 
@@ -506,6 +534,13 @@ def run_document_purge(
                 logger.warning(
                     "Document %s tombstone could not be resolved to a deletable row",
                     identifier,
+                    extra={
+                        "event": "course_purge_document_failed",
+                        "document_id": str(identifier),
+                        "course_id": owning_course_id,
+                        "maintenance_task": "document_purge",
+                        "reason": "not_found",
+                    },
                 )
                 report.documents_failed += 1
                 continue
@@ -513,6 +548,12 @@ def run_document_purge(
                 logger.exception(
                     "Document %s could not be purged; its tombstone is retained",
                     identifier,
+                    extra={
+                        "event": "course_purge_document_failed",
+                        "document_id": str(identifier),
+                        "course_id": owning_course_id,
+                        "maintenance_task": "document_purge",
+                    },
                 )
                 report.documents_failed += 1
                 continue
@@ -548,7 +589,15 @@ def run_document_purge(
         dimensions={"Service": "document_purge", "Environment": settings.app_env},
         units={"OldestDocumentTombstoneAgeSeconds": "Seconds"},
     )
-    logger.info("Document purge finished: %s", report.summary())
+    logger.info(
+        "Document purge finished: %s",
+        report.summary(),
+        extra={
+            "event": "document_purge_finished",
+            "maintenance_task": "document_purge",
+            "course_id": course_id,
+        },
+    )
     return report
 
 
@@ -621,6 +670,13 @@ def _purge_profile_documents(
                     "Profile document %s tombstone could not be resolved "
                     "to a deletable row",
                     identifier,
+                    extra={
+                        "event": "course_purge_profile_document_failed",
+                        "document_id": str(identifier),
+                        "owner_id": owner_id,
+                        "maintenance_task": "profile_document_purge",
+                        "reason": "not_found",
+                    },
                 )
                 report.profile_documents_failed += 1
                 continue
@@ -629,6 +685,12 @@ def _purge_profile_documents(
                     "Profile document %s could not be purged; "
                     "its tombstone is retained",
                     identifier,
+                    extra={
+                        "event": "course_purge_profile_document_failed",
+                        "document_id": str(identifier),
+                        "owner_id": owner_id,
+                        "maintenance_task": "profile_document_purge",
+                    },
                 )
                 report.profile_documents_failed += 1
                 continue
@@ -658,47 +720,99 @@ def run_purge_worker(
     if stop.is_set():
         return
 
-    logger.info("Course purge worker started (interval=%.1fs)", interval_seconds)
+    logger.info(
+        "Course purge worker started (interval=%.1fs)",
+        interval_seconds,
+        extra={"event": "course_purge_worker_started", "course_id": course_id},
+    )
     try:
         while not stop.is_set():
+            operation_token = bind_operation_context(
+                operation_id="maintenance:course_purge"
+            )
             try:
-                run_account_purge(
-                    session_factory=session_factory,
-                    storage=storage,
-                    vector_store=vector_store,
-                    user_id=None,
-                    dry_run=dry_run,
-                    stop_event=stop,
-                )
-            except Exception:
-                logger.exception("Account purge execution failed")
-            try:
-                run_purge(
+                _run_purge_cycle(
                     session_factory=session_factory,
                     storage=storage,
                     vector_store=vector_store,
                     course_id=course_id,
                     dry_run=dry_run,
-                    stop_event=stop,
+                    stop=stop,
                 )
-            except Exception:
-                logger.exception("Course purge execution failed")
-            try:
-                run_document_purge(
-                    session_factory=session_factory,
-                    storage=storage,
-                    vector_store=vector_store,
-                    course_id=course_id,
-                    dry_run=dry_run,
-                    stop_event=stop,
-                )
-            except Exception:
-                logger.exception("Document purge execution failed")
+            finally:
+                reset_operation_context(operation_token)
             if once or stop.is_set():
                 break
             stop.wait(interval_seconds)
     finally:
-        logger.info("Course purge worker stopped")
+        logger.info(
+            "Course purge worker stopped",
+            extra={"event": "course_purge_worker_stopped", "course_id": course_id},
+        )
+
+
+def _run_purge_cycle(
+    *,
+    session_factory: SessionFactory,
+    storage: Storage,
+    vector_store: VectorStore,
+    course_id: int | None,
+    dry_run: bool,
+    stop: StopEvent,
+) -> None:
+    try:
+        run_account_purge(
+            session_factory=session_factory,
+            storage=storage,
+            vector_store=vector_store,
+            user_id=None,
+            dry_run=dry_run,
+            stop_event=stop,
+        )
+    except Exception:
+        logger.exception(
+            "Account purge pass failed unexpectedly",
+            extra={
+                "event": "account_purge_pass_failed",
+                "maintenance_task": "account_purge",
+            },
+        )
+    try:
+        run_purge(
+            session_factory=session_factory,
+            storage=storage,
+            vector_store=vector_store,
+            course_id=course_id,
+            dry_run=dry_run,
+            stop_event=stop,
+        )
+    except Exception:
+        logger.exception(
+            "Course purge pass failed unexpectedly",
+            extra={
+                "event": "course_purge_pass_failed",
+                "maintenance_task": "course_purge",
+                "course_id": course_id,
+            },
+        )
+    try:
+        run_document_purge(
+            session_factory=session_factory,
+            storage=storage,
+            vector_store=vector_store,
+            course_id=course_id,
+            dry_run=dry_run,
+            stop_event=stop,
+        )
+    except Exception:
+        logger.exception(
+            "Document purge pass failed unexpectedly",
+            extra={
+                "event": "document_purge_pass_failed",
+                "maintenance_task": "document_purge",
+                "course_id": course_id,
+            },
+        )
 
 
 def _install_shutdown_handlers(stop_event: _SignalStopEvent) -> None:
@@ -772,9 +886,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         try:
             check_purge_ready()
         except ReadinessError as exc:
-            logger.error("Course purge readiness check failed: %s", exc)
+            logger.error(
+                "Course purge readiness check failed: %s",
+                exc,
+                extra={
+                    "event": "worker_readiness_check_failed",
+                    "failed_stage": exc.check,
+                },
+            )
             raise SystemExit(1) from None
-        logger.info("Course purge readiness check succeeded")
+        logger.info(
+            "Course purge readiness check succeeded",
+            extra={"event": "worker_readiness_check_succeeded"},
+        )
         return
 
     if arguments.interval_seconds is not None:
@@ -791,7 +915,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                 dry_run=arguments.dry_run,
             )
         except ReadinessError as exc:
-            logger.error("Course purge readiness check failed: %s", exc)
+            logger.error(
+                "Course purge readiness check failed: %s",
+                exc,
+                extra={
+                    "event": "worker_readiness_check_failed",
+                    "failed_stage": exc.check,
+                },
+            )
             raise SystemExit(1) from None
         return
 

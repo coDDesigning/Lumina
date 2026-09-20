@@ -140,6 +140,10 @@ MAX_GENERATION_JOB_CONCURRENCY = 6
 # than a worker tuning knob and is deliberately small.
 DEFAULT_GENERATION_JOB_MAX_ACTIVE_PER_USER = 2
 MAX_GENERATION_JOB_MAX_ACTIVE_PER_USER = 10
+WORKER_SHUTDOWN_MODE_ABORT = "abort"
+WORKER_SHUTDOWN_MODE_DRAIN = "drain"
+WORKER_SHUTDOWN_MODES = (WORKER_SHUTDOWN_MODE_ABORT, WORKER_SHUTDOWN_MODE_DRAIN)
+DEFAULT_WORKER_SHUTDOWN_MODE = WORKER_SHUTDOWN_MODE_ABORT
 DEFAULT_MAX_EXTRACTED_CHARACTERS = 2_000_000
 DEFAULT_MAX_DOCUMENT_CHUNKS = 1_000
 DEFAULT_OCR_LANGUAGE = "eng"
@@ -321,6 +325,7 @@ class Settings:
     generation_job_attempt_timeout_seconds: int
     generation_job_concurrency: int
     generation_job_max_active_per_user: int
+    worker_shutdown_mode: str
     max_extracted_characters: int
     max_document_chunks: int
     ocr_language: str
@@ -822,6 +827,14 @@ def load_settings() -> Settings:
         minimum=1,
         maximum=MAX_GENERATION_JOB_MAX_ACTIVE_PER_USER,
     )
+    worker_shutdown_mode = (
+        os.getenv("WORKER_SHUTDOWN_MODE", DEFAULT_WORKER_SHUTDOWN_MODE).strip().lower()
+        or DEFAULT_WORKER_SHUTDOWN_MODE
+    )
+    if worker_shutdown_mode not in WORKER_SHUTDOWN_MODES:
+        raise ValueError(
+            f"WORKER_SHUTDOWN_MODE must be one of: {', '.join(WORKER_SHUTDOWN_MODES)}."
+        )
     if mode == MODE_HOSTED:
         # One worker process runs both pools. Every slot costs a job connection
         # plus its heartbeat connection, and each pool has its own coordinator.
@@ -1394,6 +1407,7 @@ def load_settings() -> Settings:
         generation_job_attempt_timeout_seconds=generation_job_attempt_timeout_seconds,
         generation_job_concurrency=generation_job_concurrency,
         generation_job_max_active_per_user=generation_job_max_active_per_user,
+        worker_shutdown_mode=worker_shutdown_mode,
         max_extracted_characters=max_extracted_characters,
         max_document_chunks=max_document_chunks,
         ocr_language=ocr_language,

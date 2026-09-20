@@ -22,9 +22,21 @@ def parse_json_object(
     try:
         parsed = json.loads(raw)
     except ValueError:
-        logger.warning("%s.%s for row %s is not valid JSON", table, field, row_id)
+        logger.warning(
+            "%s.%s for row %s is not valid JSON",
+            table,
+            field,
+            row_id,
+            extra={"event": "stored_json_unreadable", "reason": "invalid_json"},
+        )
         return None
     if not isinstance(parsed, dict):
-        logger.warning("%s.%s for row %s is not a JSON object", table, field, row_id)
+        logger.warning(
+            "%s.%s for row %s is not a JSON object",
+            table,
+            field,
+            row_id,
+            extra={"event": "stored_json_unreadable", "reason": "not_a_json_object"},
+        )
         return None
     return parsed

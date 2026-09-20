@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIError } from '@/api/client';
 import { adminAPI } from '@/api/admin';
+import { modelsAPI } from '@/api/models';
 import type { AiCostReport, CreditTransaction, User } from '@/api/types';
 import { ToastProvider } from '@/ui/ToastProvider'
 import AdminPage from './AdminPage';
@@ -29,6 +30,13 @@ vi.mock('@/api/admin', () => ({
     changeCredits: vi.fn(),
     listUserCreditTransactions: vi.fn(),
     listUserCourses: vi.fn(),
+  },
+}));
+
+vi.mock('@/api/models', () => ({
+  modelsAPI: {
+    list: vi.fn(),
+    test: vi.fn(),
   },
 }));
 
@@ -126,6 +134,11 @@ const COST_REPORT: AiCostReport = {
 };
 
 const mocked = vi.mocked(adminAPI);
+const mockedModels = vi.mocked(modelsAPI);
+
+beforeEach(() => {
+  mockedModels.list.mockResolvedValue([]);
+});
 
 function renderPage() {
   return render(

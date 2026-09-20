@@ -600,6 +600,47 @@ def heartbeat_generation_job(
     return True
 
 
+def release_generation_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    _start_transition(session)
+    released_at = _database_now(session, now)
+    result = session.execute(
+        update(GenerationJob)
+        .where(
+            GenerationJob.id == job_id,
+            GenerationJob.status == JOB_STATUS_RUNNING,
+            GenerationJob.claim_token == claim_token,
+        )
+        .values(
+            status=JOB_STATUS_QUEUED,
+            attempt_count=GenerationJob.attempt_count - 1,
+            started_at=case(
+                (GenerationJob.attempt_count <= 1, None),
+                else_=GenerationJob.started_at,
+            ),
+            available_at=released_at,
+            finished_at=None,
+            lease_owner=None,
+            claim_token=None,
+            claimed_at=None,
+            heartbeat_at=None,
+            lease_expires_at=None,
+            updated_at=released_at,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        session.rollback()
+        return False
+    session.commit()
+    return True
+
+
 def complete_generation_job(
     session: Session,
     job_id: int,

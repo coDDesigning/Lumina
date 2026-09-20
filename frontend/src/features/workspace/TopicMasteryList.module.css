@@ -1,0 +1,112 @@
+.bar {
+  height: 0.5rem;
+  border-radius: var(--radius-full);
+  background: var(--border);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.fillReview {
+  background: var(--warning);
+}
+
+.fillProgress {
+  background: var(--processing);
+}
+
+.fillMastered {
+  background: var(--success);
+}
+
+.shortBar {
+  width: 100%;
+  min-width: 6rem;
+}
+
+.name {
+  font-weight: var(--weight-medium);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.percent {
+  font-weight: var(--weight-semibold);
+  text-align: right;
+  min-width: 2.75rem;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-weight: var(--weight-normal);
+}
+
+.numeric {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table {
+  width: 100%;
+  max-width: 56rem;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  table-layout: fixed;
+}
+
+.table th,
+.table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--border-width) solid var(--border);
+  vertical-align: middle;
+}
+
+.table thead th {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.table thead th.numeric {
+  text-align: right;
+}
+
+.table th:first-child {
+  padding-left: 0;
+  width: 40%;
+}
+
+.table th:nth-child(2) {
+  width: 30%;
+}
+
+.table th:last-child,
+.table td:last-child {
+  padding-right: 0;
+  width: 9rem;
+}
+
+.meterCell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+@media (max-width: 48rem) {
+  .table th:nth-child(3),
+  .table td:nth-child(3) {
+    display: none;
+  }
+
+  .table th:first-child {
+    width: auto;
+  }
+}

@@ -24,6 +24,7 @@ class GenerationType(str, Enum):
     EXAM_SIMILAR_QUESTIONS = "exam_similar_questions"
     EXAM_MOCK_EXAM = "exam_mock_exam"
     EXAM_REVIEW_SHEET = "exam_review_sheet"
+    SYLLABUS_TOPICS = "syllabus_topics"
 
 
 class ErrorCategory(str, Enum):

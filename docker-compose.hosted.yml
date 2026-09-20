@@ -128,7 +128,7 @@ services:
     <<: *lumina
     pull_policy: build
     ports:
-      - "${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-10312}:8000"
+      - "${LUMINA_BIND_ADDRESS:-0.0.0.0}:${LUMINA_PORT:-10312}:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -160,7 +160,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-645s}
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-60s}
 
 volumes:
   pgdata:

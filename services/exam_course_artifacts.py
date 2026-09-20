@@ -227,7 +227,14 @@ def render_type_quotas(quotas: tuple[TypeQuota, ...]) -> str:
 
 
 def _reject_mock(reason: str) -> None:
-    logger.warning("Mock exam refused: %s", reason)
+    logger.warning(
+        "Mock exam refused: %s",
+        reason,
+        extra={
+            "event": "exam_artifact_rejected",
+            "generation_type": GenerationType.EXAM_MOCK_EXAM.value,
+        },
+    )
     raise InvalidExamArtifactStructureError(MOCK_INVALID_MESSAGE)
 
 

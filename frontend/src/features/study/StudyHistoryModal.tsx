@@ -4,7 +4,10 @@ import { generatedOutputsAPI } from '@/api/generatedOutputs';
 import { queryKeys } from '@/api/queryKeys';
 import { useQuery } from '@/lib/query/useQuery';
 import type {
+  ExamPlanView,
+  ExamReviewSheetDocument,
   ExamRoadmap,
+  ExamTopicGuideDocument,
   GeneratedOutputDetail,
   GeneratedOutputSummary,
   StudyGuideResponse,
@@ -19,6 +22,9 @@ import {
   DetailPlaceholder,
   MasterDetail,
 } from '@/ui/MasterDetail';
+import { ExamReviewSheet } from '@/features/examMode/ExamReviewSheet';
+import { ExamTopicGuide } from '@/features/examMode/ExamTopicGuide';
+import { RankedTopicList } from '@/features/examMode/RankedTopicList';
 import { ExamRoadmapView } from './ExamRoadmapView';
 import { FlashcardDeck } from './FlashcardDeck';
 import { StoredQuiz } from './quiz/StoredQuiz';
@@ -32,6 +38,7 @@ import {
   studyGuideContext,
   tryParseJson,
 } from './storedOutput';
+import { isListedOutputType, outputTypeLabel, QUIZ_SHAPED_OUTPUT_TYPES } from './outputTypes';
 import styles from './StudyHistoryModal.module.css';
 
 export interface StudyHistoryModalProps {
@@ -52,17 +59,15 @@ type DetailState =
   | { phase: 'ready'; output: GeneratedOutputDetail }
   | { phase: 'error'; message: string };
 
-const OUTPUT_TYPE_LABELS: Record<string, string> = {
-  study_guide: 'Study guide',
-  last_minute_review: 'Last-minute review',
-  flashcards: 'Flashcards',
-  flashcard: 'Flashcards',
-  quiz: 'Practice quiz',
-  exam_roadmap: 'Exam roadmap',
-};
-
 function outputLabel(output: GeneratedOutputSummary): string {
-  return OUTPUT_TYPE_LABELS[output.output_type] ?? output.output_type;
+  return outputTypeLabel(output.output_type);
+}
+
+function asRecord(content: unknown): Record<string, unknown> | null {
+  const parsed = tryParseJson(content);
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : null;
 }
 
 function formatCreatedAt(value: string): string {
@@ -108,7 +113,33 @@ function StoredOutput({ output }: { output: GeneratedOutputDetail }) {
     }
   }
 
-  if (output.output_type === 'quiz') {
+  if (output.output_type === 'exam_plan') {
+    const plan = asRecord(content);
+    if (plan && Array.isArray(plan.topics)) {
+      return (
+        <RankedTopicList
+          courseId={output.course_id}
+          plan={{ ...plan, generated_output_id: output.id } as unknown as ExamPlanView}
+        />
+      );
+    }
+  }
+
+  if (output.output_type === 'exam_review_sheet') {
+    const sheet = asRecord(content);
+    if (sheet && Array.isArray(sheet.topics) && Array.isArray(sheet.final_checks)) {
+      return <ExamReviewSheet sheet={sheet as unknown as ExamReviewSheetDocument} />;
+    }
+  }
+
+  if (output.output_type === 'exam_topic_guide') {
+    const guide = asRecord(content);
+    if (guide) {
+      return <ExamTopicGuide guide={guide as unknown as ExamTopicGuideDocument} />;
+    }
+  }
+
+  if (QUIZ_SHAPED_OUTPUT_TYPES.has(output.output_type)) {
     const quiz = extractQuiz(content);
     if (quiz) {
       return <StoredQuiz quiz={quiz} courseId={output.course_id} />;
@@ -166,11 +197,7 @@ export function StudyHistoryModal({ courseId, courseName, initialSelectedId, onC
     setSelectedId(initialSelectedId);
   }, [initialSelectedId]);
 
-  // Reverse-quiz sessions have their own history and no viewer here, so they
-  // are kept out of this list the same way they are kept out of the rail.
-  const visibleOutputs = listQuery.data?.filter(
-    (output) => output.output_type !== 'reverse_quiz',
-  );
+  const visibleOutputs = listQuery.data?.filter((output) => isListedOutputType(output.output_type));
 
   const listState: ListState =
     listQuery.status === 'error'

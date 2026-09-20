@@ -109,6 +109,28 @@ The following routes are rate-limited under this policy:
 - `POST /api/courses/{course_id}/exam-mode/topics/{topic_key}/similar-questions`
 - `POST /api/courses/{course_id}/exam-mode/mock-exam`
 - `POST /api/courses/{course_id}/exam-mode/review-sheet`
+- `POST /api/models/test`
+- `POST /api/courses/syllabus/topics`
+
+`POST /api/courses/syllabus/topics` suggests the topics a pasted syllabus covers.
+It is free (no credit charge) and is not scoped to a course, since it exists to
+help fill in a course's topics before the course itself has been created; it
+still shares the same per-user generation bucket and is logged to
+`ai_usage_logs`.
+
+`POST /api/models/test` never generates anything. It asks the selected
+provider to list its models (Ollama's `GET /api/tags`; the `google-genai`,
+`openai`, and `anthropic` SDKs' own `models.list()` for Gemini, OpenAI, and
+Anthropic) and checks that the selected model is in that list — the list
+itself is never shown to the caller. The route charges exactly one attempt
+against the shared bucket per call, regardless of outcome — the bucket counts
+calls to this route, not the requests the check makes against the vendor. The
+check applies no application-level retry and follows no vendor fallback
+chain; for OpenAI and Anthropic models it also builds the vendor SDK client
+with retries disabled (`max_retries=0`), so a hung or erroring vendor cannot
+silently multiply the call underneath it the way the ordinary generation
+path's built-in retries would. Testing every model from the account or admin
+page spends one attempt per model tested.
 
 Routes that do not call a text-generation provider are excluded:
 

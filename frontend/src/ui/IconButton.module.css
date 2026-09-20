@@ -22,6 +22,23 @@
   cursor: not-allowed;
 }
 
+.xs {
+  position: relative;
+  width: var(--size-control-xs);
+  height: var(--size-control-xs);
+}
+
+.xs svg {
+  width: var(--size-icon-xs);
+  height: var(--size-icon-xs);
+}
+
+.xs::after {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--space-1)) calc((var(--size-control-xs) - var(--size-touch-min)) / 2);
+}
+
 .sm {
   width: var(--size-control-sm);
   height: var(--size-control-sm);

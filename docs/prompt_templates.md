@@ -64,6 +64,7 @@ All templates reside in `app/prompts/<task_name>.json`:
 | `course_qa` | `2.3.0` | active | `services/course_qa.py` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |
 | `prompt_generator` | `2.0.0` | active | `services/prompt_generator.py` | User request transformation to optimized prompt | `PromptGenerationResponse` |
 | `image_description` | `1.0.0` | active | `services/image_understanding.py` | Visual descriptions for the retrieval index | — |
+| `syllabus_topics` | `1.0.0` | active | `services/syllabus_topics.py` | Suggests the topics a pasted syllabus covers, for course topic list building | `GeneratedSyllabusTopicsResponse` |
 | `visual_content` | `2.1.0` | deferred | Advanced visual understanding (not built) | Multimodal diagram, chart, table, and figure analysis | `VisualContentDescriptionResponse` |
 | `ocr_cleanup` | `1.1.0` | deferred | none | AI-assisted OCR text normalization and repair | `OcrCleanupResponse` |
 

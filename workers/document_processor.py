@@ -8,14 +8,15 @@ import signal
 import socket
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from typing import Protocol
 from uuid import uuid4
 
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from backend.app.config import settings
+from backend.app.config import WORKER_SHUTDOWN_MODE_ABORT, settings
 from backend.app.database import SessionLocal
 from backend.app.models import Course, JOB_TYPE_DESCRIBE_VISUALS
 from backend.app.observability import (
@@ -73,6 +74,10 @@ from services.processing_jobs import (
     heartbeat_profile_job,
     processing_queue_metrics,
     recover_expired_jobs,
+    release_describe_job,
+    release_job,
+    release_profile_describe_job,
+    release_profile_job,
     replace_document_pages,
     replace_profile_document_pages,
     record_profile_visual_description,
@@ -89,6 +94,7 @@ from services.vector_store import VectorStore, VectorStoreError
 from storage.base import Storage
 from storage.dependencies import get_storage
 from services.document_lock import release_expired_generation_locks
+from workers import shutdown
 from workers.ai_usage_cleanup import run_cleanup as run_ai_usage_cleanup
 from workers.course_purge import run_account_purge, run_document_purge, run_purge
 from workers.embedding_backfill import run_backfill
@@ -104,6 +110,62 @@ def _processing_job_type(job: ClaimedJob | ClaimedProfileJob) -> str:
     )
 
 
+def _describe_job_type(job: ClaimedJob | ClaimedProfileJob) -> str:
+    return (
+        "profile_document_visual_description"
+        if isinstance(job, ClaimedProfileJob)
+        else "course_document_visual_description"
+    )
+
+
+def _job_log_fields(job: ClaimedJob | ClaimedProfileJob) -> dict[str, object]:
+    fields: dict[str, object] = {
+        "job_id": job.id,
+        "job_type": _processing_job_type(job),
+        "document_id": str(job.document_id),
+        "attempt_number": job.attempt_count,
+    }
+    if isinstance(job, ClaimedJob):
+        fields["course_id"] = job.course_id
+    if job.user_id is not None:
+        fields["user_id"] = job.user_id
+    return fields
+
+
+def _in_flight_job(
+    job: ClaimedJob | ClaimedProfileJob, worker_id: str
+) -> shutdown.InFlightJob:
+    describing_visuals = job.job_type == JOB_TYPE_DESCRIBE_VISUALS
+    if isinstance(job, ClaimedProfileJob):
+        kind = shutdown.KIND_PROFILE_DOCUMENT
+        releaser = (
+            release_profile_describe_job if describing_visuals else release_profile_job
+        )
+    else:
+        kind = shutdown.KIND_COURSE_DOCUMENT
+        releaser = release_describe_job if describing_visuals else release_job
+    attempt_seconds = (
+        settings.describe_visuals_attempt_timeout_seconds
+        if describing_visuals
+        else settings.processing_job_attempt_timeout_seconds
+    )
+    return shutdown.InFlightJob(
+        kind=kind,
+        job_id=job.id,
+        job_type=(
+            _describe_job_type(job) if describing_visuals else _processing_job_type(job)
+        ),
+        claim_token=job.claim_token,
+        attempt_number=job.attempt_count,
+        worker_id=worker_id,
+        deadline=time.monotonic() + attempt_seconds,
+        releaser=releaser,
+        course_id=job.course_id if isinstance(job, ClaimedJob) else None,
+        user_id=job.user_id,
+        document_id=str(job.document_id),
+    )
+
+
 SessionFactory = Callable[[], Session]
 RECOVERY_BATCH_SIZE = 100
 MAX_RECOVERY_BATCHES_PER_PASS = 10
@@ -113,6 +175,10 @@ WORKER_SHUTDOWN_SIGNALS = {signal.SIGTERM, signal.SIGINT}
 
 class WorkerProcessFatalError(RuntimeError):
     """The worker process must exit so its supervisor can recycle it."""
+
+
+class ExtractionAbortedError(RuntimeError):
+    pass
 
 
 class StopEvent(Protocol):
@@ -184,14 +250,20 @@ def _heartbeat_loop(
                 logger.exception(
                     "Failed to heartbeat processing job %s",
                     job.id,
-                    extra={"job_id": job.id, "attempt_number": consecutive_failures},
+                    extra={
+                        "event": "processing_heartbeat_failed",
+                        **_job_log_fields(job),
+                    },
                 )
             else:
                 logger.warning(
                     "Still failing to heartbeat processing job %s (%s in a row)",
                     job.id,
                     consecutive_failures,
-                    extra={"job_id": job.id, "attempt_number": consecutive_failures},
+                    extra={
+                        "event": "processing_heartbeat_failed",
+                        **_job_log_fields(job),
+                    },
                 )
             if stop.wait(interval):
                 return
@@ -201,7 +273,10 @@ def _heartbeat_loop(
                 "Heartbeat for processing job %s recovered after %s failures",
                 job.id,
                 consecutive_failures,
-                extra={"job_id": job.id, "attempt_number": consecutive_failures},
+                extra={
+                    "event": "processing_heartbeat_recovered",
+                    **_job_log_fields(job),
+                },
             )
             consecutive_failures = 0
         if not current:
@@ -267,7 +342,6 @@ def _record_failure(
             else f"course {job.course_id}"
         )
         extra_fields = {
-            "event": "permanent_document_failure",
             "job_id": job.id,
             "document_id": str(job.document_id),
             "failed_stage": stage,
@@ -284,28 +358,32 @@ def _record_failure(
             job.document_id,
             scope_info,
             error.code,
-            extra=extra_fields,
+            extra={"event": "permanent_document_failure", **extra_fields},
         )
     if resulting_status is not None:
-        logger.warning(
-            "Document processing attempt ended",
-            extra={
-                "event": (
-                    "processing_job_retried"
-                    if resulting_status == "queued"
-                    else "processing_job_failed"
-                ),
-                "job_id": job.id,
-                "job_type": _processing_job_type(job),
-                "job_status": resulting_status,
-                "attempt_number": job.attempt_count,
-                "document_id": str(job.document_id),
-                "course_id": job.course_id if isinstance(job, ClaimedJob) else None,
-                "user_id": job.user_id,
-                "failed_stage": stage,
-                "error_code": error.code,
-            },
-        )
+        attempt_fields = {
+            "job_id": job.id,
+            "job_type": _processing_job_type(job),
+            "job_status": resulting_status,
+            "attempt_number": job.attempt_count,
+            "document_id": str(job.document_id),
+            "course_id": job.course_id if isinstance(job, ClaimedJob) else None,
+            "user_id": job.user_id,
+            "failed_stage": stage,
+            "error_code": error.code,
+        }
+        if resulting_status == "queued":
+            logger.warning(
+                "Document processing attempt ended; job %s will be retried",
+                job.id,
+                extra={"event": "processing_job_retried", **attempt_fields},
+            )
+        else:
+            logger.warning(
+                "Document processing attempt ended; job %s failed",
+                job.id,
+                extra={"event": "processing_job_failed", **attempt_fields},
+            )
     return resulting_status
 
 
@@ -413,14 +491,14 @@ def _describe_visuals_process(
     )
     if job.correlation_id is not None:
         bind_request_id(job.correlation_id)
+    describe_fields = _job_log_fields(job)
+    describe_fields["job_type"] = _describe_job_type(job)
     bind_operation_context(
         operation_id=(
             f"processing_job:describe:{'profile' if isinstance(job, ClaimedProfileJob) else 'course'}:{job.id}"
         ),
         parent_operation_id=job.parent_operation_id,
-        job_id=job.id,
-        job_type="course_document_visual_description",
-        attempt_number=job.attempt_count,
+        **describe_fields,
     )
     for shutdown_signal in WORKER_SHUTDOWN_SIGNALS:
         signal.signal(shutdown_signal, signal.SIG_IGN)
@@ -457,7 +535,14 @@ def _describe_visuals_process(
         connection.send(("succeeded", result.pages, result.chunks))
     except DocumentProcessingError as exc:
         logger.info(
-            "Visual description failed for job %s with code %s", job.id, exc.code
+            "Visual description failed for job %s with code %s",
+            job.id,
+            exc.code,
+            extra={
+                "event": "processing_job_failed",
+                "error_code": exc.code,
+                **_job_log_fields(job),
+            },
         )
         connection.send(("failed", exc.code, str(exc), exc.retryable))
     except Exception as exc:
@@ -504,9 +589,7 @@ def _extraction_process(
             f"processing_job:{'profile' if isinstance(job, ClaimedProfileJob) else 'course'}:{job.id}"
         ),
         parent_operation_id=job.parent_operation_id,
-        job_id=job.id,
-        job_type=_processing_job_type(job),
-        attempt_number=job.attempt_count,
+        **_job_log_fields(job),
     )
     # The parent owns graceful shutdown and the hard timeout for this child.
     for shutdown_signal in WORKER_SHUTDOWN_SIGNALS:
@@ -542,7 +625,14 @@ def _extraction_process(
         connection.send(("succeeded", result.pages, result.chunks))
     except DocumentProcessingError as exc:
         logger.info(
-            "Document processing failed for job %s with code %s", job.id, exc.code
+            "Document processing failed for job %s with code %s",
+            job.id,
+            exc.code,
+            extra={
+                "event": "processing_job_failed",
+                "error_code": exc.code,
+                **_job_log_fields(job),
+            },
         )
         connection.send(("failed", exc.code, str(exc), exc.retryable))
     except Exception as exc:
@@ -571,7 +661,10 @@ def _extract_with_timeout(
     prompt_context: PromptContext | None = None,
     visual_callback: Callable[[int, int, str, str], None] | None = None,
     resume_cache: dict[tuple[int, int], tuple[str, str]] | None = None,
+    abort_requested: Callable[[], bool] | None = None,
 ):
+    if abort_requested is not None and abort_requested():
+        raise ExtractionAbortedError("Shutdown aborted the attempt before it started")
     context = multiprocessing.get_context("spawn")
     parent_connection, child_connection = context.Pipe(duplex=True)
     if resume_cache is None:
@@ -588,6 +681,7 @@ def _extract_with_timeout(
     started = False
     result = None
     timed_out = False
+    aborted = False
     reaped = True
     try:
         _start_extraction_process(process)
@@ -595,6 +689,9 @@ def _extract_with_timeout(
         child_connection.close()
         deadline = time.monotonic() + timeout_seconds
         while True:
+            if abort_requested is not None and abort_requested():
+                aborted = True
+                break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
@@ -669,6 +766,8 @@ def _extract_with_timeout(
             except (EOFError, OSError):
                 break
     finally:
+        if started and aborted:
+            process.kill()
         parent_connection.close()
         child_connection.close()
         if started:
@@ -676,6 +775,8 @@ def _extract_with_timeout(
 
     if not reaped:
         raise WorkerProcessFatalError("Unable to terminate extraction subprocess")
+    if aborted:
+        raise ExtractionAbortedError("Shutdown aborted the extraction attempt")
     if timed_out and result is None:
         raise DocumentProcessingError(
             "PROCESSING_TIMEOUT",
@@ -795,7 +896,10 @@ def _stop_heartbeat(
     stop.set()
     heartbeat.join(timeout=HEARTBEAT_SHUTDOWN_SECONDS)
     if heartbeat.is_alive():
-        logger.error("Heartbeat did not stop before finalization")
+        logger.error(
+            "Heartbeat thread did not stop before the processing job was finalized",
+            extra={"event": "processing_heartbeat_stop_timeout"},
+        )
         claim_lost.set()
         return False
     return True
@@ -875,10 +979,10 @@ def process_next_job(
             f"processing_job:{'profile' if isinstance(job, ClaimedProfileJob) else 'course'}:{job.id}"
         ),
         parent_operation_id=job.parent_operation_id,
-        job_id=job.id,
-        job_type=_processing_job_type(job),
-        attempt_number=job.attempt_count,
+        **_job_log_fields(job),
     )
+    tracked = _in_flight_job(job, worker_id)
+    shutdown.register(tracked)
     try:
         processing_started = time.monotonic()
         logger.info(
@@ -894,6 +998,11 @@ def process_next_job(
         )
 
         describing_visuals = job.job_type == JOB_TYPE_DESCRIBE_VISUALS
+        abort_requested = (
+            shutdown_requested
+            if settings.worker_shutdown_mode == WORKER_SHUTDOWN_MODE_ABORT
+            else None
+        )
         stop = threading.Event()
         claim_lost = threading.Event()
         current_stage = "reading_file"
@@ -991,7 +1100,15 @@ def process_next_job(
                                 operation_timeout_seconds=remaining_seconds,
                             )
                 except Exception:
-                    logger.exception("Failed to persist raw pages for job %s", job.id)
+                    logger.exception(
+                        "Failed to persist raw pages for job %s",
+                        job.id,
+                        extra={
+                            "event": "processing_pages_persist_failed",
+                            "stage": "extracting_text",
+                            **_job_log_fields(job),
+                        },
+                    )
                     raise DocumentProcessingError(
                         "EXTRACTION_PERSISTENCE_FAILED",
                         "The extracted document content could not be recorded.",
@@ -1028,6 +1145,7 @@ def process_next_job(
                     prompt_context=prompt_context,
                     visual_callback=persist_visual,
                     resume_cache=resume_cache,
+                    abort_requested=abort_requested,
                 )
             else:
                 pages, chunks = _extract_with_timeout(
@@ -1040,6 +1158,7 @@ def process_next_job(
                         session_factory, job, usage
                     ),
                     prompt_context=prompt_context,
+                    abort_requested=abort_requested,
                 )
             persist_stage(EMBEDDING_STAGE)
             embeddings = embed_document_chunks(
@@ -1048,8 +1167,20 @@ def process_next_job(
             )
         except WorkerProcessFatalError:
             _stop_heartbeat(stop, heartbeat, claim_lost)
-            logger.critical("Extraction subprocess could not be reaped; exiting worker")
+            logger.critical(
+                "Extraction subprocess for job %s could not be reaped; exiting worker",
+                job.id,
+                extra={
+                    "event": "processing_subprocess_reap_failed",
+                    "worker_id": worker_id,
+                    **_job_log_fields(job),
+                },
+            )
             raise
+        except ExtractionAbortedError:
+            _stop_heartbeat(stop, heartbeat, claim_lost)
+            shutdown.release(tracked, session_factory)
+            return True
         except DocumentProcessingError as exc:
             heartbeat_stopped = _stop_heartbeat(stop, heartbeat, claim_lost)
             stage = getattr(exc, "failed_stage", None) or current_stage
@@ -1058,7 +1189,14 @@ def process_next_job(
                     _record_failure(session_factory, job, exc, active_stage=stage)
                 except Exception:
                     logger.exception(
-                        "Failed to record processing error for job %s", job.id
+                        "Failed to record processing error for job %s",
+                        job.id,
+                        extra={
+                            "event": "processing_failure_record_failed",
+                            "failed_stage": stage,
+                            "error_code": exc.code,
+                            **_job_log_fields(job),
+                        },
                     )
             emit_emf_metrics(
                 {"JobsRetried" if exc.retryable else "JobsFailed": 1},
@@ -1074,7 +1212,16 @@ def process_next_job(
             )
             return True
         except Exception:
-            logger.exception("Unexpected processing failure for job %s", job.id)
+            logger.exception(
+                "Unexpected processing failure for job %s",
+                job.id,
+                extra={
+                    "event": "processing_job_failed",
+                    "error_code": "UNEXPECTED_PROCESSING_ERROR",
+                    "stage": current_stage,
+                    **_job_log_fields(job),
+                },
+            )
             heartbeat_stopped = _stop_heartbeat(stop, heartbeat, claim_lost)
             stage = current_stage
             if heartbeat_stopped and not claim_lost.is_set():
@@ -1091,7 +1238,14 @@ def process_next_job(
                     )
                 except Exception:
                     logger.exception(
-                        "Failed to record processing error for job %s", job.id
+                        "Failed to record processing error for job %s",
+                        job.id,
+                        extra={
+                            "event": "processing_failure_record_failed",
+                            "failed_stage": stage,
+                            "error_code": "UNEXPECTED_PROCESSING_ERROR",
+                            **_job_log_fields(job),
+                        },
                     )
             emit_emf_metrics(
                 {"JobsRetried": 1},
@@ -1158,7 +1312,15 @@ def process_next_job(
         except VectorStoreError as exc:
             # The vector store is classified, so the job requeues instead of waiting
             # for the lease to expire.
-            logger.warning("Vector persistence failed for job %s", job.id)
+            logger.warning(
+                "Vector persistence failed while finalizing job %s",
+                job.id,
+                extra={
+                    "event": "processing_vector_persist_failed",
+                    "stage": EMBEDDING_STAGE,
+                    **_job_log_fields(job),
+                },
+            )
             try:
                 _record_failure(
                     session_factory,
@@ -1167,7 +1329,15 @@ def process_next_job(
                     active_stage=EMBEDDING_STAGE,
                 )
             except Exception:
-                logger.exception("Failed to record vector error for job %s", job.id)
+                logger.exception(
+                    "Failed to record vector error for job %s",
+                    job.id,
+                    extra={
+                        "event": "processing_failure_record_failed",
+                        "failed_stage": EMBEDDING_STAGE,
+                        **_job_log_fields(job),
+                    },
+                )
             emit_emf_metrics(
                 {"JobsRetried": 1},
                 dimensions={"Service": "worker", "Environment": settings.app_env},
@@ -1188,16 +1358,37 @@ def process_next_job(
                     "Finalizing job %s exceeded its database statement/lock "
                     "timeout budget",
                     job.id,
-                    extra={"event": "processing_job_finalize_timeout"},
+                    extra={
+                        "event": "processing_job_finalize_timeout",
+                        "reason": "statement_timeout",
+                        **_job_log_fields(job),
+                    },
                 )
             else:
-                logger.exception("Failed to finalize processing job %s", job.id)
+                logger.exception(
+                    "Failed to finalize processing job %s",
+                    job.id,
+                    extra={
+                        "event": "processing_job_finalize_failed",
+                        "reason": "database_error",
+                        **_job_log_fields(job),
+                    },
+                )
             return True
         except ValueError:
             # A rejected payload is deterministic: recovery would replay the same
             # bytes into the same refusal forever, so the job is failed here
             # instead of being left running for the lease to expire.
-            logger.exception("Refused to finalize processing job %s", job.id)
+            logger.exception(
+                "Refused to finalize processing job %s because its payload was invalid",
+                job.id,
+                extra={
+                    "event": "processing_job_finalize_failed",
+                    "reason": "invalid_payload",
+                    "error_code": "COMPLETION_PAYLOAD_INVALID",
+                    **_job_log_fields(job),
+                },
+            )
             failure = DocumentProcessingError(
                 "COMPLETION_PAYLOAD_INVALID",
                 "The extracted document could not be recorded.",
@@ -1210,7 +1401,14 @@ def process_next_job(
                 )
             except Exception:
                 logger.exception(
-                    "Failed to record completion refusal for job %s", job.id
+                    "Failed to record completion refusal for job %s",
+                    job.id,
+                    extra={
+                        "event": "processing_failure_record_failed",
+                        "failed_stage": EMBEDDING_STAGE,
+                        "error_code": "COMPLETION_PAYLOAD_INVALID",
+                        **_job_log_fields(job),
+                    },
                 )
             emit_emf_metrics(
                 {"JobsFailed": 1},
@@ -1219,10 +1417,27 @@ def process_next_job(
             return True
         except Exception:
             # Leave the fenced running state intact; periodic recovery safely retries it.
-            logger.exception("Failed to finalize processing job %s", job.id)
+            logger.exception(
+                "Failed to finalize processing job %s",
+                job.id,
+                extra={
+                    "event": "processing_job_finalize_failed",
+                    "reason": "unexpected_error",
+                    **_job_log_fields(job),
+                },
+            )
             return True
         if not completed:
-            logger.info("Processing claim was lost before job %s completed", job.id)
+            logger.info(
+                "Processing claim was lost before job %s completed",
+                job.id,
+                extra={
+                    "event": "processing_claim_lost",
+                    "reason": "lease_lost",
+                    "worker_id": worker_id,
+                    **_job_log_fields(job),
+                },
+            )
         else:
             # Past exam papers give up their questions here, after the document
             # is ready and its chunks exist. It is best-effort by design: a
@@ -1245,6 +1460,10 @@ def process_next_job(
                     logger.exception(
                         "Failed to queue visual description for document %s",
                         job.document_id,
+                        extra={
+                            "event": "visual_description_enqueue_failed",
+                            **_job_log_fields(job),
+                        },
                     )
             emit_emf_metrics(
                 {
@@ -1271,6 +1490,7 @@ def process_next_job(
             )
         return True
     finally:
+        shutdown.unregister(tracked)
         reset_operation_context(operation_token)
         reset_request_id(request_token)
 
@@ -1330,6 +1550,17 @@ class _CompositeStopEvent:
         return self.is_set()
 
 
+@contextmanager
+def _maintenance_context(task: str) -> Iterator[None]:
+    token = bind_operation_context(
+        operation_id=f"maintenance:{task}", maintenance_task=task
+    )
+    try:
+        yield
+    finally:
+        reset_operation_context(token)
+
+
 def _maintenance_cycle(
     schedule: _MaintenanceSchedule,
     *,
@@ -1340,41 +1571,55 @@ def _maintenance_cycle(
     monotonic_now = time.monotonic()
     if monotonic_now >= schedule.next_recovery:
         recovery_saturated = False
-        try:
-            recovered_total = 0
-            for _ in range(MAX_RECOVERY_BATCHES_PER_PASS):
-                if stop.is_set():
-                    break
-                with session_factory() as session:
-                    recovered = recover_expired_jobs(
-                        session,
-                        limit=RECOVERY_BATCH_SIZE,
+        with _maintenance_context("processing_job_recovery"):
+            try:
+                recovered_total = 0
+                for _ in range(MAX_RECOVERY_BATCHES_PER_PASS):
+                    if stop.is_set():
+                        break
+                    with session_factory() as session:
+                        recovered = recover_expired_jobs(
+                            session,
+                            limit=RECOVERY_BATCH_SIZE,
+                        )
+                    recovered_total += recovered
+                    if recovered < RECOVERY_BATCH_SIZE:
+                        break
+                else:
+                    recovery_saturated = True
+                if recovered_total:
+                    logger.info(
+                        "Recovered %s expired processing jobs",
+                        recovered_total,
+                        extra={
+                            "event": "processing_jobs_recovered",
+                            "maintenance_task": "processing_job_recovery",
+                        },
                     )
-                recovered_total += recovered
-                if recovered < RECOVERY_BATCH_SIZE:
-                    break
-            else:
-                recovery_saturated = True
-            if recovered_total:
-                logger.info("Recovered %s expired processing jobs", recovered_total)
-            with session_factory() as session:
-                queue = processing_queue_metrics(session)
-            emit_emf_metrics(
-                {
-                    "QueuedJobs": queue.queued,
-                    "RunningJobs": queue.running,
-                    "FailedJobs": queue.failed,
-                    "OldestQueuedAgeSeconds": queue.oldest_queued_age_seconds,
-                    "RecoveredJobs": recovered_total,
-                },
-                dimensions={
-                    "Service": "worker",
-                    "Environment": settings.app_env,
-                },
-                units={"OldestQueuedAgeSeconds": "Seconds"},
-            )
-        except Exception:
-            logger.exception("Failed to recover expired processing jobs")
+                with session_factory() as session:
+                    queue = processing_queue_metrics(session)
+                emit_emf_metrics(
+                    {
+                        "QueuedJobs": queue.queued,
+                        "RunningJobs": queue.running,
+                        "FailedJobs": queue.failed,
+                        "OldestQueuedAgeSeconds": queue.oldest_queued_age_seconds,
+                        "RecoveredJobs": recovered_total,
+                    },
+                    dimensions={
+                        "Service": "worker",
+                        "Environment": settings.app_env,
+                    },
+                    units={"OldestQueuedAgeSeconds": "Seconds"},
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to recover expired processing jobs",
+                    extra={
+                        "event": "maintenance_task_failed",
+                        "maintenance_task": "processing_job_recovery",
+                    },
+                )
         schedule.next_recovery = (
             monotonic_now
             if recovery_saturated
@@ -1385,56 +1630,96 @@ def _maintenance_cycle(
         return
 
     if schedule.purge_interval > 0 and monotonic_now >= schedule.next_purge:
-        try:
-            run_account_purge(
-                session_factory=session_factory,
-                storage=storage,
-                stop_event=stop,
-            )
-        except Exception:
-            logger.exception("Periodic account purge reconciliation failed")
-        try:
-            run_purge(
-                session_factory=session_factory,
-                storage=storage,
-                stop_event=stop,
-            )
-        except Exception:
-            logger.exception("Periodic course purge reconciliation failed")
-        try:
-            run_document_purge(
-                session_factory=session_factory,
-                storage=storage,
-                stop_event=stop,
-            )
-        except Exception:
-            logger.exception("Periodic document purge reconciliation failed")
-        try:
-            # A generation lock is released by the process that took it, so the
-            # holds left behind are exactly the ones whose process is gone.
-            with session_factory() as session:
-                expired_locks = release_expired_generation_locks(session)
-            if expired_locks:
-                logger.warning(
-                    "Released %s expired document generation locks", expired_locks
+        with _maintenance_context("account_purge"):
+            try:
+                run_account_purge(
+                    session_factory=session_factory,
+                    storage=storage,
+                    stop_event=stop,
                 )
-        except Exception:
-            logger.exception("Expired generation lock release failed")
+            except Exception:
+                logger.exception(
+                    "Periodic account purge reconciliation failed",
+                    extra={
+                        "event": "maintenance_task_failed",
+                        "maintenance_task": "account_purge",
+                    },
+                )
+        with _maintenance_context("course_purge"):
+            try:
+                run_purge(
+                    session_factory=session_factory,
+                    storage=storage,
+                    stop_event=stop,
+                )
+            except Exception:
+                logger.exception(
+                    "Periodic course purge reconciliation failed",
+                    extra={
+                        "event": "maintenance_task_failed",
+                        "maintenance_task": "course_purge",
+                    },
+                )
+        with _maintenance_context("document_purge"):
+            try:
+                run_document_purge(
+                    session_factory=session_factory,
+                    storage=storage,
+                    stop_event=stop,
+                )
+            except Exception:
+                logger.exception(
+                    "Periodic document purge reconciliation failed",
+                    extra={
+                        "event": "maintenance_task_failed",
+                        "maintenance_task": "document_purge",
+                    },
+                )
+        with _maintenance_context("generation_lock_release"):
+            try:
+                # A generation lock is released by the process that took it, so the
+                # holds left behind are exactly the ones whose process is gone.
+                with session_factory() as session:
+                    expired_locks = release_expired_generation_locks(session)
+                if expired_locks:
+                    logger.warning(
+                        "Released %s expired document generation locks",
+                        expired_locks,
+                        extra={
+                            "event": "generation_locks_released",
+                            "maintenance_task": "generation_lock_release",
+                        },
+                    )
+            except Exception:
+                logger.exception(
+                    "Expired generation lock release failed",
+                    extra={
+                        "event": "maintenance_task_failed",
+                        "maintenance_task": "generation_lock_release",
+                    },
+                )
         schedule.next_purge = monotonic_now + schedule.purge_interval
 
     if stop.is_set():
         return
 
     if schedule.backfill_interval > 0 and monotonic_now >= schedule.next_backfill:
-        try:
-            run_backfill(
-                session_factory=session_factory,
-                batch_size=settings.embedding_backfill_batch_size,
-                prune_orphans=settings.embedding_backfill_prune_orphans,
-                stop_event=stop,
-            )
-        except Exception:
-            logger.exception("Periodic embedding backfill reconciliation failed")
+        with _maintenance_context("embedding_backfill"):
+            try:
+                run_backfill(
+                    session_factory=session_factory,
+                    batch_size=settings.embedding_backfill_batch_size,
+                    prune_orphans=settings.embedding_backfill_prune_orphans,
+                    stop_event=stop,
+                )
+            except Exception:
+                logger.exception(
+                    "Periodic embedding backfill reconciliation failed",
+                    extra={
+                        "event": "maintenance_task_failed",
+                        "maintenance_task": "embedding_backfill",
+                    },
+                )
         schedule.next_backfill = monotonic_now + schedule.backfill_interval
 
     if stop.is_set():
@@ -1444,13 +1729,20 @@ def _maintenance_cycle(
         schedule.ai_usage_cleanup_interval > 0
         and monotonic_now >= schedule.next_ai_usage_cleanup
     ):
-        try:
-            # Enforces AI_USAGE_RETENTION_DAYS on every deployment that runs a
-            # worker, so per-user AI-usage telemetry does not accumulate without
-            # bound (P2-024). The job is idempotent and bounded per batch.
-            run_ai_usage_cleanup(session_factory=session_factory)
-        except Exception:
-            logger.exception("Periodic AI usage retention cleanup failed")
+        with _maintenance_context("ai_usage_cleanup"):
+            try:
+                # Enforces AI_USAGE_RETENTION_DAYS on every deployment that runs a
+                # worker, so per-user AI-usage telemetry does not accumulate without
+                # bound (P2-024). The job is idempotent and bounded per batch.
+                run_ai_usage_cleanup(session_factory=session_factory, stop_event=stop)
+            except Exception:
+                logger.exception(
+                    "Periodic AI usage retention cleanup failed",
+                    extra={
+                        "event": "maintenance_task_failed",
+                        "maintenance_task": "ai_usage_cleanup",
+                    },
+                )
         schedule.next_ai_usage_cleanup = (
             monotonic_now + schedule.ai_usage_cleanup_interval
         )
@@ -1462,20 +1754,30 @@ def _maintenance_cycle(
         schedule.visual_description_sweep_interval > 0
         and monotonic_now >= schedule.next_visual_description_sweep
     ):
-        try:
-            with session_factory() as session:
-                queued = sweep_documents_needing_visual_description(session)
-                queued += sweep_profile_documents_needing_visual_description(session)
-            if queued:
-                logger.info(
-                    "Queued documents for visual description",
+        with _maintenance_context("visual_description_sweep"):
+            try:
+                with session_factory() as session:
+                    queued = sweep_documents_needing_visual_description(session)
+                    queued += sweep_profile_documents_needing_visual_description(
+                        session
+                    )
+                if queued:
+                    logger.info(
+                        "Queued %s documents for visual description",
+                        queued,
+                        extra={
+                            "event": "visual_description_sweep",
+                            "item_count": queued,
+                        },
+                    )
+            except Exception:
+                logger.exception(
+                    "Periodic visual description sweep failed",
                     extra={
-                        "event": "visual_description_sweep",
-                        "queued": queued,
+                        "event": "maintenance_task_failed",
+                        "maintenance_task": "visual_description_sweep",
                     },
                 )
-        except Exception:
-            logger.exception("Periodic visual description sweep failed")
         schedule.next_visual_description_sweep = (
             monotonic_now + schedule.visual_description_sweep_interval
         )
@@ -1498,10 +1800,18 @@ def _claim_once(
             claim_describe=claim_describe,
         )
     except WorkerProcessFatalError:
-        logger.critical("Document worker requires process recycle")
+        logger.critical(
+            "Document worker %s requires a process recycle",
+            worker_id,
+            extra={"event": "document_worker_recycle_required", "worker_id": worker_id},
+        )
         raise
     except Exception:
-        logger.exception("Document worker iteration failed")
+        logger.exception(
+            "Document worker %s iteration failed",
+            worker_id,
+            extra={"event": "document_worker_iteration_failed", "worker_id": worker_id},
+        )
         return False
 
 
@@ -1519,6 +1829,10 @@ def _run_worker_serially(
             logger.info(
                 "Shutdown requested; document worker %s will not claim another job",
                 worker_id,
+                extra={
+                    "event": "document_worker_shutdown_requested",
+                    "worker_id": worker_id,
+                },
             )
             break
         _maintenance_cycle(
@@ -1584,6 +1898,10 @@ def _run_worker_slots(
         logger.info(
             "Shutdown requested; document worker %s will not claim another job",
             slot_worker_id,
+            extra={
+                "event": "document_worker_shutdown_requested",
+                "worker_id": slot_worker_id,
+            },
         )
 
     threads = [threading.Thread(target=coordinate, daemon=True)]
@@ -1643,7 +1961,11 @@ def run_worker(
     if once:
         concurrency = 1
 
-    logger.info("Document worker %s started", worker_id)
+    logger.info(
+        "Document worker %s started",
+        worker_id,
+        extra={"event": "document_worker_started", "worker_id": worker_id},
+    )
     try:
         if concurrency == 1:
             _run_worker_serially(
@@ -1658,6 +1980,10 @@ def run_worker(
                 "Document worker %s running %s concurrent job slots",
                 worker_id,
                 concurrency,
+                extra={
+                    "event": "document_worker_slots_started",
+                    "worker_id": worker_id,
+                },
             )
             _run_worker_slots(
                 worker_id=worker_id,
@@ -1667,7 +1993,11 @@ def run_worker(
                 stop=stop,
             )
     finally:
-        logger.info("Document worker %s stopped", worker_id)
+        logger.info(
+            "Document worker %s stopped",
+            worker_id,
+            extra={"event": "document_worker_stopped", "worker_id": worker_id},
+        )
 
 
 def _install_shutdown_handlers(stop_event: _SignalStopEvent) -> None:
@@ -1704,9 +2034,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         try:
             check_worker_ready()
         except ReadinessError as exc:
-            logger.error("Document worker readiness check failed: %s", exc)
+            logger.error(
+                "Document worker readiness check failed: %s",
+                exc,
+                extra={
+                    "event": "worker_readiness_check_failed",
+                    "failed_stage": exc.check,
+                },
+            )
             raise SystemExit(1) from None
-        logger.info("Document worker readiness check succeeded")
+        logger.info(
+            "Document worker readiness check succeeded",
+            extra={"event": "worker_readiness_check_succeeded"},
+        )
         return
 
     stop_event = _SignalStopEvent()
@@ -1719,7 +2059,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             concurrency=settings.processing_job_concurrency,
         )
     except ReadinessError as exc:
-        logger.error("Document worker readiness check failed: %s", exc)
+        logger.error(
+            "Document worker readiness check failed: %s",
+            exc,
+            extra={
+                "event": "worker_readiness_check_failed",
+                "failed_stage": exc.check,
+            },
+        )
         raise SystemExit(1) from None
 
 

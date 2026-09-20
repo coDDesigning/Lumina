@@ -15,6 +15,7 @@ from backend.app.observability import (
     bind_operation_context,
     emit_emf_metrics,
     normalize_request_id,
+    redact,
     reset_operation_context,
 )
 from services.processing_jobs import ClaimedJob
@@ -273,7 +274,7 @@ def test_spawn_child_logs_are_json_redacted_and_correlated(tmp_path: Path) -> No
     context = multiprocessing.get_context("spawn")
     process = context.Process(
         target=_spawn_child_that_logs_an_exception,
-        args=(str(stderr_path), "SECRET-CANARY"),
+        args=(str(stderr_path), "api_key=SECRET-CANARY"),
     )
     process.start()
     process.join(timeout=30)
@@ -294,6 +295,10 @@ def test_spawn_child_logs_are_json_redacted_and_correlated(tmp_path: Path) -> No
     # The INFO breadcrumb survives because the child's root level is INFO.
     assert any(json.loads(line)["level"] == "INFO" for line in lines)
     assert any(json.loads(line).get("exception_type") == "ValueError" for line in lines)
+    assert any(
+        json.loads(line).get("exception_message") == "ValueError: api_key=[REDACTED]"
+        for line in lines
+    )
     # SCRUM-206: the child emits frames, and they are still canary-free.
     assert any("stack" in json.loads(line) for line in lines)
 
@@ -395,6 +400,18 @@ def test_configure_logging_disables_uvicorn_access_logger() -> None:
     assert logging.getLogger("uvicorn.access").disabled is True
 
 
+def test_configure_logging_quiets_the_alembic_migration_context_logger() -> None:
+    from backend.app.observability import configure_logging
+
+    configure_logging(service="api", environment="production")
+
+    assert logging.getLogger("alembic").getEffectiveLevel() > logging.INFO
+    assert (
+        logging.getLogger("alembic.runtime.migration").getEffectiveLevel()
+        > logging.INFO
+    )
+
+
 @pytest.mark.parametrize(
     ("message", "sensitive_snippets", "preserved_snippets"),
     [
@@ -422,6 +439,45 @@ def test_configure_logging_disables_uvicorn_access_logger() -> None:
             "status: ok, count: 5, user_id: 42",
             [],
             ["status: ok, count: 5, user_id: 42"],
+        ),
+        (
+            "(sqlite3.OperationalError) no such table: users\n"
+            "[SQL: SELECT users.id FROM users WHERE "
+            "users.deletion_requested_at IS NOT NULL]\n"
+            "[parameters: ('student@example.com',)]",
+            ["deletion_requested_at", "SELECT users.id", "student@example.com"],
+            [
+                "no such table: users",
+                "[SQL: [REDACTED]]",
+                "[parameters: [REDACTED]]",
+            ],
+        ),
+        (
+            "1 validation error for M\nage\n  Input should be a valid integer, "
+            "unable to parse string as an integer [type=int_parsing, "
+            "input_value='not-a-number', input_type=str]",
+            ["not-a-number"],
+            [
+                "Input should be a valid integer",
+                "type=int_parsing",
+                "input_value=[REDACTED]",
+                "input_type=str]",
+            ],
+        ),
+        (
+            "GET https://api.example.com/v1/search?q=confidential+topic&user=42 -> 200",
+            ["q=confidential", "confidential+topic"],
+            ["https://api.example.com/v1/search?[REDACTED]", "-> 200"],
+        ),
+        (
+            "Deletion requested for student@example.com but account is still active",
+            ["student@example.com"],
+            ["Deletion requested for [REDACTED] but account is still active"],
+        ),
+        (
+            "Connection to the vector store timed out after 3 attempts",
+            [],
+            ["Connection to the vector store timed out after 3 attempts"],
         ),
     ],
 )
@@ -472,9 +528,9 @@ def _formatted(record) -> dict:
 
 
 def test_stack_frames_are_project_relative_and_carry_no_message() -> None:
-    """SCRUM-206: an ERROR names where it came from without quoting the failure."""
+    """SCRUM-206: an ERROR names where it came from; its message is redacted."""
     try:
-        _raise_here("SECRET-CANARY")
+        _raise_here("token=SECRET-CANARY")
     except ValueError as exc:
         payload = _formatted(_record_with_exception(exc))
 
@@ -484,6 +540,7 @@ def test_stack_frames_are_project_relative_and_carry_no_message() -> None:
     assert any(frame.startswith("tests/test_observability.py:") for frame in frames)
     assert "SECRET-CANARY" not in json.dumps(payload)
     assert "Traceback" not in json.dumps(payload)
+    assert payload["exception_message"] == "ValueError: token=[REDACTED]"
 
 
 def test_stack_frames_never_carry_an_absolute_path() -> None:
@@ -554,6 +611,438 @@ def test_the_stack_is_capped() -> None:
         payload = _formatted(_record_with_exception(exc))
 
     assert len(payload["stack"]) == 12
+
+
+def test_exception_message_drops_sql_statement_and_parameters() -> None:
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.exc import OperationalError
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.connect() as connection:
+            connection.execute(
+                text("SELECT id FROM users WHERE email = :email"),
+                {"email": "student@example.com"},
+            )
+    except OperationalError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    message = payload["exception_message"]
+    assert "student@example.com" not in message
+    assert "SELECT id FROM users" not in message
+    assert "no such table: users" in message
+    assert "[SQL: [REDACTED]]" in message
+    assert "[parameters: [REDACTED]]" in message
+    assert "student@example.com" not in json.dumps(payload)
+
+
+def test_exception_message_drops_a_multiline_orm_compiled_statement() -> None:
+    from sqlalchemy import Column, Integer, String, create_engine, select
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import declarative_base
+
+    _Base = declarative_base()
+
+    class _User(_Base):
+        __tablename__ = "users"
+        id = Column(Integer, primary_key=True)
+        email = Column(String)
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.connect() as connection:
+            connection.execute(
+                select(_User.id).where(_User.email == "student@example.com")
+            )
+    except OperationalError as exc:
+        assert "\n" in str(exc)
+        payload = _formatted(_record_with_exception(exc))
+
+    message = payload["exception_message"]
+    assert "student@example.com" not in message
+    assert "FROM users" not in message
+    assert "WHERE users.email" not in message
+    assert "[SQL: [REDACTED]]" in message
+    assert "[parameters: [REDACTED]]" in message
+    assert "student@example.com" not in json.dumps(payload)
+
+
+def test_exception_message_drops_json_column_bound_parameters() -> None:
+    from sqlalchemy import JSON, Column, Integer, String, create_engine, text
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import declarative_base
+
+    _Base = declarative_base()
+
+    class _QuizQuestion(_Base):
+        __tablename__ = "quiz_questions"
+        id = Column(Integer, primary_key=True)
+        options = Column(JSON)
+        correct_answer = Column(JSON)
+        notes = Column(String, unique=True)
+
+    engine = create_engine("sqlite:///:memory:")
+    with engine.connect() as connection:
+        _Base.metadata.create_all(connection)
+        connection.commit()
+
+    def _insert(connection, row_id: int) -> None:
+        connection.execute(
+            text(
+                "INSERT INTO quiz_questions (id, options, correct_answer, notes) "
+                "VALUES (:id, :options, :correct_answer, :notes)"
+            ),
+            {
+                "id": row_id,
+                "options": '["Paris", "London", "Berlin"]',
+                "correct_answer": '{"text": "Paris"}',
+                "notes": "student@example.com password hunter2",
+            },
+        )
+
+    try:
+        with engine.connect() as connection:
+            _insert(connection, 1)
+            _insert(connection, 2)
+    except IntegrityError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    message = payload["exception_message"]
+    assert "password hunter2" not in message
+    assert "student@example.com" not in message
+    assert '{"text": "Paris"}' not in message
+    assert '["Paris", "London", "Berlin"]' not in message
+    assert "[SQL: [REDACTED]]" in message
+    assert "[parameters: [REDACTED]]" in message
+    assert "password hunter2" not in json.dumps(payload)
+
+
+def test_sql_statement_pattern_does_not_truncate_on_an_embedded_bracket() -> None:
+    message = (
+        "(sqlite3.OperationalError) example\n"
+        '[SQL: SELECT * FROM t WHERE tags = \'["x", "y"]\' '
+        "AND owner_email = 'leaked-value-after-bracket']\n"
+        "(Background on this error at: https://sqlalche.me/e/20/xyz)"
+    )
+
+    redacted = redact(message)
+
+    assert "leaked-value-after-bracket" not in redacted
+    assert "[SQL: [REDACTED]]" in redacted
+
+
+def test_exception_message_masks_pydantic_input_but_keeps_its_type() -> None:
+    from pydantic import BaseModel, ValidationError
+
+    class _Model(BaseModel):
+        age: int
+
+    try:
+        _Model(age="not-a-number")
+    except ValidationError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    message = payload["exception_message"]
+    assert "not-a-number" not in message
+    assert "input_value=[REDACTED]" in message
+    assert "input_type=str" in message
+    assert "type=int_parsing" in message
+
+
+def test_exception_message_leaves_ordinary_input_equals_text_untouched() -> None:
+    try:
+        raise RuntimeError(
+            "Worker refused the job: input=pdf is unsupported, expected docx or txt"
+        )
+    except RuntimeError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    assert payload["exception_message"] == (
+        "RuntimeError: Worker refused the job: input=pdf is unsupported, "
+        "expected docx or txt"
+    )
+
+
+def test_exception_message_preserves_the_inner_cause_past_an_outer_input_equals() -> (
+    None
+):
+    try:
+        try:
+            raise ValueError("connection refused to pgvector host 10.0.3.4:5432")
+        except ValueError as inner:
+            raise RuntimeError("retrieval failed for input=chunk-7") from inner
+    except RuntimeError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    message = payload["exception_message"]
+    assert "retrieval failed for input=chunk-7" in message
+    assert "connection refused to pgvector host 10.0.3.4:5432" in message
+    assert " <- " in message
+
+
+def test_exception_message_strips_a_provider_url_query_string() -> None:
+    try:
+        raise ValueError(
+            "GET https://api.example.com/v1/generate?api_key=SECRET-KEY"
+            "&prompt=my+secret+question failed"
+        )
+    except ValueError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    message = payload["exception_message"]
+    assert "SECRET-KEY" not in message
+    assert "my+secret+question" not in message
+    assert "https://api.example.com/v1/generate?[REDACTED]" in message
+
+
+def test_exception_message_masks_an_email_address() -> None:
+    try:
+        raise ValueError("No active session for student@example.com")
+    except ValueError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    assert (
+        payload["exception_message"] == "ValueError: No active session for [REDACTED]"
+    )
+
+
+@pytest.mark.parametrize("filler", ["x", ".", "_", "%", "+", "-"])
+def test_redact_masks_an_email_glued_to_a_long_local_part_run(filler: str) -> None:
+    message = filler * 65 + "student@example.com"
+
+    redacted = redact(message)
+
+    assert "student@example.com" not in redacted
+    assert redacted.endswith("[REDACTED]")
+    assert redact(redacted) == redacted
+
+
+def test_redact_masks_a_normal_email_address() -> None:
+    assert redact("contact student@example.com now") == "contact [REDACTED] now"
+
+
+def test_redact_masks_an_email_at_the_very_start_of_a_message() -> None:
+    assert (
+        redact("student@example.com reported an issue")
+        == "[REDACTED] reported an issue"
+    )
+
+
+def test_redact_masks_an_email_inside_a_json_blob() -> None:
+    message = '{"email": "student@example.com", "role": "student"}'
+
+    assert redact(message) == '{"email": "[REDACTED]", "role": "student"}'
+
+
+def test_redact_leaves_a_dotless_user_at_host_untouched() -> None:
+    message = "contact worker@pod-1 for help"
+
+    assert redact(message) == message
+
+
+def test_redact_does_not_blow_up_on_a_glued_email_repeat() -> None:
+    import time
+
+    unit = "a" * 64 + "@" + "1" * 300
+    message = unit * 500
+
+    start = time.perf_counter()
+    redact(message)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 1.0
+
+
+def test_exception_message_preserves_an_ordinary_error_unchanged() -> None:
+    try:
+        raise ValueError("Document processing timed out")
+    except ValueError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    assert payload["exception_message"] == "ValueError: Document processing timed out"
+
+
+def test_operational_sink_stores_the_sql_redacted_exception_message() -> None:
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.exc import OperationalError
+
+    from backend.app.operational_events import sanitize_operational_payload
+
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.connect() as connection:
+            connection.execute(
+                text("SELECT id FROM users WHERE email = :email"),
+                {"email": "student@example.com"},
+            )
+    except OperationalError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    stored = sanitize_operational_payload(payload)
+
+    assert stored is not None
+    assert "student@example.com" not in json.dumps(stored)
+    assert "[SQL: [REDACTED]]" in stored["exception_message"]
+    assert "[parameters: [REDACTED]]" in stored["exception_message"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://api.example.com/v1/generate?api_key=SECRET-KEY&prompt=hidden",
+        "[type=int_parsing, input_value='not-a-number', input_type=str]",
+        "[type=dict_type, input_value=['a', 'b'], input_type=list]",
+        "(sqlite3.OperationalError) no such table: users\n"
+        "[SQL: SELECT 1]\n[parameters: ('student@example.com',)]",
+        "contact admin@example.com about token=super-secret",
+        "[SQL: INSERT INTO t (a) VALUES (?)]\n"
+        '[parameters: (1, \'["Paris", "London"]\', \'{"text": "Paris"}\', '
+        "'student@example.com password hunter2')]\n"
+        "(Background on this error at: https://sqlalche.me/e/20/gkpj)",
+        "Worker refused the job: input=pdf is unsupported, expected docx or txt",
+        "[SQL: " * 4000,
+        "token:a " * 2000,
+    ],
+)
+def test_redact_is_stable_when_applied_a_second_time(value: str) -> None:
+    once = redact(value)
+    twice = redact(once)
+    assert twice == once
+
+
+def test_redact_does_not_blow_up_on_a_long_unbroken_token() -> None:
+    import time
+
+    start = time.perf_counter()
+    redact("a" * 200_000)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 2.0
+
+
+def test_redact_bounds_a_pathological_repeated_sql_marker() -> None:
+    import time
+
+    message = "student@example.com" + "[parameters: " * 15_000
+
+    start = time.perf_counter()
+    redacted = redact(message)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 1.0
+    assert "student@example.com" not in redacted
+    assert redacted.endswith("[REDACTED]")
+    assert redact(redacted) == redacted
+
+
+def test_redact_leaves_a_normal_long_message_unaffected() -> None:
+    from backend.app.observability import _MAX_REDACT_INPUT_LENGTH
+
+    message = (
+        "OperationalError: (sqlite3.OperationalError) no such table: users\n"
+        "[SQL: SELECT id FROM users WHERE email = ?]\n"
+        "[parameters: ('student@example.com',)]\n"
+        "(Background on this error at: https://sqlalche.me/e/20/e3q8) "
+        "<- OperationalError: no such table: users"
+    )
+    assert len(message) < _MAX_REDACT_INPUT_LENGTH
+
+    assert redact(message) == (
+        "OperationalError: (sqlite3.OperationalError) no such table: users\n"
+        "[SQL: [REDACTED]]\n"
+        "[parameters: [REDACTED]]\n"
+        "(Background on this error at: https://sqlalche.me/e/20/e3q8) "
+        "<- OperationalError: no such table: users"
+    )
+
+
+def test_redact_ends_with_the_marker_for_a_long_plain_message() -> None:
+    from backend.app.observability import _MAX_REDACT_INPUT_LENGTH
+
+    message = "Document processing failed for course 42: " + "x" * 9000
+    assert len(message) > _MAX_REDACT_INPUT_LENGTH
+
+    redacted = redact(message)
+
+    assert redacted.endswith("[REDACTED]")
+    assert len(redacted) <= _MAX_REDACT_INPUT_LENGTH
+    assert redact(redacted) == redacted
+
+
+def test_redact_ends_with_exactly_one_marker_when_the_tail_would_have_been_redacted() -> (
+    None
+):
+    from backend.app.observability import _MAX_REDACT_INPUT_LENGTH
+
+    message = (
+        "Connection failed for "
+        + "x" * 3800
+        + " while contacting student@example.com"
+        + " and retrying " * 40
+    )
+    assert len(message) > _MAX_REDACT_INPUT_LENGTH
+
+    redacted = redact(message)
+
+    assert "student@example.com" not in redacted
+    assert "while contacting [REDACTED]" in redacted
+    assert redacted.endswith("[REDACTED]")
+    assert not redacted.endswith("[REDACTED][REDACTED]")
+    assert len(redacted) <= _MAX_REDACT_INPUT_LENGTH
+    assert redact(redacted) == redacted
+
+
+def test_redact_just_under_the_bound_is_unchanged() -> None:
+    from backend.app.observability import _MAX_REDACT_INPUT_LENGTH
+
+    prefix = "Document processing failed for course 42: "
+    message = prefix + "x" * (_MAX_REDACT_INPUT_LENGTH - 1 - len(prefix))
+    assert len(message) == _MAX_REDACT_INPUT_LENGTH - 1
+
+    assert redact(message) == message
+
+
+def test_operational_sink_stores_one_clean_marker_for_a_provider_url() -> None:
+    from backend.app.operational_events import sanitize_operational_payload
+
+    try:
+        raise ValueError(
+            "GET https://api.example.com/v1/generate?api_key=SECRET-KEY"
+            "&prompt=my+secret+question failed"
+        )
+    except ValueError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    stored = sanitize_operational_payload(payload)
+
+    assert stored is not None
+    message = stored["exception_message"]
+    assert "SECRET-KEY" not in message
+    assert "my+secret+question" not in message
+    assert message.count("[REDACTED]") == 1
+    assert message == payload["exception_message"]
+
+
+def test_operational_sink_stores_one_clean_marker_for_pydantic_input() -> None:
+    from pydantic import BaseModel, ValidationError
+
+    from backend.app.operational_events import sanitize_operational_payload
+
+    class _Model(BaseModel):
+        age: int
+
+    try:
+        _Model(age="not-a-number")
+    except ValidationError as exc:
+        payload = _formatted(_record_with_exception(exc))
+
+    stored = sanitize_operational_payload(payload)
+
+    assert stored is not None
+    message = stored["exception_message"]
+    assert "not-a-number" not in message
+    assert message.count("[REDACTED]") == 1
+    assert message == payload["exception_message"]
 
 
 def _records(caplog) -> list[logging.LogRecord]:

@@ -184,7 +184,12 @@ def acquire_generation_locks(
         except SQLAlchemyError:
             # The lease bounds the damage: the hold expires on its own.
             logger.exception(
-                "Could not release generation locks for holder %s", holder_token
+                "Could not release generation locks for holder %s",
+                holder_token,
+                extra={
+                    "event": "document_lock_release_failed",
+                    "lock_holder": str(holder_token),
+                },
             )
 
 
@@ -230,6 +235,19 @@ def release_expired_generation_locks(db: Session) -> int:
         result = session.execute(
             delete(DocumentGenerationLock).where(
                 DocumentGenerationLock.expires_at <= now
+            )
+        )
+        session.commit()
+        return int(result.rowcount or 0)
+
+
+def release_process_generation_locks(db: Session) -> int:
+    holder = _holder_identity()
+    with Session(bind=db.get_bind()) as session:
+        begin_serialized_write(session)
+        result = session.execute(
+            delete(DocumentGenerationLock).where(
+                DocumentGenerationLock.holder == holder
             )
         )
         session.commit()

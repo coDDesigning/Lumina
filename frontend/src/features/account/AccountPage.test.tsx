@@ -369,6 +369,7 @@ describe('AccountPage', () => {
     expect(screen.getByText('Fast Google Gemini model')).toBeInTheDocument()
     expect(screen.getByTestId('model-capability-study_guide')).toBeInTheDocument()
     expect(screen.getByTestId('model-capability-quiz')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Test model' })).toBeInTheDocument()
   })
 
   it('allows changing preferred AI model and calls API', async () => {
@@ -556,6 +557,74 @@ describe('AccountPage credits', () => {
     renderAccountPage('/account/ai')
 
     expect(await screen.findByText('Verify your email to unlock starting credits')).toBeInTheDocument()
+  })
+
+  it('offers no way to test a model until a non-admin account is verified', async () => {
+    authState.user.role = 'Student'
+    mockModelsList.mockResolvedValue([
+      {
+        id: 'gemini-1.5-flash',
+        model: 'gemini-1.5-flash',
+        display_name: 'Gemini 1.5 Flash',
+        provider: 'gemini',
+        is_default: true,
+        cost_hint: 'Metered (1-2 credits)',
+        capabilities: ['study_guide'],
+        description: 'Fast Google Gemini model',
+        is_local: false,
+        supports_json: true,
+      },
+    ])
+    creditState.status = {
+      credits: 0,
+      metering_enabled: true,
+      email_verification_required: true,
+      is_email_verified: false,
+      monthly_grant: null,
+      balance_cap: 40,
+      next_grant_at: null,
+      generation_costs: { study_guide: 1 },
+    }
+
+    renderAccountPage('/account/ai')
+
+    expect(await screen.findByTestId('model-details-card')).toBeInTheDocument()
+    expect(screen.getByText('Verify your email to test models.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Test model' })).not.toBeInTheDocument()
+  })
+
+  it('still lets an unverified admin test a model', async () => {
+    authState.user.role = 'admin'
+    mockModelsList.mockResolvedValue([
+      {
+        id: 'gemini-1.5-flash',
+        model: 'gemini-1.5-flash',
+        display_name: 'Gemini 1.5 Flash',
+        provider: 'gemini',
+        is_default: true,
+        cost_hint: 'Metered (1-2 credits)',
+        capabilities: ['study_guide'],
+        description: 'Fast Google Gemini model',
+        is_local: false,
+        supports_json: true,
+      },
+    ])
+    creditState.status = {
+      credits: 0,
+      metering_enabled: true,
+      email_verification_required: true,
+      is_email_verified: false,
+      monthly_grant: null,
+      balance_cap: 40,
+      next_grant_at: null,
+      generation_costs: { study_guide: 1 },
+    }
+
+    renderAccountPage('/account/ai')
+
+    expect(await screen.findByTestId('model-details-card')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Test model' })).toBeInTheDocument()
+    expect(screen.queryByText('Verify your email to test models.')).not.toBeInTheDocument()
   })
 
   it('renders no credit UI whatsoever for an unmetered account', async () => {

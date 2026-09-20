@@ -110,11 +110,14 @@ export interface AdminLogRecord {
   logger: string;
   event: string;
   description: string;
+  message: string | null;
+  exception_message: string | null;
   error_code: string | null;
   error_category: string | null;
   exception_type: string | null;
   exception_chain: string[];
   source_location: string | null;
+  stack: string[];
   error_signature: string | null;
   http_method: string | null;
   http_path: string | null;
@@ -143,7 +146,10 @@ export interface AdminLogRecord {
   estimated_cost_usd: number | null;
   pricing_version: string | null;
   runbook: string | null;
-  details: Record<string, unknown>;
+  details: Record<string, unknown> & {
+    page_number?: number;
+    visual_index?: number;
+  };
 }
 
 export interface AdminLogWindow {
@@ -416,6 +422,18 @@ export type DocumentVisualAnalysisStatus =
   | 'partial'
   | 'failed';
 
+export interface VisualAnalysisSummary {
+  total: number;
+  described: number;
+  pending: number;
+  failed: number;
+  failure_reason: string | null;
+  failed_page_numbers: number[];
+  crowded_pages: number;
+  crowded_page_numbers: number[];
+  stopped_error_code: string | null;
+}
+
 export interface DocumentResponse {
   id: string;
   original_file_name: string;
@@ -426,6 +444,7 @@ export interface DocumentResponse {
   course_id: number;
   status: LooseUnion<DocumentStatus>;
   visual_analysis_status?: LooseUnion<DocumentVisualAnalysisStatus>;
+  visual_analysis?: VisualAnalysisSummary | null;
   created_at: string;
   updated_at: string;
 }
@@ -438,6 +457,15 @@ export interface DocumentUploadResponse {
 export interface SyllabusExtraction {
   text: string;
   truncated: boolean;
+}
+
+export interface SuggestedTopic {
+  name: string;
+  weight_percent: number | null;
+}
+
+export interface SyllabusTopicsResponse {
+  topics: SuggestedTopic[];
 }
 
 export interface ProcessingJobResponse {
@@ -526,6 +554,27 @@ export interface AiModelInfo {
   description?: string;
   is_local?: boolean;
   supports_json?: boolean;
+}
+
+export type ModelTestErrorCode =
+  | 'unreachable'
+  | 'timeout'
+  | 'model_not_found'
+  | 'auth'
+  | 'rate_limited'
+  | 'bad_response'
+  | 'unavailable';
+
+export interface ModelTestResult {
+  ok: boolean;
+  model_id: string;
+  provider: string;
+  latency_ms: number | null;
+  error_code: ModelTestErrorCode | null;
+  message: string;
+  supports_vision: boolean | null;
+  base_url: string | null;
+  base_url_fallback: boolean | null;
 }
 
 export interface StudyGuideRequest {

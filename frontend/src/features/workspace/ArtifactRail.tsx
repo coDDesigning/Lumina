@@ -1,4 +1,5 @@
 import { BookOpen, Calendar, Layers3, Target } from 'lucide-react';
+import { outputTypeLabel, QUIZ_SHAPED_OUTPUT_TYPES } from '@/features/study/outputTypes';
 import { relativeDay } from '@/lib/relativeDay';
 import { Button } from '@/ui/Button';
 import { ErrorState } from '@/ui/ErrorState';
@@ -19,13 +20,8 @@ export interface ArtifactRailProps {
 const VISIBLE = 5;
 
 function titleOf(artifact: CourseArtifact): string {
-  if ('outputType' in artifact) {
-    if (artifact.outputType === 'exam_roadmap') {
-      return 'Exam roadmap';
-    }
-    if (artifact.outputType === 'last_minute_review') {
-      return 'Last-minute review';
-    }
+  if ('outputType' in artifact && artifact.kind === 'other') {
+    return outputTypeLabel(artifact.outputType);
   }
   if (artifact.kind === 'quiz' && 'totalQuestions' in artifact) {
     return `Quiz · ${artifact.totalQuestions} question${artifact.totalQuestions === 1 ? '' : 's'}`;
@@ -42,19 +38,14 @@ function titleOf(artifact: CourseArtifact): string {
   if (artifact.kind === 'quiz') {
     return 'Practice quiz';
   }
-  return 'outputType' in artifact ? artifact.outputType.replace(/_/g, ' ') : 'Quiz attempt';
+  return 'Quiz attempt';
 }
 
 function metaOf(artifact: CourseArtifact): string {
   const when = relativeDay(artifact.createdAt);
 
-  if ('outputType' in artifact) {
-    if (artifact.outputType === 'exam_roadmap') {
-      return `Exam roadmap · ${when}`;
-    }
-    if (artifact.outputType === 'last_minute_review') {
-      return `Last-minute review · ${when}`;
-    }
+  if ('outputType' in artifact && artifact.kind === 'other') {
+    return `${artifact.topic ?? 'Whole course'} · ${when}`;
   }
   if (artifact.kind === 'quiz' && 'score' in artifact) {
     return artifact.score === null
@@ -80,7 +71,10 @@ function iconOf(artifact: CourseArtifact) {
   if ('outputType' in artifact && artifact.outputType === 'exam_roadmap') {
     return <Calendar aria-hidden="true" />;
   }
-  if (artifact.kind === 'quiz') {
+  if (
+    artifact.kind === 'quiz' ||
+    ('outputType' in artifact && QUIZ_SHAPED_OUTPUT_TYPES.has(artifact.outputType))
+  ) {
     return <Target aria-hidden="true" />;
   }
   if (artifact.kind === 'flashcards') {

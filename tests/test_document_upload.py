@@ -83,6 +83,7 @@ def test_first_upload_returns_201_uploaded_document_with_trusted_metadata(
         "course_id": upload_api.course_id,
         "status": "uploaded",
         "visual_analysis_status": "not_applicable",
+        "visual_analysis": None,
         "created_at": document["created_at"],
         "updated_at": document["updated_at"],
     }
@@ -97,6 +98,21 @@ def test_first_upload_returns_201_uploaded_document_with_trusted_metadata(
         assert persisted.storage_provider == upload_api.storage.provider
         assert upload_api.storage.read(persisted.storage_key) == content
     assert len(stored_files(upload_api.storage_root)) == 1
+
+
+def test_documents_are_listed_by_name_not_upload_order(upload_api) -> None:
+    upload_document(upload_api, "b.pdf", b"%PDF-1.4 doc-b unique", "application/pdf")
+    upload_document(upload_api, "A.pdf", b"%PDF-1.4 doc-a unique", "application/pdf")
+    upload_document(upload_api, "c.pdf", b"%PDF-1.4 doc-c unique", "application/pdf")
+
+    response = upload_api.client.get(
+        f"/api/courses/{upload_api.course_id}/documents",
+        headers=upload_api.authorization,
+    )
+
+    assert response.status_code == 200
+    names = [document["original_file_name"] for document in response.json()["data"]]
+    assert names == ["A.pdf", "b.pdf", "c.pdf"]
 
 
 def test_image_upload_is_accepted_and_awaits_visual_analysis(upload_api) -> None:

@@ -344,6 +344,44 @@ def test_the_source_inventory_reports_what_the_course_can_supply(
     assert all(document["status"] != "deleting" for document in data["documents"])
 
 
+def test_the_source_inventory_lists_documents_by_name(authz_api, retrieval_env) -> None:
+    with authz_api.session_factory() as session:
+        add_material(
+            session,
+            authz_api.a_course_id,
+            ["c"],
+            file_hash="c3" + "3" * 62,
+            retrieval_env=retrieval_env,
+            file_name="charlie.txt",
+        )
+        add_material(
+            session,
+            authz_api.a_course_id,
+            ["a"],
+            file_hash="a4" + "4" * 62,
+            retrieval_env=retrieval_env,
+            file_name="Alpha.txt",
+        )
+        add_material(
+            session,
+            authz_api.a_course_id,
+            ["b"],
+            file_hash="b5" + "5" * 62,
+            retrieval_env=retrieval_env,
+            file_name="bravo.txt",
+        )
+
+    response = authz_api.client.get(
+        f"/api/courses/{authz_api.a_course_id}/exam-mode/sources",
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 200, response.text
+    labels = [document["label"] for document in response.json()["data"]["documents"]]
+    ours = [label for label in labels if label in {"Alpha", "Bravo", "Charlie"}]
+    assert ours == ["Alpha", "Bravo", "Charlie"]
+
+
 # --------------------------------------------------------------- analysis
 
 

@@ -215,13 +215,14 @@ def test_gemini_vision_rate_limit_is_temporary(monkeypatch) -> None:
         recorder,
     )
 
-    with pytest.raises(TemporaryVisualServiceError, match="rate limit"):
+    with pytest.raises(TemporaryVisualServiceError, match="rate limit") as excinfo:
         provider.describe_visual(
             VALID_PNG_BYTES,
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.DIAGRAM,
         )
+    assert excinfo.value.error_category == "rate_limit"
 
 
 def test_gemini_vision_server_error_is_temporary(monkeypatch) -> None:
@@ -232,13 +233,14 @@ def test_gemini_vision_server_error_is_temporary(monkeypatch) -> None:
         recorder,
     )
 
-    with pytest.raises(TemporaryVisualServiceError, match="unavailable"):
+    with pytest.raises(TemporaryVisualServiceError, match="unavailable") as excinfo:
         provider.describe_visual(
             VALID_PNG_BYTES,
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.DIAGRAM,
         )
+    assert excinfo.value.error_category == "provider_error"
 
 
 def test_gemini_vision_client_error_is_visual_analysis_error(monkeypatch) -> None:
@@ -249,13 +251,14 @@ def test_gemini_vision_client_error_is_visual_analysis_error(monkeypatch) -> Non
         recorder,
     )
 
-    with pytest.raises(VisualAnalysisError, match="failed"):
+    with pytest.raises(VisualAnalysisError, match="failed") as excinfo:
         provider.describe_visual(
             VALID_PNG_BYTES,
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.DIAGRAM,
         )
+    assert excinfo.value.error_category == "provider_error"
 
 
 def test_gemini_vision_timeout_is_temporary(monkeypatch) -> None:
@@ -266,13 +269,14 @@ def test_gemini_vision_timeout_is_temporary(monkeypatch) -> None:
         recorder,
     )
 
-    with pytest.raises(TemporaryVisualServiceError, match="timed out"):
+    with pytest.raises(TemporaryVisualServiceError, match="timed out") as excinfo:
         provider.describe_visual(
             VALID_PNG_BYTES,
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.DIAGRAM,
         )
+    assert excinfo.value.error_category == "timeout"
 
 
 def test_gemini_vision_missing_api_key(monkeypatch) -> None:
@@ -282,8 +286,9 @@ def test_gemini_vision_missing_api_key(monkeypatch) -> None:
         SimpleNamespace(**{**GEMINI_VISION_SETTINGS.__dict__, "gemini_api_key": None}),
     )
 
-    with pytest.raises(VisualAnalysisError, match="GEMINI_API_KEY"):
+    with pytest.raises(VisualAnalysisError, match="GEMINI_API_KEY") as excinfo:
         GeminiImageUnderstandingProvider()
+    assert excinfo.value.error_category == "authentication_error"
 
 
 def test_gemini_vision_empty_response_returns_none(monkeypatch) -> None:
@@ -306,26 +311,30 @@ def test_gemini_vision_empty_response_returns_none(monkeypatch) -> None:
 def test_gemini_vision_rejects_invalid_png_signature(monkeypatch) -> None:
     provider = _gemini_vision_provider(monkeypatch, [], [])
 
-    with pytest.raises(VisualAnalysisError, match="PNG signature"):
+    with pytest.raises(VisualAnalysisError, match="PNG signature") as excinfo:
         provider.describe_visual(
             b"NOT_A_PNG_IMAGE",
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.FIGURE,
         )
+    assert excinfo.value.error_category == "invalid_structure"
 
 
 def test_gemini_vision_rejects_oversized_image(monkeypatch) -> None:
     provider = _gemini_vision_provider(monkeypatch, [], [])
     provider._max_bytes = 10
 
-    with pytest.raises(VisualAnalysisError, match="exceeds maximum allowed size"):
+    with pytest.raises(
+        VisualAnalysisError, match="exceeds maximum allowed size"
+    ) as excinfo:
         provider.describe_visual(
             VALID_PNG_BYTES,
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.FIGURE,
         )
+    assert excinfo.value.error_category == "invalid_structure"
 
 
 def test_gemini_vision_strips_null_bytes(monkeypatch) -> None:
@@ -386,13 +395,14 @@ def test_ollama_vision_timeout_is_temporary(monkeypatch) -> None:
 
     provider = _ollama_vision_provider(monkeypatch, handler)
 
-    with pytest.raises(TemporaryVisualServiceError, match="timed out"):
+    with pytest.raises(TemporaryVisualServiceError, match="timed out") as excinfo:
         provider.describe_visual(
             VALID_PNG_BYTES,
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.DIAGRAM,
         )
+    assert excinfo.value.error_category == "timeout"
 
 
 def test_ollama_vision_connection_error_is_temporary(monkeypatch) -> None:
@@ -401,13 +411,16 @@ def test_ollama_vision_connection_error_is_temporary(monkeypatch) -> None:
 
     provider = _ollama_vision_provider(monkeypatch, handler)
 
-    with pytest.raises(TemporaryVisualServiceError, match="could not be reached"):
+    with pytest.raises(
+        TemporaryVisualServiceError, match="could not be reached"
+    ) as excinfo:
         provider.describe_visual(
             VALID_PNG_BYTES,
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.DIAGRAM,
         )
+    assert excinfo.value.error_category == "provider_error"
 
 
 def test_ollama_vision_rate_limit_is_temporary(monkeypatch) -> None:
@@ -416,13 +429,14 @@ def test_ollama_vision_rate_limit_is_temporary(monkeypatch) -> None:
 
     provider = _ollama_vision_provider(monkeypatch, handler)
 
-    with pytest.raises(TemporaryVisualServiceError, match="rate limit"):
+    with pytest.raises(TemporaryVisualServiceError, match="rate limit") as excinfo:
         provider.describe_visual(
             VALID_PNG_BYTES,
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.DIAGRAM,
         )
+    assert excinfo.value.error_category == "rate_limit"
 
 
 def test_ollama_vision_server_error_is_temporary(monkeypatch) -> None:
@@ -431,28 +445,30 @@ def test_ollama_vision_server_error_is_temporary(monkeypatch) -> None:
 
     provider = _ollama_vision_provider(monkeypatch, handler)
 
-    with pytest.raises(TemporaryVisualServiceError, match="HTTP 500"):
+    with pytest.raises(TemporaryVisualServiceError, match="HTTP 500") as excinfo:
         provider.describe_visual(
             VALID_PNG_BYTES,
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.DIAGRAM,
         )
+    assert excinfo.value.error_category == "provider_error"
 
 
 def test_ollama_vision_client_error_is_analysis_error(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, json={"error": "Bad Request"})
+        return httpx.Response(404, json={"error": "Not Found"})
 
     provider = _ollama_vision_provider(monkeypatch, handler)
 
-    with pytest.raises(VisualAnalysisError, match="HTTP 400"):
+    with pytest.raises(VisualAnalysisError, match="HTTP 404") as excinfo:
         provider.describe_visual(
             VALID_PNG_BYTES,
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.DIAGRAM,
         )
+    assert excinfo.value.error_category == "provider_error"
 
 
 def test_ollama_vision_invalid_json(monkeypatch) -> None:
@@ -461,13 +477,14 @@ def test_ollama_vision_invalid_json(monkeypatch) -> None:
 
     provider = _ollama_vision_provider(monkeypatch, handler)
 
-    with pytest.raises(VisualAnalysisError, match="invalid JSON"):
+    with pytest.raises(VisualAnalysisError, match="invalid JSON") as excinfo:
         provider.describe_visual(
             VALID_PNG_BYTES,
             page_number=1,
             visual_index=0,
             suggested_type=VisualType.DIAGRAM,
         )
+    assert excinfo.value.error_category == "invalid_structure"
 
 
 def test_ollama_vision_empty_response(monkeypatch) -> None:
@@ -910,8 +927,9 @@ def test_vision_prompt_failure_is_a_per_visual_error(monkeypatch) -> None:
         explode,
     )
 
-    with pytest.raises(VisualAnalysisError):
+    with pytest.raises(VisualAnalysisError) as excinfo:
         _render_image_description_prompt(PromptContext(), VisualType.DIAGRAM)
+    assert excinfo.value.error_category == "unknown_error"
 
 
 def test_an_unusable_ollama_response_is_logged_with_diagnostics(

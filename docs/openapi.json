@@ -2264,6 +2264,34 @@
         "title": "BaseResponse[LegalConfigResponse]",
         "type": "object"
       },
+      "BaseResponse_ModelTestResult_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelTestResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "BaseResponse[ModelTestResult]",
+        "type": "object"
+      },
       "BaseResponse_NoneType_": {
         "properties": {
           "data": {
@@ -8401,6 +8429,116 @@
           "count"
         ],
         "title": "MockExamQuestionMixEntry",
+        "type": "object"
+      },
+      "ModelTestRequest": {
+        "properties": {
+          "model_id": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          }
+        },
+        "title": "ModelTestRequest",
+        "type": "object"
+      },
+      "ModelTestResult": {
+        "properties": {
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "base_url_fallback": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url Fallback"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unreachable",
+                  "timeout",
+                  "model_not_found",
+                  "auth",
+                  "rate_limited",
+                  "bad_response",
+                  "unavailable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "supports_vision": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supports Vision"
+          }
+        },
+        "required": [
+          "ok",
+          "model_id",
+          "provider",
+          "message"
+        ],
+        "title": "ModelTestResult",
         "type": "object"
       },
       "MultipleChoiceAnswer": {
@@ -18849,6 +18987,54 @@
           }
         ],
         "summary": "List Available Models",
+        "tags": [
+          "AI Models"
+        ]
+      }
+    },
+    "/api/models/test": {
+      "post": {
+        "operationId": "test_model_api_models_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaseResponse_ModelTestResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Email verification required"
+          },
+          "422": {
+            "description": "Invalid request body"
+          },
+          "429": {
+            "description": "Per-user generation rate limited"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Test Model",
         "tags": [
           "AI Models"
         ]

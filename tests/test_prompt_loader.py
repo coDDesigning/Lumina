@@ -117,6 +117,7 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "image_description": "1.0.0",
     "visual_content": "2.1.0",
     "ocr_cleanup": "1.1.0",
+    "model_check": "1.0.0",
 }
 
 
@@ -625,6 +626,9 @@ SAMPLE_TEMPLATE_INPUTS = {
         **SHARED_PROMPT_VARIABLES,
         "SUGGESTED_TYPE": "diagram",
     },
+    "model_check": {
+        **SHARED_PROMPT_VARIABLES,
+    },
     "exam_style_question": {
         **SHARED_PROMPT_VARIABLES,
         "TOPIC_LABEL": "Graph Traversal",
@@ -939,6 +943,7 @@ ACTIVE_TEMPLATE_OWNERS = {
         "services.image_understanding",
         "_IMAGE_DESCRIPTION_TEMPLATE",
     ),
+    "model_check": ("services.model_check", "MODEL_CHECK_TEMPLATE_NAME"),
     "exam_topic_analysis": (
         "services.exam_source_analysis",
         "ExamSourceAnalysisService.PROMPT_TEMPLATE_NAME",

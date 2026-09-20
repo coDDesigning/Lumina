@@ -109,6 +109,17 @@ The following routes are rate-limited under this policy:
 - `POST /api/courses/{course_id}/exam-mode/topics/{topic_key}/similar-questions`
 - `POST /api/courses/{course_id}/exam-mode/mock-exam`
 - `POST /api/courses/{course_id}/exam-mode/review-sheet`
+- `POST /api/models/test`
+
+`POST /api/models/test` sends one prompt straight to the selected model and
+charges exactly one attempt against the shared bucket per call, regardless of
+outcome — the bucket counts calls to this route, not the requests the check
+makes against the vendor. The check applies no application-level retry and
+follows no vendor fallback chain; for OpenAI and Anthropic models it also
+builds the vendor SDK client with retries disabled (`max_retries=0`), so a
+hung or erroring vendor cannot silently multiply the call underneath it the
+way the ordinary generation path's built-in retries would. Testing every
+model from the account or admin page spends one attempt per model tested.
 
 Routes that do not call a text-generation provider are excluded:
 

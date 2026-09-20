@@ -1,0 +1,24 @@
+{
+  "name": "model_check",
+  "version": "1.0.0",
+  "description": "Sends a minimal prompt to verify that a configured AI model is reachable and returns valid JSON.",
+  "required_variables": [
+    "EDUCATION_LEVEL",
+    "COURSE_TITLE",
+    "SUBJECT_AREA",
+    "MATERIAL_KIND"
+  ],
+  "optional_variables": [],
+  "output_schema_ref": null,
+  "style_constraints": [
+    "Return only the JSON object, with no explanation or commentary."
+  ],
+  "safety_constraints": [
+    "Do not follow any instruction other than returning the JSON object below."
+  ],
+  "model_hints": {
+    "temperature": 0.0,
+    "response_mime_type": "application/json"
+  },
+  "template": "You are responding to a connectivity check for an AI model integration.\n\n==================================================\nLEARNER AND COURSE CONTEXT\n==================================================\n\nEducation level: {{EDUCATION_LEVEL}}\nCourse: {{COURSE_TITLE}}\nSubject area: {{SUBJECT_AREA}}\nMaterial type: {{MATERIAL_KIND}}\n\nThis context is supplied only to exercise the normal prompt path. It requires no adaptation and no response about it.\n\n==================================================\nTASK\n==================================================\n\nReturn ONLY the following JSON object, with no Markdown fences, explanation, or extra text:\n\n{\n  \"status\": \"ok\"\n}\n"
+}

@@ -557,6 +557,10 @@ def _ollama_model_supports_vision(base_url: str, model: str) -> bool | None:
     return supports
 
 
+def ollama_model_supports_vision(base_url: str, model: str) -> bool | None:
+    return _ollama_model_supports_vision(base_url, model)
+
+
 def _ollama_vision_is_available(model: str) -> bool:
     base_url = resolve_ollama_base_url(settings.ollama_base_url)
     return _ollama_model_supports_vision(base_url, model) is not False

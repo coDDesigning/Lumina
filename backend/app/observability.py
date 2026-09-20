@@ -30,6 +30,24 @@ _SECRET_PATTERN = re.compile(
     \b(?P<bearer>bearer)\s+[^\s,;\"'{}()]+
     """
 )
+_SQL_STATEMENT_PATTERN = re.compile(
+    r"\[SQL:(?:(?!\n\[|\n\(Background on this error at:).)*(?<!\[REDACTED)\]",
+    re.DOTALL,
+)
+_SQL_PARAMETERS_PATTERN = re.compile(
+    r"\[parameters:(?:(?!\n\[|\n\(Background on this error at:).)*(?<!\[REDACTED)\]",
+    re.DOTALL,
+)
+_URL_QUERY_PATTERN = re.compile(r"""https?://[^\s"'<>{}()?]+\?[^\s"'<>()]*""")
+_EMAIL_PATTERN = re.compile(
+    r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}"
+)
+_VALIDATION_INPUT_PATTERN = re.compile(
+    r"(\[type=\w+, input(?:_value)?=).*?(, input_type=\w+\])"
+)
+_MAX_REDACT_INPUT_LENGTH = 4000
+_TRUNCATION_MARKER = "[REDACTED]"
+_MAX_TRUNCATION_SETTLE_PASSES = 4
 _ALLOWED_FIELDS = (
     "action",
     "application_version",
@@ -86,14 +104,55 @@ _ALLOWED_FIELDS = (
 )
 
 
+def _safe_cut(text: str, limit: int) -> str:
+    cut = max(0, min(limit, len(text)))
+    marker_len = len(_TRUNCATION_MARKER)
+    search_start = max(0, cut - marker_len + 1)
+    for start in range(search_start, cut):
+        if (
+            text[start : start + marker_len] == _TRUNCATION_MARKER
+            and start + marker_len > cut
+        ):
+            return text[:start]
+    return text[:cut]
+
+
 def redact(value: str) -> str:
-    def _replace(match: re.Match[str]) -> str:
+    def _replace_secret(match: re.Match[str]) -> str:
         if match.group("bearer"):
             return f"{match.group('bearer')} [REDACTED]"
         quote = match.group("quote") or ""
         return f"{match.group('key')}[REDACTED]{quote}"
 
-    return _SECRET_PATTERN.sub(_replace, value)
+    def _replace_url_query(match: re.Match[str]) -> str:
+        url = match.group(0)
+        return f"{url[: url.index('?') + 1]}[REDACTED]"
+
+    def _apply_patterns(text: str) -> str:
+        text = _URL_QUERY_PATTERN.sub(_replace_url_query, text)
+        text = _SECRET_PATTERN.sub(_replace_secret, text)
+        text = _SQL_STATEMENT_PATTERN.sub("[SQL: [REDACTED]]", text)
+        text = _SQL_PARAMETERS_PATTERN.sub("[parameters: [REDACTED]]", text)
+        text = _EMAIL_PATTERN.sub("[REDACTED]", text)
+        text = _VALIDATION_INPUT_PATTERN.sub(r"\1[REDACTED]\2", text)
+        return text
+
+    truncated = len(value) > _MAX_REDACT_INPUT_LENGTH
+    if truncated:
+        value = value[:_MAX_REDACT_INPUT_LENGTH]
+    value = _apply_patterns(value)
+
+    if truncated or len(value) > _MAX_REDACT_INPUT_LENGTH:
+        budget = _MAX_REDACT_INPUT_LENGTH - len(_TRUNCATION_MARKER) - 1
+        value = f"{_safe_cut(value, budget)} {_TRUNCATION_MARKER}"
+        for _ in range(_MAX_TRUNCATION_SETTLE_PASSES):
+            settled = _apply_patterns(value)
+            if len(settled) > _MAX_REDACT_INPUT_LENGTH:
+                settled = f"{_safe_cut(settled, budget)} {_TRUNCATION_MARKER}"
+            if settled == value:
+                break
+            value = settled
+    return value
 
 
 def _exception_type_chain(exc: BaseException | None) -> list[str]:

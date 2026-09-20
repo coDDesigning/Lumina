@@ -19,7 +19,11 @@ Every line contains:
   `http_status`, `duration_ms`, `job_id`, `worker_id`, `error_code`, and
   `exception_type`; and
 - `exception_message` on records logged with an exception: each message in the
-  cause chain, secret-redacted and capped at 500 characters; and
+  cause chain, redacted and capped at 500 characters -- `redact` removes
+  auth-shaped credentials, SQLAlchemy `[SQL: ...]` statements and
+  `[parameters: ...]` sections, URL query strings, e-mail addresses, and
+  pydantic `input`/`input_value` fragments, replacing each with
+  `[REDACTED]`; and
 - `stack` on records logged at ERROR with an exception: project-relative frames
   (`services/quiz.py:524 in generate`) taken from the innermost cause, capped at
   twelve. Never a rendered traceback or a source line.
@@ -43,8 +47,12 @@ structured fields. Model output is described but never
 quoted: a failed generation reports its size, digest, sanitised top-level key
 names and the fields validation rejected, and the response text itself appears
 only when an operator turns on `AI_LOG_RAW_RESPONSE_ON_FAILURE`. See
-[Diagnosing an unusable AI response](#diagnosing-an-unusable-ai-response). Known
-token/password/API-key forms are redacted from messages. Uvicorn access logging is disabled because
+[Diagnosing an unusable AI response](#diagnosing-an-unusable-ai-response).
+`redact` sanitises every `message`, `exception_message`, and `stack` frame:
+known token/password/API-key forms, SQLAlchemy `[SQL: ...]` statements and
+`[parameters: ...]` sections, URL query strings, e-mail addresses, and
+pydantic `input`/`input_value` fragments are each replaced with
+`[REDACTED]`. Uvicorn access logging is disabled because
 it carries neither correlation nor sanitisation; the middleware records the
 request events described under [Which requests are logged](#which-requests-are-logged).
 

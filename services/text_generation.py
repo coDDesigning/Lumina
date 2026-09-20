@@ -645,7 +645,6 @@ class GeminiTextGenerationProvider(TemperatureBindingMixin):
 class OllamaTextGenerationProvider(TemperatureBindingMixin):
     PROVIDER_NAME = "ollama"
     GENERATE_PATH = "/api/generate"
-    TAGS_PATH = "/api/tags"
 
     def __init__(
         self,
@@ -780,53 +779,6 @@ class OllamaTextGenerationProvider(TemperatureBindingMixin):
     def generate_json(self, prompt: str) -> dict[str, object]:
         result, _ = self.generate_json_with_metadata(prompt)
         return result
-
-    def list_model_names(self) -> list[str]:
-        try:
-            response = self._client.get(
-                f"{self._base_url}{self.TAGS_PATH}", timeout=self._timeout_seconds
-            )
-        except httpx.TimeoutException as exc:
-            raise TextGenerationTimeoutError(
-                "Ollama did not respond within the configured timeout."
-            ) from exc
-        except httpx.TransportError as exc:
-            raise TextGenerationConnectionError(
-                "Ollama could not be reached at the configured base URL."
-            ) from exc
-
-        if response.status_code in (401, 403):
-            raise TextGenerationAuthError("Ollama authentication failed.")
-        if response.status_code == 429:
-            raise TextGenerationRateLimitError("Ollama rate limit exceeded.")
-        if not response.is_success:
-            raise TextGenerationProviderError(
-                f"Ollama returned HTTP {response.status_code}."
-            )
-
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise TextGenerationProviderError(
-                "Ollama returned a response that is not valid JSON."
-            ) from exc
-
-        if not isinstance(payload, dict):
-            raise TextGenerationProviderError(
-                "Ollama returned an unexpected response structure."
-            )
-
-        models = payload.get("models")
-        if not isinstance(models, list):
-            raise TextGenerationProviderError(
-                "Ollama returned an unexpected response structure."
-            )
-
-        return [
-            entry.get("name")
-            for entry in models
-            if isinstance(entry, dict) and isinstance(entry.get("name"), str)
-        ]
 
 
 class OpenAITextGenerationProvider(TemperatureBindingMixin):

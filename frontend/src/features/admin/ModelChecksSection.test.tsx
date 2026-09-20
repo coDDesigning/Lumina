@@ -39,7 +39,7 @@ function result(overrides: Partial<ModelTestResult> = {}): ModelTestResult {
     provider: 'gemini',
     latency_ms: 800,
     error_code: null,
-    message: 'The model responded successfully.',
+    message: 'The provider confirmed this model is available to your account.',
     supports_vision: null,
     base_url: null,
     base_url_fallback: null,

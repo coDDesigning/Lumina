@@ -20,7 +20,7 @@ const OK_RESULT: ModelTestResult = {
   provider: 'ollama',
   latency_ms: 1234,
   error_code: null,
-  message: 'The model responded successfully.',
+  message: 'The provider confirmed this model is available to your account.',
   supports_vision: null,
   base_url: null,
   base_url_fallback: null,
@@ -31,7 +31,7 @@ describe('ModelTestControl', () => {
     mockTest.mockReset();
   });
 
-  it('shows Testing while pending and the answer time once the model responds', async () => {
+  it('shows Testing while pending and that the model is available once the check completes', async () => {
     const user = userEvent.setup();
     let resolveTest: (value: ModelTestResult) => void = () => {};
     mockTest.mockReturnValue(
@@ -47,7 +47,9 @@ describe('ModelTestControl', () => {
 
     resolveTest(OK_RESULT);
 
-    expect(await screen.findByText('Answered in 1.2 s')).toBeInTheDocument();
+    expect(
+      await screen.findByText('This model is available on the provider (checked in 1.2 s)'),
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Test model' })).toBeInTheDocument();
     expect(mockTest).toHaveBeenCalledWith('ollama:llama3.1');
   });
@@ -71,7 +73,7 @@ describe('ModelTestControl', () => {
     render(<ModelTestControl modelId="ollama:llama3.1" isAdmin={false} />);
     await user.click(screen.getByRole('button', { name: 'Test model' }));
 
-    await screen.findByText('Answered in 1.2 s');
+    await screen.findByText('This model is available on the provider (checked in 1.2 s)');
     expect(screen.queryByText(/can't read images/)).not.toBeInTheDocument();
   });
 
@@ -97,7 +99,9 @@ describe('ModelTestControl', () => {
 
     await user.click(screen.getByRole('button', { name: 'Try again' }));
 
-    expect(await screen.findByText('Answered in 0.3 s')).toBeInTheDocument();
+    expect(
+      await screen.findByText('This model is available on the provider (checked in 0.3 s)'),
+    ).toBeInTheDocument();
     expect(mockTest).toHaveBeenCalledTimes(2);
   });
 
@@ -125,7 +129,9 @@ describe('ModelTestControl', () => {
 
     await user.click(screen.getByRole('button', { name: 'Try again' }));
 
-    expect(await screen.findByText('Answered in 0.5 s')).toBeInTheDocument();
+    expect(
+      await screen.findByText('This model is available on the provider (checked in 0.5 s)'),
+    ).toBeInTheDocument();
   });
 
   it('clears the previous result once the selected model changes', async () => {
@@ -134,12 +140,16 @@ describe('ModelTestControl', () => {
 
     const { rerender } = render(<ModelTestControl modelId="ollama:llama3.1" isAdmin={false} />);
     await user.click(screen.getByRole('button', { name: 'Test model' }));
-    expect(await screen.findByText('Answered in 0.9 s')).toBeInTheDocument();
+    expect(
+      await screen.findByText('This model is available on the provider (checked in 0.9 s)'),
+    ).toBeInTheDocument();
 
     rerender(<ModelTestControl modelId="ollama:mistral" isAdmin={false} />);
 
     await waitFor(() =>
-      expect(screen.queryByText('Answered in 0.9 s')).not.toBeInTheDocument(),
+      expect(
+        screen.queryByText('This model is available on the provider (checked in 0.9 s)'),
+      ).not.toBeInTheDocument(),
     );
     expect(screen.getByRole('button', { name: 'Test model' })).toBeInTheDocument();
   });
@@ -166,7 +176,9 @@ describe('ModelTestControl', () => {
       resolveFirst({ ...OK_RESULT, model_id: 'ollama:llama3.1', latency_ms: 999 });
     });
 
-    expect(screen.queryByText('Answered in 1.0 s')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('This model is available on the provider (checked in 1.0 s)'),
+    ).not.toBeInTheDocument();
     expect(mockTest).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: 'Test model' })).toBeInTheDocument();
   });
@@ -220,7 +232,7 @@ describe('ModelTestControl', () => {
     render(<ModelTestControl modelId="ollama:llama3.1" isAdmin={false} />);
     await user.click(screen.getByRole('button', { name: 'Test model' }));
 
-    await screen.findByText('Answered in 1.2 s');
+    await screen.findByText('This model is available on the provider (checked in 1.2 s)');
     expect(screen.queryByText('http://127.0.0.1:11434')).not.toBeInTheDocument();
   });
 });

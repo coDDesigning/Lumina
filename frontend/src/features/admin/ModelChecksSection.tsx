@@ -89,7 +89,7 @@ export function ModelChecksSection() {
             Test all models
           </h2>
           <p className={styles.subtitle}>
-            Runs one diagnostic call per configured model, one at a time.
+            Checks whether each configured model is available, one at a time.
           </p>
         </div>
         <Button

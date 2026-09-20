@@ -69,7 +69,9 @@ export function ModelTestControl({ modelId, isAdmin }: ModelTestControlProps) {
 
       {result?.ok ? (
         <Alert tone="success" live="status" className={styles.outcome}>
-          {result.latency_ms != null ? <p>Answered in {formatLatency(result.latency_ms)}</p> : null}
+          {result.latency_ms != null ? (
+            <p>This model is available on the provider (checked in {formatLatency(result.latency_ms)})</p>
+          ) : null}
           {result.supports_vision === false ? (
             <p>This model can't read images, so figures won't be described</p>
           ) : null}

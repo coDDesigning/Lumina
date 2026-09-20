@@ -41,10 +41,12 @@
   --space-7: 3rem;
   --space-8: 4rem;
 
+  --size-control-xs: 1.5rem;
   --size-control-sm: 2.125rem;
   --size-control-md: 2.625rem;
   --size-control-lg: 3rem;
   --size-touch-min: 2.75rem;
+  --size-icon-xs: 0.875rem;
   --size-icon-sm: 1rem;
   --size-icon-md: 1.1875rem;
   --size-icon-lg: 1.5rem;

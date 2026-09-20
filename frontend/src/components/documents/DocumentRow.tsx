@@ -5,6 +5,8 @@ import { cx } from '@/lib/cx';
 import { Breath } from '@/ui/Breath';
 import { Button } from '@/ui/Button';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
+import { IconButton } from '@/ui/IconButton';
+import { Spinner } from '@/ui/Spinner';
 import { Tooltip } from '@/ui/Tooltip';
 import {
   TOTAL_STAGES,
@@ -133,13 +135,28 @@ export function DocumentRow({
             </span>
           ))}
           {visualLabel ? (
-            <span>
+            <span className={styles.visualStatus}>
               {facts.length > 0 ? <span className={styles.dot}>·</span> : null}
               {visualDetail ? (
                 <Tooltip content={<VisualDetail detail={visualDetail} />}>{visualLabel}</Tooltip>
               ) : (
                 <span>{visualLabel}</span>
               )}
+              {canRetryVisuals ? (
+                <IconButton
+                  label={entry.pending === 'retryVisuals' ? 'Retrying figures' : 'Retry figures'}
+                  icon={
+                    entry.pending === 'retryVisuals' ? (
+                      <Spinner size="sm" />
+                    ) : (
+                      <RotateCcw aria-hidden="true" />
+                    )
+                  }
+                  size="xs"
+                  onClick={() => onRetryVisuals?.(document.id)}
+                  disabled={entry.pending !== null}
+                />
+              ) : null}
             </span>
           ) : null}
         </p>
@@ -221,18 +238,6 @@ export function DocumentRow({
               icon={<RotateCcw aria-hidden="true" />}
             >
               Try again
-            </Button>
-          ) : null}
-          {canRetryVisuals ? (
-            <Button
-              size="sm"
-              onClick={() => onRetryVisuals?.(document.id)}
-              disabled={entry.pending !== null}
-              isLoading={entry.pending === 'retryVisuals'}
-              loadingLabel="Retrying figures"
-              icon={<RotateCcw aria-hidden="true" />}
-            >
-              Retry figures
             </Button>
           ) : null}
           <Button

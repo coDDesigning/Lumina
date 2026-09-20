@@ -448,5 +448,34 @@ describe('DocumentRow', () => {
 
       expect(retryVisuals).toHaveBeenCalledWith('doc-1');
     });
+
+    it('is an icon-only control tucked next to the visual status label, not a text button in the action row', () => {
+      renderRow(visualRow('partial', summary({ failed: 1 })), { retryVisuals: vi.fn() });
+
+      const retry = screen.getByRole('button', { name: 'Retry figures' });
+      expect(retry).toHaveAttribute('title', 'Retry figures');
+      expect(retry.textContent).toBe('');
+
+      const label = screen.getByRole('button', { name: 'Partial visuals' });
+      expect(retry.parentElement).toBe(label.parentElement);
+
+      const remove = screen.getByRole('button', { name: /Remove week-3-lecture/ });
+      expect(retry.parentElement).not.toBe(remove.parentElement);
+    });
+
+    it('disables the control and truthfully announces a retry in progress while its own retry is pending', () => {
+      const row = visualRow('partial', summary({ failed: 1 }));
+      renderRow({ ...row, pending: 'retryVisuals' }, { retryVisuals: vi.fn() });
+
+      expect(screen.queryByRole('button', { name: 'Retry figures' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Retrying figures' })).toBeDisabled();
+    });
+
+    it('disables the control while a different row action is pending', () => {
+      const row = visualRow('partial', summary({ failed: 1 }));
+      renderRow({ ...row, pending: 'delete' }, { retryVisuals: vi.fn() });
+
+      expect(screen.getByRole('button', { name: 'Retry figures' })).toBeDisabled();
+    });
   });
 });

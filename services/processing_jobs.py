@@ -1824,6 +1824,108 @@ def _fail_document_job(
     return job.status
 
 
+def release_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    return _release_document_job(
+        session,
+        job_id,
+        claim_token,
+        job_type=JOB_TYPE_EXTRACT_DOCUMENT,
+        claimed_document_status="processing",
+        released_document_status="uploaded",
+        now=now,
+    )
+
+
+def release_describe_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    return _release_document_job(
+        session,
+        job_id,
+        claim_token,
+        job_type=JOB_TYPE_DESCRIBE_VISUALS,
+        claimed_document_status=None,
+        released_document_status=None,
+        now=now,
+    )
+
+
+def _release_document_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    job_type: str,
+    claimed_document_status: str | None,
+    released_document_status: str | None,
+    now: datetime | None = None,
+) -> bool:
+    _start_transition(session)
+    released_at = _database_now(session, now)
+    document_id = session.scalar(
+        update(ProcessingJob)
+        .where(
+            ProcessingJob.id == job_id,
+            ProcessingJob.job_type == job_type,
+            ProcessingJob.status == JOB_STATUS_RUNNING,
+            ProcessingJob.claim_token == claim_token,
+        )
+        .values(
+            status=JOB_STATUS_QUEUED,
+            attempt_count=ProcessingJob.attempt_count - 1,
+            started_at=case(
+                (ProcessingJob.attempt_count <= 1, None),
+                else_=ProcessingJob.started_at,
+            ),
+            available_at=released_at,
+            finished_at=None,
+            processing_stage=None,
+            failed_stage=None,
+            lease_owner=None,
+            claim_token=None,
+            claimed_at=None,
+            heartbeat_at=None,
+            lease_expires_at=None,
+            updated_at=released_at,
+        )
+        .returning(ProcessingJob.document_id)
+        .execution_options(synchronize_session=False)
+    )
+    if document_id is None:
+        session.rollback()
+        return False
+
+    if released_document_status is not None:
+        document_result = session.execute(
+            update(UploadedDocument)
+            .where(
+                UploadedDocument.id == document_id,
+                UploadedDocument.status == claimed_document_status,
+            )
+            .values(
+                status=released_document_status,
+                processing_error=None,
+                updated_at=released_at,
+            )
+        )
+        if document_result.rowcount != 1:
+            session.rollback()
+            return False
+
+    session.commit()
+    return True
+
+
 def recover_expired_jobs(
     session: Session,
     *,
@@ -3346,6 +3448,108 @@ def _fail_profile_document_job(
             document.status = failed_document_status
             document.processing_error = public_message
             document.updated_at = failed_at
+
+    session.commit()
+    return True
+
+
+def release_profile_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    return _release_profile_document_job(
+        session,
+        job_id,
+        claim_token,
+        job_type=JOB_TYPE_EXTRACT_DOCUMENT,
+        claimed_document_status="processing",
+        released_document_status="uploaded",
+        now=now,
+    )
+
+
+def release_profile_describe_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    return _release_profile_document_job(
+        session,
+        job_id,
+        claim_token,
+        job_type=JOB_TYPE_DESCRIBE_VISUALS,
+        claimed_document_status=None,
+        released_document_status=None,
+        now=now,
+    )
+
+
+def _release_profile_document_job(
+    session: Session,
+    job_id: int,
+    claim_token: str,
+    *,
+    job_type: str,
+    claimed_document_status: str | None,
+    released_document_status: str | None,
+    now: datetime | None = None,
+) -> bool:
+    _start_transition(session)
+    released_at = _database_now(session, now)
+    document_id = session.scalar(
+        update(ProfileProcessingJob)
+        .where(
+            ProfileProcessingJob.id == job_id,
+            ProfileProcessingJob.job_type == job_type,
+            ProfileProcessingJob.status == JOB_STATUS_RUNNING,
+            ProfileProcessingJob.claim_token == claim_token,
+        )
+        .values(
+            status=JOB_STATUS_QUEUED,
+            attempt_count=ProfileProcessingJob.attempt_count - 1,
+            started_at=case(
+                (ProfileProcessingJob.attempt_count <= 1, None),
+                else_=ProfileProcessingJob.started_at,
+            ),
+            available_at=released_at,
+            finished_at=None,
+            processing_stage=None,
+            failed_stage=None,
+            lease_owner=None,
+            claim_token=None,
+            claimed_at=None,
+            heartbeat_at=None,
+            lease_expires_at=None,
+            updated_at=released_at,
+        )
+        .returning(ProfileProcessingJob.document_id)
+        .execution_options(synchronize_session=False)
+    )
+    if document_id is None:
+        session.rollback()
+        return False
+
+    if released_document_status is not None:
+        document_result = session.execute(
+            update(ProfileDocument)
+            .where(
+                ProfileDocument.id == document_id,
+                ProfileDocument.status == claimed_document_status,
+            )
+            .values(
+                status=released_document_status,
+                processing_error=None,
+                updated_at=released_at,
+            )
+        )
+        if document_result.rowcount != 1:
+            session.rollback()
+            return False
 
     session.commit()
     return True

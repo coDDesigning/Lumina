@@ -59,10 +59,15 @@ from services.processing_jobs import (
     enqueue_describe_visuals_job_if_deferred,
     enqueue_document_job,
     enqueue_profile_describe_visuals_job,
+    enqueue_profile_document_job,
     fail_describe_job,
     fail_profile_describe_job,
     record_visual_description,
     record_profile_visual_description,
+    release_describe_job,
+    release_job,
+    release_profile_describe_job,
+    release_profile_job,
     retry_failed_profile_job,
     retry_failed_visuals,
     record_visual_failure,
@@ -274,6 +279,92 @@ def test_claiming_a_describe_job_leaves_the_document_ready(session_factory, tmp_
         )
         assert job.status == JOB_STATUS_RUNNING
         assert job.processing_stage == "validating"
+
+
+def test_releasing_a_describe_job_leaves_its_ready_document_alone(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        enqueue_describe_visuals_job(session, document, now=queued_at)
+        session.commit()
+
+    claim_at = queued_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_describe_job(
+            session, "describe-worker", ready.storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+
+    release_at = claim_at + timedelta(seconds=1)
+    with session_factory() as session:
+        assert (
+            release_describe_job(session, claim.id, claim.claim_token, now=release_at)
+            is True
+        )
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, claim.id)
+        document = session.get(UploadedDocument, ready.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert job.claim_token is None
+        assert job.started_at is None
+        assert document.status == "ready"
+        assert document.processing_error is None
+
+    with session_factory() as session:
+        reclaimed = claim_next_describe_job(
+            session,
+            "describe-worker-2",
+            ready.storage.provider,
+            600,
+            now=release_at,
+        )
+    assert reclaimed is not None
+    assert reclaimed.id == claim.id
+    assert reclaimed.attempt_count == 1
+
+
+def test_the_extraction_release_refuses_a_describe_job(session_factory, tmp_path):
+    ready = seed_ready_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        enqueue_describe_visuals_job(session, document, now=queued_at)
+        session.commit()
+
+    claim_at = queued_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_describe_job(
+            session, "describe-worker", ready.storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+
+    with session_factory() as session:
+        assert (
+            release_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                now=claim_at + timedelta(seconds=1),
+            )
+            is False
+        )
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, claim.id)
+        document = session.get(UploadedDocument, ready.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_RUNNING
+        assert job.job_type == JOB_TYPE_DESCRIBE_VISUALS
+        assert job.claim_token == claim.claim_token
+        assert document.status == "ready"
 
 
 def test_a_describe_job_is_not_claimed_while_its_document_is_reprocessing(
@@ -2016,6 +2107,123 @@ def test_the_profile_extract_claim_ignores_describe_jobs(session_factory, tmp_pa
         )
 
     assert claim is None
+
+
+def test_releasing_a_profile_extraction_returns_its_document_to_uploaded(
+    session_factory, tmp_path
+):
+    storage = LocalStorage(tmp_path / "profile-release-uploads", namespace="profile")
+    document_id = uuid4()
+    content = b"Profile release notes"
+
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Profile release owner",
+            email="profile-release@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        session.add(user)
+        session.flush()
+
+        storage_key = storage.generate_key(user.id, document_id, "txt")
+        storage.save(storage_key, BytesIO(content))
+
+        document = ProfileDocument(
+            id=document_id,
+            user_id=user.id,
+            original_file_name="notes.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=len(content),
+            file_hash=hashlib.sha256(content).hexdigest(),
+            storage_provider=storage.provider,
+            storage_key=storage_key,
+            status="uploaded",
+        )
+        session.add(document)
+        session.flush()
+        job = enqueue_profile_document_job(session, document)
+        session.commit()
+        job_id = job.id
+
+    claim_at = datetime.now(timezone.utc)
+    with session_factory() as session:
+        claim = claim_next_profile_job(
+            session, "profile-worker", storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+    assert claim.id == job_id
+
+    release_at = claim_at + timedelta(seconds=1)
+    with session_factory() as session:
+        assert (
+            release_profile_job(session, claim.id, claim.claim_token, now=release_at)
+            is True
+        )
+
+    with session_factory() as session:
+        job = session.get(ProfileProcessingJob, job_id)
+        document = session.get(ProfileDocument, document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert job.claim_token is None
+        assert job.started_at is None
+        assert document.status == "uploaded"
+        assert document.processing_error is None
+
+    with session_factory() as session:
+        reclaimed = claim_next_profile_job(
+            session, "profile-worker-2", storage.provider, 600, now=release_at
+        )
+    assert reclaimed is not None
+    assert reclaimed.id == job_id
+    assert reclaimed.attempt_count == 1
+
+
+def test_releasing_a_profile_describe_job_leaves_its_document_ready(
+    session_factory, tmp_path
+):
+    ready = seed_ready_profile_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+    with session_factory() as session:
+        document = session.get(ProfileDocument, ready.document_id)
+        enqueue_profile_describe_visuals_job(session, document, now=queued_at)
+        session.commit()
+
+    claim_at = queued_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_profile_describe_job(
+            session,
+            "profile-describe-worker",
+            ready.storage.provider,
+            600,
+            now=claim_at,
+        )
+    assert claim is not None
+
+    release_at = claim_at + timedelta(seconds=1)
+    with session_factory() as session:
+        assert (
+            release_profile_describe_job(
+                session, claim.id, claim.claim_token, now=release_at
+            )
+            is True
+        )
+
+    with session_factory() as session:
+        job = session.get(ProfileProcessingJob, claim.id)
+        document = session.get(ProfileDocument, ready.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert job.claim_token is None
+        assert document.status == "ready"
 
 
 def test_a_profile_visual_is_checkpointed_on_its_own(session_factory, tmp_path):

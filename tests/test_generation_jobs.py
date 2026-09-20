@@ -57,6 +57,7 @@ from services.generation_jobs import (
     heartbeat_generation_job,
     list_course_generation_jobs,
     recover_expired_generation_jobs,
+    release_generation_job,
     dismiss_generation_job,
     retry_generation_job,
 )
@@ -816,6 +817,99 @@ def test_complete_rejects_a_stale_claim_token(
     row = db_session.get(GenerationJob, claimed.id)
     assert row is not None
     assert row.status == JOB_STATUS_RUNNING
+
+
+def test_releasing_a_running_generation_restores_its_attempt_and_keeps_the_charge(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    queued = _enqueue(db_session, course, owner)
+    charged_balance = db_session.get(User, owner.id).credits
+    claimed = claim_next_generation_job(db_session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+    assert claimed.attempt_count == 1
+
+    assert release_generation_job(db_session, claimed.id, claimed.claim_token) is True
+
+    db_session.expire_all()
+    row = db_session.get(GenerationJob, queued.id)
+    assert row is not None
+    assert row.status == JOB_STATUS_QUEUED
+    assert row.attempt_count == 0
+    assert row.started_at is None
+    assert row.claim_token is None
+    assert row.lease_owner is None
+    assert row.claimed_at is None
+    assert row.heartbeat_at is None
+    assert row.lease_expires_at is None
+    assert row.finished_at is None
+    assert row.charge_amount == pytest.approx(1.0)
+    assert row.charge_transaction_id is not None
+    assert row.charge_refunded is False
+    assert db_session.get(User, owner.id).credits == pytest.approx(charged_balance)
+    assert_balance_is_derivable(db_session, owner.id)
+
+    reclaimed = claim_next_generation_job(db_session, "worker-2", LEASE_SECONDS)
+    assert reclaimed is not None
+    assert reclaimed.id == queued.id
+    assert reclaimed.attempt_count == 1
+
+
+def test_a_generation_release_with_a_stale_claim_token_changes_nothing(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    _enqueue(db_session, course, owner)
+    claimed = claim_next_generation_job(db_session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+
+    assert (
+        release_generation_job(
+            db_session, claimed.id, "00000000-0000-0000-0000-000000000000"
+        )
+        is False
+    )
+
+    db_session.expire_all()
+    row = db_session.get(GenerationJob, claimed.id)
+    assert row is not None
+    assert row.status == JOB_STATUS_RUNNING
+    assert row.claim_token == claimed.claim_token
+    assert row.attempt_count == 1
+
+
+def test_a_generation_that_is_not_running_cannot_be_released(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    queued = _enqueue(db_session, course, owner)
+
+    assert release_generation_job(db_session, queued.id, "irrelevant-token") is False
+
+    db_session.expire_all()
+    row = db_session.get(GenerationJob, queued.id)
+    assert row is not None
+    assert row.status == JOB_STATUS_QUEUED
+    assert row.attempt_count == 0
+
+
+def test_a_generation_released_during_its_provider_call_cannot_complete_afterwards(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    _enqueue(db_session, course, owner)
+    claimed = claim_next_generation_job(db_session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+    output = _persisted_output(db_session, course, owner)
+
+    assert release_generation_job(db_session, claimed.id, claimed.claim_token) is True
+
+    with pytest.raises(GenerationJobStateError):
+        complete_generation_job(
+            db_session, claimed.id, claimed.claim_token, generated_output_id=output.id
+        )
+
+    db_session.expire_all()
+    row = db_session.get(GenerationJob, claimed.id)
+    assert row is not None
+    assert row.status == JOB_STATUS_QUEUED
+    assert row.claim_token is None
 
 
 def test_complete_requires_exactly_one_result(

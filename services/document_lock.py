@@ -241,6 +241,19 @@ def release_expired_generation_locks(db: Session) -> int:
         return int(result.rowcount or 0)
 
 
+def release_process_generation_locks(db: Session) -> int:
+    holder = _holder_identity()
+    with Session(bind=db.get_bind()) as session:
+        begin_serialized_write(session)
+        result = session.execute(
+            delete(DocumentGenerationLock).where(
+                DocumentGenerationLock.holder == holder
+            )
+        )
+        session.commit()
+        return int(result.rowcount or 0)
+
+
 def reset_generation_locks(db: Session) -> None:
     """Drop every generation lock (primarily for tests)."""
     with Session(bind=db.get_bind()) as session:

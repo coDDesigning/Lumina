@@ -48,6 +48,7 @@ from services.processing_jobs import (
     heartbeat_job,
     processing_queue_metrics,
     recover_expired_jobs,
+    release_job,
     replace_document_pages,
     update_job_stage,
 )
@@ -1856,6 +1857,273 @@ def test_failing_a_job_never_resurrects_a_deleting_document(session_factory, tmp
         assert document is not None and job is not None
         assert document.status == "deleting"
         assert job.status == JOB_STATUS_RUNNING
+
+
+def test_releasing_an_extraction_restores_the_attempt_it_spent(
+    session_factory, tmp_path
+):
+    queued = _queue_document(session_factory, tmp_path, max_attempts=3)
+    claim_at = queued.available_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session, "worker", queued.storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+    assert claim.attempt_count == 1
+
+    release_at = claim_at + timedelta(seconds=1)
+    with session_factory() as session:
+        assert release_job(session, claim.id, claim.claim_token, now=release_at) is True
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        document = session.get(UploadedDocument, queued.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert job.started_at is None
+        assert job.claim_token is None
+        assert job.lease_owner is None
+        assert job.claimed_at is None
+        assert job.heartbeat_at is None
+        assert job.lease_expires_at is None
+        assert job.finished_at is None
+        assert job.processing_stage is None
+        assert job.failed_stage is None
+        assert document.status == "uploaded"
+        assert document.processing_error is None
+
+    with session_factory() as session:
+        reclaimed = claim_next_job(
+            session, "worker-2", queued.storage.provider, 600, now=release_at
+        )
+    assert reclaimed is not None
+    assert reclaimed.id == queued.job_id
+    assert reclaimed.attempt_count == 1
+
+
+def test_releasing_a_final_attempt_keeps_the_job_claimable(session_factory, tmp_path):
+    queued = _queue_document(session_factory, tmp_path, max_attempts=1)
+    claim_at = queued.available_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session, "worker", queued.storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+    assert claim.attempt_count == 1
+    assert claim.max_attempts == 1
+
+    release_at = claim_at + timedelta(seconds=1)
+    with session_factory() as session:
+        assert release_job(session, claim.id, claim.claim_token, now=release_at) is True
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        assert job is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert job.started_at is None
+
+    with session_factory() as session:
+        reclaimed = claim_next_job(
+            session, "worker-2", queued.storage.provider, 600, now=release_at
+        )
+    assert reclaimed is not None
+    assert reclaimed.id == queued.job_id
+    assert reclaimed.attempt_count == 1
+
+
+def test_releasing_a_second_attempt_keeps_when_it_first_started(
+    session_factory, tmp_path
+):
+    queued = _queue_document(session_factory, tmp_path, max_attempts=3)
+    first_claim_at = queued.available_at + timedelta(seconds=1)
+    with session_factory() as session:
+        first = claim_next_job(
+            session, "worker", queued.storage.provider, 600, now=first_claim_at
+        )
+    assert first is not None
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        assert job is not None
+        first_started_at = job.started_at
+    assert first_started_at is not None
+
+    fail_at = first_claim_at + timedelta(seconds=1)
+    with session_factory() as session:
+        assert (
+            fail_job(
+                session,
+                first.id,
+                first.claim_token,
+                error_code="TEMPORARY_PROVIDER_ERROR",
+                error_message="temporary provider error",
+                retryable=True,
+                now=fail_at,
+            )
+            == JOB_STATUS_QUEUED
+        )
+
+    second_claim_at = fail_at + timedelta(seconds=1)
+    with session_factory() as session:
+        second = claim_next_job(
+            session, "worker", queued.storage.provider, 600, now=second_claim_at
+        )
+    assert second is not None
+    assert second.attempt_count == 2
+
+    release_at = second_claim_at + timedelta(seconds=1)
+    with session_factory() as session:
+        assert (
+            release_job(session, second.id, second.claim_token, now=release_at) is True
+        )
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        document = session.get(UploadedDocument, queued.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 1
+        assert job.started_at == first_started_at
+        assert job.claim_token is None
+        assert document.status == "uploaded"
+
+    with session_factory() as session:
+        reclaimed = claim_next_job(
+            session, "worker-2", queued.storage.provider, 600, now=release_at
+        )
+    assert reclaimed is not None
+    assert reclaimed.attempt_count == 2
+
+
+def test_a_release_with_a_stale_claim_token_changes_nothing(session_factory, tmp_path):
+    queued = _queue_document(session_factory, tmp_path)
+    claim_at = queued.available_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session, "worker", queued.storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+
+    with session_factory() as session:
+        assert (
+            release_job(
+                session,
+                claim.id,
+                "00000000-0000-0000-0000-000000000000",
+                now=claim_at + timedelta(seconds=1),
+            )
+            is False
+        )
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        document = session.get(UploadedDocument, queued.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_RUNNING
+        assert job.claim_token == claim.claim_token
+        assert job.attempt_count == 1
+        assert document.status == "processing"
+
+
+def test_a_release_of_a_job_that_is_not_running_changes_nothing(
+    session_factory, tmp_path
+):
+    queued = _queue_document(session_factory, tmp_path)
+
+    with session_factory() as session:
+        assert release_job(session, queued.job_id, "irrelevant-token") is False
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        document = session.get(UploadedDocument, queued.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert document.status == "uploaded"
+
+
+def test_a_release_never_rewrites_a_deleting_document(session_factory, tmp_path):
+    queued = _queue_document(session_factory, tmp_path)
+    claim_at = queued.available_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session, "worker", queued.storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        assert document is not None
+        document.status = "deleting"
+        session.commit()
+
+    with session_factory() as session:
+        assert (
+            release_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                now=claim_at + timedelta(seconds=2),
+            )
+            is False
+        )
+
+    with session_factory() as session:
+        document = session.get(UploadedDocument, queued.document_id)
+        job = session.get(ProcessingJob, queued.job_id)
+        assert document is not None and job is not None
+        assert document.status == "deleting"
+        assert job.status == JOB_STATUS_RUNNING
+        assert job.claim_token == claim.claim_token
+        assert job.attempt_count == 1
+
+
+def test_a_released_claim_can_no_longer_heartbeat_or_complete(
+    session_factory, tmp_path
+):
+    queued = _queue_document(session_factory, tmp_path)
+    claim_at = queued.available_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_job(
+            session, "worker", queued.storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+
+    release_at = claim_at + timedelta(seconds=1)
+    with session_factory() as session:
+        assert release_job(session, claim.id, claim.claim_token, now=release_at) is True
+
+    with session_factory() as session:
+        assert not heartbeat_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            60,
+            now=release_at + timedelta(seconds=1),
+        )
+
+    with session_factory() as session:
+        assert not complete_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            [ChunkData("Late result")],
+            embeddings=_embeddings(1),
+            vector_store=PgVectorStore(),
+            now=release_at + timedelta(seconds=2),
+        )
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, queued.job_id)
+        assert job is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.claim_token is None
 
 
 def test_lease_recovery_requeues_the_job_but_leaves_a_deleting_document(

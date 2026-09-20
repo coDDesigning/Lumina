@@ -26,6 +26,7 @@ from services.document_lock import (
     active_generation_lock,
     is_document_locked_for_generation,
     release_expired_generation_locks,
+    release_process_generation_locks,
     reset_generation_locks,
 )
 from storage.local import LocalStorage
@@ -201,6 +202,30 @@ def test_a_hold_is_refused_for_a_document_already_being_deleted(db_session, tmp_
         # The deleter is already past its own check, so this hold must not
         # exist: it would block a deletion that cannot be called off.
         assert not is_document_locked_for_generation(db_session, document.id)
+
+
+def test_a_stopping_worker_drops_only_its_own_generation_locks(db_session):
+    other_doc_id = uuid4()
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        DocumentGenerationLock(
+            document_id=other_doc_id,
+            holder_token=uuid4(),
+            holder="another-worker-host:54321",
+            acquired_at=now,
+            expires_at=now + timedelta(minutes=30),
+        )
+    )
+    db_session.commit()
+
+    own_doc_id = uuid4()
+    with acquire_generation_locks(db_session, [own_doc_id]):
+        assert is_document_locked_for_generation(db_session, own_doc_id)
+
+        assert release_process_generation_locks(db_session) == 1
+
+        assert not is_document_locked_for_generation(db_session, own_doc_id)
+        assert is_document_locked_for_generation(db_session, other_doc_id)
 
 
 def test_reset_generation_locks_clears_every_hold(db_session):

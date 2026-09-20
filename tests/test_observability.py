@@ -399,6 +399,18 @@ def test_configure_logging_disables_uvicorn_access_logger() -> None:
     assert logging.getLogger("uvicorn.access").disabled is True
 
 
+def test_configure_logging_quiets_the_alembic_migration_context_logger() -> None:
+    from backend.app.observability import configure_logging
+
+    configure_logging(service="api", environment="production")
+
+    assert logging.getLogger("alembic").getEffectiveLevel() > logging.INFO
+    assert (
+        logging.getLogger("alembic.runtime.migration").getEffectiveLevel()
+        > logging.INFO
+    )
+
+
 @pytest.mark.parametrize(
     ("message", "sensitive_snippets", "preserved_snippets"),
     [

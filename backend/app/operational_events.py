@@ -606,6 +606,8 @@ class OperationalEventHandler(logging.Handler):
             if payload is None:
                 self._pending_dropped += 1
                 return
+            if payload["event"] == "library_log" and payload["level"] == "INFO":
+                return
             now = datetime.now(timezone.utc).isoformat()
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")

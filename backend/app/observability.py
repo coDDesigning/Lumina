@@ -238,6 +238,7 @@ def configure_logging(
         for handler in logging.getLogger(name).handlers:
             handler.setFormatter(formatter)
     logging.getLogger("uvicorn.access").disabled = True
+    logging.getLogger("alembic").setLevel(logging.WARNING)
     if persistence_path and not any(
         getattr(handler, "_lumina_operational_handler", False)
         for handler in root.handlers

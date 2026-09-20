@@ -28,7 +28,13 @@ Every log call in project code names an `event` described in
 `EVENT_DESCRIPTIONS` (`backend/app/operational_events.py`) and passes the ids it
 has in scope (`document_id`, `course_id`, `owner_id`, `job_id`, `stage`,
 `reason`, ...). `tests/test_log_events.py` fails on a call that does not. Lines
-from third-party loggers are stored as `library_log`.
+from third-party loggers are stored as `library_log`, and only at WARNING or
+above: an INFO line -- such as the two Alembic emits each time
+`check_readiness` builds a `MigrationContext`, whether reached through the
+API's `/health/ready` or through a worker's `python -m workers.worker
+--check` -- is never persisted, and `configure_logging` also raises the
+`alembic` logger above INFO so the API and worker processes stop emitting
+them in the first place.
 
 The API accepts a safe `X-Request-ID` (1-64 letters, digits, dots, dashes, or
 underscores), generates one otherwise, and returns it on the response. Query

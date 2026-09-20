@@ -63,6 +63,18 @@ def _hosted_settings():
     )
 
 
+def _emit_library(
+    handler: OperationalEventHandler,
+    logger_name: str,
+    *,
+    level: int,
+    message: str = "third-party log line",
+) -> str:
+    record = logging.LogRecord(logger_name, level, __file__, 1, message, (), None)
+    handler.emit(record)
+    return f"operational:{record._lumina_event_id}"
+
+
 def _window() -> LogFilters:
     now = datetime.now(timezone.utc)
     return LogFilters(start=now - timedelta(minutes=5), end=now + timedelta(minutes=5))
@@ -107,6 +119,30 @@ def test_operational_sink_stores_only_reviewed_fields(
         "items.0.name: string_type",
         "*",
     ]
+
+
+def test_an_info_library_log_is_dropped_but_a_warning_one_is_stored(
+    tmp_path: Path, db_session
+) -> None:
+    path = tmp_path / "operational.db"
+    handler = OperationalEventHandler(
+        str(path),
+        service="api",
+        environment="test",
+        retention_days=30,
+        max_records=10_000,
+    )
+    info_id = _emit_library(handler, "alembic.runtime.migration", level=logging.INFO)
+    warning_id = _emit_library(
+        handler, "alembic.runtime.migration", level=logging.WARNING
+    )
+
+    service = LogReadService(db_session, app_settings=_local_settings(path))
+    page = service.list(replace(_window(), sources=("operational",)), limit=10)
+
+    ids = [record.id for record in page.records]
+    assert warning_id in ids
+    assert info_id not in ids
 
 
 def test_cursor_is_bound_to_the_fixed_filter_window(tmp_path: Path, db_session) -> None:

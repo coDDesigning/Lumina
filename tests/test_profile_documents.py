@@ -57,6 +57,28 @@ def test_upload_and_list_profile_documents(authz_api):
     assert status_data["processing_job"]["status"] == "queued"
 
 
+def test_profile_documents_are_listed_by_name_not_upload_order(authz_api):
+    client = authz_api.client
+    headers = authz_api.authorization_a
+
+    def upload(name: str, content: bytes) -> None:
+        response = client.post(
+            "/api/profile-documents",
+            headers=headers,
+            files={"document": (name, io.BytesIO(content), "text/plain")},
+        )
+        assert response.status_code == 201, response.text
+
+    upload("bravo.txt", b"bravo content unique 1")
+    upload("Alpha.txt", b"alpha content unique 2")
+    upload("charlie.txt", b"charlie content unique 3")
+
+    list_res = client.get("/api/profile-documents", headers=headers)
+    assert list_res.status_code == 200
+    names = [document["original_file_name"] for document in list_res.json()["data"]]
+    assert names == ["Alpha.txt", "bravo.txt", "charlie.txt"]
+
+
 def test_upload_duplicate_profile_document(authz_api):
     client = authz_api.client
     headers = authz_api.authorization_a

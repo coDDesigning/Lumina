@@ -330,7 +330,7 @@ class DocumentService:
         db: Session,
         course_id: int,
     ) -> Sequence[UploadedDocument]:
-        """List the documents of an already authorized course, newest first.
+        """List the documents of an already authorized course, ordered by name.
 
         Callers reach this only through the course authorization boundary, so
         the course scope here is the authorized identifier rather than the one
@@ -343,7 +343,9 @@ class DocumentService:
                 UploadedDocument.course_id == course_id,
                 UploadedDocument.status != "deleting",
             )
-            .order_by(UploadedDocument.created_at.desc())
+            .order_by(
+                func.lower(UploadedDocument.original_file_name), UploadedDocument.id
+            )
         ).all()
 
     @staticmethod

@@ -14,6 +14,7 @@ import {
   isDescribingVisuals,
   isTerminalDocumentStatus,
 } from '../components/documents/documentLabels';
+import { sortByName } from '../components/documents/documentOrder';
 
 export type DocumentPendingAction = 'retry' | 'delete' | 'retryVisuals';
 
@@ -89,7 +90,7 @@ function mergeListing(
 
   const optimistic = previous.filter((entry) => !serverIds.has(entry.document.id));
 
-  return [...optimistic, ...merged];
+  return [...optimistic, ...sortByName(merged, (entry) => entry.document.original_file_name)];
 }
 
 export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
@@ -274,17 +275,6 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
 
   const addUploaded = useCallback(
     (document: DocumentResponse) => {
-      queryCache.setData<DocumentResponse[]>(
-        queryKeys.courseDocuments(courseId),
-        (previous) => {
-          if (!previous) return previous;
-          const index = previous.findIndex((row) => row.id === document.id);
-          if (index === -1) return [document, ...previous];
-          const next = [...previous];
-          next[index] = document;
-          return next;
-        },
-      );
       setEntries((previous) => {
         const index = previous.findIndex((entry) => entry.document.id === document.id);
         if (index === -1) {
@@ -299,7 +289,7 @@ export function useCourseDocuments(courseId: number): UseCourseDocumentsResult {
         controlRef.current?.schedule(document.id, 0);
       }
     },
-    [courseId],
+    [],
   );
 
   const setPending = useCallback(

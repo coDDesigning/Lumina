@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
   BarChart3,
@@ -36,6 +36,7 @@ import { AiDisclosureNotice } from '@/features/legal/AiDisclosureNotice';
 import CreditBalance from '@/components/credits/CreditBalance';
 import CreditExhaustedNotice from '@/components/credits/CreditExhaustedNotice';
 import { DocumentRow } from '@/components/documents/DocumentRow';
+import { sortByNewest, type SourceOrder } from '@/components/documents/documentOrder';
 import { ConversationHistoryModal } from './ConversationHistoryModal';
 import { ExamRoadmapModal } from '@/features/study/ExamRoadmapModal';
 import { FlashcardModal } from '@/features/study/FlashcardModal';
@@ -61,7 +62,7 @@ import { Checkbox } from '@/ui/Checkbox';
 import { CopyButton } from '@/ui/CopyButton';
 import { ErrorState } from '@/ui/ErrorState';
 import { IconButton } from '@/ui/IconButton';
-import { Input } from '@/ui/Input';
+import { Input, Select } from '@/ui/Input';
 import { LinkButton } from '@/ui/LinkButton';
 import { PageHeader } from '@/ui/PageHeader';
 import { Spinner } from '@/ui/Spinner';
@@ -155,6 +156,24 @@ function setStoredConversationId(
     }
   } catch {
     // Ignore storage errors in restricted contexts
+  }
+}
+
+const SOURCE_ORDER_KEY = 'lumina:sources:order';
+
+function getStoredSourceOrder(): SourceOrder {
+  try {
+    return localStorage.getItem(SOURCE_ORDER_KEY) === 'newest' ? 'newest' : 'name';
+  } catch {
+    return 'name';
+  }
+}
+
+function setStoredSourceOrder(order: SourceOrder): void {
+  try {
+    localStorage.setItem(SOURCE_ORDER_KEY, order);
+  } catch {
+    return;
   }
 }
 
@@ -297,6 +316,21 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
     retryVisuals,
     deleteDocument,
   } = useCourseDocuments(courseId);
+
+  const [sourceOrder, setSourceOrder] = useState<SourceOrder>(() => getStoredSourceOrder());
+
+  function updateSourceOrder(order: SourceOrder) {
+    setSourceOrder(order);
+    setStoredSourceOrder(order);
+  }
+
+  const orderedEntries = useMemo(
+    () =>
+      sourceOrder === 'newest'
+        ? sortByNewest(entries, (entry) => entry.document.created_at)
+        : entries,
+    [entries, sourceOrder],
+  );
 
   const navigate = useNavigate();
   const { progress } = useCourseProgress(courseId);
@@ -541,6 +575,15 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
         <section className={`${styles.panel} ${styles.sources}`} aria-label="Sources">
           <div className={styles.panelHead}>
             <span className={styles.panelLabel}>Sources · {entries.length}</span>
+            <Select
+              label="Sort"
+              hideLabel
+              value={sourceOrder}
+              onChange={(event) => updateSourceOrder(event.target.value as SourceOrder)}
+            >
+              <option value="name">Name</option>
+              <option value="newest">Newest</option>
+            </Select>
             {!isSupportView ? (
               <>
                 <Button
@@ -617,7 +660,7 @@ export default function WorkspacePage({ workspace, onUpdateProgress }: Workspace
                 you upload and nothing else.
               </p>
             ) : (
-              entries.map((entry) => (
+              orderedEntries.map((entry) => (
                 <DocumentRow
                   key={entry.document.id}
                   entry={entry}

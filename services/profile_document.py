@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
@@ -224,7 +224,9 @@ class ProfileDocumentService:
                 ProfileDocument.user_id == user_id,
                 ProfileDocument.status != "deleting",
             )
-            .order_by(ProfileDocument.created_at.desc(), ProfileDocument.id.desc())
+            .order_by(
+                func.lower(ProfileDocument.original_file_name), ProfileDocument.id
+            )
         ).all()
 
     @staticmethod

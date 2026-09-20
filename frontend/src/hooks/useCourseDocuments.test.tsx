@@ -31,10 +31,11 @@ function document(
   status: string,
   updatedAt: string,
   id: string = DOCUMENT_ID,
+  originalFileName: string = 'lecture.pdf',
 ): DocumentResponse {
   return {
     id,
-    original_file_name: 'lecture.pdf',
+    original_file_name: originalFileName,
     file_type: 'pdf',
     mime_type: 'application/pdf',
     material_kind: 'unspecified',
@@ -148,6 +149,66 @@ describe('useCourseDocuments polling lifecycle', () => {
       'ready',
     ]);
     expect(result.current.readyCount).toBe(1);
+  });
+
+  it('sorts entries by name even when the server list arrives out of order', async () => {
+    listDocuments.mockResolvedValue([
+      document('ready', '2026-08-19T10:00:00Z', 'c-id', 'charlie.pdf'),
+      document('ready', '2026-08-19T10:00:00Z', 'a-id', 'Alpha.pdf'),
+      document('ready', '2026-08-19T10:00:00Z', 'b-id', 'bravo.pdf'),
+    ]);
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'Alpha.pdf',
+      'bravo.pdf',
+      'charlie.pdf',
+    ]);
+  });
+
+  it('keeps a newly uploaded document on top while the refetch is pending, then sorts it into place once the server list includes it', async () => {
+    listDocuments.mockResolvedValue([
+      document('ready', '2026-08-19T10:00:00Z', 'a-id', 'Alpha.pdf'),
+    ]);
+
+    const { result } = renderHook(() => useCourseDocuments(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'Alpha.pdf',
+    ]);
+
+    act(() => {
+      result.current.addUploaded(
+        document('ready', '2026-08-19T10:01:00Z', 'z-id', 'zeta.pdf'),
+      );
+    });
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'zeta.pdf',
+      'Alpha.pdf',
+    ]);
+
+    listDocuments.mockResolvedValue([
+      document('ready', '2026-08-19T10:01:00Z', 'z-id', 'zeta.pdf'),
+      document('ready', '2026-08-19T10:00:00Z', 'a-id', 'Alpha.pdf'),
+    ]);
+    act(() => {
+      result.current.reload();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'Alpha.pdf',
+      'zeta.pdf',
+    ]);
   });
 
   it('survives a status response that carries no document', async () => {

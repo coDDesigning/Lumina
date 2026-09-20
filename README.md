@@ -222,6 +222,7 @@ your name or the local part of your email address.
 | `up` says the env file is not found | You skipped step 3. Lumina reads its whole configuration from `.env`; copy `.env.example` over. |
 | `lumina` exits straight away | A setting is missing or malformed. `docker compose logs lumina` names the variable. |
 | `up` says the port is already allocated | Something else holds `LUMINA_PORT`. Change it in `.env`, or stop the other program. |
+| Another device can't open Lumina | The port is published on this machine only, because `LUMINA_BIND_ADDRESS` defaults to `127.0.0.1`. Set it in `.env` to `0.0.0.0` (every network this machine is on) or to this machine's Tailscale address (`100.x.y.z`, reachable from your tailnet only), then run `docker compose up --detach --wait`. `docker compose ps` should now show `0.0.0.0:10312->8000/tcp` (or your address). Still nothing: allow inbound TCP on `LUMINA_PORT` in the host firewall. Register the administrator before you open the port: the first account to register becomes the administrator unless `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_TOKEN` reserve it (step 7). |
 | The page loads but every request fails | An earlier version of this stack may still be running. `docker compose down --remove-orphans` (never `--volumes`), then `up` again. |
 | A source stays in processing | Extraction or OCR is still running. Watch `docker compose logs --follow lumina-worker`. |
 | A source reaches failed | The PDF is encrypted, corrupt, or beyond the configured page and size limits. |
@@ -262,7 +263,7 @@ code.
 
 `LUMINA_PORT` in `.env` is the whole address. Change it and run `up` again:
 nothing needs rebuilding, because the interface asks for `/api` on whatever
-origin served it. Set `LUMINA_BIND_ADDRESS=0.0.0.0` to reach Lumina from
+origin served it. Set `LUMINA_BIND_ADDRESS=0.0.0.0` (or to this machine's Tailscale address) to reach Lumina from
 another machine on your network.
 
 If you put a TLS reverse proxy in front, set `FORWARDED_ALLOW_IPS` to that

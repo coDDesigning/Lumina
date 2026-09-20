@@ -144,6 +144,13 @@ export const queryKeys = {
   adminLogSummary: (query: string): QueryKey => ['admin', 'logs', 'summary', query],
   adminLogEvent: (eventId: string): QueryKey => ['admin', 'logs', 'event', eventId],
   adminLogTrace: (eventId: string): QueryKey => ['admin', 'logs', 'trace', eventId],
+  adminSystemSettings: (): QueryKey => ['admin', 'systemSettings'],
+  adminSystemRestart: (requestId: string): QueryKey => [
+    'admin',
+    'systemSettings',
+    'restart',
+    requestId,
+  ],
   adminCreditLedger: (email: string, limit: number): QueryKey => [
     'admin',
     'creditLedger',

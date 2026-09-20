@@ -52,7 +52,7 @@ EVENT_DESCRIPTIONS = {
     "aged_tombstone_detected": "A deleted record outlived the purge that should have removed it.",
     "ai_generation_failed": "An AI generation attempt failed.",
     "ai_metrics_emit_failed": "AI provider health metrics could not be emitted.",
-    "ai_model_check": "A user tested whether a configured AI model is reachable and responding.",
+    "ai_model_check": "A user tested whether a configured AI model is reachable and listed by its provider.",
     "ai_route_failed": "An AI route returned a server error for a generation.",
     "ai_route_refused": "An AI route refused a generation request.",
     "ai_usage_cleanup_completed": "An AI usage retention cleanup finished.",

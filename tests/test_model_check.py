@@ -3,9 +3,12 @@ import logging
 from dataclasses import replace
 from types import SimpleNamespace
 
+import anthropic
 import httpx
+import openai
 import pytest
 from fastapi.testclient import TestClient
+from google.genai import errors as genai_errors
 from sqlalchemy import func, select
 
 import services.image_understanding as image_understanding
@@ -94,6 +97,107 @@ _UNAVAILABLE_VENDOR_SETTINGS = SimpleNamespace(
     ollama_base_url="http://127.0.0.1:11434",
 )
 
+_GEMINI_SETTINGS = SimpleNamespace(
+    ai_available_vendors=("gemini",),
+    ai_default_model="gemini:gemini-3.6-flash",
+    ai_model_catalog={
+        "gemini": [
+            {
+                "model": "gemini-3.6-flash",
+                "json_mode": True,
+                "context_window": 32768,
+                "vision": False,
+            }
+        ]
+    },
+    gemini_api_key="fake-gemini-key",
+    openai_api_key=None,
+    anthropic_api_key=None,
+    ai_generation_timeout_seconds=42,
+)
+
+_OPENAI_SETTINGS = SimpleNamespace(
+    ai_available_vendors=("openai",),
+    ai_default_model="openai:gpt-5.6-terra",
+    ai_model_catalog={
+        "openai": [
+            {
+                "model": "gpt-5.6-terra",
+                "json_mode": True,
+                "context_window": 128000,
+                "vision": False,
+            }
+        ]
+    },
+    gemini_api_key=None,
+    openai_api_key="fake-openai-key",
+    anthropic_api_key=None,
+    ai_generation_timeout_seconds=42,
+)
+
+_ANTHROPIC_SETTINGS = SimpleNamespace(
+    ai_available_vendors=("claude",),
+    ai_default_model="claude:claude-sonnet-5",
+    ai_model_catalog={
+        "claude": [
+            {
+                "model": "claude-sonnet-5",
+                "json_mode": True,
+                "context_window": 200000,
+                "vision": False,
+            }
+        ]
+    },
+    gemini_api_key=None,
+    openai_api_key=None,
+    anthropic_api_key="fake-anthropic-key",
+    ai_generation_timeout_seconds=42,
+)
+
+
+def _fake_gemini_models(monkeypatch, *, names: list[str] | None = None, list_exc=None):
+    class FakeModels:
+        def list(self):
+            if list_exc is not None:
+                raise list_exc
+            return [SimpleNamespace(name=f"models/{n}") for n in (names or [])]
+
+    class FakeClient:
+        def __init__(self, api_key=None, http_options=None) -> None:
+            self.models = FakeModels()
+
+    monkeypatch.setattr(text_generation.genai, "Client", FakeClient)
+
+
+def _fake_openai_models(monkeypatch, *, names: list[str] | None = None, list_exc=None):
+    class FakeModels:
+        def list(self):
+            if list_exc is not None:
+                raise list_exc
+            return [SimpleNamespace(id=n) for n in (names or [])]
+
+    class FakeOpenAIClient:
+        def __init__(self, **kwargs) -> None:
+            self.models = FakeModels()
+
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAIClient)
+
+
+def _fake_anthropic_models(
+    monkeypatch, *, names: list[str] | None = None, list_exc=None
+):
+    class FakeModels:
+        def list(self):
+            if list_exc is not None:
+                raise list_exc
+            return [SimpleNamespace(id=n) for n in (names or [])]
+
+    class FakeAnthropicClient:
+        def __init__(self, **kwargs) -> None:
+            self.models = FakeModels()
+
+    monkeypatch.setattr(anthropic, "Anthropic", FakeAnthropicClient)
+
 
 def _patch_settings(monkeypatch, fake_settings) -> None:
     monkeypatch.setattr(text_generation, "settings", fake_settings)
@@ -106,9 +210,6 @@ def _ollama_handler(
     tags_status: int = 200,
     tags_text: str | None = None,
     tags_exc=None,
-    generate_json_body=None,
-    generate_status: int = 200,
-    generate_exc=None,
     show_capabilities=None,
     recorder: list[str] | None = None,
 ):
@@ -122,13 +223,6 @@ def _ollama_handler(
                 return httpx.Response(tags_status, text=tags_text)
             return httpx.Response(
                 tags_status, json=tags_json if tags_json is not None else {"models": []}
-            )
-        if request.url.path == "/api/generate":
-            if generate_exc is not None:
-                raise generate_exc("mock failure", request=request)
-            return httpx.Response(
-                generate_status,
-                json=generate_json_body if generate_json_body is not None else {},
             )
         if request.url.path == "/api/show":
             return httpx.Response(200, json={"capabilities": show_capabilities or []})
@@ -148,16 +242,6 @@ def _install_ollama_transport(monkeypatch, handler) -> httpx.Client:
 
 def _ollama_tags_success(model: str = "llama3.1") -> dict:
     return {"models": [{"name": f"{model}:latest", "model": f"{model}:latest"}]}
-
-
-def _ollama_generate_success(payload: dict | None = None) -> dict:
-    return {
-        "model": "llama3.1",
-        "response": json.dumps(payload or {"status": "ok"}),
-        "done": True,
-        "prompt_eval_count": 12,
-        "eval_count": 4,
-    }
 
 
 def _post_test(client, headers, model_id):
@@ -187,7 +271,6 @@ def test_a_successful_ollama_check_reports_ok_and_latency(
         monkeypatch,
         _ollama_handler(
             tags_json=_ollama_tags_success(),
-            generate_json_body=_ollama_generate_success(),
         ),
     )
 
@@ -216,7 +299,6 @@ def test_a_successful_check_leaves_credits_and_usage_logs_untouched(
         monkeypatch,
         _ollama_handler(
             tags_json=_ollama_tags_success(),
-            generate_json_body=_ollama_generate_success(),
         ),
     )
 
@@ -326,9 +408,7 @@ def test_a_non_json_tags_response_is_reported_as_bad_response(
     assert data["error_code"] == "bad_response"
 
 
-def test_a_model_missing_from_tags_is_model_not_found_and_skips_generate(
-    authz_api, monkeypatch
-) -> None:
+def test_a_model_missing_from_tags_is_model_not_found(authz_api, monkeypatch) -> None:
     _patch_settings(monkeypatch, _ollama_settings())
     recorder: list[str] = []
     _install_ollama_transport(
@@ -388,15 +468,200 @@ def test_a_missing_provider_api_key_is_reported_as_auth(authz_api, monkeypatch) 
     assert data["error_code"] == "auth"
 
 
-def test_ollama_rate_limit_on_generate_is_reported_as_rate_limited(
+def test_a_gemini_check_succeeds_when_the_provider_lists_the_model(
     authz_api, monkeypatch
 ) -> None:
+    _patch_settings(monkeypatch, _GEMINI_SETTINGS)
+    _fake_gemini_models(monkeypatch, names=["gemini-3.6-flash", "gemini-2.0-pro"])
+
+    response = _post_test(
+        authz_api.client, authz_api.authorization_a, "gemini:gemini-3.6-flash"
+    )
+
+    data = response.json()["data"]
+    assert data["ok"] is True
+    assert data["error_code"] is None
+    assert data["provider"] == "gemini"
+    assert data["latency_ms"] is not None
+    assert data["latency_ms"] >= 0
+    assert data["supports_vision"] is None
+    assert data["message"] == (
+        "The provider confirmed this model is available to your account."
+    )
+
+
+def test_a_gemini_check_reports_model_not_found_when_the_list_omits_it(
+    authz_api, monkeypatch
+) -> None:
+    _patch_settings(monkeypatch, _GEMINI_SETTINGS)
+    _fake_gemini_models(monkeypatch, names=["gemini-2.0-pro"])
+
+    response = _post_test(
+        authz_api.client, authz_api.authorization_a, "gemini:gemini-3.6-flash"
+    )
+
+    data = response.json()["data"]
+    assert data["ok"] is False
+    assert data["error_code"] == "model_not_found"
+    assert data["message"] == (
+        "This provider does not offer this model to this account."
+    )
+
+
+def test_a_gemini_rate_limit_on_listing_is_reported_as_rate_limited(
+    authz_api, monkeypatch
+) -> None:
+    _patch_settings(monkeypatch, _GEMINI_SETTINGS)
+    _fake_gemini_models(
+        monkeypatch, list_exc=genai_errors.APIError(429, "Too Many Requests")
+    )
+
+    response = _post_test(
+        authz_api.client, authz_api.authorization_a, "gemini:gemini-3.6-flash"
+    )
+
+    data = response.json()["data"]
+    assert data["ok"] is False
+    assert data["error_code"] == "rate_limited"
+
+
+def test_an_openai_check_succeeds_when_the_provider_lists_the_model(
+    authz_api, monkeypatch
+) -> None:
+    _patch_settings(monkeypatch, _OPENAI_SETTINGS)
+    _fake_openai_models(monkeypatch, names=["gpt-5.6-terra", "gpt-4o"])
+
+    response = _post_test(
+        authz_api.client, authz_api.authorization_a, "openai:gpt-5.6-terra"
+    )
+
+    data = response.json()["data"]
+    assert data["ok"] is True
+    assert data["error_code"] is None
+    assert data["provider"] == "openai"
+    assert data["supports_vision"] is None
+
+
+def test_an_openai_check_reports_model_not_found_when_the_list_omits_it(
+    authz_api, monkeypatch
+) -> None:
+    _patch_settings(monkeypatch, _OPENAI_SETTINGS)
+    _fake_openai_models(monkeypatch, names=["gpt-4o"])
+
+    response = _post_test(
+        authz_api.client, authz_api.authorization_a, "openai:gpt-5.6-terra"
+    )
+
+    data = response.json()["data"]
+    assert data["ok"] is False
+    assert data["error_code"] == "model_not_found"
+
+
+def test_an_openai_connection_error_on_listing_is_reported_as_unreachable(
+    authz_api, monkeypatch
+) -> None:
+    req = httpx.Request("GET", "http://test")
+    _patch_settings(monkeypatch, _OPENAI_SETTINGS)
+    _fake_openai_models(monkeypatch, list_exc=openai.APIConnectionError(request=req))
+
+    response = _post_test(
+        authz_api.client, authz_api.authorization_a, "openai:gpt-5.6-terra"
+    )
+
+    data = response.json()["data"]
+    assert data["ok"] is False
+    assert data["error_code"] == "unreachable"
+
+
+def test_an_unparsable_openai_model_list_is_reported_as_bad_response(
+    authz_api, monkeypatch
+) -> None:
+    _patch_settings(monkeypatch, _OPENAI_SETTINGS)
+    _fake_openai_models(monkeypatch, list_exc=TypeError("not iterable"))
+
+    response = _post_test(
+        authz_api.client, authz_api.authorization_a, "openai:gpt-5.6-terra"
+    )
+
+    data = response.json()["data"]
+    assert data["ok"] is False
+    assert data["error_code"] == "bad_response"
+
+
+def test_an_anthropic_check_succeeds_when_the_provider_lists_the_model(
+    authz_api, monkeypatch
+) -> None:
+    _patch_settings(monkeypatch, _ANTHROPIC_SETTINGS)
+    _fake_anthropic_models(monkeypatch, names=["claude-sonnet-5", "claude-haiku-4"])
+
+    response = _post_test(
+        authz_api.client, authz_api.authorization_a, "claude:claude-sonnet-5"
+    )
+
+    data = response.json()["data"]
+    assert data["ok"] is True
+    assert data["error_code"] is None
+    assert data["provider"] == "claude"
+    assert data["supports_vision"] is None
+
+
+def test_an_anthropic_check_reports_model_not_found_when_the_list_omits_it(
+    authz_api, monkeypatch
+) -> None:
+    _patch_settings(monkeypatch, _ANTHROPIC_SETTINGS)
+    _fake_anthropic_models(monkeypatch, names=["claude-haiku-4"])
+
+    response = _post_test(
+        authz_api.client, authz_api.authorization_a, "claude:claude-sonnet-5"
+    )
+
+    data = response.json()["data"]
+    assert data["ok"] is False
+    assert data["error_code"] == "model_not_found"
+
+
+def test_an_anthropic_auth_error_on_listing_is_reported_as_auth(
+    authz_api, monkeypatch
+) -> None:
+    req = httpx.Request("GET", "http://test")
+    _patch_settings(monkeypatch, _ANTHROPIC_SETTINGS)
+    _fake_anthropic_models(
+        monkeypatch,
+        list_exc=anthropic.APIStatusError(
+            "unauth", response=httpx.Response(401, request=req), body=None
+        ),
+    )
+
+    response = _post_test(
+        authz_api.client, authz_api.authorization_a, "claude:claude-sonnet-5"
+    )
+
+    data = response.json()["data"]
+    assert data["ok"] is False
+    assert data["error_code"] == "auth"
+
+
+def test_an_anthropic_timeout_on_listing_is_reported_as_timeout(
+    authz_api, monkeypatch
+) -> None:
+    req = httpx.Request("GET", "http://test")
+    _patch_settings(monkeypatch, _ANTHROPIC_SETTINGS)
+    _fake_anthropic_models(monkeypatch, list_exc=anthropic.APITimeoutError(request=req))
+
+    response = _post_test(
+        authz_api.client, authz_api.authorization_a, "claude:claude-sonnet-5"
+    )
+
+    data = response.json()["data"]
+    assert data["ok"] is False
+    assert data["error_code"] == "timeout"
+
+
+def test_ollama_429_on_tags_is_reported_as_rate_limited(authz_api, monkeypatch) -> None:
     _patch_settings(monkeypatch, _ollama_settings())
     _install_ollama_transport(
         monkeypatch,
-        _ollama_handler(
-            tags_json=_ollama_tags_success(), generate_status=429, generate_json_body={}
-        ),
+        _ollama_handler(tags_status=429, tags_json={}),
     )
 
     response = _post_test(
@@ -408,15 +673,13 @@ def test_ollama_rate_limit_on_generate_is_reported_as_rate_limited(
     assert data["error_code"] == "rate_limited"
 
 
-def test_an_ollama_server_error_on_generate_is_reported_as_bad_response(
+def test_an_ollama_server_error_on_tags_is_reported_as_bad_response(
     authz_api, monkeypatch
 ) -> None:
     _patch_settings(monkeypatch, _ollama_settings())
     _install_ollama_transport(
         monkeypatch,
-        _ollama_handler(
-            tags_json=_ollama_tags_success(), generate_status=500, generate_json_body={}
-        ),
+        _ollama_handler(tags_status=500, tags_json={}),
     )
 
     response = _post_test(
@@ -434,7 +697,6 @@ def test_the_ollama_address_and_fallback_are_admin_only(authz_api, monkeypatch) 
         monkeypatch,
         _ollama_handler(
             tags_json=_ollama_tags_success(),
-            generate_json_body=_ollama_generate_success(),
         ),
     )
 
@@ -459,7 +721,6 @@ def test_an_invalid_configured_ollama_url_is_reported_as_a_fallback(
         monkeypatch,
         _ollama_handler(
             tags_json=_ollama_tags_success(),
-            generate_json_body=_ollama_generate_success(),
         ),
     )
 
@@ -481,7 +742,6 @@ def test_a_vision_capable_model_reports_supports_vision_true(
         monkeypatch,
         _ollama_handler(
             tags_json=_ollama_tags_success(),
-            generate_json_body=_ollama_generate_success(),
             show_capabilities=["completion", "vision"],
         ),
     )
@@ -503,7 +763,6 @@ def test_a_text_only_model_reports_supports_vision_false(
         monkeypatch,
         _ollama_handler(
             tags_json=_ollama_tags_success(),
-            generate_json_body=_ollama_generate_success(),
             show_capabilities=["completion"],
         ),
     )
@@ -599,52 +858,6 @@ def test_instantiate_provider_forwards_timeout_seconds_only_when_given(
 
     assert with_timeout._timeout_seconds == 12.0
     assert without_timeout._timeout_seconds == 42
-
-
-def test_a_404_from_generate_never_tries_a_second_vendor(
-    authz_api, monkeypatch
-) -> None:
-    fake_settings = _ollama_settings()
-    fake_settings.ai_available_vendors = ("ollama", "gemini")
-    fake_settings.ai_model_catalog["gemini"] = [
-        {
-            "model": "gemini-x",
-            "json_mode": True,
-            "context_window": 32768,
-            "vision": False,
-        }
-    ]
-    fake_settings.gemini_api_key = "fake-gemini-key"
-    _patch_settings(monkeypatch, fake_settings)
-
-    def _gemini_must_not_be_built(*args, **kwargs):
-        raise AssertionError("Gemini must never be constructed in the check path")
-
-    monkeypatch.setattr(
-        text_generation.GeminiTextGenerationProvider,
-        "__init__",
-        _gemini_must_not_be_built,
-    )
-
-    recorder: list[str] = []
-    _install_ollama_transport(
-        monkeypatch,
-        _ollama_handler(
-            tags_json=_ollama_tags_success(),
-            generate_status=404,
-            generate_json_body={},
-            recorder=recorder,
-        ),
-    )
-
-    response = _post_test(
-        authz_api.client, authz_api.authorization_a, "ollama:llama3.1"
-    )
-
-    data = response.json()["data"]
-    assert data["ok"] is False
-    assert data["error_code"] == "bad_response"
-    assert recorder.count("/api/generate") == 1
 
 
 def test_get_single_text_generation_provider_disables_openai_sdk_retries(
@@ -782,7 +995,6 @@ def test_ollama_userinfo_never_reaches_the_response_base_url(
         monkeypatch,
         _ollama_handler(
             tags_json=_ollama_tags_success(),
-            generate_json_body=_ollama_generate_success(),
         ),
     )
 
@@ -847,7 +1059,6 @@ def test_the_log_record_carries_provider_and_model_for_a_resolved_check(
         monkeypatch,
         _ollama_handler(
             tags_json=_ollama_tags_success(),
-            generate_json_body=_ollama_generate_success(),
         ),
     )
     caplog.set_level(logging.INFO, logger="services.model_check")

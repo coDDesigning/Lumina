@@ -50,7 +50,6 @@ def test_model(
 ):
     user = db.get(User, current_user.id)
     result = check_model(
-        db,
         user=user,
         is_admin=current_user.role == Role.ADMIN,
         model_id=request.model_id,

@@ -117,7 +117,6 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "image_description": "1.0.0",
     "visual_content": "2.1.0",
     "ocr_cleanup": "1.1.0",
-    "model_check": "1.0.0",
     "syllabus_topics": "1.0.0",
 }
 
@@ -627,9 +626,6 @@ SAMPLE_TEMPLATE_INPUTS = {
         **SHARED_PROMPT_VARIABLES,
         "SUGGESTED_TYPE": "diagram",
     },
-    "model_check": {
-        **SHARED_PROMPT_VARIABLES,
-    },
     "syllabus_topics": {
         **SHARED_PROMPT_VARIABLES,
         "SYLLABUS_TEXT": "Week 1: Limits\nWeek 2: Derivatives",
@@ -948,7 +944,6 @@ ACTIVE_TEMPLATE_OWNERS = {
         "services.image_understanding",
         "_IMAGE_DESCRIPTION_TEMPLATE",
     ),
-    "model_check": ("services.model_check", "MODEL_CHECK_TEMPLATE_NAME"),
     "syllabus_topics": (
         "services.syllabus_topics",
         "PROMPT_TEMPLATE_NAME",

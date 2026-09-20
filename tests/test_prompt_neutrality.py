@@ -314,7 +314,6 @@ TEMPLATE_EXTRA_VARIABLES: dict[str, dict[str, str]] = {
     },
     "prompt_generator": {"TEXT": "Turn this into a better prompt"},
     "image_description": {"SUGGESTED_TYPE": "diagram"},
-    "model_check": {},
     "syllabus_topics": {"SYLLABUS_TEXT": "Syllabus body"},
     "exam_style_question": {
         "TOPIC_LABEL": "Graph Traversal",

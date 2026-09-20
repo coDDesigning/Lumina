@@ -73,13 +73,20 @@ def _get_shared_http_client() -> httpx.Client:
 def _validate_image_bytes(visual_png: bytes, max_bytes: int) -> None:
     """Ensure visual input is bounded and represents valid PNG image data."""
     if not isinstance(visual_png, bytes) or not visual_png:
-        raise VisualAnalysisError("Visual content is empty or invalid bytes.")
+        raise VisualAnalysisError(
+            "Visual content is empty or invalid bytes.",
+            error_category=ErrorCategory.INVALID_STRUCTURE.value,
+        )
     if len(visual_png) > max_bytes:
         raise VisualAnalysisError(
-            f"Visual content exceeds maximum allowed size of {max_bytes} bytes."
+            f"Visual content exceeds maximum allowed size of {max_bytes} bytes.",
+            error_category=ErrorCategory.INVALID_STRUCTURE.value,
         )
     if not visual_png.startswith(_PNG_SIGNATURE):
-        raise VisualAnalysisError("Visual content does not have a valid PNG signature.")
+        raise VisualAnalysisError(
+            "Visual content does not have a valid PNG signature.",
+            error_category=ErrorCategory.INVALID_STRUCTURE.value,
+        )
 
 
 def _clean_description_text(raw_text: str | None) -> str | None:
@@ -129,7 +136,8 @@ def _render_image_description_prompt(
         )
     except PromptTemplateError as exc:
         raise VisualAnalysisError(
-            "The image description prompt template could not be rendered."
+            "The image description prompt template could not be rendered.",
+            error_category=ErrorCategory.UNKNOWN_ERROR.value,
         ) from exc
 
 
@@ -153,7 +161,8 @@ class GeminiImageUnderstandingProvider:
         key = api_key or settings.gemini_api_key
         if client is None and not key:
             raise VisualAnalysisError(
-                "GEMINI_API_KEY is not configured for visual understanding."
+                "GEMINI_API_KEY is not configured for visual understanding.",
+                error_category=ErrorCategory.AUTHENTICATION_ERROR.value,
             )
         self._model = model or self.MODEL
         self._timeout_seconds = (
@@ -207,37 +216,48 @@ class GeminiImageUnderstandingProvider:
                 extra={"event": "image_understanding_usage_report_failed"},
             )
 
-    def _handle_client_error(self, exc: Exception) -> None:
+    def _handle_client_error(self, exc: Exception, category: ErrorCategory) -> None:
         if isinstance(exc, (TemporaryVisualServiceError, VisualAnalysisError)):
             raise exc
         if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
             raise TemporaryVisualServiceError(
-                "Gemini visual understanding request timed out."
+                "Gemini visual understanding request timed out.",
+                error_category=category.value,
             ) from exc
         if isinstance(exc, genai_errors.APIError):
             code = getattr(exc, "code", None)
             if code == 429:
                 raise TemporaryVisualServiceError(
-                    "Gemini visual rate limit exceeded."
+                    "Gemini visual rate limit exceeded.",
+                    error_category=category.value,
                 ) from exc
             if code in {500, 502, 503, 504}:
                 raise TemporaryVisualServiceError(
-                    "Gemini visual service temporarily unavailable."
+                    "Gemini visual service temporarily unavailable.",
+                    error_category=category.value,
                 ) from exc
             if code in {400, 401, 403, 404}:
                 raise VisualAnalysisError(
-                    f"Gemini visual analysis failed: {getattr(exc, 'message', str(exc))}"
+                    f"Gemini visual analysis failed: {getattr(exc, 'message', str(exc))}",
+                    error_category=category.value,
                 ) from exc
             raise TemporaryVisualServiceError(
-                "Gemini visual understanding request failed."
+                "Gemini visual understanding request failed.",
+                error_category=category.value,
             ) from exc
         if isinstance(exc, genai_errors.ServerError):
-            raise TemporaryVisualServiceError("Gemini visual server error.") from exc
+            raise TemporaryVisualServiceError(
+                "Gemini visual server error.", error_category=category.value
+            ) from exc
         if isinstance(exc, (httpx.NetworkError, httpx.ConnectError)):
             raise TemporaryVisualServiceError(
-                "Gemini visual connection error."
+                "Gemini visual connection error.",
+                error_category=category.value,
             ) from exc
-        raise VisualAnalysisError(f"Gemini visual understanding error: {exc}") from exc
+        raise VisualAnalysisError(
+            f"Gemini visual understanding error: {exc}",
+            error_category=category.value,
+        ) from exc
 
     def describe_visual(
         self,
@@ -257,12 +277,13 @@ class GeminiImageUnderstandingProvider:
                 contents=[prompt, part],
             )
         except Exception as exc:
+            category = _error_category(exc)
             self._report_usage(
                 started_at=started_at,
                 success=False,
-                error_category=_error_category(exc),
+                error_category=category,
             )
-            self._handle_client_error(exc)
+            self._handle_client_error(exc, category)
             return None
 
         self._report_usage(started_at=started_at, success=True, response=response)
@@ -412,7 +433,8 @@ class OllamaImageUnderstandingProvider:
                 error_category=ErrorCategory.TIMEOUT,
             )
             raise TemporaryVisualServiceError(
-                "Ollama image understanding timed out."
+                "Ollama image understanding timed out.",
+                error_category=ErrorCategory.TIMEOUT.value,
             ) from exc
         except (httpx.TransportError, httpx.NetworkError, httpx.ConnectError) as exc:
             self._report_usage(
@@ -421,7 +443,8 @@ class OllamaImageUnderstandingProvider:
                 error_category=ErrorCategory.PROVIDER_ERROR,
             )
             raise TemporaryVisualServiceError(
-                "Ollama visual service could not be reached."
+                "Ollama visual service could not be reached.",
+                error_category=ErrorCategory.PROVIDER_ERROR.value,
             ) from exc
 
         if response.status_code == 429:
@@ -430,7 +453,10 @@ class OllamaImageUnderstandingProvider:
                 success=False,
                 error_category=ErrorCategory.RATE_LIMIT,
             )
-            raise TemporaryVisualServiceError("Ollama rate limit exceeded.")
+            raise TemporaryVisualServiceError(
+                "Ollama rate limit exceeded.",
+                error_category=ErrorCategory.RATE_LIMIT.value,
+            )
         if response.status_code in {500, 502, 503, 504}:
             self._report_usage(
                 started_at=started_at,
@@ -438,19 +464,24 @@ class OllamaImageUnderstandingProvider:
                 error_category=ErrorCategory.PROVIDER_ERROR,
             )
             raise TemporaryVisualServiceError(
-                f"Ollama visual service returned HTTP {response.status_code}."
+                f"Ollama visual service returned HTTP {response.status_code}.",
+                error_category=ErrorCategory.PROVIDER_ERROR.value,
             )
         if not response.is_success:
+            category = (
+                ErrorCategory.AUTHENTICATION_ERROR
+                if response.status_code in {401, 403}
+                else ErrorCategory.PROVIDER_ERROR
+            )
             self._report_usage(
                 started_at=started_at,
                 success=False,
-                error_category=(
-                    ErrorCategory.AUTHENTICATION_ERROR
-                    if response.status_code in {401, 403}
-                    else ErrorCategory.PROVIDER_ERROR
-                ),
+                error_category=category,
             )
-            raise VisualAnalysisError(f"Ollama returned HTTP {response.status_code}.")
+            raise VisualAnalysisError(
+                f"Ollama returned HTTP {response.status_code}.",
+                error_category=category.value,
+            )
 
         try:
             envelope = response.json()
@@ -462,7 +493,8 @@ class OllamaImageUnderstandingProvider:
             )
             self._log_unusable_response(response.text, exc)
             raise VisualAnalysisError(
-                "Ollama returned an invalid JSON response."
+                "Ollama returned an invalid JSON response.",
+                error_category=ErrorCategory.INVALID_STRUCTURE.value,
             ) from exc
 
         if not isinstance(envelope, dict):
@@ -473,7 +505,8 @@ class OllamaImageUnderstandingProvider:
             )
             self._log_unusable_response(response.text, None)
             raise VisualAnalysisError(
-                "Ollama returned an unexpected response structure."
+                "Ollama returned an unexpected response structure.",
+                error_category=ErrorCategory.INVALID_STRUCTURE.value,
             )
 
         self._report_usage(started_at=started_at, success=True, envelope=envelope)

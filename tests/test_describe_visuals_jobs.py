@@ -34,6 +34,11 @@ from backend.app.models import (
     UploadedDocument,
     User,
 )
+from backend.app.observability import (
+    bind_operation_context,
+    get_operation_context,
+    reset_operation_context,
+)
 from services.processing_jobs import (
     ChunkData,
     NoRetryableVisualsError,
@@ -2260,3 +2265,45 @@ def test_a_visual_that_moved_is_still_refused(session_factory, tmp_path):
                 vector_store=PgVectorStore(),
                 now=queued_at + timedelta(seconds=10),
             )
+
+
+def test_visual_description_logs_carry_the_document_and_the_right_job_type(
+    session_factory, tmp_path, monkeypatch
+):
+    ready = seed_ready_document(session_factory, tmp_path)
+
+    with _StubVisionServer() as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=120)
+
+        checkpoint = bind_operation_context()
+        try:
+            document_processor._describe_visuals_process(
+                _ScriptedConnection(),
+                ready.storage,
+                _extraction_job(ready, profile=False),
+            )
+            course_context = dict(get_operation_context())
+        finally:
+            reset_operation_context(checkpoint)
+
+        checkpoint = bind_operation_context()
+        try:
+            document_processor._describe_visuals_process(
+                _ScriptedConnection(),
+                ready.storage,
+                _extraction_job(ready, profile=True),
+            )
+            profile_context = dict(get_operation_context())
+        finally:
+            reset_operation_context(checkpoint)
+
+    assert course_context["document_id"] == str(ready.document_id)
+    assert course_context["course_id"] == ready.course_id
+    assert course_context["user_id"] == ready.user_id
+    assert course_context["job_type"] == "course_document_visual_description"
+    assert course_context["operation_id"] == "processing_job:describe:course:1"
+
+    assert profile_context["document_id"] == str(ready.document_id)
+    assert profile_context["user_id"] == ready.user_id
+    assert profile_context["job_type"] == "profile_document_visual_description"
+    assert profile_context["operation_id"] == "processing_job:describe:profile:1"

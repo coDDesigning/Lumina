@@ -191,6 +191,34 @@ describe('AdminLogsPage', () => {
     expect(params?.get('error_signature')).toBe('v1:request-failed');
   });
 
+  it('hides the page and figure detail rows when the log carries neither', async () => {
+    renderPage();
+    await screen.findByText('The request failed during persistence.');
+
+    await userEvent.click(screen.getByRole('button', { name: 'request.failed' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Operational event' });
+
+    expect(within(dialog).queryByText('Page')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('Figure')).not.toBeInTheDocument();
+  });
+
+  it('shows the page and figure detail rows when the log carries them', async () => {
+    mocked.getLogEvent.mockResolvedValue({
+      record: { ...RECORD, details: { ...RECORD.details, page_number: 4, visual_index: 2 } },
+      related_filter: {},
+    });
+    renderPage();
+    await screen.findByText('The request failed during persistence.');
+
+    await userEvent.click(screen.getByRole('button', { name: 'request.failed' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Operational event' });
+
+    expect(within(dialog).getByText('Page')).toBeInTheDocument();
+    expect(within(dialog).getByText('4')).toBeInTheDocument();
+    expect(within(dialog).getByText('Figure')).toBeInTheDocument();
+    expect(within(dialog).getByText('2')).toBeInTheDocument();
+  });
+
   it('applies comma-delimited filters through URL-backed API parameters', async () => {
     renderPage();
     await screen.findByText('The request failed during persistence.');

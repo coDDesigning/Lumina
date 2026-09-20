@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+import json
 import logging
 import shutil
 from threading import BoundedSemaphore, Lock
@@ -9,6 +10,7 @@ import unicodedata
 import pymupdf
 import pytest
 
+from backend.app.observability import JsonFormatter
 import services.document_pipeline as pipeline
 from services.document_pipeline import (
     DocumentProcessingError,
@@ -2935,3 +2937,148 @@ def test_unreadable_pages_are_summarised_once_not_logged_per_page(
     assert per_page == []
     assert degraded[0].exception_type == "RuntimeError"
     assert degraded[0].error_class in {"table:RuntimeError", "drawing:RuntimeError"}
+
+
+def test_a_failed_visual_is_logged_with_its_category_and_reason(caplog) -> None:
+    class FailingProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            raise VisualAnalysisError(
+                "Ollama returned HTTP 404.", error_category="provider_error"
+            )
+
+    with caplog.at_level(logging.WARNING, logger="services.document_pipeline"):
+        process_document(
+            "pdf",
+            pdf_bytes(
+                "Searchable text survives visual analysis.",
+                image_pages={1},
+                width=300,
+                height=300,
+            ),
+            options=pipeline_options(),
+            image_provider=FailingProvider(),
+        )
+
+    failures = [
+        record for record in caplog.records if record.event == "visual_analysis_failed"
+    ]
+    assert len(failures) == 1
+    record = failures[0]
+    assert record.error_category == "provider_error"
+    assert record.exc_info is not None
+
+    payload = json.loads(
+        JsonFormatter(service="worker", environment="test").format(record)
+    )
+    assert "exception_message" in payload
+    assert isinstance(payload["exception_message"], str)
+    serialized = json.dumps(payload)
+    assert "base64" not in serialized
+    assert not any(isinstance(value, bytes) for value in payload.values())
+
+
+def test_a_temporarily_unavailable_visual_is_logged_with_its_category(caplog) -> None:
+    class PageSpecificProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            if page_number == 1:
+                raise TemporaryVisualServiceError(
+                    "Ollama visual service could not be reached.",
+                    error_category="timeout",
+                )
+            return VisualDescription(
+                visual_type=VisualType.DIAGRAM,
+                description="Second-page diagram description.",
+            )
+
+    with caplog.at_level(logging.WARNING, logger="services.document_pipeline"):
+        process_document(
+            "pdf",
+            pdf_bytes(
+                "First page has native fallback text.",
+                "Second page has native fallback text.",
+                image_pages={1, 2},
+                width=300,
+                height=300,
+            ),
+            options=pipeline_options(),
+            image_provider=PageSpecificProvider(),
+        )
+
+    failures = [
+        record
+        for record in caplog.records
+        if record.event == "visual_analysis_temporarily_unavailable"
+    ]
+    assert len(failures) == 1
+    assert failures[0].error_category == "timeout"
+    assert failures[0].exc_info is not None
+
+
+@pytest.mark.parametrize(
+    ("description", "expected_reason"),
+    [
+        (1, "malformed_result"),
+        ("   ", "empty_description"),
+        (
+            "x" * (pipeline._MAX_VISUAL_DESCRIPTION_CHARACTERS + 1),
+            "description_too_long",
+        ),
+    ],
+)
+def test_an_unusable_visual_description_is_logged_with_its_reason(
+    caplog, description: object, expected_reason: str
+) -> None:
+    class UnusableProvider:
+        enabled = True
+
+        def describe_visual(
+            self,
+            visual_png: bytes,
+            *,
+            page_number: int,
+            visual_index: int,
+            suggested_type: VisualType,
+        ) -> VisualDescription:
+            return VisualDescription(
+                visual_type=suggested_type,
+                description=description,  # type: ignore[arg-type]
+            )
+
+    with caplog.at_level(logging.WARNING, logger="services.document_pipeline"):
+        process_document(
+            "pdf",
+            pdf_bytes(
+                "Usable native text remains available.",
+                image_pages={1},
+                width=300,
+                height=300,
+            ),
+            options=pipeline_options(),
+            image_provider=UnusableProvider(),
+        )
+
+    failures = [
+        record for record in caplog.records if record.event == "visual_analysis_failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].reason == expected_reason
+    assert failures[0].page_number == 1
+    assert failures[0].visual_index == 0

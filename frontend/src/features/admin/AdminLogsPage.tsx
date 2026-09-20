@@ -690,6 +690,8 @@ export default function AdminLogsPage() {
                 Course: detailQuery.data.record.course_id,
                 Document: detailQuery.data.record.document_id,
                 Auth: detailQuery.data.record.details?.auth_state ?? null,
+                Page: detailQuery.data.record.details?.page_number ?? null,
+                Figure: detailQuery.data.record.details?.visual_index ?? null,
                 'HTTP outcome': detailQuery.data.record.http_status,
                 Duration: detailQuery.data.record.duration_ms == null ? null : `${detailQuery.data.record.duration_ms} ms`,
                 Stage: detailQuery.data.record.failed_stage ?? detailQuery.data.record.stage,

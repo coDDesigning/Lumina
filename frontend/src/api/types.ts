@@ -146,7 +146,10 @@ export interface AdminLogRecord {
   estimated_cost_usd: number | null;
   pricing_version: string | null;
   runbook: string | null;
-  details: Record<string, unknown>;
+  details: Record<string, unknown> & {
+    page_number?: number;
+    visual_index?: number;
+  };
 }
 
 export interface AdminLogWindow {

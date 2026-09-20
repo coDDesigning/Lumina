@@ -549,9 +549,17 @@ class ImageUnderstandingProvider(Protocol):
 class TemporaryVisualServiceError(RuntimeError):
     """The visual provider failed transiently and the job should retry."""
 
+    def __init__(self, message: str = "", *, error_category: str | None = None) -> None:
+        super().__init__(message)
+        self.error_category = error_category
+
 
 class VisualAnalysisError(RuntimeError):
     """One visual cannot be described but other document content can continue."""
+
+    def __init__(self, message: str = "", *, error_category: str | None = None) -> None:
+        super().__init__(message)
+        self.error_category = error_category
 
 
 class DisabledImageUnderstandingProvider:
@@ -2304,17 +2312,19 @@ def _apply_visual_understanding(
                     visual_index=visual.visual_index,
                     suggested_type=visual.visual_type,
                 )
-            except VisualAnalysisError:
+            except VisualAnalysisError as exc:
                 logger.warning(
                     "Visual analysis failed for PDF page %s visual %s",
                     page.page_number,
                     visual.visual_index,
+                    exc_info=exc,
                     extra={
                         "event": "visual_analysis_failed",
                         "stage": PipelineStage.UNDERSTANDING_IMAGES.value,
                         "page_number": page.page_number,
                         "visual_index": visual.visual_index,
                         "error_code": "VISUAL_ANALYSIS_FAILED",
+                        "error_category": exc.error_category,
                     },
                 )
                 analyzed_visuals.append(
@@ -2325,7 +2335,7 @@ def _apply_visual_understanding(
                     )
                 )
                 continue
-            except TemporaryVisualServiceError:
+            except TemporaryVisualServiceError as exc:
                 consecutive_temporary_failures += 1
                 temporary_failures += 1
                 if (
@@ -2341,12 +2351,14 @@ def _apply_visual_understanding(
                     "Visual analysis temporarily unavailable for PDF page %s visual %s",
                     page.page_number,
                     visual.visual_index,
+                    exc_info=exc,
                     extra={
                         "event": "visual_analysis_temporarily_unavailable",
                         "stage": PipelineStage.UNDERSTANDING_IMAGES.value,
                         "page_number": page.page_number,
                         "visual_index": visual.visual_index,
                         "error_code": "VISUAL_SERVICE_TEMPORARY",
+                        "error_category": exc.error_category,
                     },
                 )
                 analyzed_visuals.append(
@@ -2386,6 +2398,19 @@ def _apply_visual_understanding(
                 or not isinstance(result.visual_type, VisualType)
                 or not isinstance(result.description, str)
             ):
+                logger.warning(
+                    "Visual analysis returned an unusable description for PDF page %s visual %s",
+                    page.page_number,
+                    visual.visual_index,
+                    extra={
+                        "event": "visual_analysis_failed",
+                        "stage": PipelineStage.UNDERSTANDING_IMAGES.value,
+                        "page_number": page.page_number,
+                        "visual_index": visual.visual_index,
+                        "error_code": "VISUAL_ANALYSIS_FAILED",
+                        "reason": "malformed_result",
+                    },
+                )
                 analyzed_visuals.append(
                     replace(
                         visual,
@@ -2396,6 +2421,23 @@ def _apply_visual_understanding(
                 continue
             description = result.description.replace("\x00", "").strip()
             if not description or len(description) > _MAX_VISUAL_DESCRIPTION_CHARACTERS:
+                reason = (
+                    "empty_description" if not description else "description_too_long"
+                )
+                logger.warning(
+                    "Visual analysis produced %s for PDF page %s visual %s",
+                    reason,
+                    page.page_number,
+                    visual.visual_index,
+                    extra={
+                        "event": "visual_analysis_failed",
+                        "stage": PipelineStage.UNDERSTANDING_IMAGES.value,
+                        "page_number": page.page_number,
+                        "visual_index": visual.visual_index,
+                        "error_code": "VISUAL_ANALYSIS_FAILED",
+                        "reason": reason,
+                    },
+                )
                 analyzed_visuals.append(
                     replace(
                         visual,

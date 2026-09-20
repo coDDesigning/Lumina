@@ -105,6 +105,14 @@ def _processing_job_type(job: ClaimedJob | ClaimedProfileJob) -> str:
     )
 
 
+def _describe_job_type(job: ClaimedJob | ClaimedProfileJob) -> str:
+    return (
+        "profile_document_visual_description"
+        if isinstance(job, ClaimedProfileJob)
+        else "course_document_visual_description"
+    )
+
+
 def _job_log_fields(job: ClaimedJob | ClaimedProfileJob) -> dict[str, object]:
     fields: dict[str, object] = {
         "job_id": job.id,
@@ -440,14 +448,14 @@ def _describe_visuals_process(
     )
     if job.correlation_id is not None:
         bind_request_id(job.correlation_id)
+    describe_fields = _job_log_fields(job)
+    describe_fields["job_type"] = _describe_job_type(job)
     bind_operation_context(
         operation_id=(
             f"processing_job:describe:{'profile' if isinstance(job, ClaimedProfileJob) else 'course'}:{job.id}"
         ),
         parent_operation_id=job.parent_operation_id,
-        job_id=job.id,
-        job_type="course_document_visual_description",
-        attempt_number=job.attempt_count,
+        **describe_fields,
     )
     for shutdown_signal in WORKER_SHUTDOWN_SIGNALS:
         signal.signal(shutdown_signal, signal.SIG_IGN)
@@ -538,9 +546,7 @@ def _extraction_process(
             f"processing_job:{'profile' if isinstance(job, ClaimedProfileJob) else 'course'}:{job.id}"
         ),
         parent_operation_id=job.parent_operation_id,
-        job_id=job.id,
-        job_type=_processing_job_type(job),
-        attempt_number=job.attempt_count,
+        **_job_log_fields(job),
     )
     # The parent owns graceful shutdown and the hard timeout for this child.
     for shutdown_signal in WORKER_SHUTDOWN_SIGNALS:
@@ -919,9 +925,7 @@ def process_next_job(
             f"processing_job:{'profile' if isinstance(job, ClaimedProfileJob) else 'course'}:{job.id}"
         ),
         parent_operation_id=job.parent_operation_id,
-        job_id=job.id,
-        job_type=_processing_job_type(job),
-        attempt_number=job.attempt_count,
+        **_job_log_fields(job),
     )
     try:
         processing_started = time.monotonic()

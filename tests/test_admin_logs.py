@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from backend.app.config import MODE_HOSTED, MODE_SELF_HOSTED, settings
-from backend.app.models import AiUsageLog
+from backend.app.models import AiUsageLog, UploadedDocument
 from backend.app.operational_events import (
     OperationalEventHandler,
     sanitize_operational_payload,
@@ -18,6 +18,8 @@ from services.admin_logs import (
     LogFilters,
     LogReadService,
 )
+from services.processing_jobs import enqueue_describe_visuals_job
+from tests.test_describe_visuals_jobs import seed_ready_document
 
 
 def _emit(
@@ -213,6 +215,53 @@ def test_trace_follows_parent_and_child_operations(tmp_path: Path, db_session) -
         "generation_job_enqueued",
         "generation_job_claimed",
         "generation_job_completed",
+    ]
+
+
+def test_trace_follows_a_visual_description_job(
+    tmp_path: Path, db_session, session_factory
+) -> None:
+    ready = seed_ready_document(session_factory, tmp_path)
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        job = enqueue_describe_visuals_job(
+            session, document, now=datetime.now(timezone.utc)
+        )
+        session.commit()
+        job_id = job.id
+
+    path = tmp_path / "operational.db"
+    handler = OperationalEventHandler(
+        str(path),
+        service="worker",
+        environment="test",
+        retention_days=30,
+        max_records=10_000,
+    )
+    _emit(
+        handler,
+        "processing_job_claimed",
+        operation_id=f"processing_job:course:{job_id}",
+        job_id=job_id,
+        job_type="course_document_processing",
+        job_status="running",
+    )
+    anchor = _emit(
+        handler,
+        "visual_analysis_failed",
+        level=logging.WARNING,
+        operation_id=f"processing_job:describe:course:{job_id}",
+        job_id=job_id,
+        job_type="course_document_visual_description",
+        error_category="provider_error",
+    )
+
+    trace = LogReadService(db_session, app_settings=_local_settings(path)).trace(anchor)
+
+    assert trace.correlation_status == "correlated"
+    assert [record.event for record in trace.records] == [
+        "processing_job_claimed",
+        "visual_analysis_failed",
     ]
 
 

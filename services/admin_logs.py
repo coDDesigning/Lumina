@@ -21,6 +21,7 @@ from backend.app.config import Settings, settings
 from backend.app.models import (
     AiUsageLog,
     GenerationJob,
+    JOB_TYPE_DESCRIBE_VISUALS,
     ProcessingJob,
     ProfileProcessingJob,
 )
@@ -1152,9 +1153,27 @@ class LogReadService:
                 values.add(f"processing_job:course:{row.id}")
                 if row.parent_operation_id:
                     values.add(row.parent_operation_id)
+                if row.job_type == JOB_TYPE_DESCRIBE_VISUALS:
+                    values.add(f"processing_job:describe:course:{row.id}")
         elif job_type == "profile_document_processing":
             row = self.db.get(ProfileProcessingJob, job_id)
             if row:
+                values.add(f"processing_job:profile:{row.id}")
+                if row.parent_operation_id:
+                    values.add(row.parent_operation_id)
+                if row.job_type == JOB_TYPE_DESCRIBE_VISUALS:
+                    values.add(f"processing_job:describe:profile:{row.id}")
+        elif job_type == "course_document_visual_description":
+            row = self.db.get(ProcessingJob, job_id)
+            if row:
+                values.add(f"processing_job:describe:course:{row.id}")
+                values.add(f"processing_job:course:{row.id}")
+                if row.parent_operation_id:
+                    values.add(row.parent_operation_id)
+        elif job_type == "profile_document_visual_description":
+            row = self.db.get(ProfileProcessingJob, job_id)
+            if row:
+                values.add(f"processing_job:describe:profile:{row.id}")
                 values.add(f"processing_job:profile:{row.id}")
                 if row.parent_operation_id:
                     values.add(row.parent_operation_id)

@@ -82,8 +82,8 @@
 }
 
 .rows {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr;
   gap: var(--space-3);
 }
 
@@ -95,5 +95,11 @@
 
   .body {
     padding: 0 var(--space-6) var(--space-8);
+  }
+}
+
+@media (min-width: 64rem) {
+  .rows {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

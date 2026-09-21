@@ -407,6 +407,7 @@ contract, and production configuration.
 | Dependencies | [`docs/dependencies.md`](docs/dependencies.md) |
 | Legal policy sources and update process | [`docs/legal/README.md`](docs/legal/README.md) |
 | Operational runbooks | [`docs/runbooks/`](docs/runbooks/) |
+| Every environment variable, as JSON | [`docs/env.json`](docs/env.json) |
 | System settings and controlled restart | [`docs/runbooks/system_settings_restart.md`](docs/runbooks/system_settings_restart.md) |
 | Branch protection and status checks | [`docs/branch_protection.md`](docs/branch_protection.md) |
 | PR-Agent | [`docs/pr-agent.md`](docs/pr-agent.md) |

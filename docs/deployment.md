@@ -629,6 +629,25 @@ Secrets (`JWT_SECRET_KEY`, `ENCRYPTION_KEY`, every provider key, `SMTP_PASSWORD`
 returned, prefilled, logged or exported. A row reports only whether one is
 configured. Submitting a blank value leaves the existing secret untouched.
 
+### The machine-readable inventory
+
+[`docs/env.json`](env.json) is `.env.example` rendered as JSON, with each key's
+section, documented default, prose and registry metadata (kind, scope, risk,
+whether it is a secret, whether it is editable). It is generated, along with the
+data tables the settings registry reads, and neither is edited by hand:
+
+```bash
+python scripts/export_env_inventory.py
+```
+
+Regenerate and commit both with every `.env.example` change. Each key carries its
+own comment directly above it; a description is never inherited from a
+neighbouring key's block, because that attaches the wrong prose to a setting
+without anyone noticing. `tests/test_env_inventory.py` fails when a key documents
+nothing, when two keys share a description, or when either artifact drifts, and
+`docs/env.json` is built only from the committed template, so it can never carry
+a value from a real `.env`.
+
 ### Hosted deployments
 
 The editable surface is self-hosted only. On a hosted deployment the inventory

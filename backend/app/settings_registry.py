@@ -332,10 +332,8 @@ _RAW: tuple[_Row, ...] = (
         "LUMINA_MEMORY_LIMIT",
         "Application",
         "Memory limit",
-        "Ceilings each container runs under. Compose applies these to a plain `docker "
-        "compose up` as well, not only under Swarm. The API and the worker share "
-        "these two: embedding and OCR are the memory-hungry step, so a host with less "
-        "to spare lowers them together.",
+        "Memory ceiling for each container, in Docker units such as 4G or 512M. "
+        "Extraction and embedding are the hungry stages.",
         "text",
         "4G",
         None,
@@ -356,8 +354,7 @@ _RAW: tuple[_Row, ...] = (
         "POSTGRES_MEMORY_LIMIT",
         "Application",
         "Postgres memory limit",
-        "docker-compose.hosted.yml only, for the database and object store it runs "
-        "beside the application. The self-hosted stack has neither.",
+        "Memory ceiling for that PostgreSQL container.",
         "text",
         "2G",
         None,
@@ -367,8 +364,7 @@ _RAW: tuple[_Row, ...] = (
         "MINIO_CPU_LIMIT",
         "Application",
         "Minio CPU limit",
-        "docker-compose.hosted.yml only, for the database and object store it runs "
-        "beside the application. The self-hosted stack has neither.",
+        "CPU ceiling for the MinIO container in the hosted topology.",
         "integer",
         "1",
         None,
@@ -378,8 +374,7 @@ _RAW: tuple[_Row, ...] = (
         "MINIO_MEMORY_LIMIT",
         "Application",
         "Minio memory limit",
-        "docker-compose.hosted.yml only, for the database and object store it runs "
-        "beside the application. The self-hosted stack has neither.",
+        "Memory ceiling for that MinIO container.",
         "text",
         "1G",
         None,
@@ -400,8 +395,8 @@ _RAW: tuple[_Row, ...] = (
         "BACKUP_ARCHIVE_NAME",
         "Application",
         "Backup archive name",
-        "Host directory for encrypted/off-host backup handling; never place it in the "
-        "lumina-data volume. Override the archive name for every scheduled backup.",
+        "File name given to the archive inside LUMINA_BACKUP_DIRECTORY. Give each "
+        "scheduled run its own name or the previous archive is overwritten.",
         "text",
         "lumina-backup.tar.gz",
         None,
@@ -448,10 +443,8 @@ _RAW: tuple[_Row, ...] = (
         "BOOTSTRAP_ADMIN_TOKEN",
         "Application",
         "Bootstrap admin token",
-        "Optional when self-hosted: leave both empty and the first account to "
-        "register becomes the administrator. Set both to reserve that account for one "
-        "address, which then registers once with the token as X-Bootstrap-Token. "
-        "Hosted mode requires both. Prefer a generated URL-safe token without $.",
+        "Proof required from the reserved address when it registers, sent as the "
+        "X-Bootstrap-Token header. At least 32 visible ASCII characters.",
         "text",
         None,
         None,
@@ -536,8 +529,8 @@ _RAW: tuple[_Row, ...] = (
         "DATABASE_MAX_OVERFLOW",
         "Structured database",
         "Database max overflow",
-        "Hosted PostgreSQL runtime pool. With RDS Proxy these values bound each "
-        "API/worker process; total possible clients are replicas * (size + overflow).",
+        "Extra connections a process may open beyond the pool when it is saturated, "
+        "0-20. Pool plus overflow is the per-process ceiling.",
         "integer",
         "5",
         None,
@@ -547,8 +540,8 @@ _RAW: tuple[_Row, ...] = (
         "DATABASE_POOL_RECYCLE_SECONDS",
         "Structured database",
         "Database pool recycle seconds",
-        "Hosted PostgreSQL runtime pool. With RDS Proxy these values bound each "
-        "API/worker process; total possible clients are replicas * (size + overflow).",
+        "Seconds before an idle pooled connection is discarded and reopened, 60-3600. "
+        "Keep it under any proxy or database idle timeout.",
         "integer",
         "900",
         60,
@@ -582,8 +575,8 @@ _RAW: tuple[_Row, ...] = (
         "OPERATIONAL_LOG_RETENTION_DAYS",
         "Structured database",
         "Operational log retention days",
-        "Compose overrides this to true. Leave false for an ordinary development "
-        "checkout unless durable local diagnostics are deliberately wanted.",
+        "Days an operational event is kept before the background trim deletes it, "
+        "1-366.",
         "integer",
         "30",
         1,
@@ -593,8 +586,8 @@ _RAW: tuple[_Row, ...] = (
         "OPERATIONAL_LOG_MAX_RECORDS",
         "Structured database",
         "Operational log max records",
-        "Compose overrides this to true. Leave false for an ordinary development "
-        "checkout unless durable local diagnostics are deliberately wanted.",
+        "Hard ceiling on stored events, 10000-10000000. The oldest rows are trimmed "
+        "first, so this bounds the file even if retention has not elapsed.",
         "integer",
         "500000",
         10000,
@@ -604,8 +597,8 @@ _RAW: tuple[_Row, ...] = (
         "OPERATIONAL_LOG_QUERY_TIMEOUT_SECONDS",
         "Structured database",
         "Operational log query timeout seconds",
-        "Compose overrides this to true. Leave false for an ordinary development "
-        "checkout unless durable local diagnostics are deliberately wanted.",
+        "Budget for one administrator log query, 1-30. A heavy filter is refused "
+        "rather than allowed to hold the database open.",
         "integer",
         "10",
         1,
@@ -625,7 +618,7 @@ _RAW: tuple[_Row, ...] = (
         "OPERATIONAL_LOG_CLOUDWATCH_REGION",
         "Structured database",
         "CloudWatch region",
-        "Hosted only. Never accept a log group from an API request.",
+        "AWS region that log group lives in. Hosted only.",
         "text",
         "us-east-1",
         None,
@@ -652,14 +645,8 @@ _RAW: tuple[_Row, ...] = (
         "CHROMA_PERSIST_DIRECTORY",
         "Vector storage / document storage",
         "Chroma persist directory",
-        "VECTOR_BACKEND selects where chunk embeddings live. It defaults to the "
-        "backend that matches DATABASE_URL: pgvector on PostgreSQL, chroma on SQLite. "
-        "Setting pgvector with a non-PostgreSQL DATABASE_URL fails at startup. "
-        "CHROMA_PERSIST_DIRECTORY holds the self-hosted vector collection and must be "
-        "on durable storage; losing it means re-running the embedding backfill. "
-        "CHROMA_PERSIST_DIRECTORY and UPLOAD_DIRECTORY must be absolute when the "
-        "local backend or chroma vectors are used in production; hosted + s3 ignores "
-        "both. Provision the production UPLOAD_DIRECTORY before application startup.",
+        "Where the self-hosted Chroma collection is written. Must be durable storage: "
+        "losing it means re-running the embedding backfill.",
         "text",
         "./data/chroma",
         None,
@@ -683,11 +670,9 @@ _RAW: tuple[_Row, ...] = (
         "RETRIEVAL_MIN_SIMILARITY",
         "Semantic retrieval",
         "Retrieval min similarity",
-        "RETRIEVAL_CHUNK_LIMIT is how many of a course's chunks semantic retrieval "
-        "ranks for one generation request. RETRIEVAL_MIN_SIMILARITY is the cosine "
-        "floor (0.0-1.0) below which a ranked chunk is discarded; when nothing clears "
-        "the floor the request is rejected without calling the AI provider. Set the "
-        "floor to 0.0 to disable it.",
+        "Cosine floor a ranked chunk must clear, 0.0-1.0. Nothing above the floor "
+        "means the request is refused rather than answered from weak material. Set "
+        "0.0 to disable.",
         "float",
         "0.25",
         0.0,
@@ -709,9 +694,8 @@ _RAW: tuple[_Row, ...] = (
         "STORAGE_NAMESPACE",
         "Semantic retrieval",
         "Storage namespace",
-        "STORAGE_BACKEND selects where uploaded documents live: local -> filesystem "
-        "under UPLOAD_DIRECTORY (self-hosted) s3 -> S3-compatible bucket; hosted "
-        "production requires s3",
+        "Prefix every stored object key carries, 1-40 characters of A-Z a-z 0-9 . _ "
+        "-. Changing it orphans existing documents; they are not moved.",
         "text",
         "self-hosted",
         None,
@@ -721,9 +705,8 @@ _RAW: tuple[_Row, ...] = (
         "UPLOAD_DIRECTORY",
         "Semantic retrieval",
         "Upload directory",
-        "STORAGE_BACKEND selects where uploaded documents live: local -> filesystem "
-        "under UPLOAD_DIRECTORY (self-hosted) s3 -> S3-compatible bucket; hosted "
-        "production requires s3",
+        "Where uploaded documents are written under the local storage backend. Must "
+        "be durable storage and absolute in production.",
         "text",
         "./data/uploads",
         None,
@@ -745,9 +728,8 @@ _RAW: tuple[_Row, ...] = (
         "S3_REGION",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "S3 region",
-        "S3_BUCKET must exist; the hosted Compose creates it via minio-init. Without "
-        "S3_ENDPOINT_URL (real AWS), S3_REGION is required. Static credentials are "
-        "optional on AWS (prefer IAM roles); MinIO requires both keys.",
+        "Bucket region. Required when no endpoint URL is set, which is the real-AWS "
+        "case.",
         "text",
         "us-east-1",
         None,
@@ -757,9 +739,8 @@ _RAW: tuple[_Row, ...] = (
         "S3_ENDPOINT_URL",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "S3 endpoint URL",
-        "S3_BUCKET must exist; the hosted Compose creates it via minio-init. Without "
-        "S3_ENDPOINT_URL (real AWS), S3_REGION is required. Static credentials are "
-        "optional on AWS (prefer IAM roles); MinIO requires both keys.",
+        "Address of an S3-compatible service such as MinIO. Leave it unset for real "
+        "AWS.",
         "text",
         "http://minio:9000",
         None,
@@ -769,9 +750,8 @@ _RAW: tuple[_Row, ...] = (
         "S3_ACCESS_KEY_ID",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "S3 access key ID",
-        "S3_BUCKET must exist; the hosted Compose creates it via minio-init. Without "
-        "S3_ENDPOINT_URL (real AWS), S3_REGION is required. Static credentials are "
-        "optional on AWS (prefer IAM roles); MinIO requires both keys.",
+        "Static access key. Optional on AWS, where an IAM role is preferred; MinIO "
+        "requires it. Set both keys or neither.",
         "text",
         None,
         None,
@@ -781,9 +761,7 @@ _RAW: tuple[_Row, ...] = (
         "S3_SECRET_ACCESS_KEY",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "S3 secret access key",
-        "S3_BUCKET must exist; the hosted Compose creates it via minio-init. Without "
-        "S3_ENDPOINT_URL (real AWS), S3_REGION is required. Static credentials are "
-        "optional on AWS (prefer IAM roles); MinIO requires both keys.",
+        "Secret paired with that access key. Single-quote it if it contains $.",
         "text",
         None,
         None,
@@ -793,9 +771,8 @@ _RAW: tuple[_Row, ...] = (
         "S3_FORCE_PATH_STYLE",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "S3 force path style",
-        "S3_BUCKET must exist; the hosted Compose creates it via minio-init. Without "
-        "S3_ENDPOINT_URL (real AWS), S3_REGION is required. Static credentials are "
-        "optional on AWS (prefer IAM roles); MinIO requires both keys.",
+        "Whether to address buckets as a path rather than a subdomain. MinIO needs "
+        "true; real AWS does not.",
         "boolean",
         "false",
         None,
@@ -805,9 +782,8 @@ _RAW: tuple[_Row, ...] = (
         "MAX_UPLOAD_SIZE_BYTES",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "Max upload size bytes",
-        "S3_BUCKET must exist; the hosted Compose creates it via minio-init. Without "
-        "S3_ENDPOINT_URL (real AWS), S3_REGION is required. Static credentials are "
-        "optional on AWS (prefer IAM roles); MinIO requires both keys.",
+        "Largest document a student may upload. Enforced before the body is read, so "
+        "an oversized file is refused rather than buffered.",
         "integer",
         "52428800",
         None,
@@ -817,9 +793,8 @@ _RAW: tuple[_Row, ...] = (
         "MAX_REQUEST_SIZE_BYTES",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "Max request size bytes",
-        "S3_BUCKET must exist; the hosted Compose creates it via minio-init. Without "
-        "S3_ENDPOINT_URL (real AWS), S3_REGION is required. Static credentials are "
-        "optional on AWS (prefer IAM roles); MinIO requires both keys.",
+        "Ceiling on an ordinary JSON request body. Uploads are bounded separately by "
+        "MAX_UPLOAD_SIZE_BYTES.",
         "integer",
         "1048576",
         None,
@@ -829,9 +804,8 @@ _RAW: tuple[_Row, ...] = (
         "MAX_CONCURRENT_DOCUMENT_VALIDATIONS",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "Max concurrent document validations",
-        "S3_BUCKET must exist; the hosted Compose creates it via minio-init. Without "
-        "S3_ENDPOINT_URL (real AWS), S3_REGION is required. Static credentials are "
-        "optional on AWS (prefer IAM roles); MinIO requires both keys.",
+        "How many uploads may be validated at once before the rest wait. Validation "
+        "reads bytes, so this bounds memory during a burst.",
         "integer",
         "2",
         None,
@@ -862,7 +836,7 @@ _RAW: tuple[_Row, ...] = (
         "MAX_DOCUMENTS_PER_COURSE",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "Max documents per course",
-        "Total deadline for upload admission and body receipt.",
+        "How many documents one course may hold.",
         "integer",
         "1000",
         None,
@@ -872,7 +846,7 @@ _RAW: tuple[_Row, ...] = (
         "MAX_COURSE_STORAGE_BYTES",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "Max course storage bytes",
-        "Total deadline for upload admission and body receipt.",
+        "Total stored bytes one course may hold across all of its documents.",
         "integer",
         "2147483648",
         None,
@@ -882,7 +856,8 @@ _RAW: tuple[_Row, ...] = (
         "MAX_PDF_PAGES",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "Max PDF pages",
-        "Total deadline for upload admission and body receipt.",
+        "Pages a single PDF may contain before it is refused, so one enormous file "
+        "cannot occupy a worker slot indefinitely.",
         "integer",
         "500",
         None,
@@ -892,7 +867,8 @@ _RAW: tuple[_Row, ...] = (
         "MAX_PDF_PAGE_PIXELS",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "Max PDF page pixels",
-        "Total deadline for upload admission and body receipt.",
+        "Pixel ceiling for one rendered PDF page. A decompression bomb is refused "
+        "here rather than during rasterisation.",
         "integer",
         "40000000",
         None,
@@ -902,7 +878,7 @@ _RAW: tuple[_Row, ...] = (
         "MAX_PDF_TOTAL_PIXELS",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "Max PDF total pixels",
-        "Total deadline for upload admission and body receipt.",
+        "Pixel ceiling summed across every page of one PDF.",
         "integer",
         "200000000",
         None,
@@ -912,7 +888,8 @@ _RAW: tuple[_Row, ...] = (
         "MAX_PDF_CONTENT_STREAM_BYTES",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "Max PDF content stream bytes",
-        "Total deadline for upload admission and body receipt.",
+        "Ceiling on a single decompressed PDF content stream, which is the other half "
+        "of the decompression-bomb guard.",
         "integer",
         "16777216",
         None,
@@ -922,7 +899,8 @@ _RAW: tuple[_Row, ...] = (
         "MAX_PDF_DRAWING_OPERATIONS",
         "S3-compatible storage (STORAGE_BACKEND=s3)",
         "Max PDF drawing operations",
-        "Total deadline for upload admission and body receipt.",
+        "Drawing operations one PDF page may issue. A page that exceeds it is "
+        "pathological rather than large.",
         "integer",
         "100000",
         None,
@@ -980,15 +958,8 @@ _RAW: tuple[_Row, ...] = (
         "IMAGE_UNDERSTANDING_TIMEOUT_SECONDS",
         "Visual understanding / image pipeline",
         "Image understanding timeout seconds",
-        "There is no image provider setting. Descriptions of diagrams, tables and "
-        "charts are extracted once by the background worker and stored on the "
-        "document, where every reader of that course shares them, so this can never "
-        "be a per-user choice. The deployment uses the first vision-capable model of "
-        "the first available vendor that has an image implementation (gemini or "
-        "ollama); with none, visual extraction is skipped and recorded as "
-        "not_configured. Describing a visual is a paid call per image, so a "
-        "deployment can decline it without giving up the vendor that would otherwise "
-        "answer.",
+        "Budget for describing one visual, 1-300. Exceeding it records that visual as "
+        "failed without failing the document.",
         "integer",
         "180",
         1,
@@ -998,15 +969,8 @@ _RAW: tuple[_Row, ...] = (
         "IMAGE_UNDERSTANDING_MAX_BYTES",
         "Visual understanding / image pipeline",
         "Image understanding max bytes",
-        "There is no image provider setting. Descriptions of diagrams, tables and "
-        "charts are extracted once by the background worker and stored on the "
-        "document, where every reader of that course shares them, so this can never "
-        "be a per-user choice. The deployment uses the first vision-capable model of "
-        "the first available vendor that has an image implementation (gemini or "
-        "ollama); with none, visual extraction is skipped and recorded as "
-        "not_configured. Describing a visual is a paid call per image, so a "
-        "deployment can decline it without giving up the vendor that would otherwise "
-        "answer.",
+        "Largest visual sent to the model, 1KiB-50MiB. Anything bigger is skipped "
+        "rather than resized.",
         "integer",
         "10485760",
         1024,
@@ -1030,8 +994,8 @@ _RAW: tuple[_Row, ...] = (
         "PROCESSING_JOB_LEASE_SECONDS",
         "Durable document processing worker",
         "Processing job lease seconds",
-        "How long a claimed document job stays leased to one worker slot. Once the "
-        "lease expires another slot may recover the job, so this bounds how long a "
+        "How long a claimed document job stays leased to one worker slot, 5-86400. "
+        "Once it expires another slot may recover the job, so this bounds how long a "
         "killed worker can strand work.",
         "integer",
         "60",
@@ -1042,9 +1006,8 @@ _RAW: tuple[_Row, ...] = (
         "PROCESSING_JOB_MAX_ATTEMPTS",
         "Durable document processing worker",
         "Processing job max attempts",
-        "How many times a document job may be attempted before it is recorded as "
-        "failed. A shutdown that returns a job to the queue does not spend an "
-        "attempt.",
+        "Attempts a document job gets before it is recorded as failed, 1-100. A "
+        "shutdown that returns a job to the queue does not spend an attempt.",
         "integer",
         "3",
         1,
@@ -1064,8 +1027,8 @@ _RAW: tuple[_Row, ...] = (
         "PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS",
         "Durable document processing worker",
         "Processing job attempt timeout seconds",
-        "Wall-clock budget for one document extraction attempt. An attempt that "
-        "exceeds it is abandoned and retried while attempts remain.",
+        "Wall-clock budget for one document extraction attempt, 1-86400. An attempt "
+        "that exceeds it is abandoned and retried while attempts remain.",
         "integer",
         "300",
         1,
@@ -1113,10 +1076,8 @@ _RAW: tuple[_Row, ...] = (
         "DESCRIBE_VISUALS_MAX_ACTIVE_PER_USER",
         "Durable document processing worker",
         "Describe visuals max active per user",
-        "Visual description runs as its own job after a document is ready, and its "
-        "progress is checkpointed per visual, so one long attempt is cheaper than "
-        "many short ones: every retry re-pays the PDF parse, OCR and chunking that "
-        "the attempt also performs.",
+        "Visual-description jobs one account may have running at once, 1-10. Counted "
+        "separately from extraction so a long description cannot block an upload.",
         "integer",
         "1",
         1,
@@ -1150,9 +1111,8 @@ _RAW: tuple[_Row, ...] = (
         "GENERATION_JOB_MAX_ATTEMPTS",
         "Durable document processing worker",
         "Generation job max attempts",
-        "Durable AI generation uses separate slots in the same worker process. A "
-        "student's third active request remains queued until one of the first two "
-        "ends.",
+        "Attempts a backgrounded generation gets before it is recorded as failed, "
+        "1-100.",
         "integer",
         "2",
         1,
@@ -1162,9 +1122,8 @@ _RAW: tuple[_Row, ...] = (
         "GENERATION_JOB_POLL_SECONDS",
         "Durable document processing worker",
         "Generation job poll seconds",
-        "Durable AI generation uses separate slots in the same worker process. A "
-        "student's third active request remains queued until one of the first two "
-        "ends.",
+        "Seconds a worker slot waits between polls while the generation queue is "
+        "empty.",
         "float",
         "1.0",
         None,
@@ -1174,9 +1133,7 @@ _RAW: tuple[_Row, ...] = (
         "GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS",
         "Durable document processing worker",
         "Generation job attempt timeout seconds",
-        "Durable AI generation uses separate slots in the same worker process. A "
-        "student's third active request remains queued until one of the first two "
-        "ends.",
+        "Wall-clock budget for one backgrounded generation attempt, 1-86400.",
         "integer",
         "600",
         1,
@@ -1186,9 +1143,8 @@ _RAW: tuple[_Row, ...] = (
         "GENERATION_JOB_CONCURRENCY",
         "Durable document processing worker",
         "Generation job concurrency",
-        "Durable AI generation uses separate slots in the same worker process. A "
-        "student's third active request remains queued until one of the first two "
-        "ends.",
+        "Generation claim slots inside one worker process, 1-6. Each slot costs a job "
+        "connection plus a heartbeat connection from the database pool.",
         "integer",
         "2",
         1,
@@ -1198,9 +1154,7 @@ _RAW: tuple[_Row, ...] = (
         "GENERATION_JOB_MAX_ACTIVE_PER_USER",
         "Durable document processing worker",
         "Generation job max active per user",
-        "Durable AI generation uses separate slots in the same worker process. A "
-        "student's third active request remains queued until one of the first two "
-        "ends.",
+        "Backgrounded generations one account may have running at once, 1-10.",
         "integer",
         "2",
         1,
@@ -1221,8 +1175,9 @@ _RAW: tuple[_Row, ...] = (
         "WORKER_STOP_GRACE_PERIOD",
         "Durable document processing worker",
         "Worker stop grace period",
-        "Stop grace per mode: abort needs 60s; drain the largest attempt timeout + "
-        "45s.",
+        "How long Compose waits for the worker to stop before killing it. Read by "
+        "Compose, not the application: abort needs about 60s, drain needs the largest "
+        "attempt timeout plus 45s.",
         "text",
         "60s",
         None,
@@ -1232,8 +1187,8 @@ _RAW: tuple[_Row, ...] = (
         "MAX_EXTRACTED_CHARACTERS",
         "Durable document processing worker",
         "Max extracted characters",
-        "Stop grace per mode: abort needs 60s; drain the largest attempt timeout + "
-        "45s.",
+        "Characters kept from one document. Text past the ceiling is dropped, so a "
+        "single enormous file cannot fill the database.",
         "integer",
         "2000000",
         None,
@@ -1243,8 +1198,7 @@ _RAW: tuple[_Row, ...] = (
         "MAX_DOCUMENT_CHUNKS",
         "Durable document processing worker",
         "Max document chunks",
-        "Stop grace per mode: abort needs 60s; drain the largest attempt timeout + "
-        "45s.",
+        "Chunks one document may produce. Each chunk costs one stored embedding.",
         "integer",
         "1000",
         None,
@@ -1254,8 +1208,8 @@ _RAW: tuple[_Row, ...] = (
         "OCR_LANGUAGE",
         "Durable document processing worker",
         "OCR language",
-        "Stop grace per mode: abort needs 60s; drain the largest attempt timeout + "
-        "45s.",
+        "Tesseract language packs to load, plus-joined such as eng+tur. Only packs "
+        "installed in the image can be named; the image ships eng.",
         "text",
         "eng",
         None,
@@ -1265,8 +1219,8 @@ _RAW: tuple[_Row, ...] = (
         "OCR_DPI",
         "Durable document processing worker",
         "OCR resolution (DPI)",
-        "Stop grace per mode: abort needs 60s; drain the largest attempt timeout + "
-        "45s.",
+        "Resolution a page is rasterised at before OCR. Higher reads small type "
+        "better and costs proportionally more time and memory.",
         "integer",
         "300",
         None,
@@ -1276,8 +1230,8 @@ _RAW: tuple[_Row, ...] = (
         "OCR_MIN_TEXT_CHARACTERS",
         "Durable document processing worker",
         "OCR min text characters",
-        "Stop grace per mode: abort needs 60s; drain the largest attempt timeout + "
-        "45s.",
+        "Characters a page must already contain to be treated as digital text. Below "
+        "it the page is treated as a scan and sent to OCR.",
         "integer",
         "20",
         None,
@@ -1287,8 +1241,8 @@ _RAW: tuple[_Row, ...] = (
         "DOCUMENT_CHUNK_SIZE_CHARACTERS",
         "Durable document processing worker",
         "Document chunk size characters",
-        "Stop grace per mode: abort needs 60s; drain the largest attempt timeout + "
-        "45s.",
+        "Target size of one retrievable chunk. It bounds how much context a single "
+        "retrieval hit can carry.",
         "integer",
         "1200",
         None,
@@ -1298,8 +1252,8 @@ _RAW: tuple[_Row, ...] = (
         "DOCUMENT_CHUNK_OVERLAP_CHARACTERS",
         "Durable document processing worker",
         "Document chunk overlap characters",
-        "Stop grace per mode: abort needs 60s; drain the largest attempt timeout + "
-        "45s.",
+        "Characters repeated between neighbouring chunks so a sentence split across "
+        "the boundary is still retrievable. Must be below the chunk size.",
         "integer",
         "200",
         None,
@@ -1346,8 +1300,8 @@ _RAW: tuple[_Row, ...] = (
         "EMBEDDING_BACKFILL_BATCH_SIZE",
         "Periodic maintenance & reconciliation",
         "Embedding backfill batch size",
-        "EMBEDDING_BACKFILL_INTERVAL_SECONDS: seconds between scans for missing "
-        "vectors.",
+        "Chunks the backfill embeds per pass. Larger batches finish sooner and hold "
+        "more memory while they run.",
         "integer",
         "64",
         None,
@@ -1357,8 +1311,7 @@ _RAW: tuple[_Row, ...] = (
         "EMBEDDING_BACKFILL_PRUNE_ORPHANS",
         "Periodic maintenance & reconciliation",
         "Embedding backfill prune orphans",
-        "EMBEDDING_BACKFILL_INTERVAL_SECONDS: seconds between scans for missing "
-        "vectors.",
+        "Whether the backfill also deletes vectors whose chunk no longer exists.",
         "boolean",
         "false",
         None,
@@ -1382,11 +1335,8 @@ _RAW: tuple[_Row, ...] = (
         "AI_USAGE_CLEANUP_BATCH_SIZE",
         "Periodic maintenance & reconciliation",
         "AI usage cleanup batch size",
-        "AI_USAGE_RETENTION_DAYS: masked AI-usage telemetry older than this is "
-        "deleted by the background worker on the interval below. "
-        "AI_USAGE_CLEANUP_INTERVAL_SECONDS is the seconds between those retention "
-        "scans; set it to 0 to disable the cycle (a one-off `python -m "
-        "workers.ai_usage_cleanup` still works).",
+        "Telemetry rows deleted per pass, so a long retention change cannot hold one "
+        "long transaction open.",
         "integer",
         "1000",
         None,
@@ -1396,11 +1346,8 @@ _RAW: tuple[_Row, ...] = (
         "AI_USAGE_CLEANUP_INTERVAL_SECONDS",
         "Periodic maintenance & reconciliation",
         "AI usage cleanup interval seconds",
-        "AI_USAGE_RETENTION_DAYS: masked AI-usage telemetry older than this is "
-        "deleted by the background worker on the interval below. "
-        "AI_USAGE_CLEANUP_INTERVAL_SECONDS is the seconds between those retention "
-        "scans; set it to 0 to disable the cycle (a one-off `python -m "
-        "workers.ai_usage_cleanup` still works).",
+        "Seconds between retention scans; 0 disables the cycle and leaves `python -m "
+        "workers.ai_usage_cleanup` as the manual path.",
         "float",
         "86400",
         None,
@@ -1428,15 +1375,8 @@ _RAW: tuple[_Row, ...] = (
         "STUDY_GUIDE_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "Study guide material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for study guide generation. At least "
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS, and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "126000",
         None,
@@ -1446,15 +1386,8 @@ _RAW: tuple[_Row, ...] = (
         "QUIZ_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "Quiz material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for quiz generation. At least "
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS, and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "126000",
         None,
@@ -1464,15 +1397,8 @@ _RAW: tuple[_Row, ...] = (
         "FLASHCARD_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "Flashcard material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for flashcard generation. At least "
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS, and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "120000",
         None,
@@ -1482,15 +1408,8 @@ _RAW: tuple[_Row, ...] = (
         "AI_TUTOR_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "AI tutor material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for the AI tutor. At least DOCUMENT_CHUNK_SIZE_CHARACTERS, "
+        "and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "126000",
         None,
@@ -1500,15 +1419,8 @@ _RAW: tuple[_Row, ...] = (
         "COURSE_QA_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "Course Q&A material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for course Q&A. At least DOCUMENT_CHUNK_SIZE_CHARACTERS, "
+        "and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "126000",
         None,
@@ -1518,15 +1430,8 @@ _RAW: tuple[_Row, ...] = (
         "EXAM_ANALYSIS_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "Exam analysis material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for exam source analysis. At least "
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS, and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "126000",
         None,
@@ -1536,15 +1441,8 @@ _RAW: tuple[_Row, ...] = (
         "EXAM_PAST_PAPER_MAX_CHARS",
         "AI course-material context budget",
         "Exam past paper max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for reading a past paper. At least "
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS, and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "126000",
         None,
@@ -1554,15 +1452,8 @@ _RAW: tuple[_Row, ...] = (
         "EXAM_TOPIC_GUIDE_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "Exam topic guide material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for an exam topic guide. At least "
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS, and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "126000",
         None,
@@ -1572,15 +1463,8 @@ _RAW: tuple[_Row, ...] = (
         "EXAM_TOPIC_SUMMARY_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "Exam topic summary material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for an exam topic summary. At least "
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS, and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "60000",
         None,
@@ -1590,15 +1474,8 @@ _RAW: tuple[_Row, ...] = (
         "EXAM_TOPIC_QUIZ_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "Exam topic quiz material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for an exam topic quiz. At least "
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS, and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "126000",
         None,
@@ -1608,15 +1485,8 @@ _RAW: tuple[_Row, ...] = (
         "EXAM_SIMILAR_QUESTIONS_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "Exam similar questions material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for similar-question generation. At least "
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS, and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "126000",
         None,
@@ -1626,15 +1496,8 @@ _RAW: tuple[_Row, ...] = (
         "EXAM_MOCK_EXAM_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "Exam mock exam material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for mock exam generation. At least "
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS, and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "126000",
         None,
@@ -1644,15 +1507,8 @@ _RAW: tuple[_Row, ...] = (
         "EXAM_REVIEW_SHEET_MATERIAL_MAX_CHARS",
         "AI course-material context budget",
         "Exam review sheet material max chars",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Character budget for the exam review sheet. At least "
+        "DOCUMENT_CHUNK_SIZE_CHARACTERS, and clamped by MATERIAL_MAX_CHARS_CEILING.",
         "integer",
         "126000",
         None,
@@ -1662,15 +1518,8 @@ _RAW: tuple[_Row, ...] = (
         "EXAM_MOCK_EXAM_QUESTION_COUNT",
         "AI course-material context budget",
         "Exam mock exam question count",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Questions in a generated mock exam, 1-20. Allocation reserves one question "
+        "per requested topic, so a paper too short to cover them all is refused.",
         "integer",
         "20",
         1,
@@ -1680,15 +1529,8 @@ _RAW: tuple[_Row, ...] = (
         "EXAM_QUIZ_DEFAULT_QUESTION_COUNT",
         "AI course-material context budget",
         "Exam quiz default question count",
-        "Maximum characters of course material placed into one generation request, "
-        "per feature. Each value must be at least DOCUMENT_CHUNK_SIZE_CHARACTERS. "
-        "Study guide, quiz, AI tutor, course Q&A, and exam analysis head each "
-        "retrieved passage with a citation key, which spends part of the budget, so "
-        "they carry a wider one than flashcards, which emit no citations. See "
-        "docs/citations.md. MATERIAL_MAX_CHARS_CEILING caps every per-feature budget "
-        "below to this many characters when set (must also be >= "
-        "DOCUMENT_CHUNK_SIZE_CHARACTERS). Set it once for a small local context "
-        "window instead of lowering each budget.",
+        "Questions in a practice quiz or topic exam when the student names no count, "
+        "1-20.",
         "integer",
         "10",
         1,
@@ -1736,9 +1578,8 @@ _RAW: tuple[_Row, ...] = (
         "AI_MODEL_COST_RATES",
         "AI providers",
         "AI model cost rates",
-        "Optional versioned USD rates used to price successful telemetry events. "
-        "Model keys are exact provider:model identities. Unknown models remain "
-        "explicitly unpriced rather than inheriting a fallback rate.",
+        "Per-million-token prices used to estimate spend, as the JSON object shown "
+        "above. Empty means generations are recorded without a cost estimate.",
         "text",
         None,
         None,
@@ -1759,8 +1600,8 @@ _RAW: tuple[_Row, ...] = (
         "AI_GENERATION_MAX_ATTEMPTS",
         "AI providers",
         "AI generation max attempts",
-        "Per-request deadline for one generation, every provider. Raise it for local "
-        "models on modest hardware; they are far slower than a hosted API.",
+        "Attempts one provider call gets before the chain moves to the next vendor, "
+        "1-10.",
         "integer",
         "3",
         1,
@@ -1770,8 +1611,8 @@ _RAW: tuple[_Row, ...] = (
         "AI_GENERATION_BACKOFF_BASE_SECONDS",
         "AI providers",
         "AI generation backoff base seconds",
-        "Per-request deadline for one generation, every provider. Raise it for local "
-        "models on modest hardware; they are far slower than a hosted API.",
+        "First wait between provider retries. It doubles each attempt up to the "
+        "maximum below.",
         "float",
         "1.0",
         None,
@@ -1781,8 +1622,7 @@ _RAW: tuple[_Row, ...] = (
         "AI_GENERATION_BACKOFF_MAX_SECONDS",
         "AI providers",
         "AI generation backoff max seconds",
-        "Per-request deadline for one generation, every provider. Raise it for local "
-        "models on modest hardware; they are far slower than a hosted API.",
+        "Ceiling on that doubling wait. Must be at least the base.",
         "float",
         "10.0",
         None,
@@ -1792,8 +1632,8 @@ _RAW: tuple[_Row, ...] = (
         "AI_GENERATION_MAX_CONCURRENCY",
         "AI providers",
         "AI generation max concurrency",
-        "Per-request deadline for one generation, every provider. Raise it for local "
-        "models on modest hardware; they are far slower than a hosted API.",
+        "Provider calls in flight at once across the process, 1-100. It is the main "
+        "guard against a vendor rate limit.",
         "integer",
         "10",
         1,
@@ -1847,11 +1687,8 @@ _RAW: tuple[_Row, ...] = (
         "OLLAMA_TOP_P",
         "AI providers",
         "Ollama top p",
-        "Sampling options sent with every Ollama request. Ollama's own defaults are "
-        "tuned for chat, not for schema-constrained JSON; temperature 0.8 makes a "
-        'small model violate hard constraints such as "exactly four options" often '
-        "enough to fail whole generations. See the single-GPU box profile in "
-        "docs/ai_providers.md.",
+        "Nucleus sampling cutoff, 0.01-1.0. Lower keeps the model to its most likely "
+        "tokens.",
         "float",
         "0.9",
         0.01,
@@ -1873,9 +1710,8 @@ _RAW: tuple[_Row, ...] = (
         "OLLAMA_NUM_PREDICT",
         "AI providers",
         "Ollama num predict",
-        "num_ctx is sent per request, so the model does not need a custom Modelfile "
-        "and a server-wide OLLAMA_CONTEXT_LENGTH cannot silently inflate the KV "
-        "cache. The prompt and the response share this window.",
+        "Most tokens one response may generate, 64-131072. Must not exceed "
+        "OLLAMA_NUM_CTX.",
         "integer",
         "4096",
         64,
@@ -1885,9 +1721,8 @@ _RAW: tuple[_Row, ...] = (
         "OLLAMA_REPEAT_PENALTY",
         "AI providers",
         "Ollama repeat penalty",
-        "num_ctx is sent per request, so the model does not need a custom Modelfile "
-        "and a server-wide OLLAMA_CONTEXT_LENGTH cannot silently inflate the KV "
-        "cache. The prompt and the response share this window.",
+        "How hard repeated tokens are discouraged, 0.5-2.0. Above 1.0 penalises "
+        "repetition.",
         "float",
         "1.1",
         0.5,
@@ -1909,9 +1744,8 @@ _RAW: tuple[_Row, ...] = (
         "GEMINI_API_KEY",
         "AI providers",
         "Gemini api key",
-        "Thinking-capable models such as qwen3.5 reason before answering unless told "
-        "not to. With format=json that reasoning can consume the whole turn and leave "
-        "an empty response, so it is off unless explicitly enabled.",
+        "Google Gemini credential. Setting it is what makes the vendor available; "
+        "there is no separate provider switch.",
         "text",
         None,
         None,
@@ -1921,9 +1755,7 @@ _RAW: tuple[_Row, ...] = (
         "OPENAI_API_KEY",
         "AI providers",
         "Openai api key",
-        "Thinking-capable models such as qwen3.5 reason before answering unless told "
-        "not to. With format=json that reasoning can consume the whole turn and leave "
-        "an empty response, so it is off unless explicitly enabled.",
+        "OpenAI credential. Setting it is what makes the vendor available.",
         "text",
         None,
         None,
@@ -1933,9 +1765,7 @@ _RAW: tuple[_Row, ...] = (
         "ANTHROPIC_API_KEY",
         "AI providers",
         "Anthropic api key",
-        "Thinking-capable models such as qwen3.5 reason before answering unless told "
-        "not to. With format=json that reasoning can consume the whole turn and leave "
-        "an empty response, so it is off unless explicitly enabled.",
+        "Anthropic credential. Setting it is what makes the vendor available.",
         "text",
         None,
         None,
@@ -1956,8 +1786,9 @@ _RAW: tuple[_Row, ...] = (
         "AI_GRADING_OVERALL_TIMEOUT_SECONDS",
         "AI providers",
         "AI grading overall timeout seconds",
-        "Overall deadline for the entire generation request including all retries and "
-        "fallbacks. Must be less than ALB idle timeout (120s). Default 110s.",
+        "Whole-request budget for grading one attempt's open-ended answers, 1-55. It "
+        "sits below the window a hosted database leaves a transaction idle, so a slow "
+        "grader costs marks rather than the student's answers.",
         "integer",
         "45",
         1,
@@ -2042,9 +1873,7 @@ _RAW: tuple[_Row, ...] = (
         "RATE_LIMIT_LOGIN_WINDOW_SECONDS",
         "Rate limiting",
         "Rate limit login window seconds",
-        "Full policy in docs/rate_limiting.md. Per-IP and per-account login attempts "
-        "allowed within the window before a 429; the account dimension additionally "
-        "locks out progressively (see RATE_LIMIT_LOCKOUT_* below).",
+        "Window those sign-in attempts are counted over.",
         "integer",
         "300",
         None,
@@ -2064,7 +1893,7 @@ _RAW: tuple[_Row, ...] = (
         "RATE_LIMIT_REGISTER_WINDOW_SECONDS",
         "Rate limiting",
         "Rate limit register window seconds",
-        "Per-IP registration attempts allowed within the window before a 429.",
+        "Window those registrations are counted over.",
         "integer",
         "3600",
         None,
@@ -2086,9 +1915,7 @@ _RAW: tuple[_Row, ...] = (
         "RATE_LIMIT_GENERATION_WINDOW_SECONDS",
         "Rate limiting",
         "Rate limit generation window seconds",
-        "Per-user, per-feature AI generation requests allowed within the window "
-        "before a 429. Checked ahead of CreditService.charge, so a throttled request "
-        "never spends credit.",
+        "Window those generation requests are counted over.",
         "integer",
         "3600",
         None,
@@ -2110,9 +1937,7 @@ _RAW: tuple[_Row, ...] = (
         "RATE_LIMIT_LOCKOUT_MAX_SECONDS",
         "Rate limiting",
         "Rate limit lockout max seconds",
-        "Progressive lockout for repeated account-login violations: the first lockout "
-        "lasts the base duration, each further violation while still recently locked "
-        "doubles it, capped at the max.",
+        "Ceiling on that doubling lockout. Must be at least the base.",
         "integer",
         "1800",
         None,
@@ -2134,9 +1959,7 @@ _RAW: tuple[_Row, ...] = (
         "RATE_LIMIT_VERIFICATION_WINDOW_SECONDS",
         "Rate limiting",
         "Rate limit verification window seconds",
-        "Per-IP email verification attempts (redeem and resend combined) allowed "
-        "within the window before a 429. Keyed by IP rather than by address so an "
-        "attacker cannot lock a victim out of verifying their own account.",
+        "Window those verification sends are counted over.",
         "integer",
         "3600",
         None,
@@ -2157,8 +1980,7 @@ _RAW: tuple[_Row, ...] = (
         "RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS",
         "Rate limiting",
         "Rate limit password reset window seconds",
-        "Per-IP password reset request attempts allowed within the window before a "
-        "429.",
+        "Window those reset requests are counted over.",
         "integer",
         "3600",
         None,
@@ -2178,7 +2000,7 @@ _RAW: tuple[_Row, ...] = (
         "CLIENT_ERROR_WINDOW_SECONDS",
         "Rate limiting",
         "Client error window seconds",
-        "Authenticated browser crash reports per user in one fixed window.",
+        "Window those browser error reports are counted over, 1-3600.",
         "integer",
         "60",
         1,
@@ -2283,9 +2105,7 @@ _RAW: tuple[_Row, ...] = (
         "SMTP_PORT",
         "Authentication hardening",
         "SMTP port",
-        "SMTP relay. SMTP_USERNAME and SMTP_PASSWORD are optional; supply both or "
-        "neither. SMTP_USE_TLS issues STARTTLS after connecting, which is what port "
-        "587 expects; disable it only for a relay on the same private network.",
+        "Port for the SMTP host, 1-65535. 587 is submission with STARTTLS.",
         "integer",
         "587",
         1,
@@ -2295,9 +2115,8 @@ _RAW: tuple[_Row, ...] = (
         "SMTP_USERNAME",
         "Authentication hardening",
         "SMTP username",
-        "SMTP relay. SMTP_USERNAME and SMTP_PASSWORD are optional; supply both or "
-        "neither. SMTP_USE_TLS issues STARTTLS after connecting, which is what port "
-        "587 expects; disable it only for a relay on the same private network.",
+        "SMTP account name. Username and password are both set or both empty; one "
+        "without the other is refused at startup.",
         "text",
         None,
         None,
@@ -2307,9 +2126,7 @@ _RAW: tuple[_Row, ...] = (
         "SMTP_PASSWORD",
         "Authentication hardening",
         "SMTP password",
-        "SMTP relay. SMTP_USERNAME and SMTP_PASSWORD are optional; supply both or "
-        "neither. SMTP_USE_TLS issues STARTTLS after connecting, which is what port "
-        "587 expects; disable it only for a relay on the same private network.",
+        "SMTP account password. Single-quote it if it contains $.",
         "text",
         None,
         None,
@@ -2319,9 +2136,8 @@ _RAW: tuple[_Row, ...] = (
         "SMTP_USE_TLS",
         "Authentication hardening",
         "SMTP uses TLS",
-        "SMTP relay. SMTP_USERNAME and SMTP_PASSWORD are optional; supply both or "
-        "neither. SMTP_USE_TLS issues STARTTLS after connecting, which is what port "
-        "587 expects; disable it only for a relay on the same private network.",
+        "Whether STARTTLS is negotiated on the connection. Leave it on unless the "
+        "relay is on this host.",
         "boolean",
         "true",
         None,
@@ -2331,9 +2147,8 @@ _RAW: tuple[_Row, ...] = (
         "SMTP_TIMEOUT_SECONDS",
         "Authentication hardening",
         "SMTP timeout seconds",
-        "SMTP relay. SMTP_USERNAME and SMTP_PASSWORD are optional; supply both or "
-        "neither. SMTP_USE_TLS issues STARTTLS after connecting, which is what port "
-        "587 expects; disable it only for a relay on the same private network.",
+        "Budget for one SMTP conversation, 1-120. Exceeding it fails the send without "
+        "failing the request that triggered it.",
         "integer",
         "10",
         1,
@@ -2370,11 +2185,8 @@ _RAW: tuple[_Row, ...] = (
         "SECURITY_HSTS_MAX_AGE_SECONDS",
         "Response security headers",
         "HSTS maximum age",
-        "HSTS is a promise the browser remembers for a year, so it defaults on only "
-        "in hosted mode, where TLS is known to terminate in front of the API. A "
-        "self-hosted deployment behind a TLS reverse proxy should set it to true; one "
-        "served over plain HTTP must leave it false or browsers will refuse to reach "
-        "it.",
+        "How long a browser should refuse plain HTTP for this host once it has seen "
+        "the header. Only set a long value once TLS is permanent.",
         "integer",
         "31536000",
         None,
@@ -2407,9 +2219,7 @@ _RAW: tuple[_Row, ...] = (
         "HOSTED_ADS_PROVIDER",
         "Optional hosted advertising",
         "Hosted ads provider",
-        "ENABLE_HOSTED_ADS controls the optional privacy-preserving advertising path. "
-        "Strictly forbidden in self_hosted mode (setting true raises a startup "
-        "error). In hosted mode, defaults to false (kill-switch ready).",
+        "Which ad network serves the slots. Hosted deployments only.",
         "text",
         "ethicalads",
         None,
@@ -2419,9 +2229,7 @@ _RAW: tuple[_Row, ...] = (
         "HOSTED_ADS_PUBLISHER_ID",
         "Optional hosted advertising",
         "Hosted ads publisher ID",
-        "ENABLE_HOSTED_ADS controls the optional privacy-preserving advertising path. "
-        "Strictly forbidden in self_hosted mode (setting true raises a startup "
-        "error). In hosted mode, defaults to false (kill-switch ready).",
+        "Publisher identifier handed to that network. Hosted deployments only.",
         "text",
         "lumina",
         None,

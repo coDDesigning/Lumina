@@ -1,14 +1,4 @@
-import {
-  History,
-  LayoutGrid,
-  LogOut,
-  Moon,
-  ScrollText,
-  Shield,
-  SlidersHorizontal,
-  Sun,
-  UserRound,
-} from 'lucide-react';
+import { History, LayoutGrid, LogOut, Moon, Shield, Sun, UserRound } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { cx } from '@/lib/cx';
@@ -38,16 +28,7 @@ export function AppShell() {
   ];
 
   if (user?.role === 'admin') {
-    links.push(
-      { to: '/admin', label: 'Admin', icon: Shield, end: true },
-      { to: '/admin/logs', label: 'Admin logs', icon: ScrollText, end: true },
-      {
-        to: '/admin/system-settings',
-        label: 'System settings',
-        icon: SlidersHorizontal,
-        end: true,
-      },
-    );
+    links.push({ to: '/admin', label: 'Admin', icon: Shield });
   }
 
   function handleSignOut() {

@@ -166,6 +166,20 @@ describe('AdminPage credit administration', () => {
     mocked.listUserCreditTransactions.mockResolvedValue([]);
   });
 
+  it('is the only way into the admin sub-sections', async () => {
+    renderPage();
+
+    const nav = within(await screen.findByRole('navigation', { name: 'Admin sections' }));
+    expect(nav.getByRole('link', { name: 'Admin logs' })).toHaveAttribute(
+      'href',
+      '/admin/logs',
+    );
+    expect(nav.getByRole('link', { name: 'System settings' })).toHaveAttribute(
+      'href',
+      '/admin/system-settings',
+    );
+  });
+
   it('shows persisted provider cost estimates and their pricing version', async () => {
     renderPage();
 

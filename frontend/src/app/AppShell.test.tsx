@@ -119,10 +119,16 @@ describe('AppShell', () => {
     authState.role = 'admin';
     renderShell();
     expect(screen.getByRole('link', { name: 'Admin' })).toHaveAttribute('href', '/admin');
-    expect(screen.getByRole('link', { name: 'Admin logs' })).toHaveAttribute(
-      'href',
-      '/admin/logs',
-    );
+  });
+
+  it('keeps the admin sub-destinations out of the rail', () => {
+    authState.role = 'admin';
+    renderShell();
+
+    expect(screen.queryByRole('link', { name: 'Admin logs' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'System settings' }),
+    ).not.toBeInTheDocument();
   });
 
   it('toggles the theme and remembers the choice', async () => {

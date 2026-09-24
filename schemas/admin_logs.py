@@ -95,11 +95,14 @@ class AdminLogRecord(BaseModel):
     logger: str
     event: str
     description: str
+    message: str | None = None
+    exception_message: str | None = None
     error_code: str | None = None
     error_category: str | None = None
     exception_type: str | None = None
     exception_chain: list[str] = Field(default_factory=list)
     source_location: str | None = None
+    stack: list[str] = Field(default_factory=list)
     error_signature: str | None = None
     http_method: str | None = None
     http_path: str | None = None

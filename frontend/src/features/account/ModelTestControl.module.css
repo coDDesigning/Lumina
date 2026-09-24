@@ -1,0 +1,28 @@
+.control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.outcome {
+  width: 100%;
+}
+
+.adminDetail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.detail {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.warning {
+  font-size: var(--text-xs);
+  color: var(--warning);
+}

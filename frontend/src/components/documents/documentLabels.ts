@@ -1,9 +1,11 @@
 import type {
   DocumentMaterialKind,
+  DocumentResponse,
   DocumentStatus,
   DocumentVisualAnalysisStatus,
   ProcessingJobResponse,
   ProcessingStage,
+  VisualAnalysisSummary,
 } from '../../api/types';
 
 import type { BadgeTone } from '@/ui/Badge';
@@ -21,11 +23,114 @@ export const VISUAL_STATUS_LABELS: Record<DocumentVisualAnalysisStatus, string> 
 
 export function visualAnalysisStatusLabel(
   status: string | null | undefined,
+  summary?: VisualAnalysisSummary | null,
 ): string | null {
   if (!status || status === 'not_applicable' || status === 'completed') {
     return null;
   }
+  if (status === 'pending' && summary?.stopped_error_code) {
+    return 'Visual analysis stopped';
+  }
   return VISUAL_STATUS_LABELS[status as DocumentVisualAnalysisStatus] ?? humanizeToken(status);
+}
+
+export interface VisualAnalysisDetail {
+  lines: string[];
+  progress: { value: number; max: number } | null;
+}
+
+const VISUAL_FAILURE_REASONS: Record<string, string> = {
+  VISUAL_ANALYSIS_FAILED: "the vision model's answer couldn't be used",
+  VISUAL_SERVICE_TEMPORARY: "the vision service didn't respond in time",
+  IMAGE_UNDERSTANDING_FAILED: 'the vision service kept failing',
+};
+
+const VISUAL_DETAIL_WITHOUT_SUMMARY: Record<'pending' | 'partial' | 'failed', string> = {
+  pending: 'Figures are being described in the background.',
+  partial: "Some figures couldn't be described. The text is still usable.",
+  failed: 'No figures could be described. The text is still usable.',
+};
+
+function visualFailureReason(code: string | null): string {
+  return (code && VISUAL_FAILURE_REASONS[code.toUpperCase()]) || 'something went wrong';
+}
+
+function counted(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+const PAGE_LIST_MAX = 6;
+
+export function pageList(numbers: readonly number[]): string {
+  if (numbers.length === 0) {
+    return '';
+  }
+  if (numbers.length === 1) {
+    return `page ${numbers[0]}`;
+  }
+  if (numbers.length <= PAGE_LIST_MAX) {
+    const allButLast = numbers.slice(0, -1).join(', ');
+    const last = numbers[numbers.length - 1];
+    return `pages ${allButLast} and ${last}`;
+  }
+  const shown = numbers.slice(0, PAGE_LIST_MAX).join(', ');
+  const more = numbers.length - PAGE_LIST_MAX;
+  return `pages ${shown} and ${more} more`;
+}
+
+function pagesSuffix(numbers: readonly number[]): string {
+  const formatted = pageList(numbers);
+  return formatted ? ` (${formatted})` : '';
+}
+
+export function visualAnalysisDetail(
+  status: string | null | undefined,
+  summary: VisualAnalysisSummary | null | undefined,
+): VisualAnalysisDetail | null {
+  if (status === 'not_configured') {
+    return {
+      lines: [
+        "No vision model is set up on this server, so figures aren't described. The text is still usable.",
+      ],
+      progress: null,
+    };
+  }
+  if (status !== 'pending' && status !== 'partial' && status !== 'failed') {
+    return null;
+  }
+  if (!summary) {
+    return { lines: [VISUAL_DETAIL_WITHOUT_SUMMARY[status]], progress: null };
+  }
+
+  const lines = [
+    `${summary.described} of ${counted(summary.total, 'figure', 'figures')} described`,
+  ];
+  if (summary.failed > 0) {
+    lines.push(
+      `${summary.failed} couldn't be described${pagesSuffix(summary.failed_page_numbers)}: ${visualFailureReason(summary.failure_reason)}`,
+    );
+  }
+  if (summary.crowded_pages > 0) {
+    lines.push(
+      `${counted(summary.crowded_pages, 'page', 'pages')} had too many images to pick figures from${pagesSuffix(summary.crowded_page_numbers)}`,
+    );
+  }
+  if (status !== 'pending') {
+    return { lines, progress: null };
+  }
+  if (summary.stopped_error_code) {
+    lines.push(`Stopped: ${visualFailureReason(summary.stopped_error_code)}`);
+    return { lines, progress: null };
+  }
+  return { lines, progress: { value: summary.described, max: summary.total } };
+}
+
+export function isDescribingVisuals(document: DocumentResponse): boolean {
+  return (
+    document.status === 'ready' &&
+    document.visual_analysis_status === 'pending' &&
+    !document.visual_analysis?.stopped_error_code
+  );
 }
 
 const STATUS_LABELS: Record<DocumentStatus, string> = {

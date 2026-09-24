@@ -1,5 +1,7 @@
 import hashlib
 import json
+import logging
+import multiprocessing
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +16,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from backend.app.config import WORKER_SHUTDOWN_MODE_ABORT
 from backend.app.models import (
     Course,
     DocumentChunk,
@@ -34,13 +37,21 @@ from backend.app.models import (
     UploadedDocument,
     User,
 )
+from backend.app.observability import (
+    bind_operation_context,
+    get_operation_context,
+    reset_operation_context,
+)
 from services.processing_jobs import (
     ChunkData,
+    NoRetryableVisualsError,
     PageData,
     ClaimedJob,
     ClaimedProfileJob,
     ProcessingJobStateError,
+    VisualAnalysisNotConfiguredError,
     VisualData,
+    VisualDescriptionActiveError,
     complete_describe_job,
     update_job_stage,
     claim_next_describe_job,
@@ -51,11 +62,17 @@ from services.processing_jobs import (
     enqueue_describe_visuals_job_if_deferred,
     enqueue_document_job,
     enqueue_profile_describe_visuals_job,
+    enqueue_profile_document_job,
     fail_describe_job,
     fail_profile_describe_job,
     record_visual_description,
     record_profile_visual_description,
+    release_describe_job,
+    release_job,
+    release_profile_describe_job,
+    release_profile_job,
     retry_failed_profile_job,
+    retry_failed_visuals,
     record_visual_failure,
     recover_expired_jobs,
     stored_visual_descriptions,
@@ -100,6 +117,7 @@ def seed_ready_document(
     email: str = "describe-owner@example.com",
     pending_visuals: int = 2,
     described_visuals: int = 0,
+    failed_visuals: int = 0,
     content: bytes | None = None,
 ) -> ReadyDocument:
     content = content if content is not None else visual_pdf()
@@ -144,8 +162,17 @@ def seed_ready_document(
         session.add(document)
         session.flush()
 
-        total = pending_visuals + described_visuals
+        total = pending_visuals + described_visuals + failed_visuals
+        failed_upper_bound = described_visuals + failed_visuals
         for index in range(total):
+            is_described = index < described_visuals
+            is_failed = described_visuals <= index < failed_upper_bound
+            if is_described:
+                page_status, visual_status = "completed", "succeeded"
+            elif is_failed:
+                page_status, visual_status = "failed", "failed"
+            else:
+                page_status, visual_status = "pending", "pending"
             page = DocumentPage(
                 document_id=document_id,
                 course_id=course.id,
@@ -157,9 +184,7 @@ def seed_ready_document(
                 raw_extraction_method="native",
                 has_images=True,
                 has_visual_content=True,
-                visual_analysis_status=(
-                    "completed" if index < described_visuals else "pending"
-                ),
+                visual_analysis_status=page_status,
             )
             page.visuals = [
                 DocumentVisual(
@@ -172,12 +197,11 @@ def seed_ready_document(
                     bbox_y1=270.0,
                     description=(
                         f"A described figure on page {index + 1}."
-                        if index < described_visuals
+                        if is_described
                         else None
                     ),
-                    analysis_status=(
-                        "succeeded" if index < described_visuals else "pending"
-                    ),
+                    analysis_status=visual_status,
+                    error_code="VISUAL_ANALYSIS_FAILED" if is_failed else None,
                 )
             ]
             session.add(page)
@@ -258,6 +282,92 @@ def test_claiming_a_describe_job_leaves_the_document_ready(session_factory, tmp_
         )
         assert job.status == JOB_STATUS_RUNNING
         assert job.processing_stage == "validating"
+
+
+def test_releasing_a_describe_job_leaves_its_ready_document_alone(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        enqueue_describe_visuals_job(session, document, now=queued_at)
+        session.commit()
+
+    claim_at = queued_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_describe_job(
+            session, "describe-worker", ready.storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+
+    release_at = claim_at + timedelta(seconds=1)
+    with session_factory() as session:
+        assert (
+            release_describe_job(session, claim.id, claim.claim_token, now=release_at)
+            is True
+        )
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, claim.id)
+        document = session.get(UploadedDocument, ready.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert job.claim_token is None
+        assert job.started_at is None
+        assert document.status == "ready"
+        assert document.processing_error is None
+
+    with session_factory() as session:
+        reclaimed = claim_next_describe_job(
+            session,
+            "describe-worker-2",
+            ready.storage.provider,
+            600,
+            now=release_at,
+        )
+    assert reclaimed is not None
+    assert reclaimed.id == claim.id
+    assert reclaimed.attempt_count == 1
+
+
+def test_the_extraction_release_refuses_a_describe_job(session_factory, tmp_path):
+    ready = seed_ready_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        enqueue_describe_visuals_job(session, document, now=queued_at)
+        session.commit()
+
+    claim_at = queued_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_describe_job(
+            session, "describe-worker", ready.storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+
+    with session_factory() as session:
+        assert (
+            release_job(
+                session,
+                claim.id,
+                claim.claim_token,
+                now=claim_at + timedelta(seconds=1),
+            )
+            is False
+        )
+
+    with session_factory() as session:
+        job = session.get(ProcessingJob, claim.id)
+        document = session.get(UploadedDocument, ready.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_RUNNING
+        assert job.job_type == JOB_TYPE_DESCRIBE_VISUALS
+        assert job.claim_token == claim.claim_token
+        assert document.status == "ready"
 
 
 def test_a_describe_job_is_not_claimed_while_its_document_is_reprocessing(
@@ -1125,6 +1235,104 @@ def test_an_interrupted_describe_attempt_keeps_what_it_already_paid_for(
         assert session.get(UploadedDocument, ready.document_id).status == "ready"
 
 
+def test_an_aborted_describe_attempt_is_released_and_keeps_what_it_already_paid_for(
+    session_factory, tmp_path, monkeypatch
+):
+    ready = seed_ready_document(session_factory, tmp_path)
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        enqueue_describe_visuals_job(session, document)
+        session.commit()
+
+    first_visual_recorded = threading.Event()
+    record_description = document_processor.record_visual_description
+
+    def record_then_request_shutdown(*args, **kwargs):
+        recorded = record_description(*args, **kwargs)
+        first_visual_recorded.set()
+        return recorded
+
+    monkeypatch.setattr(
+        document_processor, "record_visual_description", record_then_request_shutdown
+    )
+
+    with _StubVisionServer(stall_after=1) as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=120)
+        monkeypatch.setattr(
+            document_processor,
+            "settings",
+            replace(
+                document_processor.settings,
+                worker_shutdown_mode=WORKER_SHUTDOWN_MODE_ABORT,
+            ),
+        )
+        handled = document_processor.process_next_job(
+            session_factory=session_factory,
+            storage=ready.storage,
+            worker_id="describe-worker",
+            shutdown_requested=first_visual_recorded.is_set,
+            embedding_provider=_StubEmbeddings(),
+            vector_store=PgVectorStore(),
+        )
+        assert handled is True
+
+    assert multiprocessing.active_children() == []
+    with session_factory() as session:
+        visuals = session.scalars(
+            select(DocumentVisual)
+            .join(DocumentPage, DocumentPage.id == DocumentVisual.page_id)
+            .where(DocumentPage.document_id == ready.document_id)
+            .order_by(DocumentPage.page_number)
+        ).all()
+        assert visuals[0].analysis_status == "succeeded"
+        assert visuals[0].description == "A stub description number 1."
+        assert visuals[1].analysis_status == "pending"
+        assert visuals[1].description is None
+        job = session.scalar(
+            select(ProcessingJob).where(
+                ProcessingJob.document_id == ready.document_id,
+                ProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            )
+        )
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert job.claim_token is None
+        assert job.last_error_code is None
+        assert session.get(UploadedDocument, ready.document_id).status == "ready"
+
+    with _StubVisionServer() as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=120)
+        handled = document_processor.process_next_job(
+            session_factory=session_factory,
+            storage=ready.storage,
+            worker_id="describe-worker",
+            embedding_provider=_StubEmbeddings(),
+            vector_store=PgVectorStore(),
+        )
+        assert handled is True
+        second_attempt_requests = server.request_count
+
+    assert second_attempt_requests == 1
+    with session_factory() as session:
+        visuals = session.scalars(
+            select(DocumentVisual)
+            .join(DocumentPage, DocumentPage.id == DocumentVisual.page_id)
+            .where(DocumentPage.document_id == ready.document_id)
+            .order_by(DocumentPage.page_number)
+        ).all()
+        assert visuals[0].description == "A stub description number 1."
+        assert visuals[1].analysis_status == "succeeded"
+        job = session.scalar(
+            select(ProcessingJob).where(
+                ProcessingJob.document_id == ready.document_id,
+                ProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            )
+        )
+        assert job.status == "succeeded"
+        assert job.attempt_count == 1
+        assert session.get(UploadedDocument, ready.document_id).status == "ready"
+
+
 def test_a_single_slot_worker_never_claims_a_describe_job(monkeypatch):
     claims: list[bool] = []
 
@@ -1387,6 +1595,519 @@ def test_retrying_a_failed_document_rearms_its_visual_description(
     assert describe_job_count(session_factory, ready.document_id) == 0
 
 
+def _document_visuals(session_factory, document_id):
+    with session_factory() as session:
+        return session.scalars(
+            select(DocumentVisual)
+            .join(DocumentPage, DocumentPage.id == DocumentVisual.page_id)
+            .where(DocumentPage.document_id == document_id)
+            .order_by(DocumentPage.page_number)
+        ).all()
+
+
+def _document_pages(session_factory, document_id):
+    with session_factory() as session:
+        return session.scalars(
+            select(DocumentPage)
+            .options(selectinload(DocumentPage.visuals))
+            .where(DocumentPage.document_id == document_id)
+            .order_by(DocumentPage.page_number)
+        ).all()
+
+
+def _describe_job(session_factory, document_id):
+    with session_factory() as session:
+        return session.scalar(
+            select(ProcessingJob).where(
+                ProcessingJob.document_id == document_id,
+                ProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            )
+        )
+
+
+def test_retrying_failed_figures_requeues_a_finished_describe_job_in_place(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=1,
+        failed_visuals=1,
+    )
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        job = enqueue_describe_visuals_job(session, document)
+        job.status = "succeeded"
+        job.attempt_count = 1
+        job.finished_at = datetime.now(timezone.utc)
+        session.commit()
+        job_id = job.id
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+
+    assert retried is not None
+    assert retried.id == ready.document_id
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.id == job_id
+    assert job.status == JOB_STATUS_QUEUED
+    assert job.attempt_count == 0
+    assert job.finished_at is None
+    assert job.last_error_code is None
+
+    pages = _document_pages(session_factory, ready.document_id)
+    assert pages[0].visual_analysis_status == "completed"
+    assert pages[0].visuals[0].analysis_status == "succeeded"
+    assert pages[0].visuals[0].description == "A described figure on page 1."
+    assert pages[1].visual_analysis_status == "pending"
+    assert pages[1].visuals[0].analysis_status == "pending"
+    assert pages[1].visuals[0].error_code is None
+
+
+def test_retrying_figures_after_the_describe_job_gave_up_resets_its_attempts(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(session_factory, tmp_path, pending_visuals=2)
+    queued_at = datetime.now(timezone.utc)
+    claim = claimed_describe_job(session_factory, ready, now=queued_at)
+
+    with session_factory() as session:
+        recorded = record_visual_failure(
+            session,
+            claim.id,
+            claim.claim_token,
+            page_number=1,
+            visual_index=0,
+            error_code="VISUAL_ANALYSIS_FAILED",
+        )
+    assert recorded is True
+
+    with session_factory() as session:
+        outcome = fail_describe_job(
+            session,
+            claim.id,
+            claim.claim_token,
+            error_code="IMAGE_UNDERSTANDING_FAILED",
+            error_message="The vision provider is unavailable.",
+            retryable=False,
+            now=queued_at + timedelta(seconds=5),
+        )
+    assert outcome == JOB_STATUS_FAILED
+
+    before = _describe_job(session_factory, ready.document_id)
+    assert before.attempt_count > 0
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+    assert retried is not None
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.id == claim.id
+    assert job.status == JOB_STATUS_QUEUED
+    assert job.attempt_count == 0
+    assert job.last_error_code is None
+    assert job.last_error_message is None
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[0].analysis_status == "pending"
+    assert visuals[0].error_code is None
+    assert visuals[1].analysis_status == "pending"
+
+
+def test_retrying_a_figure_that_failed_inline_creates_the_describe_job(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=1,
+        failed_visuals=1,
+    )
+    assert describe_job_count(session_factory, ready.document_id) == 0
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+
+    assert retried is not None
+    assert describe_job_count(session_factory, ready.document_id) == 1
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.status == JOB_STATUS_QUEUED
+    assert job.attempt_count == 0
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[1].analysis_status == "pending"
+    assert visuals[1].error_code is None
+
+
+@pytest.mark.parametrize("job_status", ["queued", "running"])
+def test_figures_cannot_be_retried_while_they_are_being_described(
+    session_factory, tmp_path, job_status
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=1,
+        failed_visuals=1,
+    )
+    queued_at = datetime.now(timezone.utc)
+    if job_status == "running":
+        claimed_describe_job(session_factory, ready, now=queued_at)
+    else:
+        with session_factory() as session:
+            document = session.get(UploadedDocument, ready.document_id)
+            enqueue_describe_visuals_job(session, document, now=queued_at)
+            session.commit()
+
+    with session_factory() as session:
+        with pytest.raises(VisualDescriptionActiveError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=True,
+                now=queued_at,
+            )
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.status == job_status
+    assert job.attempt_count == (1 if job_status == "running" else 0)
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[1].analysis_status == "failed"
+
+
+def test_figures_cannot_be_retried_when_none_failed(session_factory, tmp_path):
+    ready = seed_ready_document(
+        session_factory, tmp_path, pending_visuals=0, described_visuals=2
+    )
+
+    with session_factory() as session:
+        with pytest.raises(NoRetryableVisualsError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=True,
+            )
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert all(visual.analysis_status == "succeeded" for visual in visuals)
+
+
+def _seed_describe_job_that_gave_up_with_every_visual_described(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory, tmp_path, pending_visuals=0, described_visuals=2
+    )
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        job = enqueue_describe_visuals_job(session, document)
+        job.status = JOB_STATUS_FAILED
+        job.attempt_count = job.max_attempts
+        job.finished_at = datetime.now(timezone.utc)
+        job.last_error_code = "IMAGE_UNDERSTANDING_FAILED"
+        job.last_error_message = "The vision provider is unavailable."
+        session.commit()
+        job_id = job.id
+    return ready, job_id
+
+
+def test_retrying_figures_requeues_a_failed_describe_job_when_every_visual_already_succeeded(
+    session_factory, tmp_path
+):
+    ready, job_id = _seed_describe_job_that_gave_up_with_every_visual_described(
+        session_factory, tmp_path
+    )
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+
+    assert retried is not None
+    assert retried.id == ready.document_id
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.id == job_id
+    assert job.status == JOB_STATUS_QUEUED
+    assert job.attempt_count == 0
+    assert job.last_error_code is None
+    assert job.last_error_message is None
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert all(visual.analysis_status == "succeeded" for visual in visuals)
+    pages = _document_pages(session_factory, ready.document_id)
+    assert all(page.visual_analysis_status == "completed" for page in pages)
+
+
+def test_figures_cannot_be_retried_when_the_describe_job_succeeded_and_nothing_failed(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory, tmp_path, pending_visuals=0, described_visuals=2
+    )
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        job = enqueue_describe_visuals_job(session, document)
+        job.status = "succeeded"
+        job.attempt_count = 1
+        job.finished_at = datetime.now(timezone.utc)
+        session.commit()
+
+    with session_factory() as session:
+        with pytest.raises(NoRetryableVisualsError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=True,
+            )
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.status == "succeeded"
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert all(visual.analysis_status == "succeeded" for visual in visuals)
+
+
+def test_vision_off_refusal_still_wins_after_the_describe_job_failed(
+    session_factory, tmp_path
+):
+    ready, job_id = _seed_describe_job_that_gave_up_with_every_visual_described(
+        session_factory, tmp_path
+    )
+
+    with session_factory() as session:
+        with pytest.raises(VisualAnalysisNotConfiguredError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=False,
+            )
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.id == job_id
+    assert job.status == JOB_STATUS_FAILED
+    assert job.attempt_count == job.max_attempts
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert all(visual.analysis_status == "succeeded" for visual in visuals)
+
+
+def test_retrying_a_failed_describe_job_resumes_from_cache_without_calling_the_provider(
+    session_factory, tmp_path, monkeypatch
+):
+    ready, _ = _seed_describe_job_that_gave_up_with_every_visual_described(
+        session_factory, tmp_path
+    )
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+    assert retried is not None
+
+    with _StubVisionServer() as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=60)
+        handled = document_processor.process_next_job(
+            session_factory=session_factory,
+            storage=ready.storage,
+            worker_id="describe-worker",
+            embedding_provider=_StubEmbeddings(),
+            vector_store=PgVectorStore(),
+        )
+        assert handled is True
+        assert server.request_count == 0
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.status == "succeeded"
+    pages = _document_pages(session_factory, ready.document_id)
+    assert all(page.visual_analysis_status == "completed" for page in pages)
+
+
+def test_figures_of_a_document_that_is_not_ready_cannot_be_retried(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=0,
+        failed_visuals=1,
+    )
+    with session_factory() as session:
+        session.get(UploadedDocument, ready.document_id).status = "processing"
+        session.commit()
+
+    with session_factory() as session:
+        with pytest.raises(NoRetryableVisualsError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=True,
+            )
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[0].analysis_status == "failed"
+
+
+def test_figures_cannot_be_retried_while_visual_analysis_is_not_configured(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=0,
+        failed_visuals=1,
+    )
+
+    with session_factory() as session:
+        with pytest.raises(VisualAnalysisNotConfiguredError):
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=False,
+            )
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[0].analysis_status == "failed"
+
+
+def test_retrying_figures_finds_nothing_in_another_course_or_a_deleting_document(
+    session_factory, tmp_path
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=0,
+        failed_visuals=1,
+    )
+
+    with session_factory() as session:
+        user = session.get(User, ready.user_id)
+        other_course = Course(
+            owner=user,
+            title="Another describe course",
+            description=None,
+            semester="Fall",
+            exam_date=date(2026, 6, 15),
+        )
+        session.add(other_course)
+        session.commit()
+        other_course_id = other_course.id
+
+    with session_factory() as session:
+        assert (
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                other_course_id,
+                image_understanding_available=True,
+            )
+            is None
+        )
+
+    with session_factory() as session:
+        session.get(UploadedDocument, ready.document_id).status = "deleting"
+        session.commit()
+
+    with session_factory() as session:
+        assert (
+            retry_failed_visuals(
+                session,
+                ready.document_id,
+                ready.course_id,
+                image_understanding_available=True,
+            )
+            is None
+        )
+
+    visuals = _document_visuals(session_factory, ready.document_id)
+    assert visuals[0].analysis_status == "failed"
+
+
+def test_a_retried_figure_is_described_again_and_its_completion_is_accepted(
+    session_factory, tmp_path, monkeypatch
+):
+    ready = seed_ready_document(
+        session_factory,
+        tmp_path,
+        pending_visuals=0,
+        described_visuals=1,
+        failed_visuals=1,
+    )
+
+    with session_factory() as session:
+        retried = retry_failed_visuals(
+            session,
+            ready.document_id,
+            ready.course_id,
+            image_understanding_available=True,
+        )
+    assert retried is not None
+    assert describe_job_count(session_factory, ready.document_id) == 1
+
+    with _StubVisionServer() as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=60)
+        handled = document_processor.process_next_job(
+            session_factory=session_factory,
+            storage=ready.storage,
+            worker_id="describe-worker",
+            embedding_provider=_StubEmbeddings(),
+            vector_store=PgVectorStore(),
+        )
+        assert handled is True
+        assert server.request_count == 1
+
+    pages = _document_pages(session_factory, ready.document_id)
+    assert pages[0].visual_analysis_status == "completed"
+    assert pages[0].visuals[0].description == "A described figure on page 1."
+    assert pages[1].visual_analysis_status == "completed"
+    assert pages[1].visuals[0].analysis_status == "succeeded"
+    assert pages[1].visuals[0].description == "A stub description number 1."
+
+    job = _describe_job(session_factory, ready.document_id)
+    assert job.status == "succeeded"
+
+    with session_factory() as session:
+        chunks = session.scalars(
+            select(DocumentChunk.text)
+            .where(DocumentChunk.document_id == ready.document_id)
+            .order_by(DocumentChunk.chunk_index)
+        ).all()
+    assert any("A stub description number 1." in text for text in chunks)
+
+
 class _ScriptedConnection:
     def __init__(self):
         self.sent = []
@@ -1626,6 +2347,123 @@ def test_the_profile_extract_claim_ignores_describe_jobs(session_factory, tmp_pa
     assert claim is None
 
 
+def test_releasing_a_profile_extraction_returns_its_document_to_uploaded(
+    session_factory, tmp_path
+):
+    storage = LocalStorage(tmp_path / "profile-release-uploads", namespace="profile")
+    document_id = uuid4()
+    content = b"Profile release notes"
+
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Profile release owner",
+            email="profile-release@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        session.add(user)
+        session.flush()
+
+        storage_key = storage.generate_key(user.id, document_id, "txt")
+        storage.save(storage_key, BytesIO(content))
+
+        document = ProfileDocument(
+            id=document_id,
+            user_id=user.id,
+            original_file_name="notes.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=len(content),
+            file_hash=hashlib.sha256(content).hexdigest(),
+            storage_provider=storage.provider,
+            storage_key=storage_key,
+            status="uploaded",
+        )
+        session.add(document)
+        session.flush()
+        job = enqueue_profile_document_job(session, document)
+        session.commit()
+        job_id = job.id
+
+    claim_at = datetime.now(timezone.utc)
+    with session_factory() as session:
+        claim = claim_next_profile_job(
+            session, "profile-worker", storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+    assert claim.id == job_id
+
+    release_at = claim_at + timedelta(seconds=1)
+    with session_factory() as session:
+        assert (
+            release_profile_job(session, claim.id, claim.claim_token, now=release_at)
+            is True
+        )
+
+    with session_factory() as session:
+        job = session.get(ProfileProcessingJob, job_id)
+        document = session.get(ProfileDocument, document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert job.claim_token is None
+        assert job.started_at is None
+        assert document.status == "uploaded"
+        assert document.processing_error is None
+
+    with session_factory() as session:
+        reclaimed = claim_next_profile_job(
+            session, "profile-worker-2", storage.provider, 600, now=release_at
+        )
+    assert reclaimed is not None
+    assert reclaimed.id == job_id
+    assert reclaimed.attempt_count == 1
+
+
+def test_releasing_a_profile_describe_job_leaves_its_document_ready(
+    session_factory, tmp_path
+):
+    ready = seed_ready_profile_document(session_factory, tmp_path)
+    queued_at = datetime.now(timezone.utc)
+    with session_factory() as session:
+        document = session.get(ProfileDocument, ready.document_id)
+        enqueue_profile_describe_visuals_job(session, document, now=queued_at)
+        session.commit()
+
+    claim_at = queued_at + timedelta(seconds=1)
+    with session_factory() as session:
+        claim = claim_next_profile_describe_job(
+            session,
+            "profile-describe-worker",
+            ready.storage.provider,
+            600,
+            now=claim_at,
+        )
+    assert claim is not None
+
+    release_at = claim_at + timedelta(seconds=1)
+    with session_factory() as session:
+        assert (
+            release_profile_describe_job(
+                session, claim.id, claim.claim_token, now=release_at
+            )
+            is True
+        )
+
+    with session_factory() as session:
+        job = session.get(ProfileProcessingJob, claim.id)
+        document = session.get(ProfileDocument, ready.document_id)
+        assert job is not None
+        assert document is not None
+        assert job.status == JOB_STATUS_QUEUED
+        assert job.attempt_count == 0
+        assert job.claim_token is None
+        assert document.status == "ready"
+
+
 def test_a_profile_visual_is_checkpointed_on_its_own(session_factory, tmp_path):
     ready = seed_ready_profile_document(session_factory, tmp_path)
     queued_at = datetime.now(timezone.utc)
@@ -1701,12 +2539,140 @@ def test_a_failed_profile_describe_job_leaves_the_document_ready(
             now=queued_at + timedelta(seconds=5),
         )
 
-    assert requeued is True
+    assert requeued == "queued"
 
     with session_factory() as session:
         document = session.get(ProfileDocument, ready.document_id)
         assert document.status == "ready"
         assert document.processing_error is None
+
+
+def test_a_profile_describe_job_keeps_its_claim_and_completes(
+    session_factory, tmp_path, monkeypatch
+):
+    ready = seed_ready_profile_document(session_factory, tmp_path)
+
+    with session_factory() as session:
+        document = session.get(ProfileDocument, ready.document_id)
+        enqueue_profile_describe_visuals_job(session, document)
+        session.commit()
+
+    with _StubVisionServer() as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=60)
+        handled = document_processor.process_next_job(
+            session_factory=session_factory,
+            storage=ready.storage,
+            worker_id="profile-describe-worker",
+            embedding_provider=_StubEmbeddings(),
+            vector_store=PgVectorStore(),
+        )
+        assert handled is True
+        assert server.request_count == 2
+
+    with session_factory() as session:
+        pages = session.scalars(
+            select(ProfileDocumentPage)
+            .options(selectinload(ProfileDocumentPage.visuals))
+            .where(ProfileDocumentPage.document_id == ready.document_id)
+            .order_by(ProfileDocumentPage.page_number)
+        ).all()
+        assert pages[0].visual_analysis_status == "completed"
+        assert pages[0].visuals[0].analysis_status == "succeeded"
+        assert pages[0].visuals[0].description == "A stub description number 1."
+        assert pages[1].visual_analysis_status == "completed"
+        assert pages[1].visuals[0].analysis_status == "succeeded"
+
+        job = session.scalar(
+            select(ProfileProcessingJob).where(
+                ProfileProcessingJob.document_id == ready.document_id,
+                ProfileProcessingJob.job_type == JOB_TYPE_DESCRIBE_VISUALS,
+            )
+        )
+        assert job.status == "succeeded"
+        assert session.get(ProfileDocument, ready.document_id).status == "ready"
+
+
+def test_a_requeued_profile_job_is_logged_as_retried(session_factory, tmp_path):
+    storage = LocalStorage(tmp_path / "profile-retry-uploads", namespace="profile")
+    document_id = uuid4()
+    content = b"Profile retry notes"
+
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Profile retry owner",
+            email="profile-retry@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        session.add(user)
+        session.flush()
+
+        storage_key = storage.generate_key(user.id, document_id, "txt")
+        storage.save(storage_key, BytesIO(content))
+
+        document = ProfileDocument(
+            id=document_id,
+            user_id=user.id,
+            original_file_name="retry-notes.txt",
+            file_type="txt",
+            mime_type="text/plain",
+            file_size=len(content),
+            file_hash=hashlib.sha256(content).hexdigest(),
+            storage_provider=storage.provider,
+            storage_key=storage_key,
+            status="uploaded",
+        )
+        session.add(document)
+        session.flush()
+        enqueue_profile_document_job(session, document)
+        session.commit()
+
+    claim_at = datetime.now(timezone.utc)
+    with session_factory() as session:
+        claim = claim_next_profile_job(
+            session, "profile-retry-worker", storage.provider, 600, now=claim_at
+        )
+    assert claim is not None
+    assert claim.attempt_count == 1
+    assert claim.max_attempts > 1
+
+    records: list[logging.LogRecord] = []
+
+    class CapturingHandler(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    logger = logging.getLogger("workers.document_processor")
+    handler = CapturingHandler()
+    logger.addHandler(handler)
+    try:
+        err = document_processor.DocumentProcessingError(
+            "TRANSIENT_ERROR",
+            "The extraction failed temporarily.",
+            retryable=True,
+            failed_stage="extracting_text",
+        )
+        result = document_processor._record_failure(session_factory, claim, err)
+    finally:
+        logger.removeHandler(handler)
+
+    assert result == "queued"
+
+    event_names = {getattr(record, "event", None) for record in records}
+    assert "processing_job_retried" in event_names
+    assert "processing_job_failed" not in event_names
+
+    with session_factory() as session:
+        job = session.scalar(
+            select(ProfileProcessingJob).where(
+                ProfileProcessingJob.document_id == document_id
+            )
+        )
+        document = session.get(ProfileDocument, document_id)
+        assert job.status == JOB_STATUS_QUEUED
+        assert document.status == "uploaded"
 
 
 def test_the_sweep_queues_profile_documents_too(session_factory, tmp_path):
@@ -1756,6 +2722,94 @@ def test_a_profile_document_reports_its_visual_analysis_rollup(
             select(ProfileDocument)
             .options(selectinload(ProfileDocument.pages))
             .where(ProfileDocument.id == ready_described.document_id)
+        )
+        assert document.visual_analysis_status == "completed"
+
+
+def test_a_profile_document_ignores_crowded_pages_in_its_rollup(
+    session_factory, tmp_path
+):
+    content = visual_pdf(page_count=2)
+    storage = LocalStorage(tmp_path / "profile-uploads", namespace="profile")
+    document_id = uuid4()
+
+    with session_factory() as session:
+        role = session.scalar(select(Role).where(Role.name == "user"))
+        assert role is not None
+        user = User(
+            name="Profile owner",
+            email="profile-crowded@example.com",
+            password_hash="not-a-real-hash",
+            role=role,
+        )
+        session.add(user)
+        session.flush()
+
+        storage_key = storage.generate_key(user.id, document_id, "pdf")
+        storage.save(storage_key, BytesIO(content))
+
+        document = ProfileDocument(
+            id=document_id,
+            user_id=user.id,
+            original_file_name="profile-crowded.pdf",
+            file_type="pdf",
+            mime_type="application/pdf",
+            file_size=len(content),
+            file_hash=hashlib.sha256(content).hexdigest(),
+            storage_provider=storage.provider,
+            storage_key=storage_key,
+            status="ready",
+        )
+        session.add(document)
+        session.flush()
+
+        completed_page = ProfileDocumentPage(
+            document_id=document_id,
+            user_id=user.id,
+            content_index=0,
+            page_number=1,
+            raw_text="Page 1 body text.",
+            text="Page 1 body text.",
+            extraction_method="native",
+            raw_extraction_method="native",
+            has_images=True,
+            has_visual_content=True,
+            visual_analysis_status="completed",
+        )
+        completed_page.visuals = [
+            ProfileDocumentVisual(
+                visual_index=0,
+                visual_type="figure",
+                source="image",
+                bbox_x0=30.0,
+                bbox_y0=50.0,
+                bbox_x1=270.0,
+                bbox_y1=270.0,
+                description="A described figure on page 1.",
+                analysis_status="succeeded",
+            )
+        ]
+        crowded_page = ProfileDocumentPage(
+            document_id=document_id,
+            user_id=user.id,
+            content_index=1,
+            page_number=2,
+            raw_text="Page 2 body text.",
+            text="Page 2 body text.",
+            extraction_method="native",
+            raw_extraction_method="native",
+            has_images=True,
+            has_visual_content=True,
+            visual_analysis_status="not_applicable",
+        )
+        session.add_all([completed_page, crowded_page])
+        session.commit()
+
+    with session_factory() as session:
+        document = session.scalar(
+            select(ProfileDocument)
+            .options(selectinload(ProfileDocument.pages))
+            .where(ProfileDocument.id == document_id)
         )
         assert document.visual_analysis_status == "completed"
 
@@ -1873,3 +2927,45 @@ def test_a_visual_that_moved_is_still_refused(session_factory, tmp_path):
                 vector_store=PgVectorStore(),
                 now=queued_at + timedelta(seconds=10),
             )
+
+
+def test_visual_description_logs_carry_the_document_and_the_right_job_type(
+    session_factory, tmp_path, monkeypatch
+):
+    ready = seed_ready_document(session_factory, tmp_path)
+
+    with _StubVisionServer() as server:
+        _use_stub_vision(monkeypatch, server.port, attempt_timeout=120)
+
+        checkpoint = bind_operation_context()
+        try:
+            document_processor._describe_visuals_process(
+                _ScriptedConnection(),
+                ready.storage,
+                _extraction_job(ready, profile=False),
+            )
+            course_context = dict(get_operation_context())
+        finally:
+            reset_operation_context(checkpoint)
+
+        checkpoint = bind_operation_context()
+        try:
+            document_processor._describe_visuals_process(
+                _ScriptedConnection(),
+                ready.storage,
+                _extraction_job(ready, profile=True),
+            )
+            profile_context = dict(get_operation_context())
+        finally:
+            reset_operation_context(checkpoint)
+
+    assert course_context["document_id"] == str(ready.document_id)
+    assert course_context["course_id"] == ready.course_id
+    assert course_context["user_id"] == ready.user_id
+    assert course_context["job_type"] == "course_document_visual_description"
+    assert course_context["operation_id"] == "processing_job:describe:course:1"
+
+    assert profile_context["document_id"] == str(ready.document_id)
+    assert profile_context["user_id"] == ready.user_id
+    assert profile_context["job_type"] == "profile_document_visual_description"
+    assert profile_context["operation_id"] == "processing_job:describe:profile:1"

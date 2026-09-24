@@ -52,7 +52,7 @@ root filesystem, and a bounded temporary filesystem. Only `/data` is
 persistently writable.
 
 `lumina` publishes the only port,
-`${LUMINA_BIND_ADDRESS:-127.0.0.1}:${LUMINA_PORT:-10312}:8000`, and it is the
+`${LUMINA_BIND_ADDRESS:-0.0.0.0}:${LUMINA_PORT:-10312}:8000`, and it is the
 whole address: the interface and `/api` answer on one origin, which is why the
 default `VITE_API_BASE_URL=/api` needs no CORS configuration and why changing
 `LUMINA_PORT` needs no rebuild. The container-internal port is fixed at 8000.
@@ -479,10 +479,14 @@ initializes an empty database.
 
 ## Deploy an update
 
-Drain the worker and stop both runtime roles before changing the schema. The
-default API stop grace is 345 seconds and the worker stop grace is 645 seconds.
-The worker value matches the larger generation attempt timeout (600 seconds)
-plus 45 seconds.
+Stop both runtime roles before changing the schema. The default API stop grace
+is 345 seconds and the worker stop grace is 60 seconds. With the default
+`WORKER_SHUTDOWN_MODE=abort`, the worker kills its in-flight extractions, hands
+every running job back to the queue without spending an attempt, and exits
+within about ten seconds; the jobs resume once the worker is back. With
+`WORKER_SHUTDOWN_MODE=drain` it finishes every running attempt instead, so
+`WORKER_STOP_GRACE_PERIOD` must then cover the largest attempt timeout plus 45
+seconds: 1845 seconds with the defaults.
 
 ```bash
 set -euo pipefail
@@ -607,11 +611,13 @@ maximum-size chunked upload. Keep `LUMINA_TMPFS_SIZE_BYTES` at least
 receipt and cannot exceed 300 seconds. Configure the reverse proxy with a
 request-body timeout no greater than this value and reject ambiguous
 `Content-Length` plus `Transfer-Encoding` framing at ingress.
-If `PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS` or
-`GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS` changes, keep
-`WORKER_STOP_GRACE_PERIOD` at least the larger duration plus 45 seconds. The
-API uses a fixed 330-second graceful-shutdown deadline inside Docker's
-345-second stop grace.
+`WORKER_STOP_GRACE_PERIOD` follows `WORKER_SHUTDOWN_MODE`. In `abort` mode the
+worker stops in about ten seconds whatever the attempt timeouts are, so 60
+seconds is enough. In `drain` mode keep it at least the largest of
+`PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS`,
+`DESCRIBE_VISUALS_ATTEMPT_TIMEOUT_SECONDS`, and
+`GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS`, plus 45 seconds. The API uses a fixed
+330-second graceful-shutdown deadline inside Docker's 345-second stop grace.
 
 For a manual non-container deployment, set all production values through the
 environment before importing the application. The SQLite parent and both
@@ -625,8 +631,9 @@ python -m workers.worker --check
 ```
 
 Then start these as two separate supervisor units, not as sequential shell
-commands. Give both units at least 345 seconds to stop before forcing
-termination:
+commands. Give the API unit at least 345 seconds to stop before forcing
+termination, and the worker unit at least 60 seconds, or the `drain` rule above
+when `WORKER_SHUTDOWN_MODE=drain`:
 
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-graceful-shutdown 330 --no-access-log
@@ -662,7 +669,8 @@ the published port, which is what the quickstart in `README.md` checks. There
 is deliberately no `/api/health/*` alias: the hosted distribution forwards
 `/api/*` to the ALB, so an alias there would publish readiness on the public
 hostname, and `/health/ready` writes and reads an object in document storage on
-every call. The port binds to loopback by default, so it is still a trusted
-path; an operator who changes `LUMINA_BIND_ADDRESS` or places a public ingress
-in front must restrict `/health/*` at that edge. The container probes itself
-directly.
+every call. The port binds to every interface by default, so this is a
+trusted path only as long as the machine itself is trusted: an operator whose
+machine is reachable beyond a trusted network, whether through the default
+`LUMINA_BIND_ADDRESS` or a public ingress placed in front, must restrict
+`/health/*` at that edge. The container probes itself directly.

@@ -237,7 +237,12 @@ def load_profile_knowledge(
                 doc_chunks.append(f"[{label}]\n{chunk.text.strip()}")
         except Exception:
             logger.warning(
-                "Could not retrieve semantic profile chunks for user %s", user_id
+                "Could not retrieve semantic profile chunks for user %s",
+                user_id,
+                extra={
+                    "event": "profile_knowledge_retrieval_failed",
+                    "owner_id": user_id,
+                },
             )
     else:
         statement_chunks = (

@@ -36,6 +36,7 @@ def parse_message_citations(message: ConversationMessage) -> list[Citation]:
         logger.warning(
             "conversation_messages.citations for row %s is not a valid citation document",
             message.id,
+            extra={"event": "conversation_citations_unreadable"},
         )
         return []
 

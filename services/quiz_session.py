@@ -446,7 +446,14 @@ class QuizSessionService:
             # superseded, immediately and without waiting. One retry is enough:
             # the re-read sees the winner and returns its attempt.
             db.rollback()
-            logger.info("Retrying a timed submission that lost a write race")
+            logger.info(
+                "Retrying a timed submission that lost a write race",
+                extra={
+                    "event": "quiz_session_submit_retried",
+                    "course_id": course_id,
+                    "user_id": user_id,
+                },
+            )
             return cls._submit_once(
                 db,
                 course_id,

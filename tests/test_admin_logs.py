@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from backend.app.config import MODE_HOSTED, MODE_SELF_HOSTED, settings
-from backend.app.models import AiUsageLog
+from backend.app.models import AiUsageLog, UploadedDocument
 from backend.app.operational_events import (
     OperationalEventHandler,
     sanitize_operational_payload,
@@ -18,6 +18,8 @@ from services.admin_logs import (
     LogFilters,
     LogReadService,
 )
+from services.processing_jobs import enqueue_describe_visuals_job
+from tests.test_describe_visuals_jobs import seed_ready_document
 
 
 def _emit(
@@ -32,7 +34,7 @@ def _emit(
         level,
         __file__,
         1,
-        "SECRET-CONTENT must not enter the operational store",
+        "Quiz generation request failed",
         (),
         None,
     )
@@ -59,6 +61,18 @@ def _hosted_settings():
         operational_log_cloudwatch_group="/ecs/lumina-production",
         operational_log_cloudwatch_region="us-east-1",
     )
+
+
+def _emit_library(
+    handler: OperationalEventHandler,
+    logger_name: str,
+    *,
+    level: int,
+    message: str = "third-party log line",
+) -> str:
+    record = logging.LogRecord(logger_name, level, __file__, 1, message, (), None)
+    handler.emit(record)
+    return f"operational:{record._lumina_event_id}"
 
 
 def _window() -> LogFilters:
@@ -105,6 +119,30 @@ def test_operational_sink_stores_only_reviewed_fields(
         "items.0.name: string_type",
         "*",
     ]
+
+
+def test_an_info_library_log_is_dropped_but_a_warning_one_is_stored(
+    tmp_path: Path, db_session
+) -> None:
+    path = tmp_path / "operational.db"
+    handler = OperationalEventHandler(
+        str(path),
+        service="api",
+        environment="test",
+        retention_days=30,
+        max_records=10_000,
+    )
+    info_id = _emit_library(handler, "alembic.runtime.migration", level=logging.INFO)
+    warning_id = _emit_library(
+        handler, "alembic.runtime.migration", level=logging.WARNING
+    )
+
+    service = LogReadService(db_session, app_settings=_local_settings(path))
+    page = service.list(replace(_window(), sources=("operational",)), limit=10)
+
+    ids = [record.id for record in page.records]
+    assert warning_id in ids
+    assert info_id not in ids
 
 
 def test_cursor_is_bound_to_the_fixed_filter_window(tmp_path: Path, db_session) -> None:
@@ -216,6 +254,53 @@ def test_trace_follows_parent_and_child_operations(tmp_path: Path, db_session) -
     ]
 
 
+def test_trace_follows_a_visual_description_job(
+    tmp_path: Path, db_session, session_factory
+) -> None:
+    ready = seed_ready_document(session_factory, tmp_path)
+    with session_factory() as session:
+        document = session.get(UploadedDocument, ready.document_id)
+        job = enqueue_describe_visuals_job(
+            session, document, now=datetime.now(timezone.utc)
+        )
+        session.commit()
+        job_id = job.id
+
+    path = tmp_path / "operational.db"
+    handler = OperationalEventHandler(
+        str(path),
+        service="worker",
+        environment="test",
+        retention_days=30,
+        max_records=10_000,
+    )
+    _emit(
+        handler,
+        "processing_job_claimed",
+        operation_id=f"processing_job:course:{job_id}",
+        job_id=job_id,
+        job_type="course_document_processing",
+        job_status="running",
+    )
+    anchor = _emit(
+        handler,
+        "visual_analysis_failed",
+        level=logging.WARNING,
+        operation_id=f"processing_job:describe:course:{job_id}",
+        job_id=job_id,
+        job_type="course_document_visual_description",
+        error_category="provider_error",
+    )
+
+    trace = LogReadService(db_session, app_settings=_local_settings(path)).trace(anchor)
+
+    assert trace.correlation_status == "correlated"
+    assert [record.event for record in trace.records] == [
+        "processing_job_claimed",
+        "visual_analysis_failed",
+    ]
+
+
 def test_partial_source_makes_aggregate_counts_unavailable(
     tmp_path: Path, db_session
 ) -> None:
@@ -242,7 +327,7 @@ def test_hosted_source_reads_only_the_configured_group_and_sanitizes_events(
         "environment": "production",
         "logger": "main",
         "event": "http_request_failed",
-        "message": "SECRET-CONTENT",
+        "message": "Quiz generation request failed",
         "operation_id": "api:operation-1",
         "unreviewed_content": "SECRET-FIELD",
     }
@@ -438,7 +523,9 @@ def test_client_error_reports_are_authenticated_and_deduplicated(
     )
 
 
-def test_payload_sanitizer_rejects_messages_and_unsafe_identifiers() -> None:
+def test_payload_sanitizer_keeps_redacted_messages_and_rejects_unsafe_identifiers() -> (
+    None
+):
     payload = sanitize_operational_payload(
         {
             "event_id": "event-1",
@@ -448,15 +535,71 @@ def test_payload_sanitizer_rejects_messages_and_unsafe_identifiers() -> None:
             "environment": "test",
             "logger": "lumina.test",
             "event": "http_request_failed",
-            "message": "SECRET-CONTENT",
+            "message": "Upload failed\x07token=SECRET-CONTENT for document 7",
+            "exception_message": "ValueError: password=SECRET-CONTENT " + "x" * 900,
             "error_code": "unsafe error with content",
         }
     )
 
     assert payload is not None
-    assert "message" not in payload
+    assert payload["message"] == "Upload failed token=[REDACTED] for document 7"
+    assert payload["exception_message"].startswith("ValueError: password=[REDACTED]")
+    assert len(payload["exception_message"]) == 500
+    assert payload["description"] == "An HTTP request failed unexpectedly."
     assert "error_code" not in payload
     assert "SECRET" not in str(payload)
+
+
+def test_unnamed_project_logs_describe_themselves_with_their_message() -> None:
+    payload = sanitize_operational_payload(
+        {
+            "event_id": "event-2",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": "WARNING",
+            "service": "worker",
+            "environment": "test",
+            "logger": "workers.document_processor",
+            "event": "application_log",
+            "message": "Could not release lock for document 7",
+            "maintenance_task": "generation_lock_release",
+            "item_count": 3,
+            "stack": [
+                "workers/document_processor.py:10 in run",
+                "C:\\Users\\someone\\secret.py:1 in leak",
+                "services/document_lock.py:20 in release",
+            ],
+        }
+    )
+
+    assert payload is not None
+    assert payload["event"] == "application_log"
+    assert payload["description"] == "Could not release lock for document 7"
+    assert payload["stack"] == [
+        "workers/document_processor.py:10 in run",
+        "services/document_lock.py:20 in release",
+    ]
+    assert payload["source_location"] == "services/document_lock.py:20 in release"
+    assert payload["details"]["maintenance_task"] == "generation_lock_release"
+    assert payload["details"]["item_count"] == 3
+
+
+def test_third_party_logs_are_labelled_as_library_logs() -> None:
+    payload = sanitize_operational_payload(
+        {
+            "event_id": "event-3",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": "INFO",
+            "service": "api",
+            "environment": "test",
+            "logger": "httpx",
+            "event": "application_log",
+            "message": 'HTTP Request: GET https://example.test/v1 "HTTP/1.1 200 OK"',
+        }
+    )
+
+    assert payload is not None
+    assert payload["event"] == "library_log"
+    assert payload["message"].startswith("HTTP Request: GET")
 
 
 def test_request_detail_survives_into_the_operational_store(

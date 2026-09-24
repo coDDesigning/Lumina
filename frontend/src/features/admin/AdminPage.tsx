@@ -33,6 +33,7 @@ import { LinkButton } from '@/ui/LinkButton';
 import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
 import { useToast } from '@/ui/toastContext';
+import { ModelChecksSection } from './ModelChecksSection';
 import styles from './AdminPage.module.css';
 
 type RoleFilter = 'all' | 'admin' | 'user';
@@ -391,6 +392,8 @@ export default function AdminPage() {
             </>
           ) : null}
         </section>
+
+        <ModelChecksSection />
 
         {loadError ? (
           <ErrorState className={styles.spaced} onRetry={() => void load()}>

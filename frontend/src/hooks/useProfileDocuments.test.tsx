@@ -26,10 +26,11 @@ function profileDoc(
   status: string,
   updatedAt: string,
   id: string = DOCUMENT_ID,
+  originalFileName: string = 'syllabus.pdf',
 ): ProfileDocumentResponse {
   return {
     id,
-    original_file_name: 'syllabus.pdf',
+    original_file_name: originalFileName,
     file_type: 'pdf',
     mime_type: 'application/pdf',
     file_size: 1024,
@@ -97,6 +98,68 @@ describe('useProfileDocuments hook', () => {
     expect(result.current.entries).toHaveLength(2);
     expect(result.current.readyCount).toBe(2);
     expect(getDocumentStatus).toHaveBeenCalledWith('doc-2', expect.anything());
+  });
+
+  it('sorts entries by name even when the server list arrives out of order', async () => {
+    listDocuments.mockResolvedValue([
+      profileDoc('ready', '2026-08-19T10:00:00Z', 'c-id', 'charlie.pdf'),
+      profileDoc('ready', '2026-08-19T10:00:00Z', 'a-id', 'Alpha.pdf'),
+      profileDoc('ready', '2026-08-19T10:00:00Z', 'b-id', 'bravo.pdf'),
+    ]);
+
+    const { result } = renderHook(() => useProfileDocuments());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'Alpha.pdf',
+      'bravo.pdf',
+      'charlie.pdf',
+    ]);
+  });
+
+  it('keeps a newly uploaded document on top until the server list confirms it, then sorts it into place', async () => {
+    listDocuments.mockResolvedValue([
+      profileDoc('ready', '2026-08-19T10:00:00Z', 'a-id', 'Alpha.pdf'),
+    ]);
+
+    const { result } = renderHook(() => useProfileDocuments());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'Alpha.pdf',
+    ]);
+
+    act(() => {
+      result.current.addUploaded(
+        profileDoc('ready', '2026-08-19T10:01:00Z', 'z-id', 'zeta.pdf'),
+      );
+    });
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'zeta.pdf',
+      'Alpha.pdf',
+    ]);
+
+    listDocuments.mockResolvedValue([
+      profileDoc('ready', '2026-08-19T10:01:00Z', 'z-id', 'zeta.pdf'),
+      profileDoc('ready', '2026-08-19T10:00:00Z', 'a-id', 'Alpha.pdf'),
+    ]);
+    act(() => {
+      result.current.reload();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await advance(0);
+
+    expect(result.current.entries.map((entry) => entry.document.original_file_name)).toEqual([
+      'Alpha.pdf',
+      'zeta.pdf',
+    ]);
   });
 
   it('allows retrying a failed profile document', async () => {

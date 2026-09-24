@@ -269,7 +269,13 @@ class PastExamExtractionService:
             provider = factory()
         except Exception:
             logger.warning(
-                "No text generation provider is available for past exam extraction"
+                "No text generation provider is available for past exam extraction",
+                exc_info=True,
+                extra={
+                    "event": "exam_question_extraction_provider_unavailable",
+                    "document_id": str(document_id),
+                    "generation_type": GenerationType.PAST_EXAM_EXTRACTION.value,
+                },
             )
             outcome = ExtractionOutcome(status=EXAM_EXTRACTION_NOT_CONFIGURED)
             _record_outcome(db, document, outcome)
@@ -282,7 +288,15 @@ class PastExamExtractionService:
             outcome = cls.extract(db, document, provider, prompt_context=prompt_context)
         except Exception:
             db.rollback()
-            logger.exception("Past exam question extraction failed for a document")
+            logger.exception(
+                "Past exam question extraction failed for a document",
+                extra={
+                    "event": "exam_question_extraction_failed",
+                    "document_id": str(document_id),
+                    "generation_type": GenerationType.PAST_EXAM_EXTRACTION.value,
+                    "error_code": _category_value(ErrorCategory.UNKNOWN_ERROR),
+                },
+            )
             outcome = ExtractionOutcome(
                 status=EXAM_EXTRACTION_FAILED,
                 error_code=_category_value(ErrorCategory.UNKNOWN_ERROR),
@@ -300,6 +314,11 @@ class PastExamExtractionService:
                 "A past exam paper was cut short at %s of %s passages",
                 outcome.chunks_used,
                 outcome.chunks_available,
+                extra={
+                    "event": "exam_question_extraction_truncated",
+                    "document_id": str(document_id),
+                    "generation_type": GenerationType.PAST_EXAM_EXTRACTION.value,
+                },
             )
         _record_outcome(db, document, outcome)
         return outcome
@@ -345,7 +364,16 @@ def extract_past_exam_questions(
         with session_factory() as session:
             outcome = PastExamExtractionService.run(session, document_id)
     except Exception:
-        logger.exception("Past exam question extraction could not be attempted")
+        logger.exception(
+            "Past exam question extraction could not be attempted",
+            extra={
+                "event": "exam_question_extraction_failed",
+                "document_id": str(document_id),
+                "generation_type": GenerationType.PAST_EXAM_EXTRACTION.value,
+                "error_code": _category_value(ErrorCategory.UNKNOWN_ERROR),
+                "reason": "worker_session_failed",
+            },
+        )
         return ExtractionOutcome(
             status=EXAM_EXTRACTION_FAILED,
             error_code=_category_value(ErrorCategory.UNKNOWN_ERROR),
@@ -362,7 +390,14 @@ def _record_outcome(
         db.commit()
     except Exception:
         db.rollback()
-        logger.exception("Past exam extraction status could not be recorded")
+        logger.exception(
+            "Past exam extraction status could not be recorded",
+            extra={
+                "event": "exam_question_extraction_status_write_failed",
+                "generation_type": GenerationType.PAST_EXAM_EXTRACTION.value,
+                "error_code": outcome.error_code,
+            },
+        )
 
 
 def _category_value(category: ErrorCategory | str) -> str:

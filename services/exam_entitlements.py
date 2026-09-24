@@ -125,7 +125,12 @@ class ExamEntitlementService:
             CreditService.refund(db, receipt)
             db.commit()
             logger.info(
-                "An exam topic was unlocked concurrently; the charge was undone"
+                "An exam topic was unlocked concurrently; the charge was undone",
+                extra={
+                    "event": "exam_topic_unlock_race_refunded",
+                    "course_id": course_id,
+                    "user_id": user_id,
+                },
             )
             return TopicUnlock(topic_key=topic_key, charged=False, amount=0.0)
 
@@ -157,4 +162,7 @@ class ExamEntitlementService:
             db.commit()
         except Exception:
             db.rollback()
-            logger.exception("An exam topic unlock could not be released")
+            logger.exception(
+                "An exam topic unlock could not be released",
+                extra={"event": "exam_topic_unlock_release_failed"},
+            )

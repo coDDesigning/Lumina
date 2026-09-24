@@ -28,12 +28,14 @@ vi.mock('@/api/settings', () => ({
 vi.mock('@/api/courses', () => ({
   coursesAPI: {
     extractSyllabus: vi.fn(),
+    suggestSyllabusTopics: vi.fn(),
   },
 }));
 
 const mockGet = vi.mocked(settingsAPI.get);
 const mockUpdate = vi.mocked(settingsAPI.update);
 const mockExtractSyllabus = vi.mocked(coursesAPI.extractSyllabus);
+const mockSuggestSyllabusTopics = vi.mocked(coursesAPI.suggestSyllabusTopics);
 
 const workspace: Workspace = {
   id: '1',
@@ -94,6 +96,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGet.mockResolvedValue(settingsPayload);
   mockUpdate.mockResolvedValue(settingsPayload);
+  mockSuggestSyllabusTopics.mockResolvedValue([]);
 });
 
 describe('CourseSettingsPage — course details', () => {
@@ -193,6 +196,147 @@ describe('CourseSettingsPage — course details', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Course title already exists.');
     expect(name).toHaveValue('Clashing Name');
+  });
+});
+
+describe('CourseSettingsPage — suggesting topics from the syllabus', () => {
+  it('shows the suggest button because the syllabus already has text', () => {
+    renderPage();
+    expect(
+      screen.getByRole('button', { name: 'Suggest topics from syllabus' }),
+    ).toBeInTheDocument();
+  });
+
+  it('hides the suggest button once the syllabus is cleared', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.clear(screen.getByLabelText(/^Syllabus/));
+
+    expect(
+      screen.queryByRole('button', { name: 'Suggest topics from syllabus' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('discards suggestions for the previous syllabus text once it is edited', async () => {
+    const user = userEvent.setup();
+    mockSuggestSyllabusTopics.mockResolvedValueOnce([
+      { name: 'Concurrency Control', weight_percent: 15 },
+    ]);
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Suggest topics from syllabus' }));
+    expect(await screen.findByText('Found in your syllabus')).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/^Syllabus/), ' plus an addendum');
+
+    expect(screen.queryByText('Found in your syllabus')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Suggest topics from syllabus' }),
+    ).toBeInTheDocument();
+    expect(mockSuggestSyllabusTopics).toHaveBeenCalledTimes(1);
+  });
+
+  it('suggests topics from an uploaded syllabus file and adds one on request', async () => {
+    const user = userEvent.setup();
+    mockExtractSyllabus.mockResolvedValueOnce({
+      text: 'Week 1: Graph Traversal\nWeek 2: Dynamic Programming',
+      truncated: false,
+    });
+    mockSuggestSyllabusTopics.mockResolvedValueOnce([
+      { name: 'Graph Traversal', weight_percent: 20 },
+      { name: 'Dynamic Programming', weight_percent: null },
+    ]);
+    const { container } = renderPage();
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['syllabus'], 'syllabus.pdf', { type: 'application/pdf' });
+    await user.upload(fileInput, file);
+
+    await waitFor(() =>
+      expect(mockSuggestSyllabusTopics).toHaveBeenCalledWith(
+        'Week 1: Graph Traversal\nWeek 2: Dynamic Programming',
+      ),
+    );
+
+    expect(await screen.findByText('Found in your syllabus')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Graph Traversal' }));
+
+    expect(screen.getByRole('button', { name: 'Remove Graph Traversal' })).toBeInTheDocument();
+  });
+
+  it('adds every suggested topic at once', async () => {
+    const user = userEvent.setup();
+    mockSuggestSyllabusTopics.mockResolvedValueOnce([
+      { name: 'Concurrency Control', weight_percent: 15 },
+      { name: 'Deadlocks', weight_percent: null },
+    ]);
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Suggest topics from syllabus' }));
+    await user.click(await screen.findByRole('button', { name: 'Add all 2' }));
+
+    expect(
+      screen.getByRole('button', { name: 'Remove Concurrency Control' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Deadlocks' })).toBeInTheDocument();
+  });
+
+  it('hides a suggested topic already in the topic list', async () => {
+    const user = userEvent.setup();
+    mockSuggestSyllabusTopics.mockResolvedValueOnce([{ name: 'Processes', weight_percent: 20 }]);
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Suggest topics from syllabus' }));
+
+    await waitFor(() =>
+      expect(screen.queryByText('Reading topics from your syllabus…')).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText('Found in your syllabus')).not.toBeInTheDocument();
+  });
+
+  it('does not save the course from adding a suggestion, only from Save details', async () => {
+    const user = userEvent.setup();
+    mockSuggestSyllabusTopics.mockResolvedValueOnce([
+      { name: 'Graph Traversal', weight_percent: 20 },
+    ]);
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    renderPage({ onSave });
+
+    await user.click(screen.getByRole('button', { name: 'Suggest topics from syllabus' }));
+    await user.click(await screen.findByRole('button', { name: 'Graph Traversal' }));
+
+    expect(onSave).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Save details' }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ topics: ['Processes', 'Memory', 'Graph Traversal'] }),
+      );
+    });
+  });
+
+  it('keeps the syllabus text in the box when suggesting fails, and retries on request', async () => {
+    const user = userEvent.setup();
+    mockSuggestSyllabusTopics
+      .mockRejectedValueOnce(
+        new APIError(503, { detail: 'AI provider unreachable' }, 'provider_unavailable'),
+      )
+      .mockResolvedValueOnce([{ name: 'Graph Traversal', weight_percent: 20 }]);
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Suggest topics from syllabus' }));
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Syllabus/)).toHaveValue(
+      'Deep dive into kernels and virtual memory.',
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByText('Found in your syllabus')).toBeInTheDocument();
+    expect(mockSuggestSyllabusTopics).toHaveBeenCalledTimes(2);
   });
 });
 

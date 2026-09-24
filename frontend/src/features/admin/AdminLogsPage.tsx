@@ -55,6 +55,7 @@ type Column =
   | 'service'
   | 'event'
   | 'description'
+  | 'message'
   | 'error'
   | 'http'
   | 'duration'
@@ -66,6 +67,7 @@ const COLUMNS: Array<{ id: Column; label: string }> = [
   { id: 'service', label: 'Source / service' },
   { id: 'event', label: 'Event' },
   { id: 'description', label: 'Description' },
+  { id: 'message', label: 'Message' },
   { id: 'error', label: 'Error code' },
   { id: 'http', label: 'HTTP' },
   { id: 'duration', label: 'Duration' },
@@ -102,6 +104,11 @@ function sourceLabel(source: AdminLogSource): string {
   return SOURCES.find((item) => item.value === source)?.label ?? source;
 }
 
+function originLabel(record: AdminLogRecord): string {
+  if (record.source !== 'operational') return sourceLabel(record.source);
+  return record.logger.split('.').pop() || record.logger;
+}
+
 function apiParams(searchParams: URLSearchParams, includeCursor = true): URLSearchParams {
   const params = new URLSearchParams(searchParams);
   for (const key of UI_PARAMS) params.delete(key);
@@ -136,7 +143,7 @@ function cell(column: Column, record: AdminLogRecord, inspect: () => void): Reac
       return (
         <span>
           <strong>{record.service}</strong>
-          <small>{sourceLabel(record.source)}</small>
+          <small title={record.logger}>{originLabel(record)}</small>
         </span>
       );
     case 'event':
@@ -147,8 +154,16 @@ function cell(column: Column, record: AdminLogRecord, inspect: () => void): Reac
       );
     case 'description':
       return <span className={styles.clamped}>{record.description}</span>;
+    case 'message':
+      if (!record.message && !record.exception_message) return '—';
+      return (
+        <span className={styles.message}>
+          {record.message ? <span>{record.message}</span> : null}
+          {record.exception_message ? <small>{record.exception_message}</small> : null}
+        </span>
+      );
     case 'error':
-      return record.error_code ?? record.error_category ?? '—';
+      return record.error_code ?? record.error_category ?? record.exception_type ?? '—';
     case 'http':
       return record.http_status
         ? `${record.http_method ?? ''} ${record.http_status}`.trim()
@@ -156,7 +171,12 @@ function cell(column: Column, record: AdminLogRecord, inspect: () => void): Reac
     case 'duration':
       return record.duration_ms == null ? '—' : `${Math.round(record.duration_ms)} ms`;
     case 'correlation':
-      return <code className={styles.compactCode}>{identifier(record)}</code>;
+      return (
+        <span>
+          <code className={styles.compactCode}>{identifier(record)}</code>
+          {record.user_id != null ? <small>user:{record.user_id}</small> : null}
+        </span>
+      );
   }
 }
 
@@ -653,12 +673,16 @@ export default function AdminLogsPage() {
               <span>{detailQuery.data.record.environment} / {detailQuery.data.record.service}</span>
             </div>
             <p>{detailQuery.data.record.description}</p>
+            {detailQuery.data.record.message && detailQuery.data.record.message !== detailQuery.data.record.description ? (
+              <p>{detailQuery.data.record.message}</p>
+            ) : null}
             <dl>
               {Object.entries({
                 Logger: detailQuery.data.record.logger,
                 'Error code': detailQuery.data.record.error_code,
                 'Error category': detailQuery.data.record.error_category,
                 Exception: detailQuery.data.record.exception_type,
+                'Exception message': detailQuery.data.record.exception_message,
                 'Exception chain': detailQuery.data.record.exception_chain.join(' → ') || null,
                 Location: detailQuery.data.record.source_location,
                 Route: detailQuery.data.record.http_path,
@@ -666,6 +690,8 @@ export default function AdminLogsPage() {
                 Course: detailQuery.data.record.course_id,
                 Document: detailQuery.data.record.document_id,
                 Auth: detailQuery.data.record.details?.auth_state ?? null,
+                Page: detailQuery.data.record.details?.page_number ?? null,
+                Figure: detailQuery.data.record.details?.visual_index ?? null,
                 'HTTP outcome': detailQuery.data.record.http_status,
                 Duration: detailQuery.data.record.duration_ms == null ? null : `${detailQuery.data.record.duration_ms} ms`,
                 Stage: detailQuery.data.record.failed_stage ?? detailQuery.data.record.stage,
@@ -680,6 +706,9 @@ export default function AdminLogsPage() {
                 <div key={label}><dt>{label}</dt><dd>{String(value)}</dd></div>
               ))}
             </dl>
+            {detailQuery.data.record.stack.length ? (
+              <details open><summary>Stack</summary><pre>{detailQuery.data.record.stack.join('\n')}</pre></details>
+            ) : null}
             <div className={styles.copyActions}>
               {detailQuery.data.record.operation_id ? <Button size="sm" variant="ghost" onClick={() => void copy(detailQuery.data!.record.operation_id!)}>Copy operation ID</Button> : null}
               {detailQuery.data.record.request_id ? <Button size="sm" variant="ghost" onClick={() => void copy(detailQuery.data!.record.request_id!)}>Copy request ID</Button> : null}

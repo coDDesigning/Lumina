@@ -1,4 +1,5 @@
 import copy
+import inspect
 import json
 import logging
 import threading
@@ -625,6 +626,21 @@ class GeminiTextGenerationProvider(TemperatureBindingMixin):
         result, _ = self.generate_json_with_metadata(prompt)
         return result
 
+    def list_model_names(self) -> list[str]:
+        try:
+            response = self._client.models.list()
+            names: list[str] = []
+            for model in response:
+                name = getattr(model, "name", None)
+                if not isinstance(name, str):
+                    continue
+                if name.startswith("models/"):
+                    name = name[len("models/") :]
+                names.append(name)
+            return names
+        except Exception as exc:
+            self._handle_client_error(exc)
+
 
 class OllamaTextGenerationProvider(TemperatureBindingMixin):
     PROVIDER_NAME = "ollama"
@@ -775,6 +791,7 @@ class OpenAITextGenerationProvider(TemperatureBindingMixin):
         timeout_seconds: int | None = None,
         model: str | None = None,
         client: object | None = None,
+        max_retries: int | None = None,
     ) -> None:
         key = api_key or settings.openai_api_key
         if not key and client is None:
@@ -792,7 +809,13 @@ class OpenAITextGenerationProvider(TemperatureBindingMixin):
             try:
                 from openai import OpenAI
 
-                self._client = OpenAI(api_key=key, timeout=self._timeout_seconds)
+                client_kwargs: dict[str, object] = {
+                    "api_key": key,
+                    "timeout": self._timeout_seconds,
+                }
+                if max_retries is not None:
+                    client_kwargs["max_retries"] = max_retries
+                self._client = OpenAI(**client_kwargs)
             except (ImportError, AttributeError):
                 self._client = None
 
@@ -938,6 +961,17 @@ class OpenAITextGenerationProvider(TemperatureBindingMixin):
         result, _ = self.generate_json_with_metadata(prompt)
         return result
 
+    def list_model_names(self) -> list[str]:
+        try:
+            response = self._client.models.list()
+            return [
+                model.id
+                for model in response
+                if isinstance(getattr(model, "id", None), str)
+            ]
+        except Exception as exc:
+            self._handle_client_error(exc)
+
 
 class ClaudeTextGenerationProvider:
     """Claude text generation over the Anthropic Messages API.
@@ -960,6 +994,7 @@ class ClaudeTextGenerationProvider:
         timeout_seconds: int | None = None,
         model: str | None = None,
         client: object | None = None,
+        max_retries: int | None = None,
     ) -> None:
         key = api_key or settings.anthropic_api_key
         if not key and client is None:
@@ -977,7 +1012,13 @@ class ClaudeTextGenerationProvider:
             try:
                 from anthropic import Anthropic
 
-                self._client = Anthropic(api_key=key, timeout=self._timeout_seconds)
+                client_kwargs: dict[str, object] = {
+                    "api_key": key,
+                    "timeout": self._timeout_seconds,
+                }
+                if max_retries is not None:
+                    client_kwargs["max_retries"] = max_retries
+                self._client = Anthropic(**client_kwargs)
             except (ImportError, ModuleNotFoundError, AttributeError):
                 self._client = None
 
@@ -1135,6 +1176,17 @@ class ClaudeTextGenerationProvider:
     def generate_json(self, prompt: str) -> dict[str, object]:
         result, _ = self.generate_json_with_metadata(prompt)
         return result
+
+    def list_model_names(self) -> list[str]:
+        try:
+            response = self._client.models.list()
+            return [
+                model.id
+                for model in response
+                if isinstance(getattr(model, "id", None), str)
+            ]
+        except Exception as exc:
+            self._handle_client_error(exc)
 
 
 # Register all providers
@@ -1628,6 +1680,12 @@ def resolve_user_api_key(
                 "Failed to decrypt BYOK API key for provider '%s': %s. Falling back to default.",
                 clean_name,
                 exc,
+                extra={
+                    "event": "byok_key_decrypt_failed",
+                    "provider": clean_name,
+                    "user_id": getattr(user, "id", None),
+                    "error_code": type(exc).__name__,
+                },
             )
 
     return None
@@ -1637,6 +1695,9 @@ def _instantiate_provider(
     provider_name: str,
     model_name: str | None = None,
     api_key: str | None = None,
+    *,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
 ) -> TextGenerationProvider:
     clean_name = provider_name.strip().lower()
     constructor = ProviderRegistry.get_constructor(clean_name)
@@ -1648,9 +1709,80 @@ def _instantiate_provider(
 
     default_model = ProviderRegistry.get_default_model(clean_name)
     model = model_name or default_model
-    if api_key and ProviderRegistry.requires_key(clean_name):
-        return constructor(model=model, api_key=api_key)
-    return constructor(model=model)
+    accepted_params = inspect.signature(constructor).parameters
+    kwargs: dict[str, object] = {"model": model}
+    if (
+        api_key
+        and ProviderRegistry.requires_key(clean_name)
+        and "api_key" in accepted_params
+    ):
+        kwargs["api_key"] = api_key
+    if timeout_seconds is not None and "timeout_seconds" in accepted_params:
+        kwargs["timeout_seconds"] = timeout_seconds
+    if max_retries is not None and "max_retries" in accepted_params:
+        kwargs["max_retries"] = max_retries
+    return constructor(**kwargs)
+
+
+def _build_vendor_provider(
+    provider_name: str,
+    model_override: str | None,
+    *,
+    user: object | None,
+    user_api_keys: dict[str, str | None] | None = None,
+    explicit_key: str | None = None,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
+) -> TextGenerationProvider:
+    resolved_key = resolve_user_api_key(
+        provider_name,
+        user=user,
+        user_api_keys=user_api_keys,
+        explicit_key=explicit_key,
+    )
+    is_personal = bool(resolved_key)
+    instantiate_kwargs: dict[str, object] = {}
+    if resolved_key is not None:
+        instantiate_kwargs["api_key"] = resolved_key
+    if timeout_seconds is not None:
+        instantiate_kwargs["timeout_seconds"] = timeout_seconds
+    if max_retries is not None:
+        instantiate_kwargs["max_retries"] = max_retries
+    try:
+        provider_inst = _instantiate_provider(
+            provider_name, model_override, **instantiate_kwargs
+        )
+    except TypeError:
+        provider_inst = _instantiate_provider(provider_name, model_override)
+    except TextGenerationAuthError as exc:
+        if is_personal:
+            vendor = _vendor_display_name(provider_name)
+            raise PersonalKeyAuthError(
+                f"Your personal {vendor} API key is invalid or expired.",
+                provider=provider_name,
+            ) from exc
+        raise
+    setattr(provider_inst, "is_personal_key", is_personal)
+    setattr(provider_inst, "provider_name", provider_name)
+    return provider_inst
+
+
+def get_single_text_generation_provider(
+    effective_model: str,
+    *,
+    user: object | None,
+    timeout_seconds: float,
+) -> TextGenerationProvider:
+    entry = _model_catalog_entry(effective_model, user=user)
+    if entry is None:
+        raise UnavailableModelError("Requested AI model is not available.")
+    return _build_vendor_provider(
+        str(entry["provider"]),
+        str(entry["model"]),
+        user=user,
+        timeout_seconds=timeout_seconds,
+        max_retries=0,
+    )
 
 
 def get_text_generation_provider(
@@ -1711,29 +1843,13 @@ def get_text_generation_provider(
 
     for name in provider_names:
         model_override = selected_model if name == selected_provider else None
-        resolved_key = resolve_user_api_key(
+        provider_inst = _build_vendor_provider(
             name,
+            model_override,
             user=user,
             user_api_keys=user_api_keys,
             explicit_key=api_key if name == selected_provider else None,
         )
-        is_personal = bool(resolved_key)
-        try:
-            provider_inst = _instantiate_provider(
-                name, model_override, api_key=resolved_key
-            )
-        except TypeError:
-            provider_inst = _instantiate_provider(name, model_override)
-        except TextGenerationAuthError as exc:
-            if is_personal:
-                vendor = _vendor_display_name(name)
-                raise PersonalKeyAuthError(
-                    f"Your personal {vendor} API key is invalid or expired.",
-                    provider=name,
-                ) from exc
-            raise
-        setattr(provider_inst, "is_personal_key", is_personal)
-        setattr(provider_inst, "provider_name", name)
         providers.append(provider_inst)
 
     return ReliableTextGenerationProvider(

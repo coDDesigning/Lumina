@@ -5,6 +5,9 @@ import { cx } from '@/lib/cx';
 import { Breath } from '@/ui/Breath';
 import { Button } from '@/ui/Button';
 import { ConfirmDialog } from '@/ui/ConfirmDialog';
+import { IconButton } from '@/ui/IconButton';
+import { Spinner } from '@/ui/Spinner';
+import { Tooltip } from '@/ui/Tooltip';
 import {
   TOTAL_STAGES,
   attemptsLabel,
@@ -12,12 +15,15 @@ import {
   displayFileName,
   documentStatusLabel,
   formatFileSize,
+  isDescribingVisuals,
   isDocumentBusy,
   materialKindLabel,
   progressLabel,
   stageNumber,
   stageReason,
+  visualAnalysisDetail,
   visualAnalysisStatusLabel,
+  type VisualAnalysisDetail,
 } from './documentLabels';
 import styles from './DocumentRow.module.css';
 
@@ -25,21 +31,53 @@ export interface DocumentRowProps {
   entry: DocumentEntry;
   onRetry: (documentId: string) => void;
   onDelete: (documentId: string, options?: { force?: boolean }) => void;
+  onRetryVisuals?: (documentId: string) => void;
   readOnly?: boolean;
 }
 
 function readyFacts(entry: DocumentEntry): string[] {
   const { document } = entry;
-  const visualStatus = visualAnalysisStatusLabel(document.visual_analysis_status);
   return [
     materialKindLabel(document.material_kind),
     document.file_type.toUpperCase(),
     formatFileSize(document.file_size),
-    visualStatus ?? '',
   ].filter(Boolean);
 }
 
-export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: DocumentRowProps) {
+function VisualDetail({ detail }: { detail: VisualAnalysisDetail }) {
+  return (
+    <>
+      {detail.lines.map((line) => (
+        <span key={line} className={styles.detailLine}>
+          {line}
+        </span>
+      ))}
+      {detail.progress ? (
+        <span
+          className={styles.detailBar}
+          role="progressbar"
+          aria-valuenow={detail.progress.value}
+          aria-valuemin={0}
+          aria-valuemax={detail.progress.max}
+          aria-label="Figures described"
+        >
+          <span
+            className={styles.barFill}
+            style={{ width: `${(detail.progress.value / detail.progress.max) * 100}%` }}
+          />
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+export function DocumentRow({
+  entry,
+  onRetry,
+  onDelete,
+  onRetryVisuals,
+  readOnly = false,
+}: DocumentRowProps) {
   const [isConfirming, setIsConfirming] = useState(false);
   const [isForcing, setIsForcing] = useState(false);
   const { document, job } = entry;
@@ -48,12 +86,28 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
   const busy = isDocumentBusy(document.status);
   const failed = document.status === 'failed';
   const ready = document.status === 'ready';
+  const canRetryVisuals =
+    Boolean(onRetryVisuals) &&
+    ready &&
+    !readOnly &&
+    !isDescribingVisuals(document) &&
+    ((document.visual_analysis?.failed ?? 0) > 0 ||
+      Boolean(document.visual_analysis?.stopped_error_code));
 
   const stage = progressLabel(job);
   const step = stageNumber(job?.processing_stage);
   const why = stageReason(job?.processing_stage);
   const failure = failed ? describeFailure(job) : null;
   const attempts = failed ? attemptsLabel(job) : null;
+  const facts = readyFacts(entry);
+  const visualLabel = visualAnalysisStatusLabel(
+    document.visual_analysis_status,
+    document.visual_analysis,
+  );
+  const visualDetail = visualAnalysisDetail(
+    document.visual_analysis_status,
+    document.visual_analysis,
+  );
 
   return (
     <article
@@ -74,12 +128,37 @@ export function DocumentRow({ entry, onRetry, onDelete, readOnly = false }: Docu
 
       {ready ? (
         <p className={styles.facts}>
-          {readyFacts(entry).map((fact, index) => (
+          {facts.map((fact, index) => (
             <span key={fact}>
               {index > 0 ? <span className={styles.dot}>·</span> : null}
               <span className={index > 0 ? 'tabular' : undefined}>{fact}</span>
             </span>
           ))}
+          {visualLabel ? (
+            <span className={styles.visualStatus}>
+              {facts.length > 0 ? <span className={styles.dot}>·</span> : null}
+              {visualDetail ? (
+                <Tooltip content={<VisualDetail detail={visualDetail} />}>{visualLabel}</Tooltip>
+              ) : (
+                <span>{visualLabel}</span>
+              )}
+              {canRetryVisuals ? (
+                <IconButton
+                  label={entry.pending === 'retryVisuals' ? 'Retrying figures' : 'Retry figures'}
+                  icon={
+                    entry.pending === 'retryVisuals' ? (
+                      <Spinner size="sm" />
+                    ) : (
+                      <RotateCcw aria-hidden="true" />
+                    )
+                  }
+                  size="xs"
+                  onClick={() => onRetryVisuals?.(document.id)}
+                  disabled={entry.pending !== null}
+                />
+              ) : null}
+            </span>
+          ) : null}
         </p>
       ) : null}
 

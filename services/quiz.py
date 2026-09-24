@@ -250,6 +250,7 @@ def parse_correct_answer(row: QuizQuestion) -> QuizCorrectAnswer | None:
         logger.warning(
             "quiz_questions.correct_answer for row %s is not a valid answer document",
             row.id,
+            extra={"event": "quiz_answer_document_unreadable"},
         )
         return None
 
@@ -268,6 +269,7 @@ def parse_citations(row: QuizQuestion) -> list[Citation]:
         logger.warning(
             "quiz_questions.citations for row %s is not a valid citation document",
             row.id,
+            extra={"event": "quiz_citations_unreadable"},
         )
         return []
 

@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, History, Layers3, Sparkles, Target } from 'lucide-react';
+import { History } from 'lucide-react';
 import type { ActivityItem } from '@/api/types';
+import { outputTypeLabel } from '@/features/study/outputTypes';
 import { cx } from '@/lib/cx';
-import { relativeDay } from '@/lib/relativeDay';
+import { CourseChip } from '@/ui/CourseLight';
 import { EmptyState } from '@/ui/EmptyState';
 import { ErrorState } from '@/ui/ErrorState';
 import { Skeleton } from '@/ui/Skeleton';
@@ -15,48 +16,97 @@ export interface RecentActivityProps {
   limit?: number;
   heading?: string;
   headingLevel?: 'h1' | 'h2' | 'h3';
+  headingClassName?: string;
   footer?: ReactNode;
+  className?: string;
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  study_guide: 'Study guide',
-  quiz: 'Practice quiz',
-  flashcards: 'Flashcards',
-  quiz_attempt: 'Quiz attempt',
-  reverse_quiz: 'Reverse quiz',
-  exam_topic_analysis: 'Exam source analysis',
-  exam_plan: 'Exam plan',
+interface ActivityDay {
+  key: string;
+  label: string;
+  items: ActivityItem[];
+}
+
+const SUBHEADING: Record<'h1' | 'h2' | 'h3', 'h2' | 'h3' | 'h4'> = {
+  h1: 'h2',
+  h2: 'h3',
+  h3: 'h4',
 };
 
+const TIME_FORMAT = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+const DATE_FORMAT = new Intl.DateTimeFormat('en', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+});
+const DATE_WITH_YEAR_FORMAT = new Intl.DateTimeFormat('en', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+
 function actionLabel(item: ActivityItem): string {
-  return ACTION_LABELS[item.action_type] ?? item.action_type.replace(/_/g, ' ');
+  return item.action_type === 'quiz_attempt' ? 'Quiz attempt' : outputTypeLabel(item.action_type);
 }
 
-function ActionIcon({ item }: { item: ActivityItem }) {
-  if (item.kind === 'attempt' || item.action_type === 'quiz') {
-    return <Target aria-hidden="true" />;
+function dayKey(date: Date): string {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function dayLabel(date: Date, now: Date): string {
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (dayKey(date) === dayKey(now)) {
+    return 'Today';
   }
-  if (item.action_type === 'study_guide') {
-    return <Sparkles aria-hidden="true" />;
+  if (dayKey(date) === dayKey(yesterday)) {
+    return 'Yesterday';
   }
-  if (item.action_type === 'flashcards') {
-    return <Layers3 aria-hidden="true" />;
+  return date.getFullYear() === now.getFullYear()
+    ? DATE_FORMAT.format(date)
+    : DATE_WITH_YEAR_FORMAT.format(date);
+}
+
+function groupByDay(items: ActivityItem[]): ActivityDay[] {
+  const now = new Date();
+  const days: ActivityDay[] = [];
+  for (const item of items) {
+    const date = new Date(item.occurred_at);
+    const key = Number.isNaN(date.getTime()) ? 'unknown' : dayKey(date);
+    const last = days[days.length - 1];
+    if (last && last.key === key) {
+      last.items.push(item);
+    } else {
+      days.push({
+        key,
+        label: key === 'unknown' ? 'Earlier' : dayLabel(date, now),
+        items: [item],
+      });
+    }
   }
-  return <BookOpen aria-hidden="true" />;
+  return days;
+}
+
+function timeOf(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : TIME_FORMAT.format(date);
 }
 
 export function RecentActivity({
   limit,
   heading = 'Recent activity',
   headingLevel = 'h2',
+  headingClassName,
   footer,
+  className,
 }: RecentActivityProps) {
   const { items, isLoading, error, reload } = useRecentActivity(limit);
   const Heading = headingLevel;
+  const DayHeading = SUBHEADING[headingLevel];
 
   return (
-    <section className={styles.section} aria-labelledby="recent-activity-heading">
-      <Heading id="recent-activity-heading" className={styles.heading}>
+    <section className={cx(styles.section, className)} aria-labelledby="recent-activity-heading">
+      <Heading id="recent-activity-heading" className={cx(styles.heading, headingClassName)}>
         {heading}
       </Heading>
 
@@ -79,33 +129,35 @@ export function RecentActivity({
         />
       ) : (
         <>
-          <ol className={styles.list}>
-            {items.map((item) => (
-              <li
-                key={`${item.kind}-${item.attempt_id ?? item.output_id}-${item.occurred_at}`}
-                className={styles.row}
-              >
-                <Link to={activityHref(item)} className={styles.link}>
-                  <span className={styles.icon}>
-                    <ActionIcon item={item} />
-                  </span>
-                  <span className={styles.what}>
-                    <span className={styles.action}>{actionLabel(item)}</span>
-                    <span className={styles.course}>{item.course_title}</span>
-                  </span>
-                  {item.topic ? <span className={styles.topic}>{item.topic}</span> : null}
-                  {item.score !== null ? (
-                    <span className={cx(styles.score, 'tabular')}>
-                      {Math.round(item.score * 100)}%
-                    </span>
-                  ) : null}
-                  <time className={styles.when} dateTime={item.occurred_at}>
-                    {relativeDay(item.occurred_at)}
-                  </time>
-                </Link>
-              </li>
+          <div className={styles.days}>
+            {groupByDay(items).map((day) => (
+              <div key={day.key} className={styles.day}>
+                <DayHeading className={styles.dayLabel}>{day.label}</DayHeading>
+                <ol className={styles.list}>
+                  {day.items.map((item) => (
+                    <li
+                      key={`${item.kind}-${item.attempt_id ?? item.output_id}-${item.occurred_at}`}
+                    >
+                      <Link to={activityHref(item)} className={styles.link}>
+                        <span className={styles.action}>{actionLabel(item)}</span>
+                        <span className={styles.course}>
+                          <CourseChip courseId={item.course_id} />
+                          <span className={styles.courseName}>{item.course_title}</span>
+                          {item.topic ? <span className={styles.topic}>{item.topic}</span> : null}
+                        </span>
+                        <span className={cx(styles.score, 'tabular')}>
+                          {item.score !== null ? `${Math.round(item.score * 100)}%` : null}
+                        </span>
+                        <time className={cx(styles.when, 'tabular')} dateTime={item.occurred_at}>
+                          {timeOf(item.occurred_at)}
+                        </time>
+                      </Link>
+                    </li>
+                  ))}
+                </ol>
+              </div>
             ))}
-          </ol>
+          </div>
           {footer ? <div className={styles.footer}>{footer}</div> : null}
         </>
       )}

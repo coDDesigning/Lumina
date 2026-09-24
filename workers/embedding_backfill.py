@@ -405,7 +405,14 @@ def run_backfill(
         },
         dimensions={"Service": "embedding_backfill", "Environment": settings.app_env},
     )
-    logger.info("Embedding backfill finished: %s", report.summary())
+    logger.info(
+        "Embedding backfill finished: %s",
+        report.summary(),
+        extra={
+            "event": "embedding_backfill_completed",
+            "maintenance_task": "embedding_backfill",
+        },
+    )
     return report
 
 
@@ -448,6 +455,10 @@ def run_backfill_worker(
         interval_seconds,
         batch_size,
         prune_orphans,
+        extra={
+            "event": "embedding_backfill_worker_started",
+            "maintenance_task": "embedding_backfill",
+        },
     )
     try:
         while not stop.is_set():
@@ -464,12 +475,24 @@ def run_backfill_worker(
                     stop_event=stop,
                 )
             except Exception:
-                logger.exception("Embedding backfill execution failed")
+                logger.exception(
+                    "Embedding backfill execution failed",
+                    extra={
+                        "event": "maintenance_task_failed",
+                        "maintenance_task": "embedding_backfill",
+                    },
+                )
             if once or stop.is_set():
                 break
             stop.wait(interval_seconds)
     finally:
-        logger.info("Embedding backfill worker stopped")
+        logger.info(
+            "Embedding backfill worker stopped",
+            extra={
+                "event": "embedding_backfill_worker_stopped",
+                "maintenance_task": "embedding_backfill",
+            },
+        )
 
 
 def _install_shutdown_handlers(stop_event: _SignalStopEvent) -> None:
@@ -526,9 +549,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         try:
             check_backfill_ready()
         except ReadinessError as exc:
-            logger.error("Embedding backfill readiness check failed: %s", exc)
+            logger.error(
+                "Embedding backfill readiness check failed: %s",
+                exc,
+                extra={
+                    "event": "worker_readiness_check_failed",
+                    "failed_stage": exc.check,
+                },
+            )
             raise SystemExit(1) from None
-        logger.info("Embedding backfill readiness check succeeded")
+        logger.info(
+            "Embedding backfill readiness check succeeded",
+            extra={"event": "worker_readiness_check_succeeded"},
+        )
         return
 
     if arguments.interval_seconds is not None:
@@ -550,7 +583,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                 prune_orphans=arguments.prune_orphans,
             )
         except ReadinessError as exc:
-            logger.error("Embedding backfill readiness check failed: %s", exc)
+            logger.error(
+                "Embedding backfill readiness check failed: %s",
+                exc,
+                extra={
+                    "event": "worker_readiness_check_failed",
+                    "failed_stage": exc.check,
+                },
+            )
             raise SystemExit(1) from None
         return
 

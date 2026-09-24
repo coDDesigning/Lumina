@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
-import { FolderOpen, Plus, Settings2, Trash2, Upload } from 'lucide-react';
+import { FolderOpen, Plus, Settings2, Sparkles, Trash2, Upload } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { coursesAPI } from '@/api/courses';
 import { describeError } from '@/api/errors';
@@ -35,6 +35,9 @@ import { LinkButton } from '@/ui/LinkButton';
 import { PageHeader } from '@/ui/PageHeader';
 import { Skeleton } from '@/ui/Skeleton';
 import { TagInput } from '@/ui/TagInput';
+import { addTopics } from './topicList';
+import { SyllabusTopicSuggestions } from './SyllabusTopicSuggestions';
+import { useSyllabusTopicSuggestions } from './useSyllabusTopicSuggestions';
 import styles from './CoursesPage.module.css';
 
 export interface CoursesPageProps {
@@ -166,6 +169,7 @@ export default function CoursesPage({
   const [isReadingSyllabus, setIsReadingSyllabus] = useState(false);
   const [syllabusNotice, setSyllabusNotice] = useState<string | null>(null);
   const syllabusInputRef = useRef<HTMLInputElement>(null);
+  const topicSuggestions = useSyllabusTopicSuggestions(draft.syllabus);
 
   const createMutation = useMutation({
     mutate: (courseDraft: WorkspaceDraft) => onCreate(courseDraft),
@@ -233,12 +237,14 @@ export default function CoursesPage({
 
   const confirming = workspaces.find((workspace) => workspace.id === confirmingId) ?? null;
 
+  const clearTopicSuggestions = topicSuggestions.clear;
   useEffect(() => {
     if (!isCreating) {
       createMutation.reset();
       setSyllabusNotice(null);
+      clearTopicSuggestions();
     }
-  }, [isCreating, createMutation]);
+  }, [isCreating, createMutation, clearTopicSuggestions]);
 
   function updateDraft<Field extends keyof WorkspaceDraft>(
     field: Field,
@@ -267,6 +273,7 @@ export default function CoursesPage({
           ? `Read ${file.name}, trimmed to the first ${extracted.text.length} characters.`
           : `Read ${file.name}.`,
       );
+      topicSuggestions.suggest(extracted.text);
     } catch (caught) {
       setSyllabusNotice(
         describeError(caught, 'That file could not be read. Try again.').message,
@@ -550,6 +557,7 @@ export default function CoursesPage({
         <AdSlot placement="dashboard" className={styles.adSlot} />
 
         <RecentActivity
+          className={styles.recentActivity}
           limit={5}
           footer={
             <LinkButton variant="ghost" size="sm" to="/activity">
@@ -683,6 +691,29 @@ export default function CoursesPage({
               Read from PDF or TXT
             </Button>
           </div>
+
+          {draft.syllabus.trim() ? (
+            <div className={cx(styles.formSpan, styles.syllabusSuggestions)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Sparkles aria-hidden="true" />}
+                isLoading={topicSuggestions.isPending}
+                loadingLabel="Reading"
+                onClick={() => topicSuggestions.suggest(draft.syllabus)}
+              >
+                Suggest topics from syllabus
+              </Button>
+              <SyllabusTopicSuggestions
+                suggestions={topicSuggestions.suggestions}
+                isPending={topicSuggestions.isPending}
+                error={topicSuggestions.error}
+                declared={draft.topics}
+                onAdd={(added) => updateDraft('topics', addTopics(draft.topics, added))}
+                onRetry={() => topicSuggestions.suggest(draft.syllabus)}
+              />
+            </div>
+          ) : null}
         </form>
       </Dialog>
 

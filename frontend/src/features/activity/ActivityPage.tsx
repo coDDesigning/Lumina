@@ -1,9 +1,10 @@
 import { useDocumentTitle } from '@/app/useDocumentTitle';
 import { PageHeader } from '@/ui/PageHeader';
+import { ActivitySummary } from './ActivitySummary';
 import { RecentActivity } from './RecentActivity';
 import styles from './ActivityPage.module.css';
 
-const FULL_HISTORY = 50;
+const FULL_HISTORY = 100;
 
 export default function ActivityPage() {
   useDocumentTitle('Activity');
@@ -21,7 +22,13 @@ export default function ActivityPage() {
           </p>
         </div>
 
-        <RecentActivity limit={FULL_HISTORY} heading="All activity" />
+        <ActivitySummary limit={FULL_HISTORY} />
+
+        <RecentActivity
+          limit={FULL_HISTORY}
+          heading="History"
+          headingClassName={styles.historyHeading}
+        />
       </div>
     </div>
   );

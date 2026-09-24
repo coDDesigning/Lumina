@@ -1,5 +1,6 @@
 import math
 import struct
+from collections import Counter
 from datetime import date, datetime, timezone
 from uuid import UUID, uuid4
 
@@ -187,6 +188,52 @@ _DOCUMENT_PROCESSING_STAGES_SQL = ", ".join(
 _ASCII_WHITESPACE = " \t\n\r\v\f"
 
 EMBEDDING_DIMENSIONS = SCHEMA_EMBEDDING_DIMENSIONS
+
+
+def _loaded_relationship(instance: object, name: str) -> list | None:
+    try:
+        state = inspect(instance)
+    except Exception:
+        return getattr(instance, "__dict__", {}).get(name)
+    if state is None or name in state.unloaded:
+        return None
+    return getattr(instance, name)
+
+
+def _document_visual_analysis_status(document: object) -> str:
+    pages = None
+    try:
+        insp = inspect(document)
+        if insp is not None and "pages" not in insp.unloaded:
+            pages = document.pages
+    except Exception:
+        pages = getattr(document, "__dict__", {}).get("pages")
+
+    if not pages:
+        if document.file_type not in VISUAL_CAPABLE_FILE_TYPES:
+            return "not_applicable"
+        if document.status in ("uploaded", "processing"):
+            return "pending"
+        return "not_applicable"
+
+    visual_pages = [p for p in pages if getattr(p, "has_visual_content", False)]
+    if not visual_pages:
+        return "not_applicable"
+
+    statuses = {
+        getattr(p, "visual_analysis_status", "not_applicable") for p in visual_pages
+    } - {"not_applicable"}
+    if not statuses:
+        return "not_applicable"
+    if "pending" in statuses:
+        return "pending"
+    if statuses == {"completed"}:
+        return "completed"
+    if statuses == {"not_configured"}:
+        return "not_configured"
+    if statuses == {"failed"}:
+        return "failed"
+    return "partial"
 
 
 class UTCDateTime(TypeDecorator[datetime]):
@@ -767,37 +814,63 @@ class UploadedDocument(Base):
 
     @property
     def visual_analysis_status(self) -> str:
-        pages = None
-        try:
-            insp = inspect(self)
-            if insp is not None and "pages" not in insp.unloaded:
-                pages = self.pages
-        except Exception:
-            pages = getattr(self, "__dict__", {}).get("pages")
+        return _document_visual_analysis_status(self)
 
-        if not pages:
-            if self.file_type not in VISUAL_CAPABLE_FILE_TYPES:
-                return "not_applicable"
-            if self.status in ("uploaded", "processing"):
-                return "pending"
-            return "not_applicable"
+    @property
+    def visual_analysis(self) -> dict[str, int | str | list[int] | None] | None:
+        pages = _loaded_relationship(self, "pages")
+        jobs = _loaded_relationship(self, "processing_jobs")
+        if not pages or jobs is None:
+            return None
+        visual_pages = [page for page in pages if page.has_visual_content]
+        page_visuals = [_loaded_relationship(page, "visuals") for page in visual_pages]
+        if not visual_pages or any(loaded is None for loaded in page_visuals):
+            return None
 
-        visual_pages = [p for p in pages if getattr(p, "has_visual_content", False)]
-        if not visual_pages:
-            return "not_applicable"
-
-        statuses = {
-            getattr(p, "visual_analysis_status", "not_applicable") for p in visual_pages
+        visuals = [visual for loaded in page_visuals for visual in loaded]
+        statuses = Counter(visual.analysis_status for visual in visuals)
+        failure_codes = Counter(
+            visual.error_code
+            for visual in visuals
+            if visual.analysis_status == "failed"
+        )
+        describe_job = next(
+            (job for job in jobs if job.job_type == JOB_TYPE_DESCRIBE_VISUALS), None
+        )
+        failed_page_numbers: set[int] = set()
+        for page, loaded in zip(visual_pages, page_visuals, strict=True):
+            if page.page_number is None:
+                continue
+            if any(visual.analysis_status == "failed" for visual in loaded):
+                failed_page_numbers.add(page.page_number)
+        crowded_pages = [
+            page
+            for page, loaded in zip(visual_pages, page_visuals, strict=True)
+            if not loaded
+            and page.visual_analysis_status in ("partial", "not_applicable")
+        ]
+        crowded_page_numbers = {
+            page.page_number for page in crowded_pages if page.page_number is not None
         }
-        if "pending" in statuses:
-            return "pending"
-        if statuses == {"completed"}:
-            return "completed"
-        if statuses == {"not_configured"}:
-            return "not_configured"
-        if statuses == {"failed"}:
-            return "failed"
-        return "partial"
+        return {
+            "total": len(visuals),
+            "described": statuses["succeeded"],
+            "pending": statuses["pending"],
+            "failed": statuses["failed"],
+            "failure_reason": min(
+                failure_codes,
+                key=lambda code: (-failure_codes[code], code),
+                default=None,
+            ),
+            "failed_page_numbers": sorted(failed_page_numbers),
+            "crowded_pages": len(crowded_pages),
+            "crowded_page_numbers": sorted(crowded_page_numbers),
+            "stopped_error_code": (
+                describe_job.last_error_code
+                if describe_job is not None and describe_job.status == JOB_STATUS_FAILED
+                else None
+            ),
+        }
 
 
 class DocumentChunk(Base):
@@ -2784,37 +2857,7 @@ class ProfileDocument(Base):
 
     @property
     def visual_analysis_status(self) -> str:
-        pages = None
-        try:
-            insp = inspect(self)
-            if insp is not None and "pages" not in insp.unloaded:
-                pages = self.pages
-        except Exception:
-            pages = getattr(self, "__dict__", {}).get("pages")
-
-        if not pages:
-            if self.file_type not in VISUAL_CAPABLE_FILE_TYPES:
-                return "not_applicable"
-            if self.status in ("uploaded", "processing"):
-                return "pending"
-            return "not_applicable"
-
-        visual_pages = [p for p in pages if getattr(p, "has_visual_content", False)]
-        if not visual_pages:
-            return "not_applicable"
-
-        statuses = {
-            getattr(p, "visual_analysis_status", "not_applicable") for p in visual_pages
-        }
-        if "pending" in statuses:
-            return "pending"
-        if statuses == {"completed"}:
-            return "completed"
-        if statuses == {"not_configured"}:
-            return "not_configured"
-        if statuses == {"failed"}:
-            return "failed"
-        return "partial"
+        return _document_visual_analysis_status(self)
 
 
 class ProfileDocumentChunk(Base):

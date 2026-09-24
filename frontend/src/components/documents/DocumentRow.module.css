@@ -70,6 +70,12 @@
   color: var(--text-subtle);
 }
 
+.visualStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 .stageName {
   color: var(--processing);
   font-weight: var(--weight-semibold);
@@ -84,10 +90,24 @@
 }
 
 .barFill {
+  display: block;
   height: 100%;
   border-radius: var(--radius-sm);
   background: var(--processing);
   transition: width var(--duration-normal) var(--ease-out);
+}
+
+.detailLine {
+  display: block;
+}
+
+.detailBar {
+  display: block;
+  height: 0.1875rem;
+  margin-top: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  overflow: hidden;
 }
 
 .locked {

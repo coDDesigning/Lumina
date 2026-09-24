@@ -11,8 +11,9 @@ import urllib.parse
 from backend.app.config import settings
 
 
-def resolve_ollama_base_url(url_str: str | None = None) -> str:
-    """Parse OLLAMA_BASE_URL, defaulting to http://127.0.0.1:11434 if invalid or unresolved."""
+def resolve_ollama_base_url_with_fallback(
+    url_str: str | None = None,
+) -> tuple[str, bool]:
     default_url = "http://127.0.0.1:11434"
     raw = (
         url_str
@@ -22,12 +23,12 @@ def resolve_ollama_base_url(url_str: str | None = None) -> str:
         )
     )
     if not raw or not isinstance(raw, str) or not raw.strip():
-        return default_url
+        return default_url, False
     cleaned = raw.strip().rstrip("/")
     try:
         parsed = urllib.parse.urlsplit(cleaned)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            return default_url
+            return default_url, True
         hostname = parsed.hostname
         if hostname in {"host.docker.internal", "localhost"}:
             try:
@@ -38,7 +39,12 @@ def resolve_ollama_base_url(url_str: str | None = None) -> str:
                     socket.SOCK_STREAM,
                 )
             except (socket.gaierror, OSError):
-                return default_url
-        return cleaned
+                return default_url, True
+        return cleaned, False
     except Exception:
-        return default_url
+        return default_url, True
+
+
+def resolve_ollama_base_url(url_str: str | None = None) -> str:
+    """Parse OLLAMA_BASE_URL, defaulting to http://127.0.0.1:11434 if invalid or unresolved."""
+    return resolve_ollama_base_url_with_fallback(url_str)[0]

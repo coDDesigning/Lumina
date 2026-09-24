@@ -343,6 +343,8 @@ def export_logs(
             "logger",
             "event",
             "description",
+            "message",
+            "exception_message",
             "error_code",
             "error_category",
             "exception_type",

@@ -38,6 +38,7 @@ from schemas.document import (
 )
 from schemas.prompt_context import DocumentMaterialKind
 from schemas.response import BaseResponse
+from schemas.syllabus_topics import SyllabusTopicsRequest, SyllabusTopicsResponse
 from schemas.user import UserResponse
 from services.document import (
     CourseDocumentLimitError,
@@ -54,10 +55,13 @@ from services.document_validation import (
     DocumentValidationError,
     upload_error_response,
 )
+from services.syllabus_topics import suggest_topics
 from storage.base import Storage
 from storage.dependencies import get_storage
+from utils.ai_errors import ai_generation_http_exception
 from utils.authorization import AuthorizedCourse, OwnedCourse
 from utils.deps import get_current_user, get_verified_user
+from utils.rate_limit import rate_limit_generation
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/courses", tags=["Documents"])
@@ -161,14 +165,20 @@ def upload_document(
     except DocumentValidationError as exc:
         return _error_response(exc.error_key)
     except FileHashError:
-        logger.exception("Failed to hash uploaded document")
+        logger.exception(
+            "Failed to hash uploaded document",
+            extra={"event": "document_upload_hash_failed", "course_id": course.id},
+        )
         return _error_response("upload_failed")
     except CourseDocumentLimitError:
         return _error_response("course_document_limit")
     except DocumentDeletionInProgressError:
         return _error_response("document_deletion_in_progress")
     except DocumentRegistrationError:
-        logger.exception("Failed to register uploaded document")
+        logger.exception(
+            "Failed to register uploaded document",
+            extra={"event": "document_registration_failed", "course_id": course.id},
+        )
         return _error_response("upload_failed")
 
     response.status_code = (
@@ -218,6 +228,44 @@ def extract_syllabus(
             text=extraction.text,
             truncated=extraction.truncated,
         ),
+    )
+
+
+@router.post(
+    "/syllabus/topics",
+    response_model=BaseResponse[SyllabusTopicsResponse],
+    dependencies=[Depends(rate_limit_generation("syllabus_topics"))],
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Email verification required"},
+        422: {"description": "Invalid request body"},
+        429: {"description": "Per-user generation rate limited"},
+        500: {"description": "Invalid generated structure"},
+        503: {"description": "AI provider unreachable"},
+        504: {"description": "AI provider timed out"},
+    },
+)
+def suggest_syllabus_topics(
+    request: SyllabusTopicsRequest,
+    current_user: Annotated[UserResponse, Depends(get_verified_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> BaseResponse[SyllabusTopicsResponse]:
+    try:
+        topics = suggest_topics(
+            db,
+            user_id=current_user.id,
+            preferred_model=current_user.preferred_model,
+            text=request.text,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise ai_generation_http_exception(exc, feature="syllabus_topics") from exc
+
+    return BaseResponse(
+        success=True,
+        message="Syllabus topics suggested",
+        data=SyllabusTopicsResponse(topics=topics),
     )
 
 
@@ -281,6 +329,27 @@ def retry_document(
 ) -> DocumentStatusResponse:
     document, job = DocumentService.retry_document(db, document_id, course.id)
     return _status_response(document, job)
+
+
+@router.post(
+    "/{course_id}/documents/{document_id}/visuals/retry",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(get_verified_user)],
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Account is not allowed to retry documents"},
+        404: {"description": "Course or document not found"},
+        409: {"description": "The document's figures cannot be retried right now"},
+    },
+)
+def retry_document_visuals(
+    document_id: UUID,
+    course: OwnedCourse,
+    db: Annotated[Session, Depends(get_db)],
+) -> DocumentResponse:
+    document = DocumentService.retry_document_visuals(db, document_id, course.id)
+    return DocumentResponse.model_validate(document)
 
 
 def _delete_conflict(exc: DocumentActiveError) -> HTTPException:
@@ -374,7 +443,15 @@ def delete_document(
             headers={"X-Error-Code": "document_storage_provider_mismatch"},
         ) from exc
     except DocumentDeletionError as exc:
-        logger.exception("Document deletion failed for %s", document_id)
+        logger.exception(
+            "Document deletion failed for %s",
+            document_id,
+            extra={
+                "event": "document_delete_failed",
+                "document_id": str(document_id),
+                "course_id": course.id,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="The document could not be deleted; retry the operation.",

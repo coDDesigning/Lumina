@@ -28,7 +28,7 @@ from pathlib import Path
 from uuid import UUID
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
@@ -165,7 +165,9 @@ class ExamSourceAnalysisService:
         rows = db.scalars(
             select(UploadedDocument)
             .where(UploadedDocument.course_id == course_id)
-            .order_by(UploadedDocument.created_at, UploadedDocument.id)
+            .order_by(
+                func.lower(UploadedDocument.original_file_name), UploadedDocument.id
+            )
         ).all()
 
         documents = [

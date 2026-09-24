@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from backend.app.observability import redact
+
 _SAFE_TOKEN = re.compile(r"[A-Za-z0-9._:/-]{1,200}")
 _SAFE_LOGGER = re.compile(r"[A-Za-z0-9_.-]{1,200}")
 _SAFE_STACK = re.compile(r"[\w./<>-]+:\d+ in [A-Za-z0-9_<>.]+")
@@ -22,32 +24,105 @@ _SAFE_VALIDATION_ERROR = re.compile(
 _LEVELS = {"INFO", "WARNING", "ERROR", "CRITICAL"}
 _STATUSES = {"queued", "running", "succeeded", "failed", "timed_out"}
 _MAX_DETAILS_ITEMS = 40
+_MAX_MESSAGE = 1000
+_MAX_EXCEPTION_MESSAGE = 500
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+_PROJECT_LOGGER_ROOTS = {
+    "__main__",
+    "backend",
+    "lumina",
+    "main",
+    "routes",
+    "schemas",
+    "services",
+    "tasks",
+    "utils",
+    "workers",
+}
 
 EVENT_DESCRIPTIONS = {
+    "account_purge_failed": "An account could not be purged, so its deletion tombstone was kept for a retry.",
+    "account_purge_finished": "An account purge pass finished.",
+    "account_purge_pass_failed": "An account purge pass failed unexpectedly.",
     "ad_telemetry": "An advertisement slot reported an impression or a click.",
     "admin_credits_changed": "An administrator changed an account credit balance.",
     "admin_role_changed": "An administrator changed an account role.",
     "admin_user_ban_changed": "An administrator changed an account ban state.",
+    "aged_account_tombstone_detected": "A deleted account outlived the purge that should have erased it.",
     "aged_tombstone_detected": "A deleted record outlived the purge that should have removed it.",
     "ai_generation_failed": "An AI generation attempt failed.",
     "ai_metrics_emit_failed": "AI provider health metrics could not be emitted.",
+    "ai_model_check": "A user tested whether a configured AI model is reachable and listed by its provider.",
     "ai_route_failed": "An AI route returned a server error for a generation.",
     "ai_route_refused": "An AI route refused a generation request.",
+    "ai_usage_cleanup_completed": "An AI usage retention cleanup finished.",
     "ai_usage_cost_estimate_failed": "An AI usage cost estimate could not be calculated.",
+    "ai_usage_owner_missing": "AI usage telemetry was skipped because no account was attached to the generation.",
     "ai_usage_write_failed": "AI usage telemetry could not be persisted.",
     "ai_vendors_available": "The configured AI vendor fallback chain was reported at startup.",
+    "byok_key_decrypt_failed": "A stored provider API key could not be decrypted, so the default key was used.",
     "client_error_reported": "The browser reported an unhandled interface error.",
+    "conversation_citations_unreadable": "A stored conversation message had citations that could not be read.",
+    "course_cleanup_failed": "A course could not be fully erased, so its metadata was kept for a retry.",
+    "course_purge_document_failed": "A deleted document could not be purged, so its tombstone was kept for a retry.",
+    "course_purge_failed": "A course could not be purged, so its deletion tombstone was kept for a retry.",
+    "course_purge_finished": "A course purge pass finished.",
+    "course_purge_pass_failed": "A course purge pass failed unexpectedly.",
+    "course_purge_profile_document_failed": "A deleted profile document could not be purged, so its tombstone was kept for a retry.",
+    "course_purge_worker_started": "The purge worker started.",
+    "course_purge_worker_stopped": "The purge worker stopped.",
     "credit_grant_already_recorded": "A periodic credit grant for this period already existed.",
     "credit_refund_already_settled": "A generation refund had already been settled.",
+    "document_chunking_retried": "Splitting a document into chunks failed once and was retried.",
+    "document_commit_outcome_unknown": "Whether a document registration was saved could not be determined.",
+    "document_commit_recovered": "A document was found saved after an uncertain registration commit.",
+    "document_delete_failed": "A course document could not be deleted.",
+    "document_lock_release_failed": "Generation locks on documents could not be released and will expire on their own.",
+    "document_pipeline_callback_failed": "A document processing progress callback failed.",
+    "document_pipeline_stage_failed": "A document processing stage failed unexpectedly.",
+    "document_purge_finished": "A document purge pass finished.",
+    "document_purge_pass_failed": "A document purge pass failed unexpectedly.",
+    "document_registration_failed": "An uploaded document could not be registered.",
+    "document_registration_rollback_failed": "A failed document registration could not be rolled back.",
     "document_storage_provider_mismatch": "A document belongs to a storage backend this deployment is not using.",
+    "document_upload_cleanup_failed": "The stored file of an unregistered upload could not be removed.",
+    "document_upload_hash_failed": "An uploaded document could not be hashed.",
+    "document_worker_iteration_failed": "A document worker failed while claiming or running a job.",
+    "document_worker_recycle_required": "A document worker hit an unrecoverable error and exited to be restarted.",
+    "document_worker_shutdown_requested": "A document worker was asked to shut down and stopped claiming jobs.",
+    "document_worker_slots_started": "A document worker started its concurrent job slots.",
+    "document_worker_started": "A document worker started.",
+    "document_worker_stopped": "A document worker stopped.",
     "email_delivery_failed": "An outbound email could not be delivered.",
     "email_verified": "An account proved ownership of its email address.",
+    "embedding_backfill_completed": "An embedding backfill run finished.",
+    "embedding_backfill_worker_started": "The embedding backfill worker started.",
+    "embedding_backfill_worker_stopped": "The embedding backfill worker stopped.",
+    "exam_artifact_rejected": "A generated exam artifact was refused because it did not match what was requested.",
+    "exam_question_extraction_failed": "Questions could not be extracted from a past exam paper.",
+    "exam_question_extraction_provider_unavailable": "No AI provider was available to extract questions from a past exam paper.",
+    "exam_question_extraction_status_write_failed": "The extraction status of a past exam paper could not be saved.",
+    "exam_question_extraction_truncated": "A past exam paper was only partly read because it exceeded the extraction budget.",
+    "exam_topic_unlock_race_refunded": "A concurrent exam topic unlock was detected and its duplicate charge was refunded.",
+    "exam_topic_unlock_release_failed": "An exam topic unlock could not be undone after the work it paid for failed.",
     "generation_attempt_timeout": "A generation attempt exceeded its time limit.",
+    "generation_failed_after_lease_lost": "A generation job failed after its lease had already been released.",
+    "generation_heartbeat_failed": "A generation worker could not renew the lease on its job.",
+    "generation_heartbeat_recovered": "A generation worker renewed its job lease again after failed attempts.",
     "generation_job_claimed": "A generation job was claimed by a worker.",
     "generation_job_completed": "A generation job completed successfully.",
     "generation_job_enqueued": "A generation job was accepted for processing.",
     "generation_job_failed": "A generation job attempt failed.",
     "generation_job_retried": "A generation job was queued for another attempt.",
+    "generation_job_type_unknown": "A generation job had a type this worker cannot run, so it was failed.",
+    "generation_jobs_recovered": "Expired generation jobs were returned to the queue.",
+    "generation_lease_lost": "A generation job lost its lease to another worker.",
+    "generation_locks_released": "Expired document generation locks were released.",
+    "generation_recovery_failed": "Recovering expired generation jobs failed.",
+    "generation_worker_iteration_failed": "A generation worker failed unexpectedly while claiming or running a job.",
+    "generation_worker_shutdown_requested": "A generation worker stopped claiming jobs because shutdown was requested.",
+    "generation_worker_started": "A generation worker started.",
+    "generation_worker_stopped": "A generation worker stopped.",
     "http_authorization_denied": "An HTTP request was denied by authorization.",
     "http_not_found": "An HTTP request asked for something that does not exist.",
     "http_request_completed": "An HTTP request completed.",
@@ -55,24 +130,50 @@ EVENT_DESCRIPTIONS = {
     "http_request_rate_limited": "An HTTP request was rejected by a rate limit.",
     "http_request_slow": "An HTTP request exceeded the slow-request threshold.",
     "http_validation_rejected": "An HTTP request was rejected by validation or a business rule.",
+    "image_transcode_failed": "An uploaded image could not be converted to a PDF.",
     "image_understanding_disabled": "The configured model cannot read images, so visual analysis is switched off.",
     "image_understanding_usage_owner_missing": "Visual analysis usage could not be attributed to an account.",
     "image_understanding_usage_persist_failed": "Visual analysis usage telemetry could not be persisted.",
     "image_understanding_usage_report_failed": "Visual analysis usage could not be reported.",
+    "image_upload_ocr_skipped": "Text recognition was skipped for an uploaded image.",
+    "library_log": "A third-party library wrote a log line.",
+    "maintenance_task_failed": "A periodic maintenance task failed.",
     "password_reset_email_undelivered": "A password reset email could not be delivered.",
+    "pdf_page_pool_unavailable": "Parallel PDF page processing was unavailable, so pages were processed one at a time.",
+    "pdf_text_extraction_failed": "Text could not be extracted from a PDF.",
+    "pdf_validation_failed": "An uploaded PDF could not be validated.",
     "permanent_document_failure": "Document processing failed permanently.",
     "permanent_generation_failure": "Generation failed permanently.",
+    "processing_claim_lost": "A document processing job lost its claim before it could complete.",
+    "processing_failure_record_failed": "A document processing failure could not be recorded on its job.",
+    "processing_heartbeat_failed": "A document processing job could not renew its lease.",
+    "processing_heartbeat_recovered": "A document processing job renewed its lease again after failed attempts.",
+    "processing_heartbeat_stop_timeout": "A document processing lease heartbeat did not stop before the job was finalized.",
     "processing_job_claimed": "A document processing job was claimed by a worker.",
     "processing_job_completed": "A document processing job completed successfully.",
     "processing_job_enqueued": "A document was accepted for background processing.",
     "processing_job_failed": "A document processing attempt failed.",
+    "processing_job_finalize_failed": "A document processing job could not be finalized.",
     "processing_job_finalize_timeout": "Finalizing a document job exceeded its database time limit.",
     "processing_job_retried": "A document processing job was queued for another attempt.",
+    "processing_jobs_recovered": "Expired document processing jobs were returned to the queue.",
+    "processing_pages_persist_failed": "The extracted pages of a document could not be saved.",
     "processing_stage_started": "A document processing stage started.",
+    "processing_subprocess_reap_failed": "A document extraction subprocess could not be stopped, so the worker exited.",
+    "processing_vector_persist_failed": "Document vectors could not be saved while finalizing a processing job.",
+    "profile_document_delete_failed": "A profile document could not be deleted.",
+    "profile_document_registration_failed": "An uploaded profile document could not be registered.",
+    "profile_document_upload_cleanup_failed": "The stored file of an unregistered profile document could not be removed.",
+    "profile_knowledge_retrieval_failed": "Relevant passages could not be retrieved from a user's profile documents.",
     "provider_attempt": "An AI provider attempt completed.",
     "provider_exhausted": "An AI provider exhausted its retry budget.",
     "provider_failed": "An AI provider attempt failed.",
+    "quiz_answer_document_unreadable": "A stored quiz question had an answer document that could not be read.",
+    "quiz_citations_unreadable": "A stored quiz question had citations that could not be read.",
+    "quiz_grading_provider_unavailable": "No AI provider was available to grade open-ended quiz answers.",
+    "quiz_session_submit_retried": "A timed quiz submission lost a write race and was retried.",
     "rate_limit_rejected": "A request was rejected by an application rate limit.",
+    "readiness_check_failed": "The API readiness probe found a required dependency unavailable.",
     "self_hosted_backup_completed": "A self-hosted backup completed.",
     "self_hosted_restore_completed": "A self-hosted restore completed.",
     "self_hosted_restore_object_unavailable": "A restored document object could not be read back.",
@@ -80,14 +181,31 @@ EVENT_DESCRIPTIONS = {
     "self_hosted_restore_verification_failed": "Restore verification could not complete.",
     "stored_document_delete_failed": "A stored document could not be deleted from its backend.",
     "stored_document_deleted": "A stored document was deleted from its backend.",
+    "stored_json_unreadable": "A stored JSON value could not be read back and was skipped.",
+    "text_document_decode_failed": "An uploaded text document could not be decoded.",
     "token_iat_unreadable": "A token was rejected because its issued-at timestamp could not be read.",
     "unprotected_admin_bootstrap_granted": "An account became an administrator through unprotected bootstrap.",
     "unprotected_admin_bootstrap_warning": "The deployment is running with unprotected administrator bootstrap.",
+    "vector_store_cache_clear_failed": "The vector store's cached system could not be cleared.",
     "vector_store_reopened": "The vector store was reopened after a failed operation.",
     "verification_email_undelivered": "A verification email could not be delivered.",
+    "visual_analysis_failed": "A figure in a document could not be described.",
+    "visual_analysis_temporarily_unavailable": "A figure in a document could not be described because the visual service was temporarily unavailable.",
+    "visual_description_enqueue_failed": "A document's visual description job could not be queued.",
     "visual_description_sweep": "A sweep enqueued outstanding visual descriptions.",
     "visual_detection_degraded": "Table or drawing detection failed on some pages of a document.",
+    "visual_provider_failed": "The visual description provider failed unexpectedly.",
     "web_root_missing": "The configured interface build directory does not exist.",
+    "worker_child_processes_killed": "A stopping worker killed the document subprocesses it was still running.",
+    "worker_generation_locks_released": "A stopping worker released the document generation locks its aborted generations held.",
+    "worker_readiness_check_failed": "A worker found a required dependency unavailable during its readiness check.",
+    "worker_readiness_check_succeeded": "A worker readiness check passed.",
+    "worker_shutdown_aborting_job": "A stopping worker is aborting a running job so it can return it to the queue.",
+    "worker_shutdown_deadline_exceeded": "Worker threads were still running at the shutdown deadline, so their jobs were released and the worker exited.",
+    "worker_shutdown_job_not_released": "A stopping worker no longer held a running job, so it left the job as it was.",
+    "worker_shutdown_job_released": "A stopping worker returned a job to the queue without spending its attempt.",
+    "worker_shutdown_release_failed": "A stopping worker could not return a job to the queue, so lease recovery will requeue it.",
+    "worker_shutdown_waiting_for_job": "A stopping worker is waiting for a running job to finish.",
 }
 
 RUNBOOKS = {
@@ -108,11 +226,18 @@ _DETAIL_FIELDS = {
     "auth_state",
     "client_fingerprint",
     "error_class",
+    "item_count",
+    "lock_holder",
+    "maintenance_task",
+    "page_number",
+    "profile_document_id",
     "rate_limit_control",
     "rate_limit_feature",
+    "reason",
     "related_request_id",
     "response_bytes",
     "retry_after_seconds",
+    "visual_index",
     "worker_id",
 }
 
@@ -152,14 +277,24 @@ def _safe_timestamp(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _source_location(payload: Mapping[str, Any]) -> str | None:
+def _safe_stack(payload: Mapping[str, Any]) -> list[str]:
     stack = payload.get("stack")
     if not isinstance(stack, list):
-        return None
-    safe = [
+        return []
+    return [
         item for item in stack if isinstance(item, str) and _SAFE_STACK.fullmatch(item)
     ]
-    return safe[-1] if safe else None
+
+
+def _safe_text(value: object, limit: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = _CONTROL_CHARACTERS.sub(" ", redact(value)).strip()
+    return text[:limit] or None
+
+
+def _is_project_logger(name: str) -> bool:
+    return name.split(".", 1)[0] in _PROJECT_LOGGER_ROOTS
 
 
 def _signature(payload: Mapping[str, Any], source_location: str | None) -> str | None:
@@ -202,6 +337,9 @@ def sanitize_operational_payload(
         or event == "cloudwatch_emf"
     ):
         return None
+    if event == "application_log" and not _is_project_logger(logger):
+        event = "library_log"
+    message = _safe_text(payload.get("message"), _MAX_MESSAGE)
 
     source_type = source or (
         "client_report" if event == "client_error_reported" else "operational"
@@ -220,8 +358,15 @@ def sanitize_operational_payload(
         "environment": environment,
         "logger": logger,
         "event": event,
-        "description": EVENT_DESCRIPTIONS.get(event, "Application event."),
+        "description": EVENT_DESCRIPTIONS.get(event) or message or "Application event.",
     }
+    if message is not None:
+        safe["message"] = message
+    exception_message = _safe_text(
+        payload.get("exception_message"), _MAX_EXCEPTION_MESSAGE
+    )
+    if exception_message is not None:
+        safe["exception_message"] = exception_message
     for field in (
         "error_code",
         "error_category",
@@ -294,7 +439,10 @@ def sanitize_operational_payload(
         safe_chain = [_safe_string(item) for item in chain[:10]]
         safe["exception_chain"] = [item for item in safe_chain if item is not None]
 
-    location = _source_location(payload)
+    stack = _safe_stack(payload)
+    location = stack[-1] if stack else None
+    if stack:
+        safe["stack"] = stack
     if location is not None:
         safe["source_location"] = location
     signature = _signature(safe, location)
@@ -457,6 +605,8 @@ class OperationalEventHandler(logging.Handler):
             payload = sanitize_operational_payload(json.loads(rendered))
             if payload is None:
                 self._pending_dropped += 1
+                return
+            if payload["event"] == "library_log" and payload["level"] == "INFO":
                 return
             now = datetime.now(timezone.utc).isoformat()
             with self._connect() as connection:

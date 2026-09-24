@@ -116,12 +116,48 @@ def test_readme_local_model_profile_uses_the_single_material_ceiling() -> None:
     assert "STUDY_GUIDE_MATERIAL_MAX_CHARS=" not in block
 
 
-def test_compose_worker_stop_grace_period_covers_generation_timeout() -> None:
-    """P2-048: worker stop_grace_period in compose files must cover the 600s
-    generation job attempt timeout plus 45s margin (645s)."""
+def test_compose_worker_stop_grace_agrees_with_the_documented_shutdown_rule() -> None:
+    from backend.app.config import (
+        DEFAULT_DESCRIBE_VISUALS_ATTEMPT_TIMEOUT_SECONDS,
+        DEFAULT_GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS,
+        DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
+        DEFAULT_WORKER_SHUTDOWN_MODE,
+        WORKER_SHUTDOWN_MODE_ABORT,
+    )
+    from workers.shutdown import ABORT_SHUTDOWN_SECONDS
+
+    compose_defaults = {}
     for filename in ("docker-compose.yml", "docker-compose.hosted.yml"):
         content = (PROJECT_ROOT / filename).read_text(encoding="utf-8")
-        assert "stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-645s}" in content
+        match = re.search(
+            r"stop_grace_period: \$\{WORKER_STOP_GRACE_PERIOD:-(\d+)s\}", content
+        )
+        assert match, f"{filename} does not take the worker stop grace from .env"
+        compose_defaults[filename] = int(match.group(1))
+
+    env_example = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
+    grace = re.search(r"^WORKER_STOP_GRACE_PERIOD=(\d+)s$", env_example, re.MULTILINE)
+    mode = re.search(r"^WORKER_SHUTDOWN_MODE=(\w+)$", env_example, re.MULTILINE)
+    assert grace and mode, ".env.example must declare the worker shutdown settings"
+    grace_seconds = int(grace.group(1))
+    assert set(compose_defaults.values()) == {grace_seconds}, compose_defaults
+    assert mode.group(1) == DEFAULT_WORKER_SHUTDOWN_MODE
+
+    if mode.group(1) == WORKER_SHUTDOWN_MODE_ABORT:
+        required = ABORT_SHUTDOWN_SECONDS + 45
+    else:
+        required = (
+            max(
+                DEFAULT_PROCESSING_JOB_ATTEMPT_TIMEOUT_SECONDS,
+                DEFAULT_DESCRIBE_VISUALS_ATTEMPT_TIMEOUT_SECONDS,
+                DEFAULT_GENERATION_JOB_ATTEMPT_TIMEOUT_SECONDS,
+            )
+            + 45
+        )
+    assert grace_seconds >= required
+
+    deployment = (PROJECT_ROOT / "docs" / "deployment.md").read_text(encoding="utf-8")
+    assert f"worker stop grace is {grace_seconds} seconds" in deployment
 
 
 def test_docs_uvicorn_commands_include_no_access_log() -> None:

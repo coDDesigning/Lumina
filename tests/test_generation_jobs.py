@@ -8,13 +8,19 @@ is allowed to see.
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+import logging
+import threading
+import time
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from backend.app.config import WORKER_SHUTDOWN_MODE_ABORT, WORKER_SHUTDOWN_MODE_DRAIN
 from backend.app.models import (
     GENERATION_JOB_TYPES,
     JOB_STATUS_FAILED,
@@ -43,6 +49,10 @@ from generation_fixtures import (
     study_guide_payload,
 )
 from services.credits import GENERATION_CREDIT_COSTS, CreditService
+from services.document_lock import (
+    acquire_generation_locks,
+    is_document_locked_for_generation,
+)
 from services.generation_jobs import (
     CREDIT_SOURCE_TYPES,
     GenerationJobNotDismissableError,
@@ -57,14 +67,16 @@ from services.generation_jobs import (
     heartbeat_generation_job,
     list_course_generation_jobs,
     recover_expired_generation_jobs,
+    release_generation_job,
     dismiss_generation_job,
     retry_generation_job,
 )
 
 from tests.conftest import assert_balance_is_derivable, seed_registration_grant
-from workers import generation_processor
+from workers import document_processor, generation_processor, shutdown, worker
 
 LEASE_SECONDS = 60
+COMBINED_WORKER_THREADS = {"documents", "generations"}
 
 JOB_TYPE_BY_FEATURE = {
     "quiz": JOB_TYPE_GENERATE_QUIZ,
@@ -816,6 +828,311 @@ def test_complete_rejects_a_stale_claim_token(
     row = db_session.get(GenerationJob, claimed.id)
     assert row is not None
     assert row.status == JOB_STATUS_RUNNING
+
+
+def test_releasing_a_running_generation_restores_its_attempt_and_keeps_the_charge(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    queued = _enqueue(db_session, course, owner)
+    charged_balance = db_session.get(User, owner.id).credits
+    claimed = claim_next_generation_job(db_session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+    assert claimed.attempt_count == 1
+
+    assert release_generation_job(db_session, claimed.id, claimed.claim_token) is True
+
+    db_session.expire_all()
+    row = db_session.get(GenerationJob, queued.id)
+    assert row is not None
+    assert row.status == JOB_STATUS_QUEUED
+    assert row.attempt_count == 0
+    assert row.started_at is None
+    assert row.claim_token is None
+    assert row.lease_owner is None
+    assert row.claimed_at is None
+    assert row.heartbeat_at is None
+    assert row.lease_expires_at is None
+    assert row.finished_at is None
+    assert row.charge_amount == pytest.approx(1.0)
+    assert row.charge_transaction_id is not None
+    assert row.charge_refunded is False
+    assert db_session.get(User, owner.id).credits == pytest.approx(charged_balance)
+    assert_balance_is_derivable(db_session, owner.id)
+
+    reclaimed = claim_next_generation_job(db_session, "worker-2", LEASE_SECONDS)
+    assert reclaimed is not None
+    assert reclaimed.id == queued.id
+    assert reclaimed.attempt_count == 1
+
+
+def test_a_generation_release_with_a_stale_claim_token_changes_nothing(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    _enqueue(db_session, course, owner)
+    claimed = claim_next_generation_job(db_session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+
+    assert (
+        release_generation_job(
+            db_session, claimed.id, "00000000-0000-0000-0000-000000000000"
+        )
+        is False
+    )
+
+    db_session.expire_all()
+    row = db_session.get(GenerationJob, claimed.id)
+    assert row is not None
+    assert row.status == JOB_STATUS_RUNNING
+    assert row.claim_token == claimed.claim_token
+    assert row.attempt_count == 1
+
+
+def test_a_generation_that_is_not_running_cannot_be_released(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    queued = _enqueue(db_session, course, owner)
+
+    assert release_generation_job(db_session, queued.id, "irrelevant-token") is False
+
+    db_session.expire_all()
+    row = db_session.get(GenerationJob, queued.id)
+    assert row is not None
+    assert row.status == JOB_STATUS_QUEUED
+    assert row.attempt_count == 0
+
+
+def test_a_generation_released_during_its_provider_call_cannot_complete_afterwards(
+    db_session: Session, owner: User, course: Course
+) -> None:
+    _enqueue(db_session, course, owner)
+    claimed = claim_next_generation_job(db_session, "worker-1", LEASE_SECONDS)
+    assert claimed is not None
+    output = _persisted_output(db_session, course, owner)
+
+    assert release_generation_job(db_session, claimed.id, claimed.claim_token) is True
+
+    with pytest.raises(GenerationJobStateError):
+        complete_generation_job(
+            db_session, claimed.id, claimed.claim_token, generated_output_id=output.id
+        )
+
+    db_session.expire_all()
+    row = db_session.get(GenerationJob, claimed.id)
+    assert row is not None
+    assert row.status == JOB_STATUS_QUEUED
+    assert row.claim_token is None
+
+
+class _IdleStorage:
+    provider = "combined-worker-test"
+
+    def check_ready(self) -> None:
+        return None
+
+
+def _isolate_the_combined_worker(
+    monkeypatch: pytest.MonkeyPatch, *, mode: str, generation_concurrency: int
+) -> None:
+    monkeypatch.setattr(document_processor, "check_worker_ready", lambda **_k: None)
+    monkeypatch.setattr(generation_processor, "check_worker_ready", lambda **_k: None)
+    monkeypatch.setattr(document_processor, "get_storage", _IdleStorage)
+    monkeypatch.setattr(generation_processor, "get_storage", _IdleStorage)
+    monkeypatch.setattr(
+        document_processor,
+        "settings",
+        replace(
+            document_processor.settings,
+            worker_shutdown_mode=mode,
+            course_purge_interval_seconds=0.0,
+            embedding_backfill_interval_seconds=0.0,
+            ai_usage_cleanup_interval_seconds=0.0,
+            visual_description_sweep_interval_seconds=0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        worker,
+        "settings",
+        replace(
+            worker.settings,
+            worker_shutdown_mode=mode,
+            generation_job_concurrency=generation_concurrency,
+        ),
+    )
+
+
+def _join_the_combined_worker() -> None:
+    for thread in threading.enumerate():
+        if thread.name in COMBINED_WORKER_THREADS:
+            thread.join(timeout=10)
+
+
+def _stop_the_worker_if_nothing_claims(stop: threading.Event) -> threading.Timer:
+    watchdog = threading.Timer(30.0, stop.set)
+    watchdog.daemon = True
+    watchdog.start()
+    return watchdog
+
+
+def _events(caplog: pytest.LogCaptureFixture, name: str) -> list[logging.LogRecord]:
+    return [
+        record for record in caplog.records if getattr(record, "event", None) == name
+    ]
+
+
+@pytest.mark.parametrize("concurrency", [1, 2])
+def test_an_aborting_worker_returns_a_blocked_generation_to_the_queue(
+    concurrency: int,
+    db_session: Session,
+    session_factory: sessionmaker[Session],
+    owner: User,
+    course: Course,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    queued = _enqueue(db_session, course, owner)
+    charged_balance = db_session.get(User, owner.id).credits
+    held_document_id = uuid4()
+    stop = threading.Event()
+    provider_answers = threading.Event()
+    stop_requested_at: list[float] = []
+
+    def blocked_runner(session: Session, _job) -> generation_processor.ResultPersister:
+        with acquire_generation_locks(session, [held_document_id]):
+            stop_requested_at.append(time.monotonic())
+            stop.set()
+            provider_answers.wait(timeout=10)
+
+        def persist(result_session: Session) -> tuple[int | None, int | None]:
+            output = GeneratedOutput(
+                course_id=course.id,
+                user_id=owner.id,
+                model_used="test-model",
+                output_type="study_guide",
+                content='{"title":"Arrived after shutdown"}',
+            )
+            result_session.add(output)
+            result_session.flush()
+            return output.id, None
+
+        return persist
+
+    monkeypatch.setitem(
+        generation_processor.RUNNERS, JOB_TYPE_GENERATE_STUDY_GUIDE, blocked_runner
+    )
+    monkeypatch.setattr(shutdown, "ABORT_SHUTDOWN_SECONDS", 0.5)
+    _isolate_the_combined_worker(
+        monkeypatch,
+        mode=WORKER_SHUTDOWN_MODE_ABORT,
+        generation_concurrency=concurrency,
+    )
+    caplog.set_level(logging.INFO)
+    watchdog = _stop_the_worker_if_nothing_claims(stop)
+
+    try:
+        abandoned = worker.run_worker(stop_event=stop, session_factory=session_factory)
+        returned_at = time.monotonic()
+        with session_factory() as session:
+            released = session.get(GenerationJob, queued.id)
+            balance = session.get(User, owner.id).credits
+            lock_still_held = is_document_locked_for_generation(
+                session, held_document_id
+            )
+            assert_balance_is_derivable(session, owner.id)
+    finally:
+        watchdog.cancel()
+        provider_answers.set()
+        _join_the_combined_worker()
+
+    assert abandoned is True
+    assert returned_at - stop_requested_at[0] < 2.0
+    assert released.status == JOB_STATUS_QUEUED
+    assert released.attempt_count == 0
+    assert released.claim_token is None
+    assert released.lease_expires_at is None
+    assert released.charge_amount == pytest.approx(1.0)
+    assert released.charge_refunded is False
+    assert balance == pytest.approx(charged_balance)
+    assert lock_still_held is False
+
+    assert not any(
+        thread.name in COMBINED_WORKER_THREADS for thread in threading.enumerate()
+    )
+    assert shutdown.in_flight() == []
+    db_session.expire_all()
+    after_the_late_answer = db_session.get(GenerationJob, queued.id)
+    assert after_the_late_answer.status == JOB_STATUS_QUEUED
+    assert after_the_late_answer.attempt_count == 0
+    assert db_session.scalars(select(GeneratedOutput)).all() == []
+
+    assert [
+        record.job_id for record in _events(caplog, "worker_shutdown_aborting_job")
+    ] == [queued.id]
+    assert [
+        record.job_id for record in _events(caplog, "worker_shutdown_job_released")
+    ] == [queued.id]
+    assert [
+        record.item_count
+        for record in _events(caplog, "worker_generation_locks_released")
+    ] == [1]
+    assert len(_events(caplog, "worker_shutdown_deadline_exceeded")) == 1
+
+
+def test_a_draining_worker_waits_for_a_blocked_generation_to_finish(
+    db_session: Session,
+    session_factory: sessionmaker[Session],
+    owner: User,
+    course: Course,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    queued = _enqueue(db_session, course, owner)
+    stop = threading.Event()
+
+    def slow_runner(_session: Session, _job) -> generation_processor.ResultPersister:
+        stop.set()
+        time.sleep(0.6)
+
+        def persist(result_session: Session) -> tuple[int | None, int | None]:
+            output = GeneratedOutput(
+                course_id=course.id,
+                user_id=owner.id,
+                model_used="test-model",
+                output_type="study_guide",
+                content='{"title":"Finished while draining"}',
+            )
+            result_session.add(output)
+            result_session.flush()
+            return output.id, None
+
+        return persist
+
+    monkeypatch.setitem(
+        generation_processor.RUNNERS, JOB_TYPE_GENERATE_STUDY_GUIDE, slow_runner
+    )
+    monkeypatch.setattr(shutdown, "ABORT_SHUTDOWN_SECONDS", 0.2)
+    _isolate_the_combined_worker(
+        monkeypatch, mode=WORKER_SHUTDOWN_MODE_DRAIN, generation_concurrency=2
+    )
+    caplog.set_level(logging.INFO)
+    watchdog = _stop_the_worker_if_nothing_claims(stop)
+
+    try:
+        abandoned = worker.run_worker(stop_event=stop, session_factory=session_factory)
+    finally:
+        watchdog.cancel()
+        _join_the_combined_worker()
+
+    assert abandoned is False
+    db_session.expire_all()
+    finished = db_session.get(GenerationJob, queued.id)
+    assert finished.status == JOB_STATUS_SUCCEEDED
+    assert finished.attempt_count == 1
+    assert db_session.get(GeneratedOutput, finished.generated_output_id) is not None
+    assert [
+        record.job_id for record in _events(caplog, "worker_shutdown_waiting_for_job")
+    ] == [queued.id]
+    assert _events(caplog, "worker_shutdown_job_released") == []
+    assert _events(caplog, "worker_shutdown_deadline_exceeded") == []
 
 
 def test_complete_requires_exactly_one_result(

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { generatedOutputsAPI } from '@/api/generatedOutputs';
 import { queryKeys } from '@/api/queryKeys';
 import type { CourseProgressResponse, GeneratedOutputSummary } from '@/api/types';
+import { isListedOutputType } from '@/features/study/outputTypes';
 import { useQuery } from '@/lib/query/useQuery';
 
 export type CourseArtifact =
@@ -63,9 +64,7 @@ export function useCourseArtifacts(
 
   const artifacts = useMemo(() => {
     const outputs: CourseArtifact[] = (rows ?? [])
-      // Reverse-quiz sessions have their own history endpoint and no artifact
-      // viewer, so they stay out of the "Made for you" rail.
-      .filter((row) => row.output_type !== 'reverse_quiz')
+      .filter((row) => isListedOutputType(row.output_type))
       .map((row) => ({
         kind: outputKind(row.output_type),
         key: `output-${row.id}`,

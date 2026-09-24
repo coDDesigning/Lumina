@@ -9,6 +9,7 @@ service to mint a token it did not have to receive.
 import re
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
@@ -233,8 +234,12 @@ def test_unverified_account_cannot_enqueue_document_work(
         files={"document": ("profile.txt", b"profile notes", "text/plain")},
         headers=authorization,
     )
+    retry_visuals = api_context.client.post(
+        f"/api/courses/{course_id}/documents/{uuid4()}/visuals/retry",
+        headers=authorization,
+    )
 
-    for response in (create, upload, profile_upload):
+    for response in (create, upload, profile_upload, retry_visuals):
         assert response.status_code == 403
         assert response.headers["X-Error-Code"] == "email_verification_required"
 

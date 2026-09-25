@@ -1,0 +1,88 @@
+name: Deploy (Oracle)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Commit SHA on main to deploy. Empty deploys the triggering commit."
+        required: false
+        type: string
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Oracle production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: production
+    env:
+      ORACLE_HOST: ${{ vars.ORACLE_HOST }}
+      ORACLE_USER: ${{ vars.ORACLE_USER }}
+      ORACLE_KNOWN_HOSTS: ${{ vars.ORACLE_KNOWN_HOSTS }}
+      FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+      RELEASE_INPUT: ${{ inputs.release }}
+      COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - name: Resolve release
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Production deploys run from main only."
+            exit 1
+          fi
+          for name in ORACLE_HOST ORACLE_USER ORACLE_KNOWN_HOSTS FRONTEND_URL; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Required production variable $name is not configured."
+              exit 1
+            fi
+          done
+          release="${RELEASE_INPUT:-$COMMIT_SHA}"
+          release="${release,,}"
+          if [[ ! "$release" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The release must be a full 40-character commit SHA."
+            exit 1
+          fi
+          echo "RELEASE=$release" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        env:
+          ORACLE_DEPLOY_KEY: ${{ secrets.ORACLE_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ORACLE_DEPLOY_KEY" ]; then
+            echo "::error::Required production secret ORACLE_DEPLOY_KEY is not configured."
+            exit 1
+          fi
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$ORACLE_DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$ORACLE_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy release
+        run: |
+          set -euo pipefail
+          # The server pins this key to lumina-deploy, which reads the SHA.
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            -o ServerAliveInterval=30 \
+            "$ORACLE_USER@$ORACLE_HOST" "$RELEASE"
+
+      - name: Smoke test public site
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 10 --retry-delay 5 --retry-all-errors "${FRONTEND_URL%/}/health/ready"
+          echo
+          curl -fsS --retry 5 --retry-delay 5 "${FRONTEND_URL%/}/" | grep -q '<div id="root">'
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

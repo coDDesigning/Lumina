@@ -44,6 +44,15 @@ referenced by the database snapshot and checks each against its recorded byte
 size and SHA-256 digest. Chroma is a raw snapshot and therefore requires the API
 and worker to be stopped.
 
+`/data/system-settings/` is archived alongside them, so a restored deployment
+comes back with the administrator configuration it was running rather than
+falling back to `.env` alone. It is optional in both directions: an archive
+written before the override store existed restores normally and simply carries
+no overrides. The file holds configured secrets in plaintext, because the
+application has to read them, so the archive is exactly as sensitive as the
+database and must be stored the same way. See
+[System settings and controlled restart](deployment.md#system-settings-and-controlled-restart).
+
 One container serves the interface and the API, so stopping `lumina` takes the
 interface down with it: for the duration of a backup the deployment does not
 answer at all, rather than loading and failing every request. The wrapper

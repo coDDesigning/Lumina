@@ -604,3 +604,87 @@ def test_restore_without_vectors_backfills_embedding_gaps(
     finally:
         store.close()
         engine.dispose()
+
+
+def test_backup_round_trips_the_configuration_overrides(
+    session_factory,
+    tmp_path: Path,
+) -> None:
+    database = _database_path(session_factory)
+    uploads = tmp_path / "source-uploads"
+    chroma = tmp_path / "source-chroma"
+    uploads.mkdir(parents=True)
+    chroma.mkdir(parents=True)
+    overrides = tmp_path / "source-system-settings"
+    overrides.mkdir(parents=True)
+    (overrides / "overrides.json").write_text(
+        json.dumps({"revision": 3, "values": {"OCR_DPI": "150"}}),
+        encoding="utf-8",
+    )
+    (overrides / "last-known-good.json").write_text(
+        json.dumps({"revision": 3, "values": {"OCR_DPI": "150"}}),
+        encoding="utf-8",
+    )
+    archive = tmp_path / "off-host" / "backup.tar.gz"
+
+    manifest = create_backup(
+        archive,
+        database_path=database,
+        upload_directory=uploads,
+        chroma_directory=chroma,
+        include_chroma_offline=False,
+        system_settings_directory=overrides,
+    )
+
+    assert {entry["path"] for entry in manifest["system_settings"]} == {
+        "overrides.json",
+        "last-known-good.json",
+    }
+
+    restored_settings = tmp_path / "restored" / "system-settings"
+    restore_backup(
+        archive,
+        database_path=tmp_path / "restored" / "lumina.db",
+        upload_directory=tmp_path / "restored" / "uploads",
+        chroma_directory=tmp_path / "restored" / "chroma",
+        system_settings_directory=restored_settings,
+    )
+
+    stored = json.loads((restored_settings / "overrides.json").read_text("utf-8"))
+    assert stored == {"revision": 3, "values": {"OCR_DPI": "150"}}
+    good = json.loads((restored_settings / "last-known-good.json").read_text("utf-8"))
+    assert good["revision"] == 3
+
+
+def test_an_archive_without_overrides_still_restores(
+    session_factory,
+    tmp_path: Path,
+) -> None:
+    database = _database_path(session_factory)
+    uploads = tmp_path / "source-uploads"
+    chroma = tmp_path / "source-chroma"
+    uploads.mkdir(parents=True)
+    chroma.mkdir(parents=True)
+    archive = tmp_path / "off-host" / "backup.tar.gz"
+
+    manifest = create_backup(
+        archive,
+        database_path=database,
+        upload_directory=uploads,
+        chroma_directory=chroma,
+        include_chroma_offline=False,
+    )
+
+    assert manifest["system_settings"] == []
+
+    restored_settings = tmp_path / "restored" / "system-settings"
+    restore_backup(
+        archive,
+        database_path=tmp_path / "restored" / "lumina.db",
+        upload_directory=tmp_path / "restored" / "uploads",
+        chroma_directory=tmp_path / "restored" / "chroma",
+        system_settings_directory=restored_settings,
+    )
+
+    assert restored_settings.is_dir()
+    assert list(restored_settings.iterdir()) == []

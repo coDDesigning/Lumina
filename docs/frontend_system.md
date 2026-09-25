@@ -189,8 +189,9 @@ Rules that are not negotiable:
 /account/background                profile knowledge
 /account/ai                        model choice, and credits when metered
 /account/appearance                theme
-/admin                             admin (rail entry hidden unless role === 'admin')
-/admin/logs                        operational investigation (admin only)
+/admin                             admin (the one rail entry, hidden unless role === 'admin')
+/admin/logs                        operational investigation, reached from /admin
+/admin/system-settings             installation configuration and restart, reached from /admin
 
   -- kept so older links still resolve --
 /workspaces/:id/**                 -> /courses/:id/**

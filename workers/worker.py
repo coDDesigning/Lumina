@@ -1,5 +1,6 @@
 """Run document processing and background AI generation in one worker task."""
 
+import backend.app.boot_attempt  # noqa: F401
 import argparse
 import logging
 import os
@@ -13,6 +14,7 @@ from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.observability import configure_logging
 from backend.app.readiness import ReadinessError
+from backend.app.settings_overrides import RevisionWatcher
 from workers import shutdown
 from workers.document_processor import (
     check_worker_ready,
@@ -80,12 +82,32 @@ def run_worker(
     ]
     for thread in threads:
         thread.start()
-    abandoned = shutdown.supervise(
-        threads,
-        stop,
-        mode=settings.worker_shutdown_mode,
-        session_factory=session_factory,
+
+    def adopt_new_revision(request) -> None:
+        logger.info(
+            "Stopping the worker to adopt a new configuration revision",
+            extra={
+                "event": "worker_settings_revision_changed",
+                "settings_revision": request.target_revision,
+                "success": True,
+            },
+        )
+        stop.set()
+
+    revision_watcher = RevisionWatcher(
+        adopt_new_revision, name="lumina-worker-revision-watcher"
     )
+    if not once:
+        revision_watcher.start()
+    try:
+        abandoned = shutdown.supervise(
+            threads,
+            stop,
+            mode=settings.worker_shutdown_mode,
+            session_factory=session_factory,
+        )
+    finally:
+        revision_watcher.stop()
 
     with failure_lock:
         if failures:

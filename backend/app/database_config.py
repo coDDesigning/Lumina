@@ -5,6 +5,10 @@ from pathlib import Path
 
 from sqlalchemy.engine import make_url
 
+from backend.app.settings_overrides import apply_overrides
+
+apply_overrides()
+
 MODE_SELF_HOSTED = "self_hosted"
 MODE_HOSTED = "hosted"
 APP_ENV_DEVELOPMENT = "development"

@@ -276,10 +276,27 @@ unset otherwise: it tells the API whose `X-Forwarded-For` header to believe, and
 a caller allowed to set its own would also be choosing its own rate-limit
 identity.
 
+### Changing everything else
+
+The port, the image and the container's resource limits are read by Docker
+Compose before Lumina starts, so they stay a `.env` edit followed by
+`docker compose up -d`. Almost everything else can be changed from inside
+Lumina: sign in as an administrator and open **System settings** in the sidebar.
+
+That page lists every setting this installation supports, says where each
+current value came from, and saves changes that take effect the next time
+Lumina starts. There is a Restart Lumina button at the bottom that does the
+restart for you, waiting for any document or generation work to finish first.
+Your `.env` file is never modified, and a saved value that turns out to stop
+Lumina from starting is rolled back automatically.
+
+See [docs/deployment.md](docs/deployment.md#system-settings-and-controlled-restart).
+
 ## Data and backups
 
 Everything durable lives in one named volume, `lumina-data`: the SQLite
-database, your uploaded documents, and the Chroma vector index.
+database, your uploaded documents, the Chroma vector index, and any settings
+you changed from the System settings page.
 
 All three must be captured as a single consistent set. Copying a live SQLite
 file or Chroma directory is not a supported backup — the supported wrapper stops
@@ -390,6 +407,8 @@ contract, and production configuration.
 | Dependencies | [`docs/dependencies.md`](docs/dependencies.md) |
 | Legal policy sources and update process | [`docs/legal/README.md`](docs/legal/README.md) |
 | Operational runbooks | [`docs/runbooks/`](docs/runbooks/) |
+| Every environment variable, as JSON | [`docs/env.json`](docs/env.json) |
+| System settings and controlled restart | [`docs/runbooks/system_settings_restart.md`](docs/runbooks/system_settings_restart.md) |
 | Branch protection and status checks | [`docs/branch_protection.md`](docs/branch_protection.md) |
 | PR-Agent | [`docs/pr-agent.md`](docs/pr-agent.md) |
 

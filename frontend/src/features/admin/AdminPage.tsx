@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { ScrollText, SlidersHorizontal } from 'lucide-react';
 import type { FormEvent } from 'react';
 import { adminAPI } from '@/api/admin';
 import { queryKeys } from '@/api/queryKeys';
@@ -296,12 +297,7 @@ export default function AdminPage() {
       <PageHeader
         crumbs={[{ label: 'Admin' }]}
         badges={<Badge tone="accent">Administrator</Badge>}
-        actions={
-          <>
-            <span className="tabular">{users.length} accounts</span>
-            <LinkButton to="/admin/logs" size="sm">Investigate logs</LinkButton>
-          </>
-        }
+        actions={<span className="tabular">{users.length} accounts</span>}
       />
 
       <div className={styles.body}>
@@ -310,6 +306,19 @@ export default function AdminPage() {
           Credit changes are permanent ledger entries. A mistake is corrected by another entry,
           never by editing a balance.
         </p>
+
+        <nav className={styles.sections} aria-label="Admin sections">
+          <LinkButton to="/admin/logs" size="sm" icon={<ScrollText size={16} />}>
+            Admin logs
+          </LinkButton>
+          <LinkButton
+            to="/admin/system-settings"
+            size="sm"
+            icon={<SlidersHorizontal size={16} />}
+          >
+            System settings
+          </LinkButton>
+        </nav>
 
         <section className={styles.costSection} aria-labelledby="provider-cost-title">
           <div className={styles.costHeading}>

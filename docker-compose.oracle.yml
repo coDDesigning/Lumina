@@ -1,0 +1,35 @@
+# Single-host production override for the Oracle Cloud VM, applied on top of
+# docker-compose.hosted.yml:
+#
+#   docker compose -f docker-compose.hosted.yml -f docker-compose.oracle.yml up -d
+#
+# MinIO no longer publishes pullable images, so the `minio` service name that
+# the application reaches at http://minio:9000 is served by Versity S3 Gateway
+# on the same POSIX volume, and the bucket is created with the AWS CLI instead
+# of `mc`. Everything else, including .env, is inherited unchanged. See
+# docs/runbooks/oracle-single-host.md.
+services:
+  minio:
+    image: versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499
+    command: ["--port", ":9000", "posix", "/data"]
+    environment:
+      ROOT_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+      ROOT_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+
+  minio-init:
+    image: amazon/aws-cli:2.37.3@sha256:83f8ffe939569070c5b66d22231862ab78718766d9d8e4c44ca84dd0be5569a5
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+      AWS_DEFAULT_REGION: us-east-1
+      S3_BUCKET: ${S3_BUCKET:-lumina}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        for attempt in $$(seq 1 30); do
+          aws --endpoint-url http://minio:9000 s3api list-buckets >/dev/null 2>&1 && break
+          sleep 1
+        done
+        aws --endpoint-url http://minio:9000 s3api head-bucket --bucket "$$S3_BUCKET" 2>/dev/null \
+          || aws --endpoint-url http://minio:9000 s3api create-bucket --bucket "$$S3_BUCKET"

@@ -1498,6 +1498,30 @@ class ReliableTextGenerationProvider:
         return result
 
 
+_OLLAMA_PROMPT_RESERVE_TOKENS = 2048
+_OLLAMA_MATERIAL_CHARS_PER_TOKEN = 3
+
+
+def material_budget(configured: int, provider: object) -> int:
+    primary = (
+        provider.providers[0]
+        if isinstance(provider, ReliableTextGenerationProvider)
+        else provider
+    )
+    if getattr(primary, "PROVIDER_NAME", None) != AI_PROVIDER_OLLAMA:
+        return configured
+    material_tokens = (
+        settings.ollama_num_ctx
+        - settings.ollama_num_predict
+        - _OLLAMA_PROMPT_RESERVE_TOKENS
+    )
+    ollama_budget = max(
+        material_tokens * _OLLAMA_MATERIAL_CHARS_PER_TOKEN,
+        settings.document_chunk_size_characters,
+    )
+    return min(configured, ollama_budget)
+
+
 def get_available_models(user: object | None = None) -> list[dict[str, object]]:
     # The deployment's credentials set the base; a user's own key can add a
     # vendor the deployment does not configure.

@@ -27,6 +27,7 @@ from services.text_generation import (
     TextGenerationTimeoutError,
     get_text_generation_provider,
     is_transient_generation_error,
+    material_budget,
     with_template_temperature,
 )
 
@@ -1595,3 +1596,55 @@ def test_an_off_protocol_provider_result_is_recorded_by_repr() -> None:
         reliable.generate_json_with_metadata("Generate JSON")
 
     assert exc_info.value.raw_response == "['not', 'a', 'dict']"
+
+
+def _budget_settings(**overrides):
+    values = {
+        "ollama_num_ctx": 8192,
+        "ollama_num_predict": 4096,
+        "document_chunk_size_characters": 1200,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_material_budget_caps_ollama_to_its_context_window(monkeypatch):
+    monkeypatch.setattr(text_generation, "settings", _budget_settings())
+    provider = StubProvider(provider_name="ollama")
+
+    assert material_budget(120000, provider) == (8192 - 4096 - 2048) * 3
+
+
+def test_material_budget_leaves_hosted_vendors_untouched(monkeypatch):
+    monkeypatch.setattr(text_generation, "settings", _budget_settings())
+
+    assert material_budget(120000, StubProvider(provider_name="gemini")) == 120000
+
+
+def test_material_budget_never_raises_a_smaller_configured_budget(monkeypatch):
+    monkeypatch.setattr(text_generation, "settings", _budget_settings())
+
+    assert material_budget(3000, StubProvider(provider_name="ollama")) == 3000
+
+
+def test_material_budget_follows_the_primary_vendor_of_a_fallback_chain(monkeypatch):
+    ollama_first = ReliableTextGenerationProvider(
+        [StubProvider(provider_name="ollama"), StubProvider(provider_name="gemini")]
+    )
+    gemini_first = ReliableTextGenerationProvider(
+        [StubProvider(provider_name="gemini"), StubProvider(provider_name="ollama")]
+    )
+    monkeypatch.setattr(text_generation, "settings", _budget_settings())
+
+    assert material_budget(120000, ollama_first) == 6144
+    assert material_budget(120000, gemini_first) == 120000
+
+
+def test_material_budget_keeps_at_least_one_chunk(monkeypatch):
+    monkeypatch.setattr(
+        text_generation,
+        "settings",
+        _budget_settings(ollama_num_ctx=4096, ollama_num_predict=4096),
+    )
+
+    assert material_budget(120000, StubProvider(provider_name="ollama")) == 1200

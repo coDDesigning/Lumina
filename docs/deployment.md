@@ -221,6 +221,14 @@ the bucket's region, static credentials are optional (prefer an IAM role for the
 EC2 instance or ECS task), and the bucket is provisioned outside the stack
 (`minio`/`minio-init` services are not used).
 
+## Current production host (Oracle Cloud)
+
+Production currently runs this hosted topology on a single Oracle Cloud VM,
+with `docker-compose.oracle.yml` replacing the MinIO images that are no longer
+published. It is deployed by `.github/workflows/deploy-oracle.yml`; the AWS
+topology below is retained but not live. See the
+[Oracle single-host runbook](runbooks/oracle-single-host.md).
+
 ## AWS production topology (Terraform)
 
 The `terraform/` configuration provisions the hosted production topology on

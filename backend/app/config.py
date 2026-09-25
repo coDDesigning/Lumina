@@ -85,6 +85,10 @@ DEFAULT_OPERATIONAL_LOG_QUERY_TIMEOUT_SECONDS = 10
 DEFAULT_CLIENT_ERROR_MAX_REPORTS = 20
 DEFAULT_CLIENT_ERROR_WINDOW_SECONDS = 60
 
+DEFAULT_SYSTEM_SETTINGS_DIRECTORY = "./data/system-settings"
+DEFAULT_SYSTEM_RESTART_DRAIN_TIMEOUT_SECONDS = 120
+MAX_SYSTEM_RESTART_DRAIN_TIMEOUT_SECONDS = 3_600
+
 IMAGE_PROVIDER_NONE = "none"
 # Vendors with an ImageUnderstandingProvider implementation. A catalog entry
 # may advertise vision for a vendor we cannot send an image to.
@@ -395,6 +399,13 @@ class Settings:
     # Where the built interface lives, or None to serve the API alone. See
     # backend/app/spa.py.
     web_root: Path | None
+
+    # Administrator-managed configuration overrides. The directory is read by
+    # backend/app/settings_overrides.py before this object exists, so it can
+    # never itself be overridden.
+    system_settings_directory: str
+    system_restart_drain_timeout_seconds: int
+    supervised_restart: bool
 
     # Periodic maintenance configuration
     course_purge_interval_seconds: float
@@ -1254,6 +1265,22 @@ def load_settings() -> Settings:
     )
     web_root = _web_root_setting()
 
+    system_settings_directory = os.getenv(
+        "SYSTEM_SETTINGS_DIRECTORY", DEFAULT_SYSTEM_SETTINGS_DIRECTORY
+    ).strip()
+    if not system_settings_directory:
+        raise ValueError("SYSTEM_SETTINGS_DIRECTORY must not be blank.")
+    system_restart_drain_timeout_seconds = _nonnegative_integer_setting(
+        "SYSTEM_RESTART_DRAIN_TIMEOUT_SECONDS",
+        DEFAULT_SYSTEM_RESTART_DRAIN_TIMEOUT_SECONDS,
+    )
+    if system_restart_drain_timeout_seconds > MAX_SYSTEM_RESTART_DRAIN_TIMEOUT_SECONDS:
+        raise ValueError(
+            "SYSTEM_RESTART_DRAIN_TIMEOUT_SECONDS must be between 0 and "
+            f"{MAX_SYSTEM_RESTART_DRAIN_TIMEOUT_SECONDS}."
+        )
+    supervised_restart = _boolean_setting("LUMINA_SUPERVISED_RESTART", default=False)
+
     course_purge_interval_seconds = _nonnegative_float_setting(
         "COURSE_PURGE_INTERVAL_SECONDS",
         DEFAULT_COURSE_PURGE_INTERVAL_SECONDS,
@@ -1498,6 +1525,9 @@ def load_settings() -> Settings:
         legal_policies_enabled=_boolean_setting(
             "LEGAL_POLICIES_ENABLED", default=False
         ),
+        system_settings_directory=system_settings_directory,
+        system_restart_drain_timeout_seconds=system_restart_drain_timeout_seconds,
+        supervised_restart=supervised_restart,
     )
 
 

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from backend.app.observability import redact
+from backend.app.settings_registry import ALL_KEYS as _SETTING_KEYS
 
 _SAFE_TOKEN = re.compile(r"[A-Za-z0-9._:/-]{1,200}")
 _SAFE_LOGGER = re.compile(r"[A-Za-z0-9_.-]{1,200}")
@@ -48,6 +49,28 @@ EVENT_DESCRIPTIONS = {
     "admin_credits_changed": "An administrator changed an account credit balance.",
     "admin_role_changed": "An administrator changed an account role.",
     "admin_user_ban_changed": "An administrator changed an account ban state.",
+    "system_restart_applying": (
+        "A requested restart finished draining and is stopping the process."
+    ),
+    "system_restart_failed": "A requested restart could not be carried out.",
+    "system_restart_process_stopping": (
+        "A process stopped itself so its supervisor would restart it."
+    ),
+    "system_restart_requested": (
+        "An administrator requested a restart to apply saved configuration."
+    ),
+    "system_settings_rejected": (
+        "An administrator submitted configuration that failed validation."
+    ),
+    "system_settings_reset": "An administrator reset one configuration override.",
+    "system_settings_reset_all": "An administrator reset every configuration override.",
+    "system_settings_saved": "An administrator saved configuration overrides.",
+    "system_settings_store_unavailable": (
+        "The durable configuration override store could not be read or written."
+    ),
+    "worker_settings_revision_changed": (
+        "The worker observed a new configuration revision and stopped to adopt it."
+    ),
     "aged_account_tombstone_detected": "A deleted account outlived the purge that should have erased it.",
     "aged_tombstone_detected": "A deleted record outlived the purge that should have removed it.",
     "ai_generation_failed": "An AI generation attempt failed.",
@@ -237,6 +260,8 @@ _DETAIL_FIELDS = {
     "related_request_id",
     "response_bytes",
     "retry_after_seconds",
+    "settings_keys",
+    "settings_revision",
     "visual_index",
     "worker_id",
 }
@@ -464,6 +489,11 @@ def sanitize_operational_payload(
                 if isinstance(item, str) and _SAFE_SCHEMA_NAME.fullmatch(item)
                 else "*"
                 for item in value[:20]
+            ]
+        elif field == "settings_keys" and isinstance(value, list):
+            details[field] = [
+                item if isinstance(item, str) and item in _SETTING_KEYS else "*"
+                for item in value[:40]
             ]
         elif field == "ai_validation_errors" and isinstance(value, list):
             details[field] = [

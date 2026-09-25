@@ -510,7 +510,14 @@ state:
 /data/lumina.db
 /data/uploads/
 /data/chroma/
+/data/system-settings/
 ```
+
+`/data/system-settings/` holds the administrator-managed configuration
+overrides, the last-known-good revision and the restart request state. It is
+owner-only (`0700`, files `0600`) and is included in the backup archive, so a
+restore brings a deployment back with the same configuration it was running.
+See [System settings and controlled restart](#system-settings-and-controlled-restart).
 
 `/data/chroma/` holds the self-hosted vector collection and is load-bearing:
 `VECTOR_BACKEND` defaults to `chroma` on SQLite, and document processing writes
@@ -576,6 +583,119 @@ The hosted Compose fixes these values instead:
 | `S3_ENDPOINT_URL` | `http://minio:9000` |
 | `S3_FORCE_PATH_STYLE` | `true` |
 | `VECTOR_BACKEND` | `pgvector` |
+
+## System settings and controlled restart
+
+A self-hosted administrator can read and change configuration from
+`/admin/system-settings` instead of editing `.env` over SSH. The page lists every
+key `.env.example` declares, grouped by that file's own sections and documented
+with its own prose.
+
+### Precedence
+
+```text
+UI override  >  .env (injected by Compose env_file)  >  documented default
+```
+
+Overrides live in `/data/system-settings/overrides.json` and are merged into the
+process environment by `backend/app/settings_overrides.py` before
+`backend/app/config.py` builds the frozen `Settings` object. Every entry point --
+the API, the worker and Alembic -- imports `backend/app/database_config.py`
+first, and that module applies the overrides, so no process can miss them.
+
+**`.env` and `.env.example` are never written to.** Save, reset, restart, a
+failed start and a rollback all leave both files byte-for-byte unchanged.
+
+### What an administrator may change
+
+The registry (`backend/app/settings_registry.py`) classifies every key:
+
+| Scope | Editable | Why |
+| --- | --- | --- |
+| `overridable` | Yes | Read by `config.py` at boot, so a restart applies it. |
+| `container_managed` | No | Pinned by `environment:` in `docker-compose.yml`, which always beats `env_file`. Overriding one would be ignored at best, and would break a read-only container at worst. |
+| `compose_managed` | No | Consumed by the Compose CLI on the host before a container exists. `LUMINA_PORT`, `LUMINA_IMAGE`, `COMPOSE_PROJECT_NAME` and the resource limits are changed by editing `.env` and re-running `docker compose up -d`. |
+
+Read-only keys still appear in the inventory, with the reason shown in the row,
+so the page never claims to apply a value it cannot.
+
+A change is validated before it is stored: the candidate environment is run
+through `load_settings()` in a subprocess, so an invalid value -- including an
+invalid combination of values, such as a worker concurrency the database pool
+cannot serve -- is refused with a field-level error and nothing is written.
+
+Secrets (`JWT_SECRET_KEY`, `ENCRYPTION_KEY`, every provider key, `SMTP_PASSWORD`,
+`BOOTSTRAP_ADMIN_TOKEN`, the S3 credentials and `DATABASE_URL`) are never
+returned, prefilled, logged or exported. A row reports only whether one is
+configured. Submitting a blank value leaves the existing secret untouched.
+
+### The machine-readable inventory
+
+[`docs/env.json`](env.json) is `.env.example` rendered as JSON, with each key's
+section, documented default, prose and registry metadata (kind, scope, risk,
+whether it is a secret, whether it is editable). It is generated, along with the
+data tables the settings registry reads, and neither is edited by hand:
+
+```bash
+python scripts/export_env_inventory.py
+```
+
+Regenerate and commit both with every `.env.example` change. Each key carries its
+own comment directly above it; a description is never inherited from a
+neighbouring key's block, because that attaches the wrong prose to a setting
+without anyone noticing. `tests/test_env_inventory.py` fails when a key documents
+nothing, when two keys share a description, or when either artifact drifts, and
+`docs/env.json` is built only from the committed template, so it can never carry
+a value from a real `.env`.
+
+### Hosted deployments
+
+The editable surface is self-hosted only. On a hosted deployment the inventory
+still reads, so an administrator can see what the deployment resolved, but every
+row reports itself read-only and every mutation is refused with
+`not_available_in_hosted_mode`. Hosted configuration and secrets stay with the
+infrastructure that runs the stack.
+
+### Restarting
+
+Settings are read once at startup, so a change applies on the next start. The
+Restart Lumina section at the foot of the page requests one:
+
+1. The API records the request in `/data/system-settings/restart.json` and
+   answers `202` with a request id and the target revision.
+2. A coordinator waits up to `SYSTEM_RESTART_DRAIN_TIMEOUT_SECONDS` for document
+   and generation jobs to finish. Work still running at the deadline is returned
+   to the queue **without spending an attempt**, so nothing is lost.
+3. Both the API and the worker run a watcher that stops its own process once the
+   target revision differs from the one it loaded. Compose declares
+   `restart: unless-stopped`, so Docker starts them again and the new
+   configuration is read at boot. No Docker socket is mounted anywhere, and the
+   mechanism behaves the same on Linux and on Docker Desktop.
+4. The first successful `/health/ready` after the restart promotes the revision
+   to last-known-good and reports the request `ready`.
+
+`LUMINA_SUPERVISED_RESTART` declares that something will start the process again.
+The image sets it to `true`. Where it is false, Lumina refuses to stop itself and
+the page says so rather than offering a button that would take the site down.
+
+### Recovery
+
+If a saved revision cannot start, the process dies before any HTTP surface
+exists, so recovery happens at boot. The API and the worker each record one boot
+attempt for a revision that has not yet reached readiness, by importing
+`backend/app/boot_attempt.py` before anything that could fail on a bad value.
+After three attempts `apply_overrides()` restores the last-known-good revision,
+records the restart as `rolled_back`, and the deployment comes back on
+configuration that is known to work. If the last-known-good also fails, startup
+fails loudly, which means the deployment's own `.env` is broken rather than the
+override.
+
+Only serving processes count. The container command runs `alembic` three times
+before uvicorn, and those runs read nothing but container-managed keys, so an
+override cannot break them and they must not spend an attempt.
+
+See [System settings restart](runbooks/system_settings_restart.md) for the
+operator procedure, including break-glass recovery.
 
 ### Email verification and response headers
 

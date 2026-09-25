@@ -74,3 +74,5 @@ graphify-out/
 graphiy-out/
 .playwright-mcp/
 network-dump*.txt
+
+.serena/

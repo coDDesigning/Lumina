@@ -1481,6 +1481,7 @@ def _ollama_provider_returning(monkeypatch, generated: str):
             ollama_num_predict=4096,
             ollama_repeat_penalty=1.1,
             ollama_think=False,
+            document_chunk_size_characters=1200,
         ),
     )
 

@@ -55,6 +55,7 @@ from services.retrieval_query import build_retrieval_query
 from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
+    material_budget,
     model_identifier,
     with_template_temperature,
 )
@@ -380,7 +381,7 @@ class ExamArtifactService:
                 course_id,
                 query=query,
                 document_ids=topic.retrieval_scope,
-                max_characters=spec.material_max_characters,
+                max_characters=material_budget(spec.material_max_characters, provider),
             )
         except MaterialNotIndexedError:
             ExamEntitlementService.release(db, unlock)
@@ -505,7 +506,7 @@ class ExamArtifactService:
                 course_id,
                 query=query,
                 document_ids=plan.retrieval_scope,
-                max_characters=spec.material_max_characters,
+                max_characters=material_budget(spec.material_max_characters, provider),
             )
         except MaterialNotIndexedError:
             db.rollback()

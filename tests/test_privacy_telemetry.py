@@ -299,6 +299,11 @@ def test_the_observability_field_allowlist_matches_its_reviewed_pin() -> None:
     size, digest, sanitised key names and pydantic loc/type pairs -- never a
     value -- and `ai_response_excerpt` is empty unless an operator turns
     `AI_LOG_RAW_RESPONSE_ON_FAILURE` on.
+
+    SCRUM-211: `settings_keys` carries configuration key NAMES only, each
+    checked against the registry and masked as `*` otherwise, and
+    `settings_revision` is a counter. No configured value, secret or not, may
+    travel through either.
     """
     from backend.app.observability import _ALLOWED_FIELDS
 
@@ -349,6 +354,8 @@ def test_the_observability_field_allowlist_matches_its_reviewed_pin() -> None:
         "response_bytes",
         "retry_after_seconds",
         "runbook",
+        "settings_keys",
+        "settings_revision",
         "stage",
         "success",
         "stack",

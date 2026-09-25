@@ -82,6 +82,7 @@ from services.retrieval_query import build_retrieval_query
 from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
+    material_budget,
     model_identifier,
     with_template_temperature,
 )
@@ -270,6 +271,7 @@ class ExamSourceAnalysisService:
         *,
         query: str,
         document_ids: Sequence[UUID] | None,
+        max_characters: int | None = None,
     ) -> RetrievedCourseMaterial:
         return load_retrieved_material(
             db,
@@ -277,7 +279,7 @@ class ExamSourceAnalysisService:
             query=query,
             limit=settings.retrieval_chunk_limit,
             min_similarity=settings.retrieval_min_similarity,
-            max_characters=settings.exam_analysis_material_max_chars,
+            max_characters=max_characters or settings.exam_analysis_material_max_chars,
             include_citations=True,
             document_ids=document_ids or None,
         )
@@ -482,7 +484,13 @@ class ExamSourceAnalysisService:
 
         try:
             material = cls.get_course_material(
-                db, course_id, query=query, document_ids=selected or None
+                db,
+                course_id,
+                query=query,
+                document_ids=selected or None,
+                max_characters=material_budget(
+                    settings.exam_analysis_material_max_chars, provider
+                ),
             )
         except MaterialNotIndexedError:
             db.rollback()

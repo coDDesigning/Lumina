@@ -32,6 +32,7 @@ from services.retrieval_query import build_retrieval_query as make_retrieval_que
 from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
+    material_budget,
     model_identifier,
     with_template_temperature,
 )
@@ -73,6 +74,7 @@ class CourseQAService:
         course_id: int,
         *,
         query: str,
+        max_characters: int | None = None,
     ) -> RetrievedCourseMaterial:
         return load_retrieved_material(
             db,
@@ -80,7 +82,7 @@ class CourseQAService:
             query=query,
             limit=settings.retrieval_chunk_limit,
             min_similarity=settings.retrieval_min_similarity,
-            max_characters=settings.course_qa_material_max_chars,
+            max_characters=max_characters or settings.course_qa_material_max_chars,
             include_citations=True,
         )
 
@@ -173,7 +175,14 @@ class CourseQAService:
                 raise InsufficientCreditsError("Insufficient credits.")
 
         try:
-            material = cls.get_course_material(db, course_id, query=query)
+            material = cls.get_course_material(
+                db,
+                course_id,
+                query=query,
+                max_characters=material_budget(
+                    settings.course_qa_material_max_chars, provider
+                ),
+            )
         except MaterialNotIndexedError:
             db.rollback()
             CreditService.refund(db, receipt)

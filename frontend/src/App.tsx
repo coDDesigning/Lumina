@@ -25,6 +25,7 @@ import AccountSecurityPage from './features/account/AccountSecurityPage'
 import AccountApiKeysPage from './features/account/AccountApiKeysPage'
 import AdminPage from './features/admin/AdminPage'
 import AdminLogsPage from './features/admin/AdminLogsPage'
+import SystemSettingsPage from './features/admin/SystemSettingsPage'
 import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
 import VerifyEmailPage from './features/auth/VerifyEmailPage'
@@ -525,6 +526,7 @@ function App() {
         <Route element={<ProtectedRoute requiredRole="admin" />}>
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/admin/logs" element={<AdminLogsPage />} />
+          <Route path="/admin/system-settings" element={<SystemSettingsPage />} />
         </Route>
             </Route>
           </Route>

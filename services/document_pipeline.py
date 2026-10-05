@@ -589,10 +589,15 @@ _EXTRACTORS: dict[str, DocumentExtractor] = {
 # MuPDF stores parser warnings globally. Every operation that clears or reads
 # the warning buffer must be isolated from other PDF processing threads.
 _PDF_WARNING_LOCK = threading.Lock()
-_RECOVERABLE_MUPDF_WARNINGS = (
-    "cannot load object",
-    "invalid key in dict",
+_HARMFUL_MUPDF_WARNINGS = (
+    "page may not be correct",
+    "syntax error in content stream",
+    "content stream is not a stream",
+    "object is not a stream",
+    "non-page object in page tree",
+    "library error: zlib error",
 )
+_MAX_REPORTED_MUPDF_WARNINGS = 5
 _PIPELINE_SEMAPHORE = threading.BoundedSemaphore(
     settings.max_concurrent_document_validations
 )
@@ -1015,15 +1020,46 @@ def _failure(
     return DocumentProcessingError(code, stage, retryable=retryable)
 
 
-def _mupdf_reported_damage() -> bool:
-    reported = pymupdf.TOOLS.mupdf_warnings()
-    if not reported:
-        return False
-    return any(
-        not any(marker in line for marker in _RECOVERABLE_MUPDF_WARNINGS)
-        for line in reported.splitlines()
-        if line.strip()
+def _corrupted_pdf(stage: PipelineStage, reason: str) -> DocumentProcessingError:
+    logger.warning(
+        "PDF damage detected",
+        extra={
+            "event": "pdf_damage_detected",
+            "failed_stage": stage.value,
+            "error_code": ProcessingErrorCode.CORRUPTED_PDF.value,
+            "reason": reason,
+        },
     )
+    return _failure(ProcessingErrorCode.CORRUPTED_PDF, stage, retryable=False)
+
+
+def _mupdf_damage() -> str | None:
+    reported = pymupdf.TOOLS.mupdf_warnings()
+    harmful = list(
+        dict.fromkeys(
+            line.strip()
+            for line in reported.splitlines()
+            if any(marker in line for marker in _HARMFUL_MUPDF_WARNINGS)
+        )
+    )
+    if not harmful:
+        return None
+    return "; ".join(harmful[:_MAX_REPORTED_MUPDF_WARNINGS])
+
+
+def _log_pdf_damage(reason: str) -> None:
+    logger.warning(
+        "PDF damage detected",
+        extra={"event": "pdf_damage_detected", "reason": reason},
+    )
+
+
+def _mupdf_reported_damage() -> bool:
+    reason = _mupdf_damage()
+    if reason is None:
+        return False
+    _log_pdf_damage(reason)
+    return True
 
 
 def _pdf_preflight(content: bytes, options: PipelineOptions) -> _PDFPreflight:
@@ -1044,10 +1080,9 @@ def _bounded_stream_size(
         )
     raw_stream = pdf.xref_stream_raw(content_xref)
     if not isinstance(raw_stream, bytes):
-        raise _failure(
-            ProcessingErrorCode.CORRUPTED_PDF,
+        raise _corrupted_pdf(
             PipelineStage.VALIDATING,
-            retryable=False,
+            f"stream {content_xref} could not be read",
         )
 
     filter_type, filter_value = pdf.xref_get_key(content_xref, "Filter")
@@ -1058,10 +1093,9 @@ def _bounded_stream_size(
             decompressor = zlib.decompressobj()
             decoded = decompressor.decompress(raw_stream, remaining_bytes + 1)
         except zlib.error:
-            raise _failure(
-                ProcessingErrorCode.CORRUPTED_PDF,
+            raise _corrupted_pdf(
                 PipelineStage.VALIDATING,
-                retryable=False,
+                f"stream {content_xref} is not valid Flate data",
             ) from None
         if len(decoded) > remaining_bytes or decompressor.unconsumed_tail:
             raise _failure(
@@ -1070,10 +1104,9 @@ def _bounded_stream_size(
                 retryable=False,
             )
         if not decompressor.eof:
-            raise _failure(
-                ProcessingErrorCode.CORRUPTED_PDF,
+            raise _corrupted_pdf(
                 PipelineStage.VALIDATING,
-                retryable=False,
+                f"stream {content_xref} ends before its Flate data does",
             )
         decoded_size = len(decoded)
     else:
@@ -1095,10 +1128,9 @@ def _bounded_stream_size(
 
 def _pdf_preflight_locked(content: bytes, options: PipelineOptions) -> _PDFPreflight:
     if not content.startswith(b"%PDF-"):
-        raise _failure(
-            ProcessingErrorCode.CORRUPTED_PDF,
+        raise _corrupted_pdf(
             PipelineStage.VALIDATING,
-            retryable=False,
+            "file does not start with a PDF header",
         )
 
     pymupdf.TOOLS.reset_mupdf_warnings()
@@ -1107,12 +1139,6 @@ def _pdf_preflight_locked(content: bytes, options: PipelineOptions) -> _PDFPrefl
             if pdf.needs_pass:
                 raise _failure(
                     ProcessingErrorCode.PASSWORD_PROTECTED_PDF,
-                    PipelineStage.VALIDATING,
-                    retryable=False,
-                )
-            if pdf.is_repaired:
-                raise _failure(
-                    ProcessingErrorCode.CORRUPTED_PDF,
                     PipelineStage.VALIDATING,
                     retryable=False,
                 )
@@ -1149,10 +1175,9 @@ def _pdf_preflight_locked(content: bytes, options: PipelineOptions) -> _PDFPrefl
                     width_type, width_value = pdf.xref_get_key(stream_xref, "Width")
                     height_type, height_value = pdf.xref_get_key(stream_xref, "Height")
                     if width_type != "int" or height_type != "int":
-                        raise _failure(
-                            ProcessingErrorCode.CORRUPTED_PDF,
+                        raise _corrupted_pdf(
                             PipelineStage.VALIDATING,
-                            retryable=False,
+                            f"image {stream_xref} has no integer width and height",
                         )
                     image_pixels = int(width_value) * int(height_value)
                     if image_pixels > options.max_pdf_page_pixels:
@@ -1272,10 +1297,9 @@ def _advance_page_budget(
             or content_xref >= preflight.xref_length
             or not pdf.xref_is_stream(content_xref)
         ):
-            raise _failure(
-                ProcessingErrorCode.CORRUPTED_PDF,
+            raise _corrupted_pdf(
                 PipelineStage.VALIDATING,
-                retryable=False,
+                f"page {work.number + 1} content {content_xref} is not a stream",
             )
 
     total_drawing_operations = budget.total_drawing_operations + work.drawing_operations
@@ -1386,7 +1410,9 @@ def _page_pool(
     )
 
 
-def _ocr_page_range(page_numbers: tuple[int, ...]) -> tuple[dict[int, str], bool]:
+def _ocr_page_range(
+    page_numbers: tuple[int, ...],
+) -> tuple[dict[int, str], str | None]:
     pdf = _PAGE_WORKER_STATE["document"]
     options = _PAGE_WORKER_STATE["options"]
     recognized = {
@@ -1397,10 +1423,10 @@ def _ocr_page_range(page_numbers: tuple[int, ...]) -> tuple[dict[int, str], bool
         )
         for page_number in page_numbers
     }
-    return recognized, _mupdf_reported_damage()
+    return recognized, _mupdf_damage()
 
 
-def _page_work_range(bounds: tuple[int, int]) -> tuple[list[_PageWork], bool]:
+def _page_work_range(bounds: tuple[int, int]) -> tuple[list[_PageWork], str | None]:
     pdf = _PAGE_WORKER_STATE["document"]
     preflight = _PAGE_WORKER_STATE["preflight"]
     options = _PAGE_WORKER_STATE["options"]
@@ -1409,7 +1435,7 @@ def _page_work_range(bounds: tuple[int, int]) -> tuple[list[_PageWork], bool]:
         _page_work(pdf.load_page(number), preflight, options)
         for number in range(start, stop)
     ]
-    return works, _mupdf_reported_damage()
+    return works, _mupdf_damage()
 
 
 def _page_ranges(page_count: int, workers: int) -> list[tuple[int, int]]:
@@ -1424,10 +1450,10 @@ def _collect_page_work(
     content: bytes,
     preflight: _PDFPreflight,
     options: PipelineOptions,
-) -> tuple[list[_PageWork], bool]:
+) -> tuple[list[_PageWork], str | None]:
     workers = min(options.page_workers, pdf.page_count)
     if workers < 2 or pdf.page_count < _MIN_PAGES_FOR_PARALLEL_EXTRACTION:
-        return _collect_page_work_serially(pdf, preflight, options), False
+        return _collect_page_work_serially(pdf, preflight, options), None
     try:
         return _collect_page_work_in_parallel(
             content, pdf.page_count, preflight, options, workers
@@ -1441,7 +1467,7 @@ def _collect_page_work(
             },
         )
         pymupdf.TOOLS.reset_mupdf_warnings()
-        return _collect_page_work_serially(pdf, preflight, options), False
+        return _collect_page_work_serially(pdf, preflight, options), None
 
 
 def _collect_page_work_serially(
@@ -1458,21 +1484,21 @@ def _collect_page_work_in_parallel(
     preflight: _PDFPreflight,
     options: PipelineOptions,
     workers: int,
-) -> tuple[list[_PageWork], bool]:
+) -> tuple[list[_PageWork], str | None]:
     executor = _page_pool(content, options, workers, preflight)
     try:
         collected: list[_PageWork] = []
-        warnings_seen = False
-        for works, range_warnings in executor.map(
+        damage: str | None = None
+        for works, range_damage in executor.map(
             _page_work_range, _page_ranges(page_count, workers)
         ):
-            warnings_seen = warnings_seen or range_warnings
+            damage = damage or range_damage
             collected.extend(works)
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
     if len(collected) != page_count:
         raise RuntimeError("page pool returned an incomplete document")
-    return collected, warnings_seen
+    return collected, damage
 
 
 def _contains_parseable_pdf(content: bytes) -> bool:
@@ -1694,7 +1720,7 @@ def _extract_pdf_document(
                     total_render_pixels=preflight.total_image_pixels,
                     total_drawing_operations=0,
                 )
-                page_work, warnings_seen = _collect_page_work(
+                page_work, page_damage = _collect_page_work(
                     pdf, content, preflight, options
                 )
                 for work in page_work:
@@ -1720,12 +1746,9 @@ def _extract_pdf_document(
                     )
                     candidate_pages.append((list(work.candidates), work.overflowed))
                 _report_detection_failures(page_work)
-                if warnings_seen or _mupdf_reported_damage():
-                    raise _failure(
-                        ProcessingErrorCode.CORRUPTED_PDF,
-                        PipelineStage.VALIDATING,
-                        retryable=False,
-                    )
+                page_damage = page_damage or _mupdf_damage()
+                if page_damage is not None:
+                    raise _corrupted_pdf(PipelineStage.VALIDATING, page_damage)
                 selected_visuals, meaningful_visual_pages = _select_document_visuals(
                     candidate_pages, options
                 )
@@ -2184,11 +2207,11 @@ def _recognize_pages_in_parallel(
         executor = _page_pool(content, options, workers)
         try:
             recognized: dict[int, str] = {}
-            warnings_seen = False
-            for batch, batch_warnings in executor.map(
+            damage: str | None = None
+            for batch, batch_damage in executor.map(
                 _ocr_page_range, _ocr_batches(page_numbers, workers)
             ):
-                warnings_seen = warnings_seen or batch_warnings
+                damage = damage or batch_damage
                 recognized.update(batch)
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -2204,7 +2227,10 @@ def _recognize_pages_in_parallel(
         )
         pymupdf.TOOLS.reset_mupdf_warnings()
         return _recognize_pages_serially(content, page_numbers, options)
-    if warnings_seen or not _recognized_pages_are_complete(recognized, page_numbers):
+    if damage is not None:
+        _log_pdf_damage(damage)
+        raise OCRExecutionError
+    if not _recognized_pages_are_complete(recognized, page_numbers):
         raise OCRExecutionError
     return recognized
 
@@ -2805,10 +2831,9 @@ def _validate_render_budget(
         except DocumentProcessingError:
             raise
         except Exception:
-            raise _failure(
-                ProcessingErrorCode.CORRUPTED_PDF,
+            raise _corrupted_pdf(
                 stage,
-                retryable=False,
+                "a page could not be opened to measure its render size",
             ) from None
         finally:
             pymupdf.TOOLS.reset_mupdf_warnings()

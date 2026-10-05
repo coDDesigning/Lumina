@@ -162,6 +162,7 @@ EVENT_DESCRIPTIONS = {
     "library_log": "A third-party library wrote a log line.",
     "maintenance_task_failed": "A periodic maintenance task failed.",
     "password_reset_email_undelivered": "A password reset email could not be delivered.",
+    "pdf_damage_detected": "A PDF was found damaged; the reason names what was wrong with it.",
     "pdf_page_pool_unavailable": "Parallel PDF page processing was unavailable, so pages were processed one at a time.",
     "pdf_text_extraction_failed": "Text could not be extracted from a PDF.",
     "pdf_validation_failed": "An uploaded PDF could not be validated.",

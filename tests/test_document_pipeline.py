@@ -196,6 +196,18 @@ def pdf_with_invalid_compressed_image_stream() -> bytes:
     return content
 
 
+def pdf_with_broken_xref() -> bytes:
+    content = pdf_bytes("First page", "Second page")
+    offset = content.rindex(b"startxref") + len(b"startxref\n")
+    end = content.index(b"\n", offset)
+    return content[:offset] + b"999999" + content[end:]
+
+
+def truncated_pdf() -> bytes:
+    content = pdf_bytes("First page", "Second page")
+    return content[: len(content) // 2]
+
+
 def assert_pipeline_error(
     file_type: str,
     content: bytes,
@@ -495,6 +507,7 @@ def test_text_with_binary_tail_fails_in_pipeline() -> None:
         pdf_with_malformed_later_stream,
         pdf_with_dangling_xobject,
         pdf_with_invalid_compressed_image_stream,
+        truncated_pdf,
     ],
     ids=[
         "plain-text",
@@ -504,6 +517,7 @@ def test_text_with_binary_tail_fails_in_pipeline() -> None:
         "malformed-stream",
         "dangling-xobject",
         "invalid-image-stream",
+        "cut-in-half",
     ],
 )
 def test_corrupted_pdfs_fail_safely(
@@ -564,7 +578,38 @@ def test_pdf_extracts_despite_recoverable_mupdf_warnings(
     ]
 
 
-def test_pdf_with_unrecognised_mupdf_warning_is_rejected(
+def test_pdf_extracts_despite_unrecognised_mupdf_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = pdf_bytes("First page", "Second page")
+    monkeypatch.setattr(
+        pymupdf.TOOLS,
+        "mupdf_warnings",
+        lambda *args, **kwargs: (
+            "ActualText with no position. Text may be lost or mispositioned.\n"
+            "... repeated 6 times...\n"
+            "repaired broken tree structure in outline"
+        ),
+    )
+
+    document = extract_raw_document("pdf", content)
+
+    assert [page.text.strip() for page in document.contents] == [
+        "First page",
+        "Second page",
+    ]
+
+
+def test_pdf_with_a_repairable_xref_extracts_every_page() -> None:
+    document = extract_raw_document("pdf", pdf_with_broken_xref())
+
+    assert [page.text.strip() for page in document.contents] == [
+        "First page",
+        "Second page",
+    ]
+
+
+def test_pdf_with_content_stream_mupdf_warning_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     content = pdf_bytes("First page", "Second page")
@@ -580,6 +625,38 @@ def test_pdf_with_unrecognised_mupdf_warning_is_rejected(
         ProcessingErrorCode.CORRUPTED_PDF,
         PipelineStage.VALIDATING,
     )
+
+
+@pytest.mark.parametrize(
+    ("content_factory", "reason"),
+    [
+        (lambda: b"not a PDF", "file does not start with a PDF header"),
+        (
+            pdf_with_invalid_compressed_image_stream,
+            "library error: zlib error: incorrect header check",
+        ),
+    ],
+    ids=["missing-header", "invalid-image-stream"],
+)
+def test_corrupted_pdf_logs_why_it_was_rejected(
+    content_factory: Callable[[], bytes],
+    reason: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="services.document_pipeline"):
+        assert_pipeline_error(
+            "pdf",
+            content_factory(),
+            ProcessingErrorCode.CORRUPTED_PDF,
+            PipelineStage.VALIDATING,
+        )
+
+    reasons = [
+        record.reason
+        for record in caplog.records
+        if getattr(record, "event", None) == "pdf_damage_detected"
+    ]
+    assert reasons == [reason]
 
 
 def test_password_protected_pdf_fails_safely() -> None:
@@ -2615,6 +2692,35 @@ def test_parallel_extraction_still_reports_a_corrupt_page() -> None:
         PipelineStage.VALIDATING,
         options=pipeline_options(page_workers=4),
     )
+
+
+def test_parallel_extraction_logs_why_a_page_is_damaged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pdf = pymupdf.open(stream=parallel_capable_pdf(12), filetype="pdf")
+    image_xref = pdf[4].get_images(full=True)[0][0]
+    pdf.update_stream(image_xref, b"broken-zlib", compress=False)
+    pdf.xref_set_key(image_xref, "Filter", "/FlateDecode")
+    content = pdf.tobytes()
+    pdf.close()
+
+    with caplog.at_level(logging.WARNING, logger="services.document_pipeline"):
+        assert_pipeline_error(
+            "pdf",
+            content,
+            ProcessingErrorCode.CORRUPTED_PDF,
+            PipelineStage.VALIDATING,
+            options=pipeline_options(page_workers=4),
+        )
+
+    events = [getattr(record, "event", None) for record in caplog.records]
+    assert "pdf_page_pool_unavailable" not in events
+    reasons = [
+        record.reason
+        for record in caplog.records
+        if getattr(record, "event", None) == "pdf_damage_detected"
+    ]
+    assert reasons == ["library error: zlib error: incorrect header check"]
 
 
 def test_parallel_extraction_still_enforces_page_budgets() -> None:

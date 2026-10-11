@@ -184,7 +184,8 @@ def test_gemini_vision_reports_each_provider_call_without_content(monkeypatch) -
         usage_metadata=SimpleNamespace(
             prompt_token_count=12,
             candidates_token_count=4,
-            total_token_count=16,
+            thoughts_token_count=6,
+            total_token_count=22,
         ),
     )
     provider = _gemini_vision_provider(
@@ -202,8 +203,8 @@ def test_gemini_vision_reports_each_provider_call_without_content(monkeypatch) -
     assert events[0].provider == "gemini"
     assert events[0].model == "gemini-2.5-flash"
     assert events[0].prompt_tokens == 12
-    assert events[0].completion_tokens == 4
-    assert events[0].total_tokens == 16
+    assert events[0].completion_tokens == 10
+    assert events[0].total_tokens == 22
     assert events[0].success is True
 
 

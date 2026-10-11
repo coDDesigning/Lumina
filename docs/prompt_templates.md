@@ -48,8 +48,8 @@ All templates reside in `app/prompts/<task_name>.json`:
 | `study_guide` | `2.3.0` | active | `services/study_guide.py` | Comprehensive study guide generation | `StudyGuideResponse` |
 | `quiz` | `3.3.0` | active | `services/quiz.py` | Multi-format quiz generation | `QuizGenerationResponse` |
 | `exam_style_question` | `2.1.0` | active | `services/exam_similar_questions.py` | Fresh attemptable questions in the observed style of the course's own past ones | `GeneratedSimilarQuestionResponse` |
-| `exam_topic_analysis` | `2.0.0` | active | `services/exam_source_analysis.py` | Exam Mode source analysis: topic discovery over the selected sources | `GeneratedExamAnalysisResponse` |
-| `past_exam_question_extraction` | `1.0.0` | active | `services/exam_question_extraction.py` | Transcribes the questions printed in one past examination paper | `GeneratedPastExamExtraction` |
+| `exam_topic_analysis` | `2.0.1` | active | `services/exam_source_analysis.py` | Exam Mode source analysis: topic discovery over the selected sources | `GeneratedExamAnalysisResponse` |
+| `past_exam_question_extraction` | `1.0.1` | active | `services/exam_question_extraction.py` | Transcribes the questions printed in one past examination paper | `GeneratedPastExamExtraction` |
 | `exam_topic_guide` | `1.1.0` | active | `services/exam_topic_study.py` | Exam Mode per-topic study guide | `GeneratedExamTopicGuide` |
 | `exam_topic_summary` | `1.0.0` | active | `services/exam_topic_study.py` | Exam Mode per-topic summary | `GeneratedExamTopicSummary` |
 | `exam_topic_practice` | `1.1.0` | active | `services/exam_quiz.py` | Exam Mode per-topic practice questions | `QuizGenerationResponse` |
@@ -64,7 +64,7 @@ All templates reside in `app/prompts/<task_name>.json`:
 | `course_qa` | `2.3.0` | active | `services/course_qa.py` | Direct retrieval-grounded course Q&A | `CourseQAResponse` |
 | `prompt_generator` | `2.0.0` | active | `services/prompt_generator.py` | User request transformation to optimized prompt | `PromptGenerationResponse` |
 | `image_description` | `1.0.0` | active | `services/image_understanding.py` | Visual descriptions for the retrieval index | — |
-| `syllabus_topics` | `1.0.0` | active | `services/syllabus_topics.py` | Suggests the topics a pasted syllabus covers, for course topic list building | `GeneratedSyllabusTopicsResponse` |
+| `syllabus_topics` | `1.0.1` | active | `services/syllabus_topics.py` | Suggests the topics a pasted syllabus covers, for course topic list building | `GeneratedSyllabusTopicsResponse` |
 | `visual_content` | `2.1.0` | deferred | Advanced visual understanding (not built) | Multimodal diagram, chart, table, and figure analysis | `VisualContentDescriptionResponse` |
 | `ocr_cleanup` | `1.1.0` | deferred | none | AI-assisted OCR text normalization and repair | `OcrCleanupResponse` |
 
@@ -138,6 +138,11 @@ reads it and the generating call site binds it with
 `services.text_generation.with_template_temperature`, which returns a temperature-bound
 copy of the provider (the original keeps the deployment default, and a provider that
 cannot take a temperature is returned untouched rather than refused).
+`model_hints.thinking_level` follows the same path through
+`PromptLoader.thinking_level_for` and `with_template_thinking_level`; it accepts
+`low`, `medium` or `high` and only Gemini takes it. A call site binds both hints
+at once through `with_template_hints(provider, template_name)` and never binds
+either one itself. See `docs/ai_providers.md`.
 
 ---
 

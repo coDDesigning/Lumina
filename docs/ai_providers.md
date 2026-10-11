@@ -215,12 +215,52 @@ The dominant failure at `0.8` was `multiple_choice.options` carrying three
 entries instead of four.
 
 A prompt template may declare its own `model_hints.temperature`, and that value
-wins for the call it was declared for, on every provider. `PromptLoader.temperature_for`
+wins for the call it was declared for on Ollama and OpenAI. `PromptLoader.temperature_for`
 reads it and `with_template_temperature` binds it to a copy of the provider for
 that one generation, so the environment default stays in force everywhere else.
 This is what keeps open-ended grading at the `0.0` `quiz_grading.json` declares:
 a score written to a student's record must not move between two runs of the same
 answer. A hint that is missing or not a number leaves the provider default alone.
+
+Gemini and Claude take no sampling parameter at all, so `with_template_temperature`
+returns those providers untouched. Anthropic removed `temperature` for the current
+model family. Gemini has ignored `temperature`, `top_p` and `top_k` since 3.6 Flash,
+and Google has announced that later models will reject them, along with
+`thinking_budget`. The Gemini provider therefore sends none of them.
+
+What Gemini offers in their place is `thinking_level`, which a template declares
+as `model_hints.thinking_level`. `PromptLoader.thinking_level_for` reads it and
+`with_template_thinking_level` binds it per call exactly as the temperature is
+bound; only the Gemini provider takes it, and every other provider is returned
+untouched. A generating call site never binds either hint itself: it calls
+`with_template_hints(provider, template_name)`, which binds everything the
+template declares, and a test fails if any module outside
+`services/text_generation.py` binds a hint directly. A template that declares
+nothing leaves the model's own default in force, which is `medium` on current
+Flash models. Only `low`, `medium` and `high` are accepted, because
+`gemini-3.8-flash` rejects `minimal` while `gemini-3.6-flash` accepts it, and a
+hint must not stop working when the default model moves. A value outside that
+set is ignored rather than raised on.
+
+| Template | `thinking_level` | Why |
+| --- | --- | --- |
+| `exam_topic_analysis` | `high` | Discovery decides what a whole study plan is built from. |
+| `past_exam_question_extraction` | `low` | Transcription, not reasoning. |
+| `syllabus_topics` | `low` | Listing what a pasted syllabus already names. |
+
+`quiz_grading` deliberately declares no level. Every open-ended answer of an
+attempt is graded in one call that must finish inside
+`AI_GRADING_OVERALL_TIMEOUT_SECONDS`, and an answer whose grading runs out of
+time is recorded ungraded. A higher level adds latency that has not been
+measured against that budget. Raising it is not a determinism fix either: on
+Gemini no setting makes two runs of the same answer score identically, so the
+`0.0` grading temperature is a guarantee only on Ollama and OpenAI.
+
+Gemini bills thinking tokens as output and reports them apart from the answer,
+in `thoughts_token_count`. `gemini_completion_tokens` adds them to
+`completion_tokens`, for text generation and visual descriptions alike, so the
+estimated cost in `ai_usage_logs` covers what was actually billed. A higher
+thinking level therefore shows up there as more completion tokens.
 
 `num_ctx` is sent per request, which has two consequences worth knowing. A model
 needs no custom Modelfile to run at the intended window, and a server-wide
@@ -391,6 +431,12 @@ the provider request instead of always using the provider's default model.
 
 A model that does not support JSON mode is rejected when a generation path
 requires structured JSON output.
+
+A `gemini` entry must name a model that accepts `thinking_level`. The catalog
+has no capability flag for it, so a model without thinking support is not
+refused at startup; instead every template that declares a level fails on it
+with a non-retryable `400`. Every current Gemini text model accepts `low` and
+`high`, which are the only levels the templates declare.
 
 ## Error Semantics
 

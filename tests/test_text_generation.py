@@ -1,10 +1,12 @@
 import inspect
 import json
+import re
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
-from google.genai import errors as genai_errors
+from google.genai import errors as genai_errors, types
 import httpx
 import pytest
 
@@ -28,7 +30,9 @@ from services.text_generation import (
     get_text_generation_provider,
     is_transient_generation_error,
     material_budget,
+    with_template_hints,
     with_template_temperature,
+    with_template_thinking_level,
 )
 
 OLLAMA_SETTINGS = SimpleNamespace(
@@ -1486,7 +1490,7 @@ def test_multi_provider_fallback_chain() -> None:
     assert p3.call_count == 1
 
 
-def test_gemini_provider_applies_a_bound_temperature_to_the_json_call(
+def test_gemini_provider_sends_the_bound_thinking_level_and_no_sampling_parameter(
     monkeypatch,
 ) -> None:
     calls: list[object] = []
@@ -1508,14 +1512,149 @@ def test_gemini_provider_applies_a_bound_temperature_to_the_json_call(
     monkeypatch.setattr(text_generation.genai, "Client", FakeClient)
 
     provider = text_generation.GeminiTextGenerationProvider()
-    graded = text_generation.with_template_temperature(provider, 0.0)
+    graded = with_template_thinking_level(
+        with_template_temperature(provider, 0.0), "high"
+    )
 
     graded.generate_json("Grade this answer")
+    graded.generate_text("Explain this answer")
     provider.generate_json("Anything else")
+    provider.generate_text("Anything else")
 
     assert graded is not provider
-    assert calls[0].temperature == 0.0
-    assert calls[1].temperature is None
+    assert calls[0].response_mime_type == "application/json"
+    assert calls[0].thinking_config.thinking_level == types.ThinkingLevel.HIGH
+    assert calls[0].thinking_config.thinking_budget is None
+    assert calls[1].thinking_config.thinking_level == types.ThinkingLevel.HIGH
+    for config in calls:
+        assert config.temperature is None
+        assert config.top_p is None
+        assert config.top_k is None
+    assert calls[2].response_mime_type == "application/json"
+    assert calls[2].thinking_config is None
+    assert calls[3].thinking_config is None
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        (SimpleNamespace(candidates_token_count=4, thoughts_token_count=6), 10),
+        (SimpleNamespace(candidates_token_count=4, thoughts_token_count=None), 4),
+        (SimpleNamespace(candidates_token_count=4), 4),
+        (SimpleNamespace(candidates_token_count=None, thoughts_token_count=6), None),
+    ],
+)
+def test_gemini_completion_tokens_include_thinking_tokens(usage, expected) -> None:
+    assert text_generation.gemini_completion_tokens(usage) == expected
+
+
+def test_gemini_provider_reports_thinking_tokens_as_completion_tokens(
+    monkeypatch,
+) -> None:
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(
+                text='{"ok": true}',
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=10,
+                    candidates_token_count=4,
+                    thoughts_token_count=6,
+                    total_token_count=20,
+                ),
+            )
+
+    class FakeClient:
+        def __init__(self, api_key: str, http_options=None) -> None:
+            self.models = FakeModels()
+
+    monkeypatch.setattr(
+        text_generation,
+        "settings",
+        SimpleNamespace(gemini_api_key="test-key", ai_generation_timeout_seconds=60),
+    )
+    monkeypatch.setattr(text_generation.genai, "Client", FakeClient)
+
+    _, metadata = (
+        text_generation.GeminiTextGenerationProvider().generate_json_with_metadata(
+            "prompt"
+        )
+    )
+
+    assert metadata.prompt_tokens == 10
+    assert metadata.completion_tokens == 10
+    assert metadata.total_tokens == 20
+
+
+def test_with_template_hints_binds_everything_a_template_declares() -> None:
+    class HintedProvider(
+        text_generation.TemperatureBindingMixin,
+        text_generation.ThinkingLevelBindingMixin,
+    ):
+        pass
+
+    provider = HintedProvider()
+    analysis = with_template_hints(provider, "exam_topic_analysis")
+    quiz = with_template_hints(provider, "quiz")
+
+    assert (analysis._temperature, analysis._thinking_level) == (0.1, "high")
+    assert (quiz._temperature, quiz._thinking_level) == (0.3, None)
+    assert (provider._temperature, provider._thinking_level) == (None, None)
+
+
+def test_template_hints_reach_a_provider_only_through_with_template_hints() -> None:
+    root = Path(text_generation.__file__).resolve().parents[1]
+    direct = re.compile(
+        r"\b(?:with_template_temperature|with_template_thinking_level)\("
+        r"|\.(?:temperature_for|thinking_level_for)\("
+    )
+
+    offenders = [
+        path.relative_to(root).as_posix()
+        for package in ("backend", "routes", "services", "utils", "workers")
+        for path in sorted((root / package).rglob("*.py"))
+        if path.name != "text_generation.py"
+        and direct.search(path.read_text(encoding="utf-8"))
+    ]
+
+    assert offenders == []
+
+
+def test_with_template_thinking_level_leaves_a_provider_that_cannot_take_one(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(text_generation, "settings", OLLAMA_SETTINGS)
+    provider = text_generation.OllamaTextGenerationProvider()
+
+    assert with_template_thinking_level(provider, "high") is provider
+    assert with_template_thinking_level(provider, None) is provider
+
+
+def test_reliable_provider_binds_the_thinking_level_to_every_fallback() -> None:
+    class RecordingProvider(text_generation.ThinkingLevelBindingMixin):
+        PROVIDER_NAME = "recording"
+
+        def generate_json_with_metadata(self, prompt: str):
+            return {"thinking_level": self._thinking_level}, GenerationMetadata(
+                provider=self.PROVIDER_NAME, model="recording-1"
+            )
+
+    primary = RecordingProvider()
+    fallback = RecordingProvider()
+    reliable = text_generation.ReliableTextGenerationProvider([primary, fallback])
+
+    bound = reliable.with_thinking_level("low")
+    result, _ = bound.generate_json_with_metadata("prompt")
+
+    assert result == {"thinking_level": "low"}
+    assert [provider._thinking_level for provider in bound.providers] == [
+        "low",
+        "low",
+    ]
+    assert [provider._thinking_level for provider in reliable.providers] == [
+        None,
+        None,
+    ]
+    assert bound._semaphore is reliable._semaphore
 
 
 def test_with_template_temperature_leaves_a_provider_that_cannot_take_one(

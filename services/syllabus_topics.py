@@ -21,7 +21,7 @@ from services.text_generation import (
     TextGenerationError,
     get_text_generation_provider,
     resolve_effective_model,
-    with_template_temperature,
+    with_template_hints,
 )
 
 PROMPT_TEMPLATE_NAME = "syllabus_topics"
@@ -128,9 +128,7 @@ def suggest_topics(
         user=db_user,
         require_json_mode=True,
     )
-    provider = with_template_temperature(
-        provider, PromptLoader.temperature_for(PROMPT_TEMPLATE_NAME)
-    )
+    provider = with_template_hints(provider, PROMPT_TEMPLATE_NAME)
 
     prompt_context = resolve_prompt_context(db, user_id=user_id)
     prompt = PromptLoader.render(

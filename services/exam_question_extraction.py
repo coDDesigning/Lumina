@@ -54,7 +54,7 @@ from services.text_generation import (
     TextGenerationError,
     TextGenerationProvider,
     get_text_generation_provider,
-    with_template_temperature,
+    with_template_hints,
 )
 
 logger = logging.getLogger(__name__)
@@ -156,9 +156,7 @@ class PastExamExtractionService:
         metadata = None
         try:
             # The template's own declared temperature, applied to the call it was declared for.
-            provider = with_template_temperature(
-                provider, PromptLoader.temperature_for(cls.PROMPT_TEMPLATE_NAME)
-            )
+            provider = with_template_hints(provider, cls.PROMPT_TEMPLATE_NAME)
             if hasattr(provider, "generate_json_with_metadata"):
                 result, metadata = provider.generate_json_with_metadata(prompt)
             else:

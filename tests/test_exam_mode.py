@@ -28,7 +28,11 @@ from backend.app.models import (
 )
 from services.credits import GENERATION_CREDIT_COSTS
 from services.exam_question_extraction import PastExamExtractionService
-from services.text_generation import GenerationMetadata, TextGenerationError
+from services.text_generation import (
+    GenerationMetadata,
+    TextGenerationError,
+    ThinkingLevelBindingMixin,
+)
 from utils.ai_errors import AiErrorCode
 
 STUB_METADATA = GenerationMetadata(provider="ollama", model="qwen3:8b", latency_ms=5)
@@ -438,6 +442,30 @@ def test_the_prompt_carries_the_material_last_and_treats_it_as_data(
     assert prompt.index("COURSE MATERIAL") > prompt.index("SOURCE CITATIONS")
     assert prompt.index("SYLLABUS MATERIAL") > prompt.index("TOPIC RULES")
     assert "{{" not in prompt
+
+
+def test_analysis_runs_at_the_thinking_level_its_template_declares(
+    authz_api, exam_course, monkeypatch
+) -> None:
+    class ThinkingAwareProvider(CountingProvider, ThinkingLevelBindingMixin):
+        def __init__(self) -> None:
+            super().__init__()
+            self.thinking_levels: list[str | None] = []
+
+        def generate_json_with_metadata(self, prompt: str):
+            self.thinking_levels.append(self._thinking_level)
+            return super().generate_json_with_metadata(prompt)
+
+    provider = install_provider(monkeypatch, ThinkingAwareProvider())
+
+    response = authz_api.client.post(
+        f"/api/courses/{authz_api.a_course_id}/exam-mode/analysis",
+        json={},
+        headers=authz_api.authorization_a,
+    )
+
+    assert response.status_code == 200, response.text
+    assert provider.thinking_levels == ["high"]
 
 
 def test_analysis_price_is_derived_from_persisted_course_history(

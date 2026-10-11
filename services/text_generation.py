@@ -29,6 +29,7 @@ from backend.app.config import (
     settings,
 )
 from services.ollama import resolve_ollama_base_url
+from services.prompt_loader import PromptLoader
 from schemas.ai_usage import ErrorCategory
 from utils.exceptions import BadRequestException
 
@@ -136,6 +137,41 @@ def with_template_temperature(
     if not callable(binder):
         return provider
     return binder(temperature)
+
+
+class ThinkingLevelBindingMixin:
+    _thinking_level: str | None = None
+
+    def with_thinking_level(
+        self, thinking_level: str | None
+    ) -> "ThinkingLevelBindingMixin":
+        if thinking_level is None or thinking_level == self._thinking_level:
+            return self
+        bound = copy.copy(self)
+        bound._thinking_level = thinking_level
+        return bound
+
+
+def with_template_thinking_level(
+    provider: TextGenerationProvider, thinking_level: str | None
+) -> TextGenerationProvider:
+    if thinking_level is None:
+        return provider
+    binder = getattr(provider, "with_thinking_level", None)
+    if not callable(binder):
+        return provider
+    return binder(thinking_level)
+
+
+def with_template_hints(
+    provider: TextGenerationProvider, template_name: str
+) -> TextGenerationProvider:
+    provider = with_template_temperature(
+        provider, PromptLoader.temperature_for(template_name)
+    )
+    return with_template_thinking_level(
+        provider, PromptLoader.thinking_level_for(template_name)
+    )
 
 
 class ProviderRegistry:
@@ -499,7 +535,15 @@ def _parse_json_object(text: str, provider_label: str) -> dict[str, object]:
     return result
 
 
-class GeminiTextGenerationProvider(TemperatureBindingMixin):
+def gemini_completion_tokens(usage_metadata: object) -> int | None:
+    candidates = getattr(usage_metadata, "candidates_token_count", None)
+    if not isinstance(candidates, int):
+        return None
+    thoughts = getattr(usage_metadata, "thoughts_token_count", None)
+    return candidates + (thoughts if isinstance(thoughts, int) else 0)
+
+
+class GeminiTextGenerationProvider(ThinkingLevelBindingMixin):
     MODEL = DEFAULT_GEMINI_MODEL
     PROVIDER_NAME = "gemini"
 
@@ -534,7 +578,7 @@ class GeminiTextGenerationProvider(TemperatureBindingMixin):
         usage_metadata = getattr(response, "usage_metadata", None)
         if usage_metadata is not None:
             prompt_tokens = getattr(usage_metadata, "prompt_token_count", None)
-            completion_tokens = getattr(usage_metadata, "candidates_token_count", None)
+            completion_tokens = gemini_completion_tokens(usage_metadata)
             total_tokens = getattr(usage_metadata, "total_token_count", None)
 
         return GenerationMetadata(
@@ -569,6 +613,11 @@ class GeminiTextGenerationProvider(TemperatureBindingMixin):
             raise TextGenerationProviderError("Gemini connection error.") from exc
         raise TextGenerationProviderError("Gemini text generation failed.") from exc
 
+    def _thinking_config(self) -> types.ThinkingConfig | None:
+        if self._thinking_level is None:
+            return None
+        return types.ThinkingConfig(thinking_level=self._thinking_level)
+
     def generate_text_with_metadata(
         self, prompt: str
     ) -> tuple[str, GenerationMetadata]:
@@ -577,9 +626,9 @@ class GeminiTextGenerationProvider(TemperatureBindingMixin):
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=self._temperature)
-                if self._temperature is not None
-                else None,
+                config=types.GenerateContentConfig(
+                    thinking_config=self._thinking_config()
+                ),
             )
         except Exception as exc:
             self._handle_client_error(exc)
@@ -606,7 +655,7 @@ class GeminiTextGenerationProvider(TemperatureBindingMixin):
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    temperature=self._temperature,
+                    thinking_config=self._thinking_config(),
                 ),
             )
         except Exception as exc:
@@ -1335,6 +1384,18 @@ class ReliableTextGenerationProvider:
         bound = copy.copy(self)
         bound.providers = [
             with_template_temperature(provider, temperature)
+            for provider in self.providers
+        ]
+        return bound
+
+    def with_thinking_level(
+        self, thinking_level: str | None
+    ) -> "ReliableTextGenerationProvider":
+        if thinking_level is None:
+            return self
+        bound = copy.copy(self)
+        bound.providers = [
+            with_template_thinking_level(provider, thinking_level)
             for provider in self.providers
         ]
         return bound

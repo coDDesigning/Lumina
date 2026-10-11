@@ -38,6 +38,7 @@ from services.document_pipeline import (
 )
 
 from services.prompt_loader import PromptLoader
+from services.text_generation import gemini_completion_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +196,7 @@ class GeminiImageUnderstandingProvider:
             return
         usage = getattr(response, "usage_metadata", None)
         prompt_tokens = _token_count(getattr(usage, "prompt_token_count", None))
-        completion_tokens = _token_count(getattr(usage, "candidates_token_count", None))
+        completion_tokens = _token_count(gemini_completion_tokens(usage))
         total_tokens = _token_count(getattr(usage, "total_token_count", None))
         try:
             self._usage_callback(

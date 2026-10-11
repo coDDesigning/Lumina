@@ -35,7 +35,7 @@ Lumina implements strict privacy-safe logging controls:
 | `provider` | `VARCHAR(50)` | No | Model provider backend (e.g., `gemini`) |
 | `model` | `VARCHAR(128)` | No | Model identifier (e.g., `gemini-2.5-flash`) |
 | `prompt_tokens` | `INTEGER` | Yes | Token count for input (prompt) when exposed by provider |
-| `completion_tokens` | `INTEGER` | Yes | Token count for output (completion) when exposed by provider |
+| `completion_tokens` | `INTEGER` | Yes | Token count for output (completion) when exposed by provider. For Gemini it includes thinking tokens, which are billed as output |
 | `total_tokens` | `INTEGER` | Yes | Total token count when exposed by provider |
 | `latency_ms` | `INTEGER` | Yes | Provider response duration in milliseconds |
 | `success` | `BOOLEAN` | No | Boolean flag indicating whether the generation succeeded |

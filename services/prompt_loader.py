@@ -29,6 +29,8 @@ __all__ = [
     "UnexpectedPromptVariableError",
 ]
 
+THINKING_LEVELS = frozenset({"low", "medium", "high"})
+
 
 class PromptLoader:
     """Central loader and validator for structured, versioned AI prompt templates."""
@@ -139,6 +141,14 @@ class PromptLoader:
         if isinstance(declared, bool) or not isinstance(declared, (int, float)):
             return None
         return float(declared)
+
+    @classmethod
+    def thinking_level_for(cls, name: str, directory: Path | None = None) -> str | None:
+        template = cls.load_template(name, directory=directory)
+        declared = template.model_hints.get("thinking_level")
+        if not isinstance(declared, str) or declared not in THINKING_LEVELS:
+            return None
+        return declared
 
     @classmethod
     def get_render_metadata(

@@ -106,8 +106,8 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "course_qa": "2.3.0",
     "prompt_generator": "2.0.0",
     "exam_style_question": "2.1.0",
-    "exam_topic_analysis": "2.0.0",
-    "past_exam_question_extraction": "1.0.0",
+    "exam_topic_analysis": "2.0.1",
+    "past_exam_question_extraction": "1.0.1",
     "exam_topic_guide": "1.1.0",
     "exam_topic_summary": "1.0.0",
     "exam_topic_practice": "1.1.0",
@@ -117,7 +117,7 @@ EXPECTED_TEMPLATE_VERSIONS = {
     "image_description": "1.0.0",
     "visual_content": "2.1.0",
     "ocr_cleanup": "1.1.0",
-    "syllabus_topics": "1.0.0",
+    "syllabus_topics": "1.0.1",
 }
 
 
@@ -1314,6 +1314,37 @@ def test_declared_temperature_is_readable_for_every_template() -> None:
             assert PromptLoader.temperature_for(name) is None, name
         else:
             assert PromptLoader.temperature_for(name) == float(declared), name
+
+
+def test_declared_thinking_level_is_readable_for_every_template() -> None:
+    assert PromptLoader.thinking_level_for("quiz_grading") is None
+    assert PromptLoader.thinking_level_for("exam_topic_analysis") == "high"
+    assert PromptLoader.thinking_level_for("past_exam_question_extraction") == "low"
+    assert PromptLoader.thinking_level_for("syllabus_topics") == "low"
+    assert PromptLoader.thinking_level_for("quiz") is None
+
+    for name, template in PromptLoader.load_all().items():
+        declared = template.model_hints.get("thinking_level")
+        assert PromptLoader.thinking_level_for(name) == declared, name
+        if name in DEFERRED_TEMPLATES:
+            assert declared is None, name
+
+
+@pytest.mark.parametrize("declared", ["minimal", "HIGH", "", 2, True, ["low"]])
+def test_an_unsupported_thinking_level_is_ignored(tmp_path, declared) -> None:
+    (tmp_path / "hinted.json").write_text(
+        json.dumps(
+            {
+                "name": "hinted",
+                "version": "1.0.0",
+                "model_hints": {"thinking_level": declared},
+                "template": "Body with no placeholders.",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert PromptLoader.thinking_level_for("hinted", directory=tmp_path) is None
 
 
 # ---------------------------------------------------------------------------

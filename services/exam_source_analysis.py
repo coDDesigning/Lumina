@@ -84,7 +84,7 @@ from services.text_generation import (
     TextGenerationProvider,
     material_budget,
     model_identifier,
-    with_template_temperature,
+    with_template_hints,
 )
 from utils.ai_errors import (
     NO_READY_MATERIAL_MESSAGE,
@@ -528,9 +528,7 @@ class ExamSourceAnalysisService:
             metadata = None
             try:
                 # The template's own declared temperature, applied to the call it was declared for.
-                provider = with_template_temperature(
-                    provider, PromptLoader.temperature_for(cls.PROMPT_TEMPLATE_NAME)
-                )
+                provider = with_template_hints(provider, cls.PROMPT_TEMPLATE_NAME)
                 if hasattr(provider, "generate_json_with_metadata"):
                     result, metadata = provider.generate_json_with_metadata(prompt)
                 else:
